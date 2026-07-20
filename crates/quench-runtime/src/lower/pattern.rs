@@ -86,7 +86,7 @@ pub fn lower_assignment_target_prop(
             Some((key, value))
         }
         ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(prop) => {
-            let key = lower_property_key(&prop.name)?;
+            let key = lower_prop_name_key(&prop.name)?;
             let value = lower_assignment_target_maybe_default(&prop.binding)?;
             Some((key, value))
         }
@@ -214,21 +214,6 @@ fn lower_assignment_target_maybe_default(
 }
 
 /// Lower an OXC PropertyKey to our PropertyKey
-fn lower_property_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
-    match key {
-        ast::PropertyKey::StaticIdentifier(i) => {
-            Some(PropertyKey::Ident(i.name.as_str().to_string()))
-        }
-        ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
-        ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
-        ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
-        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(b.raw.to_string())),
-        ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
-        ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
-        _ => None,
-    }
-}
-
 fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
         ast::PropertyKey::StaticIdentifier(i) => {
@@ -240,28 +225,7 @@ fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(b.raw.to_string())),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
-        ast::PropertyKey::TemplateLiteral(_) => None,
-        // Computed property names are handled via expression variants
-        _ => {
-            // Check if it's an identifier (static key) or other expression (computed key)
-            if let ast::PropertyKey::StaticIdentifier(i) = key {
-                Some(PropertyKey::Ident(i.name.as_str().to_string()))
-            } else if let ast::PropertyKey::PrivateIdentifier(i) = key {
-                Some(PropertyKey::Ident(format!("#{}", i.name)))
-            } else if let ast::PropertyKey::StringLiteral(s) = key {
-                Some(PropertyKey::String(s.value.to_string()))
-            } else if let ast::PropertyKey::NumericLiteral(n) = key {
-                Some(PropertyKey::Number(n.value))
-            } else if let ast::PropertyKey::BigIntLiteral(b) = key {
-                Some(PropertyKey::String(b.raw.to_string()))
-            } else if let ast::PropertyKey::BooleanLiteral(b) = key {
-                Some(PropertyKey::String(b.value.to_string()))
-            } else if let ast::PropertyKey::NullLiteral(_) = key {
-                Some(PropertyKey::String("null".to_string()))
-            } else {
-                None // Computed keys need special handling and can't be represented as static
-            }
-        }
+        _ => None,
     }
 }
 
@@ -287,7 +251,36 @@ pub fn expand_nested_pattern(
             expand_nested_object_pattern(kind, obj, source_var)
         }
         ast::BindingPatternKind::AssignmentPattern(assign) => {
-            expand_nested_pattern(kind, &assign.left, source_var)
+            // `[a = default]` from source_var → apply default via nullish coalescing
+            let default_expr = match crate::lower::expr::lower_expr(&assign.right) {
+                Ok(expr) => expr,
+                Err(_) => Expression::Undefined,
+            };
+            let initializer = Expression::Binary {
+                left: Box::new(source.clone()),
+                op: crate::ast::BinaryOp::NullishCoalescing,
+                right: Box::new(default_expr),
+            };
+            match &assign.left.kind {
+                ast::BindingPatternKind::BindingIdentifier(id) => {
+                    vec![Statement::VarDeclaration {
+                        kind,
+                        name: id.name.as_str().to_string(),
+                        init: Some(initializer),
+                    }]
+                }
+                _ => {
+                    // Nested pattern with default: destructure the value with default applied
+                    let temp_name = format!("{}_def", source_var);
+                    let mut stmts = vec![Statement::VarDeclaration {
+                        kind: VarKind::Const,
+                        name: temp_name.clone(),
+                        init: Some(initializer),
+                    }];
+                    stmts.extend(expand_nested_pattern(kind, &assign.left, &temp_name));
+                    stmts
+                }
+            }
         }
     }
 }
@@ -324,11 +317,13 @@ pub fn expand_nested_array_pattern(
     }
     // Handle trailing rest element
     if let Some(rest) = &arr.rest {
+        // Start index = count of elements before the rest
+        let start_index = arr.elements.len();
         let rest_temp_name = format!("{}_rest", source_var);
         stmts.push(Statement::VarDeclaration {
             kind: VarKind::Const,
             name: rest_temp_name.clone(),
-            init: Some(Expression::Identifier(source_var.to_string())),
+            init: Some(rest_slice_expr(source_var, start_index)),
         });
         stmts.extend(expand_nested_pattern(kind, &rest.argument, &rest_temp_name));
     }
@@ -343,6 +338,29 @@ fn array_member_expr(source_var: &str, index: usize) -> Expression {
     }
 }
 
+/// Generate `Array.prototype.slice.call(source_var, start_index)` for rest elements.
+/// Generate `[].slice.call(source_var, start_index)` which slices the source array
+/// from start_index to the end. Using `[]` as the receiver avoids the `this` binding
+/// issue that arises with `Array.prototype.slice.call` when the callee resolution
+/// does not properly set up the `this` value.
+fn rest_slice_expr(source_var: &str, start_index: usize) -> Expression {
+    Expression::Call {
+        callee: Box::new(Expression::Member {
+            object: Box::new(Expression::Member {
+                object: Box::new(Expression::Array(vec![])),
+                property: PropertyKey::Ident("slice".to_string()),
+                computed: false,
+            }),
+            property: PropertyKey::Ident("call".to_string()),
+            computed: false,
+        }),
+        arguments: vec![
+            Expression::Identifier(source_var.to_string()),
+            Expression::Number(start_index as f64),
+        ],
+    }
+}
+
 /// Expand object pattern: {a, b} from source_var
 pub fn expand_nested_object_pattern(
     kind: VarKind,
@@ -352,7 +370,7 @@ pub fn expand_nested_object_pattern(
     let mut stmts = Vec::new();
     for prop in &obj.properties {
         let key_str = match &prop.key {
-            ast::PropertyKey::Identifier(i) => i.name.as_str().to_string(),
+            ast::PropertyKey::StaticIdentifier(i) => i.name.as_str().to_string(),
             ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
             ast::PropertyKey::NumericLiteral(n) => n.value.to_string(),
             _ => continue,
@@ -473,3 +491,6 @@ fn object_member_expr(source_var: &str, key: &str) -> Expression {
         computed: false,
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 1,
+  "current_stage": 4,
   "goal": "100% of test262, staged, with the minimum possible implementation LOC — small Rust core plus self-hosted JS builtins (see docs/architecture.md and tasks/refactor-plan.md).",
   "scope": {
     "includes": ["test/"],
@@ -9,10 +9,10 @@
   },
   "stages": [
     { "id": 0,  "path": "test/harness",                          "status": "done" },
-    { "id": 1,  "path": "test/language/literals",                 "status": "in_progress" },
-    { "id": 2,  "path": "test/language/identifiers",              "status": "pending" },
-    { "id": 3,  "path": "test/language/future-reserved-words",     "status": "pending" },
-    { "id": 4,  "path": "test/language/reserved-words",            "status": "pending" },
+    { "id": 1,  "path": "test/language/literals",                 "status": "done" },
+    { "id": 2,  "path": "test/language/identifiers",              "status": "done" },
+    { "id": 3,  "path": "test/language/future-reserved-words",     "status": "done" },
+    { "id": 4,  "path": "test/language/reserved-words",            "status": "in_progress" },
     { "id": 5,  "path": "test/language/keywords",                  "status": "pending" },
     { "id": 6,  "path": "test/language/punctuators",              "status": "pending" },
     { "id": 7,  "path": "test/language/white-space",              "status": "pending" },

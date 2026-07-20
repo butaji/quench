@@ -15,7 +15,7 @@ pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;
-use crate::value::{create_js_error, JsError, Object, ObjectKind, Value};
+use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -37,10 +37,9 @@ pub fn eval_member_access(
         Value::Class(class) => eval_class_member(class, prop_name, env),
         Value::Null | Value::Undefined => {
             let msg = format!("Cannot read property '{}' of {}", prop_name, obj_val);
-            let (_, js_err) = create_js_error(&msg);
+            let (_, js_err) = create_js_error_with_type(&msg, "TypeError");
             Err(js_err)
         }
-        _ => Ok(Value::Undefined),
     }
 }
 
@@ -85,6 +84,8 @@ pub fn eval_class_member(
                         params.clone(),
                         body.clone(),
                         Rc::clone(env),
+                        false,
+                        false,
                     );
                     // Class bodies are always strict mode (ES spec 15.7).
                     func.strict = true;

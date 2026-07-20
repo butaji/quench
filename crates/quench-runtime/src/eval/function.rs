@@ -216,6 +216,10 @@ pub(crate) fn call_js_function_impl_with_strict(
     let prev_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(in_strict);
 
+    // Per ES §27.2.1.1: async functions wrap their return value in Promise.resolve().
+    // Save the flag before f is consumed in the if/else branches.
+    let is_async = f.is_async;
+
     let previous_eval_env = crate::interpreter::get_current_eval_env();
     crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
     let result = if f.is_arrow {
@@ -228,7 +232,20 @@ pub(crate) fn call_js_function_impl_with_strict(
     // Restore previous strict mode
     crate::interpreter::set_strict_mode(prev_strict);
 
-    result
+    // Wrap async function return values in Promise.resolve()
+    // Per ES §27.2.1.1: the return value (or thrown error) is wrapped in a Promise.
+    if is_async {
+        let proto = crate::builtins::promise::get_promise_proto();
+        match result {
+            Ok(val) => crate::builtins::promise::promise_resolve_impl_static(vec![val], proto),
+            Err(err) => crate::builtins::promise::promise_reject_impl_static(
+                vec![Value::String(err.to_string())],
+                proto,
+            ),
+        }
+    } else {
+        result
+    }
 }
 
 fn binding_pattern_expression(pattern: BindingElement) -> Expression {

@@ -86,4 +86,124 @@ mod tests {
         let mut host = QuenchHost::new();
         assert!(host.run_module_script("export default 42;").is_ok());
     }
+
+    #[test]
+    fn quench_host_verify_property_symbol_accessor() {
+        // Reproduce verifyProperty-restore-accessor-symbol.js scenario
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var obj;
+var prop = Symbol(1);
+var desc = { enumerable: true, configurable: true, get: function() { return 42; }, set: function() {} };
+
+obj = {};
+Object.defineProperty(obj, prop, desc);
+
+// Check hasOwnProperty
+var hasOwn = Object.prototype.hasOwnProperty.call(obj, prop);
+if (hasOwn !== true) throw new Error('hasOwnProperty should be true, got ' + hasOwn);
+
+// Check getter invocation
+var val = obj[prop];
+if (val !== 42) throw new Error('obj[prop] should return 42, got ' + val + ' (type: ' + typeof val + ')');
+
+// Check getOwnPropertyDescriptor
+var desc2 = Object.getOwnPropertyDescriptor(obj, prop);
+if (typeof desc2.get !== 'function') throw new Error('desc2.get should be function');
+"#,
+        );
+        assert!(result.is_ok(), "Symbol accessor test failed: {:?}", result);
+    }
+
+    #[test]
+    fn quench_host_same_value_function_identity() {
+        // Test assert.sameValue with function identity (the core of verifyProperty)
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var obj = {};
+Object.defineProperty(obj, 'foo', {
+    enumerable: true,
+    configurable: true,
+    get: function() { return 99; },
+    set: function() {}
+});
+var d = Object.getOwnPropertyDescriptor(obj, 'foo');
+// assert.sameValue should succeed when comparing the same function object
+assert.sameValue(d.get, d.get, 'function identity');
+assert.sameValue(d.set, d.set, 'setter identity');
+// assert.sameValue should fail for different values
+var threw = false;
+try {
+    assert.sameValue(d.get, d.set);
+} catch(e) {
+    threw = true;
+}
+if (!threw) throw new Error('sameValue(d.get, d.set) should throw');
+"#,
+        );
+        assert!(result.is_ok(), "sameValue function identity test failed: {:?}", result);
+    }
+
+    #[test]
+    fn quench_host_symbol_accessor_same_value() {
+        // Test assert.sameValue with Symbol-keyed accessor descriptor
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var obj = {};
+var sym = Symbol('test');
+Object.defineProperty(obj, sym, {
+    enumerable: true,
+    configurable: true,
+    get: function() { return 42; },
+    set: function() {}
+});
+var d = Object.getOwnPropertyDescriptor(obj, sym);
+// The getter function should be preserved
+assert.sameValue(typeof d.get, 'function', 'getter is a function');
+assert.sameValue(typeof d.set, 'function', 'setter is a function');
+assert.sameValue(d.get(), 42, 'getter returns 42');
+"#,
+        );
+        assert!(result.is_ok(), "Symbol accessor sameValue test failed: {:?}", result);
+    }
+
+    #[test]
+    fn quench_host_with_harness_verify_property_accessor_symbol() {
+        // Full harness test: load assert.js + propertyHelper.js + run verifyProperty scenario
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+var __propertyIsEnumerable = Function.prototype.call.bind(Object.prototype.propertyIsEnumerable);
+
+// Simplified verifyProperty that checks the accessor descriptor
+function verifyProperty(obj, name, desc) {
+    var originalDesc = __getOwnPropertyDescriptor(obj, name);
+
+    if (!__hasOwnProperty(obj, name)) {
+        throw new Error('should be own property');
+    }
+
+    if (typeof originalDesc.get !== 'function') {
+        throw new Error('originalDesc.get should be function, got ' + typeof originalDesc.get);
+    }
+    if (typeof originalDesc.set !== 'function') {
+        throw new Error('originalDesc.set should be function, got ' + typeof originalDesc.set);
+    }
+}
+
+var obj = {};
+var prop = Symbol(1);
+var desc = { enumerable: true, configurable: true, get: function() { return 42; }, set: function() {} };
+
+Object.defineProperty(obj, prop, desc);
+verifyProperty(obj, prop, desc);
+"#,
+        );
+        assert!(result.is_ok(), "verifyProperty accessor Symbol failed: {:?}", result);
+    }
 }

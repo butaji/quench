@@ -13,15 +13,16 @@ use std::sync::Arc;
 
 /// Parse JavaScript source using OXC (script mode, not module)
 pub fn parse_script(source: &str) -> Result<Program, JsError> {
-    let source_type = SourceType::default().with_jsx(true);
+    // Explicitly mark as script so `await` is not reserved (§11.6.2).
+    // SourceType::default() is module-first in OXC 0.47+.
+    let source_type = SourceType::default().with_script(true).with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
     check_strict_reserved(&ret.program)?;
-    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    result
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
 /// Reject strict-mode future reserved words used as binding identifiers.
@@ -56,8 +57,7 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
             name
         )));
     }
-    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    result
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
 /// Parse JavaScript/JSX source using OXC (script mode)
@@ -68,8 +68,7 @@ pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
     if !ret.errors.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
-    let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
-    result
+    lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
 /// Parse TypeScript source and strip type annotations
@@ -145,6 +144,101 @@ mod tests {
     fn test_parse_object() {
         let result = parse_script(r#"const x = { a: 1, b: 2 };"#);
         assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    /// { get: fn } must be a data property (key "get", value is function).
+    /// { get() {} } must be a getter accessor (key "get", no value).
+    /// OXC already distinguishes these via prop.kind; our lower must not re-interpret.
+    #[test]
+    fn test_parse_object_getter_vs_data_property() {
+        use crate::ast::{Expression, PropertyValue};
+
+        // { get: fn } → data property (NOT a getter accessor)
+        let r1 = parse_script(r#"var x = { get: function() {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r1;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert_eq!(props.len(), 1, "expected 1 property");
+        let val = &props[0].1;
+        assert!(
+            matches!(
+                val,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{get: fn}} must be a Value property, got {:?}",
+            val,
+        );
+
+        // { get() {} } → concise method (data property, NOT getter accessor)
+        let r2 = parse_script(r#"var x = { get() {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r2;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert_eq!(props.len(), 1, "expected 1 property");
+        let val = &props[0].1;
+        assert!(
+            matches!(
+                val,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{get()}} must be a Value property (concise method), got {:?}",
+            val,
+        );
+
+        // Same for 'set'
+        let r3 = parse_script(r#"var x = { set: function(v) {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r3;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert!(
+            matches!(
+                props[0].1,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{set: fn}} must be a Value property",
+        );
+
+        // { set(v) {} } → concise method (data property, NOT setter accessor)
+        let r4 = parse_script(r#"var x = { set(v) {} };"#).unwrap();
+        let crate::ast::Program::Script(stmts) = r4;
+        let crate::ast::Statement::VarDeclaration {
+            init: Some(expr), ..
+        } = &stmts[0]
+        else {
+            panic!("expected VarDeclaration with init")
+        };
+        let Expression::Object(props) = expr else {
+            panic!("expected Object expression")
+        };
+        assert!(
+            matches!(
+                props[0].1,
+                PropertyValue::Value(Expression::FunctionExpression { .. })
+            ),
+            "{{set(v)}} must be a Value property (concise method), got {:?}",
+            props[0].1,
+        );
     }
 
     #[test]

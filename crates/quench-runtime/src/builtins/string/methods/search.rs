@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, NativeFunction, Object, Value};
+use crate::value::{to_js_string, to_number, JsError, NativeFunction, Object, Value};
 
 /// Clamp `pos` to `s.len()` and floor it to the nearest char boundary,
 /// so byte-slicing `s` with it can never panic.
@@ -119,10 +119,57 @@ fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
     );
 }
 
+/// Minimal String.prototype.match: calls regexp.exec(this) and returns the match.
+fn string_match(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this_str = crate::value::to_js_string(&this_val);
+    let regexp = args.first().cloned().unwrap_or(Value::Undefined);
+    // Use the regex's exec method
+    let exec_fn = match &regexp {
+        Value::Object(obj) => obj.borrow().get("exec"),
+        _ => None,
+    };
+    let exec_fn = match exec_fn {
+        Some(f) => f,
+        None => return Ok(Value::Undefined),
+    };
+    crate::eval::call_value_with_this(exec_fn, vec![Value::String(this_str)], regexp)
+}
+
+/// Minimal String.prototype.search: calls regexp.exec(this) and returns the index.
+fn string_search(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this_str = crate::value::to_js_string(&this_val);
+    let regexp = args.first().cloned().unwrap_or(Value::Undefined);
+    let exec_fn = match &regexp {
+        Value::Object(obj) => obj.borrow().get("exec"),
+        _ => None,
+    };
+    let exec_fn = match exec_fn {
+        Some(f) => f,
+        None => return Ok(Value::Number(-1.0)),
+    };
+    match crate::eval::call_value_with_this(exec_fn, vec![Value::String(this_str)], regexp) {
+        Ok(Value::Null) => Ok(Value::Number(-1.0)),
+        Ok(Value::Object(obj)) => Ok(obj.borrow().get("index").unwrap_or(Value::Number(-1.0))),
+        _ => Ok(Value::Number(-1.0)),
+    }
+}
+
 /// Install all search methods
 pub fn install_search_methods(proto: &Rc<RefCell<Object>>) {
     install_index_methods(proto);
     install_prefix_suffix_methods(proto);
+    let proto_clone = Rc::clone(proto);
+    proto_clone.borrow_mut().set(
+        "match",
+        Value::NativeFunction(Rc::new(NativeFunction::new(string_match))),
+    );
+    let proto_clone = Rc::clone(proto);
+    proto_clone.borrow_mut().set(
+        "search",
+        Value::NativeFunction(Rc::new(NativeFunction::new(string_search))),
+    );
 }
 
 #[cfg(test)]

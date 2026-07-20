@@ -50,18 +50,24 @@ pub fn register_array(ctx: &mut Context) {
     }
 
     setup_array_prototype_global(&array_proto_rc);
-    let array_wrapper = setup_array_wrapper(&array_proto_rc);
-    ctx.set_global("Array".to_string(), Value::Object(array_wrapper));
-}
 
-fn setup_array_wrapper(array_proto_rc: &Rc<RefCell<Object>>) -> Rc<RefCell<Object>> {
-    let array_wrapper = Object::new(ObjectKind::Ordinary);
-    let array_wrapper_rc = Rc::new(RefCell::new(array_wrapper));
+    // Build the NativeConstructor first so we can reference it for both
+    // the global binding and the prototype.constructor property.
+    let array_proto_for_ctor = Rc::clone(&array_proto_rc);
+    let array_constructor = NativeConstructor::new(
+        move |args: Vec<Value>| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            if let Value::Object(obj_rc) = this_val {
+                return make_array_with_new(obj_rc, &args, &array_proto_for_ctor);
+            }
+            make_array_direct(&args, &array_proto_for_ctor)
+        },
+        Rc::clone(&array_proto_rc),
+    );
+    array_constructor.set_name("Array");
 
-    array_wrapper_rc
-        .borrow_mut()
-        .set("prototype", Value::Object(Rc::clone(array_proto_rc)));
-    array_wrapper_rc.borrow_mut().set(
+    // Set static methods on the constructor
+    array_constructor.set_static_method(
         "isArray",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
@@ -70,7 +76,7 @@ fn setup_array_wrapper(array_proto_rc: &Rc<RefCell<Object>>) -> Rc<RefCell<Objec
             ))
         }))),
     );
-    array_wrapper_rc.borrow_mut().set(
+    array_constructor.set_static_method(
         "from",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let items = args.first().cloned().unwrap_or(Value::Undefined);
@@ -84,7 +90,7 @@ fn setup_array_wrapper(array_proto_rc: &Rc<RefCell<Object>>) -> Rc<RefCell<Objec
             Ok(Value::Object(Rc::new(RefCell::new(arr))))
         }))),
     );
-    array_wrapper_rc.borrow_mut().set(
+    array_constructor.set_static_method(
         "of",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let arr = Object::new_array_from(args.to_vec());
@@ -92,23 +98,18 @@ fn setup_array_wrapper(array_proto_rc: &Rc<RefCell<Object>>) -> Rc<RefCell<Objec
         }))),
     );
 
-    let array_proto_clone = Rc::clone(array_proto_rc);
-    let array_constructor = NativeConstructor::new(
-        move |args: Vec<Value>| {
-            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            if let Value::Object(obj_rc) = this_val {
-                return make_array_with_new(obj_rc, &args, &array_proto_clone);
-            }
-            make_array_direct(&args, &array_proto_clone)
-        },
-        Rc::clone(array_proto_rc),
+    // Set Array.prototype.constructor = the NativeConstructor
+    let array_constructor_rc = Rc::new(array_constructor.clone());
+    array_proto_rc.borrow_mut().set(
+        "constructor",
+        Value::NativeConstructor(Rc::clone(&array_constructor_rc)),
     );
 
-    array_wrapper_rc.borrow_mut().set(
-        "constructor",
-        Value::NativeConstructor(Rc::new(array_constructor)),
+    // Register Array as the NativeConstructor (typeof returns "function")
+    ctx.set_global(
+        "Array".to_string(),
+        Value::NativeConstructor(array_constructor_rc),
     );
-    array_wrapper_rc
 }
 
 fn make_array_with_new(

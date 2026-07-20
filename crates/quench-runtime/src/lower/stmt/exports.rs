@@ -155,7 +155,13 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .as_ref()
                 .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Some(Statement::FunctionDeclaration { name, params, body })
+            Some(Statement::FunctionDeclaration {
+                name,
+                params,
+                body,
+                is_async: func_expr.r#async,
+                is_generator: func_expr.generator,
+            })
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class_expr) => {
             let name = class_expr
@@ -166,7 +172,7 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
             let class = lower_class(class_expr)?;
             Some(Statement::ClassDeclaration { name, class })
         }
-        // Expression export: export default <expression>
+        // Expression export: export default <expression> -> exports.default = <expression>
         ast::ExportDefaultDeclarationKind::Identifier(id) => Some(Statement::Expression(Box::new(
             Expression::Identifier(id.name.as_str().to_string()),
         ))),

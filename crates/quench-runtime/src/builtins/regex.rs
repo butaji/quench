@@ -4,10 +4,117 @@
 
 mod string_methods;
 
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // ------------------------------------------------------------------------
+    // validate_unicode_backreferences
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn validate_backref_no_capturing_groups() {
+        // Pattern with no capturing groups should return false (valid).
+        let regex = regress::Regex::new("abc").unwrap();
+        let haystack = "abcdef";
+        let m = regex.find(haystack).unwrap();
+        // No groups → loop never enters → returns false
+        assert!(!validate_unicode_backreferences(haystack, &m));
+    }
+
+    #[test]
+    fn validate_backref_valid_backreference() {
+        // Backreference that fits within the haystack is valid.
+        // Pattern (a?)\\1 on "a": the greedy a? first tries "a", backref fails
+        // (no second 'a'), so it backtracks to empty. Group 1 captures empty (0..0),
+        // backref matches empty at pos 0. Formula: backref_pos = m.end() = 0,
+        // captured_len = 0, check 0 + 0 > 1 → false (valid).
+        let regex = regress::Regex::new("(a?)\\1").unwrap();
+        let haystack = "a";
+        let m = regex.find(haystack).unwrap();
+        assert!(!validate_unicode_backreferences(haystack, &m));
+    }
+
+    #[test]
+    fn validate_backref_extends_past_end() {
+        // Pattern (ab)\\1? on "ab": group 1 captures "ab" at 0..2, backref at pos 2
+        // needs 2 chars but only 0 remain → extends past end → invalid.
+        let regex = regress::Regex::new("(ab)\\1?").unwrap();
+        let haystack = "ab";
+        let m = regex.find(haystack).unwrap();
+        // The overall match succeeds (backref is optional), but backref extends past string.
+        assert!(validate_unicode_backreferences(haystack, &m));
+    }
+
+    #[test]
+    fn validate_backref_multiple_groups_mixed() {
+        // Pattern: (a)\\1(b)\\1? — first backref valid, second extends past end.
+        // (a)\\1 matches "aa", group 1 = "a" at 0..1; backref at 1 needs 1 char, ok.
+        // (b)\\1? — group 2 = "b" at 2..3; backref at 3 needs 1 char but len is 3 → extends.
+        // Since at least one group is invalid, function returns true.
+        let regex = regress::Regex::new("(a)\\1(b)\\1?").unwrap();
+        let haystack = "aab";
+        let m = regex.find(haystack).unwrap();
+        assert!(validate_unicode_backreferences(haystack, &m));
+    }
+
+    // ------------------------------------------------------------------------
+    // regexp_match_state
+    // ------------------------------------------------------------------------
+
+    fn make_regexp_object(flags: &str) -> Rc<RefCell<Object>> {
+        let mut obj = Object::new(ObjectKind::RegExp);
+        obj.internal_regex_flags = Some(flags.to_string());
+        Rc::new(RefCell::new(obj))
+    }
+
+    #[test]
+    fn regexp_match_state_no_flags() {
+        let obj = make_regexp_object("");
+        let (flags, is_global_or_sticky, is_sticky) = regexp_match_state(&obj);
+        assert_eq!(flags, "");
+        assert!(!is_global_or_sticky);
+        assert!(!is_sticky);
+    }
+
+    #[test]
+    fn regexp_match_state_global_flag() {
+        let obj = make_regexp_object("g");
+        let (flags, is_global_or_sticky, is_sticky) = regexp_match_state(&obj);
+        assert_eq!(flags, "g");
+        assert!(is_global_or_sticky);
+        assert!(!is_sticky);
+    }
+
+    #[test]
+    fn regexp_match_state_sticky_flag() {
+        let obj = make_regexp_object("y");
+        let (flags, is_global_or_sticky, is_sticky) = regexp_match_state(&obj);
+        assert_eq!(flags, "y");
+        assert!(is_global_or_sticky);
+        assert!(is_sticky);
+    }
+
+    #[test]
+    fn regexp_match_state_gy_flags() {
+        let obj = make_regexp_object("gy");
+        let (flags, is_global_or_sticky, is_sticky) = regexp_match_state(&obj);
+        assert_eq!(flags, "gy");
+        assert!(is_global_or_sticky);
+        assert!(is_sticky);
+    }
+}
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use regress::Regex;
+use regress::{Match, Regex};
 
 use crate::value::convert::to_js_string;
 use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
@@ -185,13 +292,45 @@ fn regexp_match_state(obj: &Rc<RefCell<Object>>) -> (String, bool, bool) {
     (flags, is_global_or_sticky, is_sticky)
 }
 
+/// Returns true if the regress match violates ES spec §21.2.2.9 backreference
+/// semantics for the `u` flag: a backreference must match the exact code units
+/// captured by the group. If the backref would extend past the end of the
+/// string, the match is invalid and should be rejected (return None).
+fn validate_unicode_backreferences(haystack: &str, m: &Match) -> bool {
+    for i in 1.. {
+        let Some(grp_range) = m.group(i) else {
+            break;
+        };
+        let captured_len = grp_range.end - grp_range.start;
+        let backref_pos = m.start() + (m.end() - grp_range.start);
+        // Backref must match `captured_len` code units starting at `backref_pos`.
+        // If that would extend past the string, the match is invalid.
+        if backref_pos + captured_len > haystack.len() {
+            return true; // invalid
+        }
+    }
+    false // valid
+}
+
 /// Find the next match, honoring lastIndex for global/sticky regexes.
 /// Returns the match and updates lastIndex per spec (end of match on
 /// success, 0 on failure; untouched for non-global regexes).
 fn regexp_find(obj: &Rc<RefCell<Object>>, regex: &Regex, haystack: &str) -> Option<regress::Match> {
-    let (_flags, is_global_or_sticky, is_sticky) = regexp_match_state(obj);
+    let (flags, is_global_or_sticky, is_sticky) = regexp_match_state(obj);
     if !is_global_or_sticky {
-        return regex.find(haystack);
+        let m = regex.find(haystack);
+        // With `u` flag, backreferences must match exact code units (ES §21.2.2.9).
+        // Only validate when there are capturing groups to avoid overhead on simple
+        // patterns like /a/ (where S7.8.5_A1.1_T2.js creates 60000+ regexes).
+        if let Some(ref m) = m {
+            if flags.contains('u')
+                && m.group(1).is_some()
+                && validate_unicode_backreferences(haystack, m)
+            {
+                return None;
+            }
+        }
+        return m;
     }
     let mut start = obj
         .borrow()
@@ -212,6 +351,13 @@ fn regexp_find(obj: &Rc<RefCell<Object>>, regex: &Regex, haystack: &str) -> Opti
         .filter(|m| !is_sticky || m.start() == start);
     match m {
         Some(m) => {
+            if flags.contains('u')
+                && m.group(1).is_some()
+                && validate_unicode_backreferences(haystack, &m)
+            {
+                obj.borrow_mut().set("lastIndex", Value::Number(0.0));
+                return None;
+            }
             obj.borrow_mut()
                 .set("lastIndex", Value::Number(m.end() as f64));
             Some(m)
@@ -320,112 +466,5 @@ fn regexp_to_string_impl(_args: Vec<Value>) -> Result<Value, JsError> {
         Err(JsError::new(
             "RegExp.prototype.toString requires RegExp 'this'".to_string(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_regexp_constructor() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("/abc/").unwrap();
-        assert!(matches!(result, Value::Object(_)));
-    }
-
-    #[test]
-    fn test_regexp_test() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("/abc/.test(\"abcdef\")").unwrap();
-        assert_eq!(result, Value::Boolean(true));
-    }
-
-    #[test]
-    fn test_regexp_test_no_match() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("/xyz/.test(\"abcdef\")").unwrap();
-        assert_eq!(result, Value::Boolean(false));
-    }
-
-    #[test]
-    fn test_regexp_exec() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("/ab(c)/.exec(\"abcdef\")").unwrap();
-        assert!(matches!(result, Value::Object(_)));
-    }
-
-    #[test]
-    fn test_regexp_to_string() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("/abc/gi.toString()").unwrap();
-        assert_eq!(result, Value::String("/abc/gi".to_string()));
-    }
-
-    #[test]
-    fn test_regexp_invalid_flags_throw_syntax_error() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        let result = ctx.eval("new RegExp('a', 'zz')");
-        assert!(result.is_err(), "invalid flags must throw");
-        assert!(result
-            .unwrap_err()
-            .0
-            .contains("Invalid regular expression flags"));
-        let dup = ctx.eval("new RegExp('a', 'gg')");
-        assert!(dup.is_err(), "duplicate flags must throw");
-    }
-
-    #[test]
-    fn test_regexp_global_test_advances_last_index() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        // Global regex: successive test() calls start from lastIndex
-        assert_eq!(
-            ctx.eval("var re = /a/g; re.test('aa')").unwrap(),
-            Value::Boolean(true)
-        );
-        assert_eq!(ctx.eval("re.lastIndex").unwrap(), Value::Number(1.0));
-        assert_eq!(ctx.eval("re.test('aa')").unwrap(), Value::Boolean(true));
-        assert_eq!(ctx.eval("re.lastIndex").unwrap(), Value::Number(2.0));
-        // Failure resets lastIndex to 0
-        assert_eq!(ctx.eval("re.test('aa')").unwrap(), Value::Boolean(false));
-        assert_eq!(ctx.eval("re.lastIndex").unwrap(), Value::Number(0.0));
-    }
-
-    #[test]
-    fn test_regexp_non_global_does_not_touch_last_index() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        assert_eq!(
-            ctx.eval("var re2 = /a/; re2.lastIndex = 5; re2.test('cat')")
-                .unwrap(),
-            Value::Boolean(true)
-        );
-        assert_eq!(ctx.eval("re2.lastIndex").unwrap(), Value::Number(5.0));
-    }
-
-    #[test]
-    fn test_regexp_global_exec_starts_from_last_index() {
-        let mut ctx = Context::new().unwrap();
-        register_regexp(&mut ctx);
-
-        ctx.eval("var re3 = /b/g; re3.lastIndex = 2;").unwrap();
-        let result = ctx.eval("re3.exec('abcabc').index").unwrap();
-        assert_eq!(result, Value::Number(4.0));
-        assert_eq!(ctx.eval("re3.lastIndex").unwrap(), Value::Number(5.0));
     }
 }

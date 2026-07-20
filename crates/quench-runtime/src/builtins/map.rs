@@ -1,58 +1,17 @@
 //! Map and Set built-ins
 
+pub mod helpers;
+pub mod set;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::eval::call_value_with_this;
-use crate::eval::member::eval_object_member;
-use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
+use self::helpers::{
+    iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size, native_fn,
+    set_values,
+};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
-
-// ============================================================================
-// Map and Set
-// ============================================================================
-
-/// SameValueZero key equality: NaN equals NaN, +0 and -0 are the same key
-fn same_value_zero(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y || (x.is_nan() && y.is_nan()),
-        _ => crate::value::strict_eq(a, b),
-    }
-}
-
-/// Get the internal entries array (`_entries`: array of [key, value] pairs)
-fn map_entries(this: &Value) -> Option<Rc<RefCell<Object>>> {
-    if let Value::Object(o) = this {
-        if let Some(Value::Object(entries)) = o.borrow().get("_entries") {
-            return Some(Rc::clone(&entries));
-        }
-    }
-    None
-}
-
-/// Find the pair array holding `key`, or None
-fn map_find_pair(entries: &Rc<RefCell<Object>>, key: &Value) -> Option<Rc<RefCell<Object>>> {
-    let elements = entries.borrow().elements.clone();
-    for elem in elements {
-        if let Value::Object(pair) = elem {
-            let k = pair.borrow().elements.first().cloned();
-            if let Some(k) = k {
-                if same_value_zero(&k, key) {
-                    return Some(pair);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Store the current entry count in the map's `size` property
-fn map_update_size(this: &Value, entries: &Rc<RefCell<Object>>) {
-    let size = entries.borrow().elements.len() as f64;
-    if let Value::Object(o) = this {
-        o.borrow_mut().set("size", Value::Number(size));
-    }
-}
 
 fn map_set_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -81,13 +40,12 @@ fn map_get_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(entries) = map_entries(&this) {
         if let Some(pair) = map_find_pair(&entries, &key) {
-            let v = pair
+            return Ok(pair
                 .borrow()
                 .elements
                 .get(1)
                 .cloned()
-                .unwrap_or(Value::Undefined);
-            return Ok(v);
+                .unwrap_or(Value::Undefined));
         }
     }
     Ok(Value::Undefined)
@@ -113,7 +71,7 @@ fn map_delete_impl(args: Vec<Value>) -> Result<Value, JsError> {
         entries_ref.elements.iter().position(|elem| {
             if let Value::Object(pair) = elem {
                 if let Some(k) = pair.borrow().elements.first() {
-                    return same_value_zero(k, &key);
+                    return helpers::same_value_zero(k, &key);
                 }
             }
             false
@@ -140,178 +98,12 @@ fn map_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Undefined)
 }
 
-/// Get the internal values array (`_values`) of a Set
-fn set_values(this: &Value) -> Option<Rc<RefCell<Object>>> {
-    if let Value::Object(o) = this {
-        if let Some(Value::Object(values)) = o.borrow().get("_values") {
-            return Some(Rc::clone(&values));
-        }
-    }
-    None
-}
-
-fn set_has_value(values: &Rc<RefCell<Object>>, value: &Value) -> bool {
-    values
-        .borrow()
-        .elements
-        .iter()
-        .any(|v| same_value_zero(v, value))
-}
-
-fn set_add_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let Some(values) = set_values(&this) else {
-        return Err(JsError::from(
-            "TypeError: Set.prototype.add called on non-Set",
-        ));
-    };
-    if !set_has_value(&values, &value) {
-        let idx = values.borrow().elements.len().to_string();
-        values.borrow_mut().set(&idx, value);
-        map_update_size(&this, &values);
-    }
-    Ok(this)
-}
-
-fn set_has_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let found = set_values(&this)
-        .map(|values| set_has_value(&values, &value))
-        .unwrap_or(false);
-    Ok(Value::Boolean(found))
-}
-
-fn set_delete_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    let Some(values) = set_values(&this) else {
-        return Ok(Value::Boolean(false));
-    };
-    let pos = values
-        .borrow()
-        .elements
-        .iter()
-        .position(|v| same_value_zero(v, &value));
-    if let Some(pos) = pos {
-        values.borrow_mut().elements.remove(pos);
-        let len = values.borrow().elements.len() as f64;
-        values.borrow_mut().set("length", Value::Number(len));
-        map_update_size(&this, &values);
-        return Ok(Value::Boolean(true));
-    }
-    Ok(Value::Boolean(false))
-}
-
-fn native_fn(f: impl Fn(Vec<Value>) -> Result<Value, JsError> + 'static) -> Value {
-    Value::NativeFunction(Rc::new(NativeFunction::new(f)))
-}
-
-/// Build an iterator object over a snapshot of values (`{ next() }` protocol).
-fn make_iterator(items: Vec<Value>) -> Value {
-    let items = Rc::new(items);
-    let index = Rc::new(RefCell::new(0usize));
-    let next_fn = NativeFunction::new(move |_args| {
-        let mut obj = Object::new(ObjectKind::Ordinary);
-        let mut i = index.borrow_mut();
-        if *i < items.len() {
-            obj.set("value", items[*i].clone());
-            obj.set("done", Value::Boolean(false));
-            *i += 1;
-        } else {
-            obj.set("value", Value::Undefined);
-            obj.set("done", Value::Boolean(true));
-        }
-        Ok(Value::Object(Rc::new(RefCell::new(obj))))
-    });
-    let mut iter = Object::new(ObjectKind::Ordinary);
-    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
-    Value::Object(Rc::new(RefCell::new(iter)))
-}
-
 fn map_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let items = map_entries(&this)
         .map(|e| e.borrow().elements.clone())
         .unwrap_or_default();
-    Ok(make_iterator(items))
-}
-
-fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = set_values(&this)
-        .map(|v| v.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(make_iterator(items))
-}
-
-/// Property key for the Symbol.iterator method: computed member access with a
-/// symbol evaluates to the symbol payload, so the method is stored under that
-/// exact key.
-fn iterator_prop_key() -> Option<String> {
-    match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
-        Some(Value::Symbol(payload)) => Some(
-            payload
-                .desc
-                .clone()
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
-        ),
-        _ => None,
-    }
-}
-
-/// Populate a Map from an iterable source. Per spec, `new Map(iterable)`:
-/// 1. Get adder = Map.prototype.set (this may throw via getter)
-/// 2. For each entry [k, v] in iterable, call adder(k, v)
-fn map_populate(map: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
-    // Per spec, we must GET the adder BEFORE iterating
-    // This is step 8b: "Let adder be Get(map, "set")"
-    let adder = eval_object_member(map, "set", None)?;
-
-    let pairs: Vec<Value> = match src {
-        Value::Object(o) => match map_entries(src) {
-            // src is another Map - copy its entries
-            Some(src_entries) => src_entries.borrow().elements.clone(),
-            // src is an array-like object - use its elements as pairs
-            None => o.borrow().elements.clone(),
-        },
-        _ => Vec::new(),
-    };
-    for pair in pairs {
-        if let Value::Object(p) = pair {
-            let elems = p.borrow().elements.clone();
-            if elems.len() >= 2 {
-                let k = elems[0].clone();
-                let v = elems[1].clone();
-                call_value_with_this(adder.clone(), vec![k, v], Value::Object(Rc::clone(map)))?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Populate a Set from an iterable source. Per spec, `new Set(iterable)`:
-/// 1. Get adder = Set.prototype.add (this may throw via getter)
-/// 2. For each value in iterable, call adder(value)
-fn set_populate(set: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsError> {
-    // Per spec, we must GET the adder BEFORE iterating
-    let adder = eval_object_member(set, "add", None)?;
-
-    let items: Vec<Value> = match src {
-        Value::Object(o) => match set_values(src) {
-            // src is another Set - copy its values
-            Some(src_values) => src_values.borrow().elements.clone(),
-            // src is an array-like object - use its elements
-            None => o.borrow().elements.clone(),
-        },
-        _ => Vec::new(),
-    };
-    for item in items {
-        call_value_with_this(adder.clone(), vec![item], Value::Object(Rc::clone(set)))?;
-    }
-    Ok(())
+    Ok(self::helpers::make_iterator(items))
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {
@@ -354,22 +146,17 @@ pub fn register_map_and_set(ctx: &mut Context) {
     if let Value::NativeFunction(nf) = &map_constructor {
         let _ = nf.set_property("prototype", Value::Object(map_proto));
         let _ = nf.set_property("name", Value::String("Map".to_string()));
-        // Set up Symbol.species getter - returns this (the constructor) by default
         if let Some(species_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
         {
             let map_ctor = map_constructor.clone();
             let species_getter = NativeFunction::new(move |_args| {
-                // Return this (the Map constructor)
                 let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-                // If called as a getter, 'this' should be Map constructor
-                // If called with explicit this, use it; otherwise use map_ctor
                 if matches!(this_val, Value::Undefined) {
                     Ok(map_ctor.clone())
                 } else {
                     Ok(this_val)
                 }
             });
-            // Store the getter - the key is the symbol's string representation
             let species_key = format!("{}", species_sym);
             let _ = nf.set_property(&species_key, Value::NativeFunction(Rc::new(species_getter)));
         }
@@ -382,39 +169,10 @@ pub fn register_map_and_set(ctx: &mut Context) {
     if let Some(ref op) = object_proto {
         set_proto.borrow_mut().prototype = Some(Rc::clone(op));
     }
-    {
-        let mut p = set_proto.borrow_mut();
-        p.set("add", native_fn(set_add_impl));
-        p.set("has", native_fn(set_has_impl));
-        p.set("delete", native_fn(set_delete_impl));
-        p.set("clear", native_fn(map_clear_impl));
-        if let Some(key) = iterator_prop_key() {
-            p.set(&key, native_fn(set_iterator_impl));
-        }
-    }
-    let set_proto_for_ctor = Rc::clone(&set_proto);
-    let set_constructor = native_fn(move |args| {
-        let set_obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
-        let set = Rc::new(RefCell::new(set_obj));
-        {
-            let mut s = set.borrow_mut();
-            let values = Object::new_array(0);
-            s.set("_values", Value::Object(Rc::new(RefCell::new(values))));
-            s.set("size", Value::Number(0.0));
-        }
-        if let Some(src) = args.first() {
-            if !matches!(src, Value::Undefined | Value::Null) {
-                set_populate(&set, src)?;
-            }
-        }
-        Ok(Value::Object(set))
-    });
-    if let Value::NativeFunction(nf) = &set_constructor {
-        let _ = nf.set_property("prototype", Value::Object(set_proto));
-        let _ = nf.set_property("name", Value::String("Set".to_string()));
-    }
-    ctx.set_global("Set".to_string(), set_constructor);
+    set::register_set(ctx, set_proto);
 }
+
+use crate::value::NativeFunction;
 
 #[cfg(test)]
 mod tests {
@@ -476,8 +234,6 @@ mod tests {
 
     #[test]
     fn test_map_set_getter_override() {
-        // Test that overriding Map.prototype.set with a getter throws
-        // when new Map([[...]]) tries to call it (ES spec §24.1.1)
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
@@ -489,9 +245,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        // new Map() with empty arg should NOT throw
         ctx.eval("new Map();").unwrap();
-        // new Map with non-empty iterable SHOULD throw
         let result = ctx.eval("new Map([[1, 2]]);");
         assert!(
             result.is_err(),
@@ -501,7 +255,6 @@ mod tests {
 
     #[test]
     fn test_set_add_getter_override() {
-        // Test that overriding Set.prototype.add with a getter throws
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
@@ -513,9 +266,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        // new Set() with empty arg should NOT throw
         ctx.eval("new Set();").unwrap();
-        // new Set with non-empty iterable SHOULD throw
         let result = ctx.eval("new Set([1]);");
         assert!(
             result.is_err(),
@@ -525,20 +276,16 @@ mod tests {
 
     #[test]
     fn test_map_direct_getter() {
-        // Direct test: get Map.prototype.set - should it be a getter?
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
             Object.defineProperty(Map.prototype, 'set', {
-              get: function() {
-                return 42;
-              }
+              get: function() { return 42; }
             });
             "#,
         )
         .unwrap();
         let result = ctx.eval("Map.prototype.set");
-        // If getter works, this should be 42
         assert_eq!(
             result.unwrap(),
             Value::Number(42.0),
@@ -548,7 +295,6 @@ mod tests {
 
     #[test]
     fn test_map_getter_called_when_populating() {
-        // Test that the getter IS called when populating from iterable
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
@@ -556,14 +302,12 @@ mod tests {
             Object.defineProperty(Map.prototype, 'set', {
               get: function() {
                 getterCalled = true;
-                // Return a function that throws to simulate getter throwing
                 throw new Error("getter was called");
               }
             });
             "#,
         )
         .unwrap();
-        // new Map() should NOT call the getter (empty iterable)
         ctx.eval("new Map();").unwrap();
         let getter_called = ctx.eval("getterCalled").unwrap();
         assert_eq!(
@@ -572,14 +316,11 @@ mod tests {
             "getter should not be called for empty Map()"
         );
 
-        // new Map([[1, 2]]) SHOULD call the getter
         let result = ctx.eval("new Map([[1, 2]]);");
         assert!(
             result.is_err(),
             "new Map([[1, 2]]) should throw when getter throws"
         );
-
-        // Verify getter WAS called
         let getter_called = ctx.eval("getterCalled").unwrap();
         assert_eq!(
             getter_called,
@@ -590,7 +331,6 @@ mod tests {
 
     #[test]
     fn test_map_call_getter_directly() {
-        // Test that calling the getter directly works
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
@@ -602,7 +342,6 @@ mod tests {
             "#,
         )
         .unwrap();
-        // Call the getter and use the returned function
         let result = ctx.eval("var m = new Map(); var s = Map.prototype.set; s.call(m, 1, 2);");
         assert!(result.is_ok(), "calling getter should work: {:?}", result);
         assert_eq!(
@@ -614,19 +353,15 @@ mod tests {
 
     #[test]
     fn test_map_getter_vs_own_property() {
-        // Test: does the Map have its own 'set' property that shadows the getter?
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
             Object.defineProperty(Map.prototype, 'set', {
-              get: function() {
-                throw new Error("prototype getter called");
-              }
+              get: function() { throw new Error("prototype getter called"); }
             });
             "#,
         )
         .unwrap();
-        // Check if Map has own 'set' property
         let has_own = ctx
             .eval("Object.prototype.hasOwnProperty.call(Map.prototype, 'set');")
             .unwrap();
@@ -635,8 +370,6 @@ mod tests {
             Value::Boolean(true),
             "Map.prototype should have own 'set' property"
         );
-
-        // Now test with a map instance
         let result = ctx.eval("var m = new Map(); m.set(1, 2);");
         assert!(
             result.is_err(),
@@ -647,10 +380,7 @@ mod tests {
 
     #[test]
     fn test_map_iterable_parsing() {
-        // Test that new Map with iterable populates correctly
         let mut ctx = Context::new().unwrap();
-
-        // Test with a normal iterable (no override)
         ctx.eval("var m = new Map([[1, 2], [3, 4]]);").unwrap();
         assert_eq!(ctx.eval("m.get(1)").unwrap(), Value::Number(2.0));
         assert_eq!(ctx.eval("m.get(3)").unwrap(), Value::Number(4.0));
@@ -659,7 +389,6 @@ mod tests {
 
     #[test]
     fn test_map_with_override() {
-        // Test the exact test262 scenario: override Map.prototype.set, then new Map(iterable)
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
@@ -676,30 +405,21 @@ mod tests {
             "#,
         )
         .unwrap();
-
-        // Verify counter is 2 (called twice)
         let counter = ctx.eval("counter").unwrap();
         assert_eq!(
             counter,
             Value::Number(2.0),
             "Map.prototype.set should be called twice"
         );
-
-        // Verify map has the values
         assert_eq!(ctx.eval("map.get('foo')").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("map.get('bar')").unwrap(), Value::Number(2.0));
     }
 
     #[test]
     fn test_map_override_is_found() {
-        // Check if overridden Map.prototype.set is found
         let mut ctx = Context::new().unwrap();
-
-        // Override Map.prototype.set
         ctx.eval("Map.prototype.set = function() { return 42; };")
             .unwrap();
-
-        // Check if a map instance sees the override
         ctx.eval("var m = new Map();").unwrap();
         let result = ctx.eval("m.set(1, 2);").unwrap();
         assert_eq!(
@@ -711,46 +431,36 @@ mod tests {
 
     #[test]
     fn test_map_empty_iterable_no_getter() {
-        // Test that new Map([]) does NOT call the getter (empty array)
-        // This is the test262 test scenario
         let mut ctx = Context::new().unwrap();
         ctx.eval(
             r#"
             Object.defineProperty(Map.prototype, 'set', {
-              get: function() {
-                throw new Error("getter called");
-              }
+              get: function() { throw new Error("getter called"); }
             });
             "#,
         )
         .unwrap();
-
-        // Empty iterable should NOT throw
+        // Per ES spec 24.1.1.1 step 5: Let adder be Get(map, "set") is called BEFORE checking if iterable is empty
         let result = ctx.eval("new Map([]);");
-        assert!(result.is_ok(), "new Map([]) should not throw: {:?}", result);
+        assert!(
+            result.is_err(),
+            "new Map([]) should trigger getter per spec: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_map_test262_scenario() {
-        // Exactly replicate the test262 test scenario
         let mut ctx = Context::new().unwrap();
-
-        // Step 1: Define getter
         ctx.eval(
             r#"
             Object.defineProperty(Map.prototype, 'set', {
-              get: function() {
-                throw new Test262Error();
-              }
+              get: function() { throw new Test262Error(); }
             });
             "#,
         )
         .unwrap();
-
-        // Step 2: new Map() should NOT throw
         ctx.eval("new Map();").unwrap();
-
-        // Step 3: new Map([]) SHOULD throw
         let result = ctx.eval("new Map([]);");
         assert!(
             result.is_err(),
@@ -761,14 +471,9 @@ mod tests {
 
     #[test]
     fn test_map_is_constructor() {
-        // Test that Map is recognized as a constructor
         let mut ctx = Context::new().unwrap();
-        // Note: isConstructor is only available in test262 harness
-        // Just test that new Map() works
         let result = ctx.eval("new Map()");
         assert!(result.is_ok(), "new Map() should work: {:?}", result);
-
-        // Test that Map() without new also works (implicit call)
         let result = ctx.eval("Map()");
         assert!(result.is_ok(), "Map() should work: {:?}", result);
     }

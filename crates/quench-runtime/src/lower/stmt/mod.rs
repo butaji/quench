@@ -263,7 +263,13 @@ fn lower_export_default_decl_local(export: &ast::ExportDefaultDeclaration) -> Op
                 .as_ref()
                 .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Some(Statement::FunctionDeclaration { name, params, body })
+            Some(Statement::FunctionDeclaration {
+                name,
+                params,
+                body,
+                is_async: func.r#async,
+                is_generator: func.generator,
+            })
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
             let name = class

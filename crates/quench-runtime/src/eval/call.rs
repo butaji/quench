@@ -384,3 +384,6 @@ pub fn extract_property_name(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
