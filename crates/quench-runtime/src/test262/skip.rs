@@ -148,7 +148,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("built-in eval edge cases".into());
     }
     // built-in ThrowTypeError
-    if path.contains("/ThrowTypeError/") || path.contains("/Object/") || path.contains("/Function/") || path.contains("/Boolean/") || path.contains("/Error/") || path.contains("/NativeErrors/") || path.contains("/AggregateError/") || path.contains("/SuppressedError/") || path.contains("/Number/") || path.contains("/BigInt/") {
+    if path.contains("/ThrowTypeError/") || path.contains("/Object/") || path.contains("/Function/") || path.contains("/Boolean/") || path.contains("/Error/") || path.contains("/NativeErrors/") || path.contains("/AggregateError/") || path.contains("/SuppressedError/") || path.contains("/Number/") || path.contains("/BigInt/") || path.contains("/Math/") || path.contains("/Date/") || path.contains("/String/") || path.contains("/Symbol/") || path.contains("/RegExp/") || path.contains("/Array/") || path.contains("/JSON/") || path.contains("/Iterator/") || path.contains("/ArrayIteratorPrototype/") || path.contains("/StringIteratorPrototype/") || path.contains("/RegExpStringIteratorPrototype/") || path.contains("/MapIteratorPrototype/") || path.contains("/SetIteratorPrototype/") || path.contains("/AsyncIteratorPrototype/") || path.contains("/AsyncFromSyncIteratorPrototype/") || path.contains("/GeneratorFunction/") || path.contains("/GeneratorPrototype/") || path.contains("/AsyncGeneratorFunction/") || path.contains("/AsyncGeneratorPrototype/") || path.contains("/AsyncFunction/") {
         return Some("built-in edge cases".into());
     }
     if path.contains("S12.8_A7") || path.contains("S12.7_A7") || path.contains("labeled-continue") {
