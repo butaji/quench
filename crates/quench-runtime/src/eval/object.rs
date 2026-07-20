@@ -183,7 +183,7 @@ pub fn assign_to_member(
 
     match obj_val {
         // Box primitives per ES §10.2.9 [[Set]] (ToObject coercion).
-        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) => {
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::String(_) => {
             assign_to_primitive_boxed(&obj_val, &prop_name, value, env)
         }
         Value::Object(o) => assign_to_object(&o, &prop_name, value, env),
