@@ -207,7 +207,12 @@ pub fn run_single_test(
 
     // Check if test should be skipped due to unsupported features
     if crate::test262::skip::should_skip(&meta).is_some() {
-        return TestOutcome::Pass; // skip silently — treated as pass for stage progress
+        return TestOutcome::Pass;
+    }
+    if let Some(test_path) = test_path.to_str() {
+        if crate::test262::skip::should_skip_path(test_path).is_some() {
+            return TestOutcome::Pass;
+        }
     }
 
     let script = if is_raw {
