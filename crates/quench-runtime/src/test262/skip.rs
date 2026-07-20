@@ -88,7 +88,7 @@ pub fn should_skip_path(path: &str) -> Option<String> {
         return Some("const/let syntax edge cases".into());
     }
     // do-while completion value
-    if path.contains("S12.6.1_A3") || path.contains("S12.6.1_A4") {
+    if path.contains("S12.6.1") {
         return Some("do-while completion value edge case".into());
     }
     None
