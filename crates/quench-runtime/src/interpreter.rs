@@ -107,6 +107,86 @@ pub(crate) fn take_generator_return() -> Option<Value> {
     GENERATOR_RETURN_VALUE.with(|cell| cell.borrow_mut().take())
 }
 
+// Thread-local label scope stack for validating break/continue targets.
+// Each scope is a set of label names currently in scope.
+// Push/pop for blocks/labels; save/restore for eval boundaries.
+thread_local! {
+    static LABEL_STACK: RefCell<Vec<std::collections::HashSet<String>>> =
+        const { RefCell::new(Vec::new()) };
+    // Records the label stack depth at the eval boundary. When > 0,
+    // has_label only searches up to this depth, preventing eval code
+    // from seeing labels defined outside the eval.
+    static EVAL_BARRIER_DEPTH: RefCell<usize> = const { RefCell::new(0) };
+}
+
+/// Push a new empty label scope (enter a block or eval).
+pub(crate) fn push_label_scope() {
+    LABEL_STACK.with(|cell| cell.borrow_mut().push(std::collections::HashSet::new()));
+}
+
+/// Pop the current label scope (exit a block or eval).
+pub(crate) fn pop_label_scope() {
+    LABEL_STACK.with(|cell| {
+        let mut stack = cell.borrow_mut();
+        if !stack.is_empty() {
+            stack.pop();
+        }
+    });
+}
+
+/// Add a label to the current scope.
+pub(crate) fn add_label(name: &str) {
+    LABEL_STACK.with(|cell| {
+        let mut stack = cell.borrow_mut();
+        if let Some(scope) = stack.last_mut() {
+            scope.insert(name.to_string());
+        }
+    });
+}
+
+/// Check if a label is in scope. When inside eval (barrier > 0), searches
+/// only scopes added after the eval boundary (indices >= barrier), preventing
+/// eval code from seeing labels defined outside the eval. When outside eval
+/// (barrier == 0), searches all scopes.
+pub(crate) fn has_label(name: &str) -> bool {
+    LABEL_STACK.with(|cell| {
+        let stack = cell.borrow();
+        let barrier = EVAL_BARRIER_DEPTH.with(|d| *d.borrow());
+        if barrier > 0 {
+            // Inside eval: search only scopes at/after the eval boundary
+            stack[barrier..].iter().any(|scope| scope.contains(name))
+        } else {
+            // Outside eval: search all scopes
+            stack.iter().any(|scope| scope.contains(name))
+        }
+    })
+}
+
+/// Set the eval barrier depth to the current label stack length.
+/// Called by eval_impl to establish the boundary.
+pub(crate) fn set_eval_barrier_depth(depth: usize) {
+    EVAL_BARRIER_DEPTH.with(|d| *d.borrow_mut() = depth);
+}
+
+/// Clear the eval barrier depth (restore normal label visibility).
+pub(crate) fn clear_eval_barrier_depth() {
+    EVAL_BARRIER_DEPTH.with(|d| *d.borrow_mut() = 0);
+}
+
+/// Save the current label stack depth. Used to restore after eval.
+pub(crate) fn label_stack_depth() -> usize {
+    LABEL_STACK.with(|cell| cell.borrow().len())
+}
+
+/// Restore the label stack to a saved depth, discarding any scopes
+/// pushed during eval execution.
+pub(crate) fn restore_label_stack(depth: usize) {
+    LABEL_STACK.with(|cell| {
+        let mut stack = cell.borrow_mut();
+        stack.truncate(depth);
+    });
+}
+
 pub(crate) fn set_current_eval_env(env: Option<Rc<RefCell<Environment>>>) {
     CURRENT_EVAL_ENV.with(|cell| *cell.borrow_mut() = env);
 }

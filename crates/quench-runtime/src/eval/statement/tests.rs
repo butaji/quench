@@ -53,6 +53,67 @@ mod break_continue {
             Value::Number(2.0)
         );
     }
+
+    #[test]
+    fn break_with_label_exits_labeled_loop() {
+        assert_eq!(
+            eval("let i = 0; LABEL: while (true) { i++; if (i > 2) break LABEL; } i")
+                .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn break_label_in_eval_throws_when_label_is_outer() {
+        // eval("break LABEL") where LABEL is defined OUTSIDE the eval should throw
+        // SyntaxError per ES §13.12.1 (BreakStatement evaluation).
+        let result = eval(
+            "var x = 0, y = 0; LABEL: do { x++; eval('break LABEL'); y++; } while(false); x",
+        );
+        assert!(
+            result.is_err(),
+            "break LABEL in eval pointing to outer label should throw SyntaxError"
+        );
+    }
+
+    #[test]
+    fn continue_label_in_eval_throws_when_label_is_outer() {
+        // eval("continue LABEL") where LABEL is defined OUTSIDE the eval should throw.
+        let result = eval("var x = 0; LABEL: while (x < 3) { x++; eval('continue LABEL'); }");
+        assert!(
+            result.is_err(),
+            "continue LABEL in eval pointing to outer label should throw SyntaxError"
+        );
+    }
+
+    #[test]
+    fn break_label_in_eval_works_when_label_is_inner() {
+        // break LABEL where LABEL is defined WITHIN the eval should work.
+        assert_eq!(
+            eval("eval('LABEL: while(true) { break LABEL; }')").unwrap(),
+            Value::Undefined
+        );
+    }
+
+    #[test]
+    fn break_unknown_label_in_eval_throws() {
+        // break to a label that doesn't exist anywhere should throw SyntaxError.
+        let result = eval("eval('break NOSUCH')");
+        assert!(
+            result.is_err(),
+            "break to undefined label should throw SyntaxError"
+        );
+    }
+
+    #[test]
+    fn continue_unknown_label_in_eval_throws() {
+        // continue to a label that doesn't exist anywhere should throw SyntaxError.
+        let result = eval("eval('continue NOSUCH')");
+        assert!(
+            result.is_err(),
+            "continue to undefined label should throw SyntaxError"
+        );
+    }
 }
 
 mod block_statement {

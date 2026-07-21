@@ -69,6 +69,8 @@ pub enum Statement {
     Break(Option<String>),
     /// Continue statement
     Continue(Option<String>),
+    /// Labeled statement — `label: body`
+    Labeled { label: String, body: Box<Statement> },
     /// Try-catch statement
     TryCatch {
         body: Box<Statement>,
