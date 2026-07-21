@@ -8,9 +8,7 @@ use super::pattern::{
     lower_object_pat_prop,
 };
 use super::stmt::lower_stmt;
-use crate::ast::{
-    BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, VarKind,
-};
+use crate::ast::{BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, VarKind};
 use oxc::ast::ast;
 
 /// Lower an if statement
@@ -348,4 +346,115 @@ fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
         .filter_map(lower_object_pat_prop)
         .collect();
     Some(Expression::ObjectPattern(props))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::{BinaryOp, Expression, ForInit, PropertyKey, Statement, VarKind};
+
+    #[test]
+    fn test_statement_has_explicit_return_true() {
+        let stmt = Statement::Block(vec![Statement::Return(Some(Box::new(Expression::Number(
+            42.0,
+        ))))]);
+        assert!(stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_statement_has_explicit_return_nested_if() {
+        let stmt = Statement::If {
+            condition: Box::new(Expression::Boolean(true)),
+            consequent: Box::new(Statement::Return(Some(Box::new(Expression::Number(1.0))))),
+            alternate: None,
+        };
+        assert!(stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_statement_has_explicit_return_false() {
+        let stmt = Statement::Block(vec![Statement::Expression(Box::new(Expression::Number(
+            42.0,
+        )))]);
+        assert!(!stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_statement_has_explicit_return_nested_no_return() {
+        let stmt = Statement::If {
+            condition: Box::new(Expression::Boolean(true)),
+            consequent: Box::new(Statement::Block(vec![Statement::Expression(Box::new(
+                Expression::Number(1.0),
+            ))])),
+            alternate: None,
+        };
+        assert!(!stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_statement_has_explicit_return_try_with_return() {
+        let stmt = Statement::Try {
+            body: Box::new(Statement::Block(vec![Statement::Return(Some(Box::new(
+                Expression::Number(1.0),
+            )))])),
+            param: None,
+            handler: None,
+            finalizer: None,
+        };
+        assert!(stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_statement_has_explicit_return_while() {
+        let stmt = Statement::While {
+            condition: Box::new(Expression::Boolean(true)),
+            body: Box::new(Statement::Return(Some(Box::new(Expression::Number(5.0))))),
+        };
+        assert!(stmt.has_explicit_return());
+    }
+
+    #[test]
+    fn test_binary_op_precedence() {
+        assert_eq!(BinaryOp::Or.precedence(), 1);
+        assert_eq!(BinaryOp::And.precedence(), 2);
+        assert_eq!(BinaryOp::StrictEq.precedence(), 6);
+        assert_eq!(BinaryOp::Add.precedence(), 9);
+        assert_eq!(BinaryOp::Mul.precedence(), 10);
+        assert_eq!(BinaryOp::Pow.precedence(), 11);
+    }
+
+    #[test]
+    fn test_binary_op_precedence_nullish() {
+        assert_eq!(BinaryOp::NullishCoalescing.precedence(), 1);
+    }
+
+    #[test]
+    fn test_var_kind_derives() {
+        assert_eq!(VarKind::Var, VarKind::Var);
+        assert_eq!(VarKind::Let, VarKind::Let);
+        assert_eq!(VarKind::Const, VarKind::Const);
+    }
+
+    #[test]
+    fn test_for_init_variants() {
+        let var_init = ForInit::VarDeclaration {
+            kind: VarKind::Let,
+            name: "x".to_string(),
+            init: Some(Expression::Number(1.0)),
+        };
+        let expr_init = ForInit::Expression(Box::new(Expression::Number(0.0)));
+        assert!(matches!(var_init, ForInit::VarDeclaration { .. }));
+        assert!(matches!(expr_init, ForInit::Expression(_)));
+    }
+
+    #[test]
+    fn test_property_key_variants() {
+        let ident = PropertyKey::Ident("foo".to_string());
+        let string = PropertyKey::String("bar".to_string());
+        let number = PropertyKey::Number(42.0);
+        let computed = PropertyKey::Computed(Box::new(Expression::Identifier("key".to_string())));
+        assert!(matches!(ident, PropertyKey::Ident(_)));
+        assert!(matches!(string, PropertyKey::String(_)));
+        assert!(matches!(number, PropertyKey::Number(_)));
+        assert!(matches!(computed, PropertyKey::Computed(_)));
+    }
 }

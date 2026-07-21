@@ -679,10 +679,12 @@ fn test_scope_delete_removes_binding() {
 fn test_env_delete_binding_implicit_global() {
     let mut env = Environment::new();
     // Implicit global: inserted directly into bindings without a kind
-    env.scopes.first().unwrap().borrow_mut().bindings_mut().insert(
-        "implicit".to_string(),
-        Rc::new(Value::Number(99.0)),
-    );
+    env.scopes
+        .first()
+        .unwrap()
+        .borrow_mut()
+        .bindings_mut()
+        .insert("implicit".to_string(), Rc::new(Value::Number(99.0)));
     assert!(env.has("implicit"));
     assert_eq!(env.get_kind("implicit"), None);
     assert!(env.delete_binding("implicit"));

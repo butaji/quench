@@ -997,7 +997,11 @@ mod tests {
             C[x |= 1]
             "#,
         );
-        assert!(r.is_ok(), "Accessing computed static getter with |= assignment should not panic: {:?}", r);
+        assert!(
+            r.is_ok(),
+            "Accessing computed static getter with |= assignment should not panic: {:?}",
+            r
+        );
         assert_eq!(r.unwrap(), Value::Number(2.0));
     }
 
@@ -1013,7 +1017,11 @@ mod tests {
             new C()[x |= 1]
             "#,
         );
-        assert!(r.is_ok(), "Instance getter with |= computed key should work: {:?}", r);
+        assert!(
+            r.is_ok(),
+            "Instance getter with |= computed key should work: {:?}",
+            r
+        );
         assert_eq!(r.unwrap(), Value::Number(3.0));
     }
 
@@ -1030,7 +1038,11 @@ mod tests {
             "#,
         );
         let val = r.unwrap();
-        assert_eq!(val, Value::Number(99.0), "k='foo', getter at 'foo' should return 99");
+        assert_eq!(
+            val,
+            Value::Number(99.0),
+            "k='foo', getter at 'foo' should return 99"
+        );
     }
 
     #[test]
@@ -1114,8 +1126,16 @@ mod tests {
         let elems = obj.borrow().elements.clone();
         assert_eq!(elems[0], Value::Number(42.0), "static getter returns 42");
         assert_eq!(elems[1], Value::Number(99.0), "static setter result is 99");
-        assert_eq!(elems[2], Value::Number(42.0), "static getter still returns 42");
-        assert_eq!(elems[3], Value::Number(99.0), "static setter stored _v = 99");
+        assert_eq!(
+            elems[2],
+            Value::Number(42.0),
+            "static getter still returns 42"
+        );
+        assert_eq!(
+            elems[3],
+            Value::Number(99.0),
+            "static setter stored _v = 99"
+        );
     }
 
     #[test]
@@ -1132,7 +1152,11 @@ mod tests {
             C._v;
             "#,
         );
-        assert_eq!(r.unwrap(), Value::Number(99.0), "static setter should set C._v = 99");
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(99.0),
+            "static setter should set C._v = 99"
+        );
     }
 
     #[test]
@@ -1147,7 +1171,11 @@ mod tests {
             C._v;
             "#,
         );
-        assert_eq!(r.unwrap(), Value::Number(99.0), "non-computed static setter should work");
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(99.0),
+            "non-computed static setter should work"
+        );
     }
 
     #[test]
@@ -1164,7 +1192,11 @@ mod tests {
             c._v;
             "#,
         );
-        assert_eq!(r.unwrap(), Value::Number(99.0), "instance setter should set _v = 99");
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(99.0),
+            "instance setter should set _v = 99"
+        );
     }
 
     #[test]
@@ -1180,7 +1212,11 @@ mod tests {
             c._v;
             "#,
         );
-        assert_eq!(r.unwrap(), Value::Number(99.0), "non-computed instance setter should work");
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(99.0),
+            "non-computed instance setter should work"
+        );
     }
 
     #[test]
@@ -1209,7 +1245,6 @@ mod tests {
         assert_eq!(elems[1], Value::Number(99.0), "setter stored 99 in _v");
     }
 
-
     #[test]
     fn class_static_computed_getter_direct_access() {
         // Direct access to the computed key getter on class
@@ -1223,7 +1258,11 @@ mod tests {
             "#,
         );
         let val = r.unwrap();
-        assert_eq!(val, Value::Number(42.0), "C[1] should return 42 from static getter");
+        assert_eq!(
+            val,
+            Value::Number(42.0),
+            "C[1] should return 42 from static getter"
+        );
     }
 
     #[test]
@@ -1248,8 +1287,16 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "static getter should return 1");
-            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "instance getter should return 1");
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "static getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "instance getter should return 1"
+            );
         } else {
             panic!("expected array result, got: {:?}", arr);
         }
@@ -1297,8 +1344,16 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 = c[f] should be 1");
-            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "g3 = c[f] should be 1");
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "g1 = c[f] should be 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "g3 = c[f] should be 1"
+            );
         } else {
             panic!("expected array");
         }
@@ -1329,11 +1384,31 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 = c[f] should be 1");
-            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "s1 = c[f] = 1 should be 1");
-            assert_eq!(obj.get("2"), Some(Value::Number(1.0)), "g2 = C[f] should be 1");
-            assert_eq!(obj.get("3"), Some(Value::Number(1.0)), "s2 = C[f] = 1 should be 1");
-            assert_eq!(obj.get("4"), Some(Value::Number(1.0)), "g3 = c[f] should be 1");
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "g1 = c[f] should be 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "s1 = c[f] = 1 should be 1"
+            );
+            assert_eq!(
+                obj.get("2"),
+                Some(Value::Number(1.0)),
+                "g2 = C[f] should be 1"
+            );
+            assert_eq!(
+                obj.get("3"),
+                Some(Value::Number(1.0)),
+                "s2 = C[f] = 1 should be 1"
+            );
+            assert_eq!(
+                obj.get("4"),
+                Some(Value::Number(1.0)),
+                "g3 = c[f] should be 1"
+            );
         } else {
             panic!("expected array");
         }
@@ -1361,8 +1436,16 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "s1 = c[f()] = 1 should be 1");
-            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "g3 = c[String(f())] should be 1");
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "s1 = c[f()] = 1 should be 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "g3 = c[String(f())] should be 1"
+            );
         } else {
             panic!("expected array");
         }
@@ -1431,8 +1514,11 @@ mod tests {
             let obj = o.borrow();
             assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 should be 1");
             assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "s1 should be 1");
-            assert_eq!(obj.get("2"), Some(Value::Number(1.0)),
-                "g3 = c[f] should be 1 after s1");
+            assert_eq!(
+                obj.get("2"),
+                Some(Value::Number(1.0)),
+                "g3 = c[f] should be 1 after s1"
+            );
         }
     }
 
@@ -1461,8 +1547,11 @@ mod tests {
             let obj = o.borrow();
             assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 should be 1");
             assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "s2 should be 1");
-            assert_eq!(obj.get("2"), Some(Value::Number(1.0)),
-                "g3 = c[f] should be 1 after s2");
+            assert_eq!(
+                obj.get("2"),
+                Some(Value::Number(1.0)),
+                "g3 = c[f] should be 1 after s2"
+            );
         }
     }
 
@@ -1494,10 +1583,18 @@ mod tests {
             let obj = o.borrow();
             assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 should be 1");
             assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "s2 should be 1");
-            assert_eq!(obj.get("2"), Some(Value::Boolean(true)),
-                "f should be unchanged after s2, got {:?}", obj.get("2"));
-            assert_eq!(obj.get("3"), Some(Value::Number(1.0)),
-                "g3 should be 1, got {:?}", obj.get("3"));
+            assert_eq!(
+                obj.get("2"),
+                Some(Value::Boolean(true)),
+                "f should be unchanged after s2, got {:?}",
+                obj.get("2")
+            );
+            assert_eq!(
+                obj.get("3"),
+                Some(Value::Number(1.0)),
+                "g3 should be 1, got {:?}",
+                obj.get("3")
+            );
         }
     }
 
@@ -1530,11 +1627,17 @@ mod tests {
             assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "g1 should be 1");
             assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "s1 should be 1");
             assert_eq!(obj.get("2"), Some(Value::Number(1.0)), "g2 should be 1");
-            assert_eq!(obj.get("3"), Some(Value::Number(1.0)),
-                "g3_after_g2 should be 1");
+            assert_eq!(
+                obj.get("3"),
+                Some(Value::Number(1.0)),
+                "g3_after_g2 should be 1"
+            );
             assert_eq!(obj.get("4"), Some(Value::Number(1.0)), "s2 should be 1");
-            assert_eq!(obj.get("5"), Some(Value::Number(1.0)),
-                "g3_after_s2 should be 1");
+            assert_eq!(
+                obj.get("5"),
+                Some(Value::Number(1.0)),
+                "g3_after_s2 should be 1"
+            );
         }
     }
 
@@ -1617,8 +1720,12 @@ mod tests {
         );
         assert!(r.is_ok(), "typeof f after class should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function".to_string()),
-            "typeof f should be 'function', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function".to_string()),
+            "typeof f should be 'function', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1639,8 +1746,12 @@ mod tests {
         );
         assert!(r.is_ok(), "var key = f; String(key) should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function f() {}".to_string()),
-            "String(f) should be 'function f() {{}}', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function f() {}".to_string()),
+            "String(f) should be 'function f() {{}}', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1662,8 +1773,12 @@ mod tests {
         );
         assert!(r.is_ok(), "typeof f after getter should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function".to_string()),
-            "typeof f after getter should be 'function', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function".to_string()),
+            "typeof f after getter should be 'function', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1685,8 +1800,12 @@ mod tests {
         );
         assert!(r.is_ok(), "String(f) after getter should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function f() {}".to_string()),
-            "String(f) after getter should be 'function f() {{}}', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function f() {}".to_string()),
+            "String(f) after getter should be 'function f() {{}}', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1709,8 +1828,12 @@ mod tests {
         );
         assert!(r.is_ok(), "String(f) after setter should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function f() {}".to_string()),
-            "String(f) after setter should be 'function f() {{}}', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function f() {}".to_string()),
+            "String(f) after setter should be 'function f() {{}}', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1735,8 +1858,12 @@ mod tests {
         );
         assert!(r.is_ok(), "diagnostic should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function".to_string()),
-            "typeof f should be 'function', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function".to_string()),
+            "typeof f should be 'function', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1756,10 +1883,18 @@ mod tests {
             typeof f
             "#,
         );
-        assert!(r.is_ok(), "var key = String(f) after class should work: {:?}", r);
+        assert!(
+            r.is_ok(),
+            "var key = String(f) after class should work: {:?}",
+            r
+        );
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function".to_string()),
-            "typeof f should be 'function', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function".to_string()),
+            "typeof f should be 'function', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1780,8 +1915,12 @@ mod tests {
         );
         assert!(r.is_ok(), "var key = String(f) should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function f() {}".to_string()),
-            "key should be 'function f() {{}}', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function f() {}".to_string()),
+            "key should be 'function f() {{}}', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1806,10 +1945,18 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::String("function f() {}".to_string())),
-                "key should be 'function f() {{}}', got {:?}", obj.get("0"));
-            assert_eq!(obj.get("1"), Some(Value::String("function".to_string())),
-                "typeof f should be 'function', got {:?}", obj.get("1"));
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::String("function f() {}".to_string())),
+                "key should be 'function f() {{}}', got {:?}",
+                obj.get("0")
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::String("function".to_string())),
+                "typeof f should be 'function', got {:?}",
+                obj.get("1")
+            );
         }
     }
 
@@ -1828,8 +1975,12 @@ mod tests {
         );
         assert!(r.is_ok(), "f() in getter body should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("works".to_string()),
-            "c[f()] calling f() inside getter should return 'works', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("works".to_string()),
+            "c[f()] calling f() inside getter should return 'works', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1847,8 +1998,12 @@ mod tests {
         );
         assert!(r.is_ok(), "typeof f in getter body should work: {:?}", r);
         let v = r.unwrap();
-        assert_eq!(v, Value::String("function".to_string()),
-            "typeof f in getter should be 'function', got {:?}", v);
+        assert_eq!(
+            v,
+            Value::String("function".to_string()),
+            "typeof f in getter should be 'function', got {:?}",
+            v
+        );
     }
 
     #[test]
@@ -1901,10 +2056,26 @@ mod tests {
         let arr = r.unwrap();
         if let Value::Object(o) = arr {
             let obj = o.borrow();
-            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "c[f] getter should return 1");
-            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "c[f] = 1 should return 1");
-            assert_eq!(obj.get("2"), Some(Value::Number(1.0)), "C[f] getter should return 1");
-            assert_eq!(obj.get("3"), Some(Value::Number(1.0)), "C[f] = 1 should return 1");
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "c[f] getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "c[f] = 1 should return 1"
+            );
+            assert_eq!(
+                obj.get("2"),
+                Some(Value::Number(1.0)),
+                "C[f] getter should return 1"
+            );
+            assert_eq!(
+                obj.get("3"),
+                Some(Value::Number(1.0)),
+                "C[f] = 1 should return 1"
+            );
             assert_eq!(
                 obj.get("4"),
                 Some(Value::String("function f() {}".to_string())),
@@ -1926,7 +2097,11 @@ mod tests {
             C[x |= 1] = 99
             "#,
         );
-        assert!(r.is_ok(), "Accessing computed setter with assignment should not panic: {:?}", r);
+        assert!(
+            r.is_ok(),
+            "Accessing computed setter with assignment should not panic: {:?}",
+            r
+        );
         assert_eq!(r.unwrap(), Value::Number(99.0));
     }
 
@@ -1993,14 +2168,22 @@ mod tests {
             "#,
         );
         assert!(r.is_ok(), "C[String(f())] = 99 must not error: {:?}", r);
-        assert_eq!(r.unwrap(), Value::Number(99.0), "assignment must return RHS");
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(99.0),
+            "assignment must return RHS"
+        );
     }
 
     // Diagnostic: what does evaluating Identifier("f") return when f is a function decl?
     #[test]
     fn function_decl_eval_returns_function() {
         let r = eval("function f() { return 1; } f");
-        assert!(r.is_ok(), "evaluating Identifier 'f' should return a value: {:?}", r);
+        assert!(
+            r.is_ok(),
+            "evaluating Identifier 'f' should return a value: {:?}",
+            r
+        );
         let val = r.unwrap();
         assert!(
             matches!(val, Value::Function(_)),

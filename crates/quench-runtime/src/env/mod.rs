@@ -9,8 +9,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 mod scope;
-#[cfg(test)]
-mod tests;
 
 use crate::ast::{Expression, PropertyKey, VarKind};
 use crate::value::Value;
@@ -390,5 +388,103 @@ impl Clone for Environment {
             super_class: self.super_class.clone(),
             pending_fields: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_live_scopes_snapshot() {
+        let mut env = Environment::new();
+        env.define("x".to_string(), Value::Number(1.0));
+        env.push_scope();
+        env.define("y".to_string(), Value::Number(2.0));
+        let snapshot = env.live_scopes_snapshot();
+        assert_eq!(snapshot.len(), 2);
+    }
+
+    #[test]
+    fn test_capture_env_deep_copies() {
+        let mut env = Environment::new();
+        env.define("x".to_string(), Value::Number(1.0));
+        let captured = env.capture_env();
+        assert_eq!(captured.get("x"), Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn test_binding_scope_finds_correct_scope() {
+        let mut env = Environment::new();
+        env.define("outer".to_string(), Value::Number(1.0));
+        env.push_scope();
+        env.define("inner".to_string(), Value::Number(2.0));
+        let inner_scope = env.binding_scope("inner").unwrap();
+        let outer_scope = env.binding_scope("outer").unwrap();
+        assert!(!Rc::ptr_eq(&inner_scope, &outer_scope));
+    }
+
+    #[test]
+    fn test_binding_scope_missing() {
+        let env = Environment::new();
+        assert!(env.binding_scope("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_keys_returns_current_scope_names() {
+        let mut env = Environment::new();
+        env.define("a".to_string(), Value::Number(1.0));
+        env.define("b".to_string(), Value::Number(2.0));
+        let keys = env.keys();
+        assert!(keys.contains(&"a".to_string()));
+        assert!(keys.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn test_set_parent_chain() {
+        let parent = Rc::new(RefCell::new(Environment::new()));
+        parent
+            .borrow_mut()
+            .define("p".to_string(), Value::Number(1.0));
+        let child = Environment::with_parent(Rc::clone(&parent));
+        assert_eq!(child.get("p"), Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn test_super_class_set_and_get() {
+        let mut env = Environment::new();
+        assert!(env.get_super_class().is_none());
+        let obj = Rc::new(RefCell::new(crate::value::Object::new(
+            crate::value::kind::ObjectKind::Ordinary,
+        )));
+        let obj_val = Value::Object(Rc::clone(&obj));
+        env.set_super_class(obj_val);
+        let result = env.get_super_class();
+        assert!(result.is_some());
+        // Compare by reference identity since Value::Object PartialEq returns false
+        let Value::Object(result_rc) = result.unwrap() else {
+            panic!("expected Object")
+        };
+        assert!(Rc::ptr_eq(&result_rc, &obj));
+    }
+
+    #[test]
+    fn test_pending_fields_take() {
+        let mut env = Environment::new();
+        assert!(env.take_pending_fields().is_none());
+        env.set_pending_fields(vec![]);
+        assert!(env.take_pending_fields().is_some());
+        assert!(env.take_pending_fields().is_none());
+    }
+
+    #[test]
+    fn test_get_shared_returns_same_rc() {
+        let mut env = Environment::new();
+        env.define("shared".to_string(), Value::Number(42.0));
+        let rc1 = env.get_shared("shared");
+        let rc2 = env.get_shared("shared");
+        assert!(rc1.is_some());
+        assert!(rc2.is_some());
+        assert!(Rc::ptr_eq(rc1.as_ref().unwrap(), rc2.as_ref().unwrap()));
     }
 }

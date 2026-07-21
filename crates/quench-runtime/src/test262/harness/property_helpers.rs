@@ -607,3 +607,242 @@ pub fn make_native_error(_args: Vec<Value>) -> Result<Value, JsError> {
         Object::new(ObjectKind::Ordinary),
     ))))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test262::harness::try_inject_harness;
+
+    fn harness_ctx() -> crate::Context {
+        let mut ctx = crate::Context::new().unwrap();
+        try_inject_harness(&mut ctx).unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_verify_property_basic_data_property() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {value: 42, enumerable: true, writable: true, configurable: true}); verifyProperty(obj, 'foo', {value: 42, enumerable: true, writable: true, configurable: true});",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty data property should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_accessor_property() {
+        let mut ctx = harness_ctx();
+        // Use same function reference for both defineProperty and verifyProperty
+        let result = ctx.eval(
+            "var obj = {}; var getter = function() { return 42; }; var setter = function(v) {}; Object.defineProperty(obj, 'foo', {get: getter, set: setter, enumerable: true, configurable: true}); verifyProperty(obj, 'foo', {get: getter, set: setter, enumerable: true, configurable: true});",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty accessor should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_symbol_key() {
+        let mut ctx = harness_ctx();
+        // Use same function reference for both defineProperty and verifyProperty
+        let result = ctx.eval(
+            "var obj = {}; var sym = Symbol('test'); var getter = function() { return 42; }; var setter = function(v) {}; Object.defineProperty(obj, sym, {get: getter, set: setter, enumerable: true, configurable: true}); verifyProperty(obj, sym, {get: getter, set: setter, enumerable: true, configurable: true});",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty with Symbol key should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_enumerable_false() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {value: 1, enumerable: false, writable: true, configurable: true}); verifyProperty(obj, 'foo', {value: 1, enumerable: false, writable: true, configurable: true});",
+        );
+        assert!(result.is_ok(), "enumerable:false should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_property_configurable_false() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {value: 42, enumerable: true, writable: true, configurable: false}); verifyProperty(obj, 'foo', {value: 42, enumerable: true, writable: true, configurable: false});",
+        );
+        assert!(
+            result.is_ok(),
+            "configurable:false should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_missing_throws() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("var obj = {}; verifyProperty(obj, 'missing', { value: 42 });");
+        assert!(
+            result.is_err(),
+            "verifyProperty should throw for missing property"
+        );
+    }
+
+    #[test]
+    fn test_verify_property_undefined_desc() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("var obj = {}; verifyProperty(obj, 'missing', undefined);");
+        assert!(
+            result.is_ok(),
+            "undefined desc should pass for missing property: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_null_desc_throws() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("var obj = {}; verifyProperty(obj, 'foo', null);");
+        assert!(result.is_err(), "null desc should throw");
+    }
+
+    #[test]
+    fn test_verify_property_value_mismatch_throws() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {value: 1, enumerable: true, writable: true, configurable: true}); verifyProperty(obj, 'foo', { value: 2 });",
+        );
+        assert!(result.is_err(), "value mismatch should throw: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_property_getter_mismatch_throws() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {get: function() { return 1; }, enumerable: true, configurable: true}); verifyProperty(obj, 'foo', {get: function() { return 2; }, enumerable: true, configurable: true});",
+        );
+        assert!(
+            result.is_err(),
+            "getter mismatch should throw: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_restore_option() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', {value: 42, enumerable: true, configurable: true, writable: true}); verifyProperty(obj, 'foo', {value: 42, enumerable: true, configurable: true, writable: true}, { restore: true }); var val = obj.foo; if (val !== 42) throw new Error('property should be restored');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty with restore should work: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_restore_preserves_accessor() {
+        let mut ctx = harness_ctx();
+        // Use same function reference for both defineProperty and verifyProperty
+        let result = ctx.eval(
+            "var obj = {}; var getter = function() { return 42; }; var setter = function(v) {}; Object.defineProperty(obj, 'foo', {get: getter, set: setter, enumerable: true, configurable: true}); verifyProperty(obj, 'foo', {get: getter, set: setter, enumerable: true, configurable: true}, { restore: true }); var val = obj.foo; if (val !== 42) throw new Error('accessor should be preserved');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty restore should preserve accessor: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_writable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, writable: true, configurable: true }); verifyWritable(obj, 'foo');",
+        );
+        assert!(result.is_ok(), "verifyWritable should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_not_writable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, writable: false, configurable: true }); verifyNotWritable(obj, 'foo');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyNotWritable should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_enumerable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, enumerable: true, configurable: true }); verifyEnumerable(obj, 'foo');",
+        );
+        assert!(result.is_ok(), "verifyEnumerable should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_not_enumerable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, enumerable: false, configurable: true }); verifyNotEnumerable(obj, 'foo');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyNotEnumerable should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_configurable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, configurable: true }); verifyConfigurable(obj, 'foo');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyConfigurable should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_not_configurable() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, configurable: false }); verifyNotConfigurable(obj, 'foo');",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyNotConfigurable should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_make_native_error() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof makeNativeError(TypeError) === 'object'");
+        assert!(
+            result.is_ok(),
+            "makeNativeError should return object: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_too_few_args() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("verifyProperty()");
+        assert!(result.is_err(), "verifyProperty with no args should throw");
+    }
+}

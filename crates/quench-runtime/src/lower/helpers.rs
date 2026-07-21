@@ -59,7 +59,7 @@ pub fn lower_bin_op(op: &BinaryOperator) -> Result<BinaryOp, LowerError> {
         BinaryOperator::Multiplication => Ok(BinaryOp::Mul),
         BinaryOperator::Division => Ok(BinaryOp::Div),
         BinaryOperator::Remainder => Ok(BinaryOp::Mod),
-        BinaryOperator::Exponential => Ok(BinaryOp::Mul), // approximation
+        BinaryOperator::Exponential => Ok(BinaryOp::Pow),
         BinaryOperator::ShiftLeft => Ok(BinaryOp::Shl),
         BinaryOperator::ShiftRight => Ok(BinaryOp::Shr),
         BinaryOperator::ShiftRightZeroFill => Ok(BinaryOp::Ushr),
@@ -111,6 +111,7 @@ pub fn assign_op_to_bin(op: &AssignmentOperator) -> Result<CompoundOp, LowerErro
         AssignmentOperator::Addition => Ok(CompoundOp::Add),
         AssignmentOperator::Subtraction => Ok(CompoundOp::Sub),
         AssignmentOperator::Multiplication => Ok(CompoundOp::Mul),
+        AssignmentOperator::Exponential => Ok(CompoundOp::Pow),
         AssignmentOperator::Division => Ok(CompoundOp::Div),
         AssignmentOperator::Remainder => Ok(CompoundOp::Mod),
         AssignmentOperator::ShiftLeft => Ok(CompoundOp::Shl),
@@ -122,9 +123,5 @@ pub fn assign_op_to_bin(op: &AssignmentOperator) -> Result<CompoundOp, LowerErro
         AssignmentOperator::LogicalAnd => Ok(CompoundOp::LogicalAndAssign),
         AssignmentOperator::LogicalOr => Ok(CompoundOp::LogicalOrAssign),
         AssignmentOperator::LogicalNullish => Ok(CompoundOp::NullishCoalescingAssign),
-        _ => Err(LowerError::new(format!(
-            "Unsupported assign operator: {:?}",
-            op
-        ))),
     }
 }
