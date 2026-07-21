@@ -152,7 +152,16 @@ pub fn eval_expression(
                 }
             }
             if let (Expression::Identifier(name), Some(scope)) = (left.as_ref(), identifier_scope) {
-                if scope.borrow().object_binding_has(name) == Some(false)
+                // Per ES spec §12.4.5.1, `let` and `const` at global scope do NOT
+                // create properties on the global object. The object_binding_has
+                // check below is meant for `var` bindings whose global property was
+                // deleted. Skip it for `let`/`const` to avoid false ReferenceErrors.
+                let is_var_like = matches!(
+                    scope.borrow().get_kind(name),
+                    Some(crate::ast::VarKind::Var) | None
+                );
+                if is_var_like
+                    && scope.borrow().object_binding_has(name) == Some(false)
                     && crate::interpreter::is_strict_mode()
                 {
                     let (_, error) = crate::value::error::create_js_error_with_type(
