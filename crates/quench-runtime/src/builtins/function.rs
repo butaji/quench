@@ -195,7 +195,17 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
     function_proto_rc.borrow_mut().set(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-            Ok(Value::String("[Function]".to_string()))
+            use crate::builtins::get_native_this;
+            match get_native_this() {
+                Some(Value::Function(f)) => Ok(Value::String(f.source_text())),
+                Some(Value::NativeFunction(_)) | Some(Value::NativeConstructor(_)) => {
+                    Ok(Value::String("[Function]".to_string()))
+                }
+                Some(Value::Generator(_)) | Some(Value::Class(_)) => {
+                    Ok(Value::String("[Function]".to_string()))
+                }
+                _ => Ok(Value::String("[Function]".to_string())),
+            }
         }))),
     );
     function_proto_rc

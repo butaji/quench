@@ -38,11 +38,8 @@ pub fn to_js_string(v: &Value) -> String {
             }
             object_to_js_string(&obj)
         }
-        Value::Function(_)
-        | Value::NativeFunction(_)
-        | Value::NativeConstructor(_)
-        | Value::Generator(_)
-        | Value::Class(_) => "[Function]".to_string(),
+        Value::Function(f) => f.source_text(),
+        Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Generator(_) | Value::Class(_) => "[Function]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         _ => "undefined".to_string(),
     }

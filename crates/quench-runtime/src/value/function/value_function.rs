@@ -258,4 +258,430 @@ impl ValueFunction {
         let mut map = self.properties.borrow_mut();
         f(&mut map);
     }
+
+    /// Get the function's source text for Function.prototype.toString.
+    /// Generates a representation from AST components.
+    pub fn source_text(&self) -> String {
+        generate_source_text(self)
+    }
+}
+
+/// Generate a string representation of this function from its AST components.
+fn generate_source_text(f: &ValueFunction) -> String {
+    use crate::ast::{ArrowBody, Expression, Statement};
+
+    fn fmt_param(name: &str, default: &Option<Box<Expression>>, rest: bool) -> String {
+        if rest {
+            format!("...{}", name)
+        } else if let Some(def) = default {
+            format!("{} = {}", name, expr_to_string(def))
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn fmt_params(params: &[crate::ast::Param]) -> String {
+        params.iter().map(|p| fmt_param(&p.name, &p.default, p.rest)).collect::<Vec<_>>().join(", ")
+    }
+
+    fn class_member_to_string(member: &crate::ast::ClassMember) -> String {
+        match member {
+            crate::ast::ClassMember::Constructor { params, body } => {
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("constructor({}) {{{}}}", params.join(", "), body_str)
+            }
+            crate::ast::ClassMember::Method { name, params, body, is_async, is_generator } => {
+                let prefix = match (*is_async, *is_generator) {
+                    (true, true) => "async function*",
+                    (true, false) => "async ",
+                    (false, true) => "function* ",
+                    (false, false) => "",
+                };
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{}{}({}) {{{}}}", prefix, name_str, fmt_params(params), body_str)
+            }
+            crate::ast::ClassMember::Getter { name, body } => {
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("get {}() {{{}}}", name_str, body_str)
+            }
+            crate::ast::ClassMember::Setter { name, param, body } => {
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("set {}({}) {{{}}}", name_str, param, body_str)
+            }
+            crate::ast::ClassMember::StaticMethod { name, params, body, is_async, is_generator } => {
+                let prefix = match (*is_async, *is_generator) {
+                    (true, true) => "async static function*",
+                    (true, false) => "async static ",
+                    (false, true) => "static function* ",
+                    (false, false) => "static ",
+                };
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{}{}({}) {{{}}}", prefix, name_str, fmt_params(params), body_str)
+            }
+            crate::ast::ClassMember::Field { name, value } => {
+                let name_str = prop_key_to_string(name);
+                format!("{} = {}", name_str, expr_to_string(value))
+            }
+            crate::ast::ClassMember::StaticField { name, value } => {
+                let name_str = prop_key_to_string(name);
+                format!("static {} = {}", name_str, expr_to_string(value))
+            }
+            crate::ast::ClassMember::StaticGetter { name, body } => {
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("static get {}() {{{}}}", name_str, body_str)
+            }
+            crate::ast::ClassMember::StaticSetter { name, param, body } => {
+                let name_str = prop_key_to_string(name);
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("static set {}({}) {{{}}}", name_str, param, body_str)
+            }
+        }
+    }
+
+    fn stmt_to_string(stmt: &Statement) -> String {
+        match stmt {
+            Statement::Return(opt_expr) => {
+                if let Some(expr) = opt_expr {
+                    format!("return {}", expr_to_string(expr))
+                } else {
+                    "return".to_string()
+                }
+            }
+            Statement::Expression(expr) => expr_to_string(expr),
+            Statement::Block(stmts) => {
+                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{{ {} }}", inner)
+            }
+            Statement::If { condition, consequent, alternate } => {
+                let s = format!("if ({}) {}", expr_to_string(condition), stmt_to_string(consequent));
+                if let Some(alt) = alternate {
+                    format!("{} else {}", s, stmt_to_string(alt))
+                } else {
+                    s
+                }
+            }
+            Statement::While { condition, body } => {
+                format!("while ({}) {}", expr_to_string(condition), stmt_to_string(body))
+            }
+            Statement::For { init, condition, update, body } => {
+                let init_str = match init {
+                    Some(crate::ast::ForInit::Expression(e)) => expr_to_string(e),
+                    Some(crate::ast::ForInit::VarDeclaration { kind, name, init }) => {
+                        let k = match kind {
+                            crate::ast::VarKind::Var => "var",
+                            crate::ast::VarKind::Let => "let",
+                            crate::ast::VarKind::Const => "const",
+                        };
+                        match init {
+                            Some(i) => format!("{} {} = {}", k, name, expr_to_string(i)),
+                            None => format!("{} {}", k, name),
+                        }
+                    }
+                    None => String::new(),
+                };
+                let cond_str = condition.as_ref().map(|c| expr_to_string(c)).unwrap_or_default();
+                let upd_str = update.as_ref().map(|u| expr_to_string(u)).unwrap_or_default();
+                format!("for ({}; {}; {}) {}", init_str, cond_str, upd_str, stmt_to_string(body))
+            }
+            Statement::ForIn { variable, object, body } => {
+                format!("for ({} in {}) {}", expr_to_string(variable), expr_to_string(object), stmt_to_string(body))
+            }
+            Statement::VarDeclaration { kind, name, init } => {
+                let k = match kind {
+                    crate::ast::VarKind::Var => "var",
+                    crate::ast::VarKind::Let => "let",
+                    crate::ast::VarKind::Const => "const",
+                };
+                match init {
+                    Some(i) => format!("{} {} = {}", k, name, expr_to_string(i)),
+                    None => format!("{} {}", k, name),
+                }
+            }
+            Statement::FunctionDeclaration { name, params, body, is_async, is_generator } => {
+                let prefix = match (*is_async, *is_generator) {
+                    (true, true) => "async function*",
+                    (true, false) => "async function",
+                    (false, true) => "function*",
+                    (false, false) => "function",
+                };
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{} {}({}) {{ {} }}", prefix, name, fmt_params(params), body_str)
+            }
+            Statement::Try { body, param, handler, finalizer } => {
+                let catch_str = handler.as_ref().map(|h| {
+                    match param {
+                        Some(p) => format!(" catch ({}) {}", p, stmt_to_string(h)),
+                        None => format!(" catch {}", stmt_to_string(h)),
+                    }
+                }).unwrap_or_default();
+                let finally_str = finalizer.as_ref().map(|f| {
+                    format!(" finally {}", stmt_to_string(f))
+                }).unwrap_or_default();
+                format!("try {{ {} }}{}{}", stmt_to_string(body), catch_str, finally_str)
+            }
+            Statement::Throw(expr) => {
+                format!("throw {}", expr_to_string(expr))
+            }
+            Statement::Break(_) => "break".to_string(),
+            Statement::Continue(_) => "continue".to_string(),
+            Statement::Labeled { label, body } => {
+                format!("{}: {}", label, stmt_to_string(body))
+            }
+            Statement::DoWhile { body, condition, .. } => {
+                format!("do {} while ({})", stmt_to_string(body), expr_to_string(condition))
+            }
+            Statement::With { object, body } => {
+                format!("with ({}) {}", expr_to_string(object), stmt_to_string(body))
+            }
+            Statement::Empty => String::new(),
+            Statement::SequenceDecls(_) => String::new(),
+            Statement::Export(_) => String::new(),
+            Statement::Import { .. } => String::new(),
+            Statement::ClassDeclaration { name, class } => {
+                let extends_str = class.super_class.as_ref().map(|e| format!(" extends {}", expr_to_string(e))).unwrap_or_default();
+                let member_strs: Vec<String> = class.body.iter().map(class_member_to_string).collect();
+                format!("class {}{} {{{}}}", name, extends_str, member_strs.join(""))
+            }
+        }
+    }
+
+    fn prop_key_to_string(key: &crate::ast::PropertyKey) -> String {
+        match key {
+            crate::ast::PropertyKey::Ident(s) => s.clone(),
+            crate::ast::PropertyKey::String(s) => format!("\"{}\"", s),
+            crate::ast::PropertyKey::Number(n) => n.to_string(),
+            crate::ast::PropertyKey::Computed(e) => expr_to_string(e),
+        }
+    }
+
+    fn expr_to_string(expr: &Expression) -> String {
+        match expr {
+            Expression::Number(n) => n.to_string(),
+            Expression::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")),
+            Expression::Boolean(b) => b.to_string(),
+            Expression::Null => "null".to_string(),
+            Expression::Undefined => "undefined".to_string(),
+            Expression::Identifier(id) => id.clone(),
+            Expression::BigInt(s) => format!("{}n", s),
+            Expression::RegExp { pattern, flags } => format!("/{}/{}", pattern, flags),
+            Expression::Elision => String::new(),
+            Expression::Binary { op, left, right } => {
+                let op_str = match op {
+                    crate::ast::BinaryOp::And => "&&",
+                    crate::ast::BinaryOp::Or => "||",
+                    crate::ast::BinaryOp::Eq => "==",
+                    crate::ast::BinaryOp::Neq => "!=",
+                    crate::ast::BinaryOp::LooseEq => "==",
+                    crate::ast::BinaryOp::StrictEq => "===",
+                    crate::ast::BinaryOp::StrictNeq => "!==",
+                    crate::ast::BinaryOp::Lt => "<",
+                    crate::ast::BinaryOp::Gt => ">",
+                    crate::ast::BinaryOp::Le => "<=",
+                    crate::ast::BinaryOp::Ge => ">=",
+                    crate::ast::BinaryOp::Add => "+",
+                    crate::ast::BinaryOp::Sub => "-",
+                    crate::ast::BinaryOp::Mul => "*",
+                    crate::ast::BinaryOp::Div => "/",
+                    crate::ast::BinaryOp::Mod => "%",
+                    crate::ast::BinaryOp::BitAnd => "&",
+                    crate::ast::BinaryOp::BitOr => "|",
+                    crate::ast::BinaryOp::BitXor => "^",
+                    crate::ast::BinaryOp::Shl => "<<",
+                    crate::ast::BinaryOp::Shr => ">>",
+                    crate::ast::BinaryOp::Ushr => ">>>",
+                    crate::ast::BinaryOp::In => "in",
+                    crate::ast::BinaryOp::Instanceof => "instanceof",
+                    crate::ast::BinaryOp::NullishCoalescing => "??",
+                };
+                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+            }
+            Expression::Unary { op, argument } => {
+                let op_str = match op {
+                    crate::ast::UnaryOp::Not => "!",
+                    crate::ast::UnaryOp::Neg => "-",
+                    crate::ast::UnaryOp::Plus => "+",
+                    crate::ast::UnaryOp::BitNot => "~",
+                    crate::ast::UnaryOp::Typeof => "typeof",
+                    crate::ast::UnaryOp::Void => "void",
+                    crate::ast::UnaryOp::Delete => "delete",
+                };
+                format!("({} {})", op_str, expr_to_string(argument))
+            }
+            Expression::Assignment { left, right } => {
+                format!("{} = {}", expr_to_string(left), expr_to_string(right))
+            }
+            Expression::CompoundAssignment { op, left, right } => {
+                let op_str = match op {
+                    crate::ast::CompoundOp::Add => "+=",
+                    crate::ast::CompoundOp::Sub => "-=",
+                    crate::ast::CompoundOp::Mul => "*=",
+                    crate::ast::CompoundOp::Div => "/=",
+                    crate::ast::CompoundOp::Mod => "%=",
+                    crate::ast::CompoundOp::BitAnd => "&=",
+                    crate::ast::CompoundOp::BitOr => "|=",
+                    crate::ast::CompoundOp::BitXor => "^=",
+                    crate::ast::CompoundOp::Shl => "<<=",
+                    crate::ast::CompoundOp::Shr => ">>=",
+                    crate::ast::CompoundOp::Ushr => ">>>=",
+                    crate::ast::CompoundOp::LogicalOrAssign => "||=",
+                    crate::ast::CompoundOp::LogicalAndAssign => "&&=",
+                    crate::ast::CompoundOp::NullishCoalescingAssign => "??=",
+                };
+                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+            }
+            Expression::LogicalCompoundAssignment { op, left, right } => {
+                let op_str = match op {
+                    crate::ast::CompoundOp::LogicalOrAssign => "||=",
+                    crate::ast::CompoundOp::LogicalAndAssign => "&&=",
+                    crate::ast::CompoundOp::NullishCoalescingAssign => "??=",
+                    _ => unreachable!(),
+                };
+                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+            }
+            Expression::Call { callee, arguments } => {
+                let args = arguments.iter().map(expr_to_string).collect::<Vec<_>>().join(", ");
+                format!("{}({})", expr_to_string(callee), args)
+            }
+            Expression::New { constructor, arguments } => {
+                let args = arguments.iter().map(expr_to_string).collect::<Vec<_>>().join(", ");
+                format!("new {}({})", expr_to_string(constructor), args)
+            }
+            Expression::Member { object, property, computed } => {
+                if *computed {
+                    format!("{}[{}]", expr_to_string(object), prop_key_to_string(property))
+                } else {
+                    match property {
+                        crate::ast::PropertyKey::Ident(s) => format!("{}.{}", expr_to_string(object), s),
+                        crate::ast::PropertyKey::String(s) => format!("{}.{}", expr_to_string(object), s),
+                        crate::ast::PropertyKey::Number(n) => format!("{}.{}", expr_to_string(object), n),
+                        crate::ast::PropertyKey::Computed(e) => {
+                            format!("{}[{}]", expr_to_string(object), expr_to_string(e))
+                        }
+                    }
+                }
+            }
+            Expression::Conditional { condition, consequent, alternate } => {
+                format!("({} ? {} : {})", expr_to_string(condition), expr_to_string(consequent), expr_to_string(alternate))
+            }
+            Expression::Update { op, argument, prefix } => {
+                let op_str = match op {
+                    crate::ast::UpdateOp::Increment => "++",
+                    crate::ast::UpdateOp::Decrement => "--",
+                };
+                if *prefix {
+                    format!("{}{}", op_str, expr_to_string(argument))
+                } else {
+                    format!("{}{}", expr_to_string(argument), op_str)
+                }
+            }
+            Expression::Array(arr) => {
+                let els: Vec<String> = arr.iter().map(expr_to_string).collect();
+                format!("[{}]", els.join(","))
+            }
+            Expression::Object(props) => {
+                let prop_strs: Vec<String> = props.iter().map(|(k, v)| {
+                    let key_str = match k {
+                        crate::ast::PropertyKey::Ident(s) => s.clone(),
+                        crate::ast::PropertyKey::String(s) => format!("\"{}\"", s),
+                        crate::ast::PropertyKey::Number(n) => n.to_string(),
+                        crate::ast::PropertyKey::Computed(e) => format!("[{}]", expr_to_string(e)),
+                    };
+                    match v {
+                        crate::ast::PropertyValue::Value(e) => format!("{}: {}", key_str, expr_to_string(e)),
+                        crate::ast::PropertyValue::Getter { params: _, body } => {
+                            let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                            format!("get {}() {{ {} }}", key_str, body_str)
+                        }
+                        crate::ast::PropertyValue::Setter { param, body } => {
+                            let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                            format!("set {}({}) {{ {} }}", key_str, param, body_str)
+                        }
+                    }
+                }).collect();
+                format!("{{{}}}", prop_strs.join(", "))
+            }
+            Expression::FunctionExpression { name, params, body, is_async, is_generator } => {
+                let prefix = match (*is_async, *is_generator) {
+                    (true, true) => "async function*",
+                    (true, false) => "async function",
+                    (false, true) => "function*",
+                    (false, false) => "function",
+                };
+                let name_str = name.as_ref().map(|n| format!(" {}", n)).unwrap_or_default();
+                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{} {}({}) {{ {} }}", prefix, name_str, fmt_params(params), body_str)
+            }
+            Expression::ArrowFunction { params, body } => {
+                let body_str = match body.as_ref() {
+                    ArrowBody::Expression(e) => expr_to_string(e),
+                    ArrowBody::Block(stmts) => {
+                        let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                        format!("{{ {} }}", inner)
+                    }
+                };
+                format!("({}) => {}", fmt_params(params), body_str)
+            }
+            Expression::Sequence(exprs) => {
+                exprs.iter().map(expr_to_string).collect::<Vec<_>>().join(", ")
+            }
+            Expression::Class(_) => "[Class]".to_string(),
+            Expression::BlockExpr(stmts) => {
+                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{{ {} }}", inner)
+            }
+            Expression::ArrayPattern(_) => "[ArrayPattern]".to_string(),
+            Expression::ObjectPattern(_) => "[ObjectPattern]".to_string(),
+            Expression::ForOf { variable, iterable, body } => {
+                format!("for ({} of {}) {}", expr_to_string(variable), expr_to_string(iterable), stmt_to_string(body))
+            }
+            Expression::ForIn { variable, object, body } => {
+                format!("for ({} in {}) {}", expr_to_string(variable), expr_to_string(object), stmt_to_string(body))
+            }
+            Expression::Yield(opt_expr) => {
+                if let Some(e) = opt_expr {
+                    format!("yield {}", expr_to_string(e))
+                } else {
+                    "yield".to_string()
+                }
+            }
+            Expression::YieldDelegate(expr) => {
+                format!("yield* {}", expr_to_string(expr))
+            }
+            Expression::Spread(expr) => {
+                format!("...{}", expr_to_string(expr))
+            }
+            Expression::JsxElement { .. } => "[JsxElement]".to_string(),
+            Expression::JsxFragment { .. } => "[JsxFragment]".to_string(),
+        }
+    }
+
+    if f.is_arrow {
+        let body_str = match f.arrow_body.as_ref() {
+            Some(ArrowBody::Expression(e)) => expr_to_string(e),
+            Some(ArrowBody::Block(stmts)) => {
+                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                format!("{{ {} }}", inner)
+            }
+            None => "{}".to_string(),
+        };
+        format!("({}) => {}", fmt_params(&f.params), body_str)
+    } else {
+        let (keyword, name_str) = match (f.is_async, f.is_generator) {
+            (true, true) => ("async function*", f.name.as_deref().unwrap_or("")),
+            (true, false) => ("async function", f.name.as_deref().unwrap_or("")),
+            (false, true) => ("function*", f.name.as_deref().unwrap_or("")),
+            (false, false) => ("function", f.name.as_deref().unwrap_or("")),
+        };
+        let body_str = f.body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+        if body_str.is_empty() {
+            format!("{} {}({}) {{}}", keyword, name_str, fmt_params(&f.params))
+        } else {
+            format!("{} {}({}) {{{}}}", keyword, name_str, fmt_params(&f.params), body_str)
+        }
+    }
 }

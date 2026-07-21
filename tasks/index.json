@@ -81,22 +81,22 @@
     {
       "id": 13,
       "path": "test/language/statements/async-function",
-      "status": "in_progress"
+      "status": "done"
     },
     {
       "id": 14,
       "path": "test/language/statements/block",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 15,
       "path": "test/language/statements/break",
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 16,
       "path": "test/language/statements/class",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": 17,

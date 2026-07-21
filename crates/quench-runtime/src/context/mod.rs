@@ -11,6 +11,14 @@ use std::rc::Rc;
 
 thread_local! {
     pub static CURRENT_CONTEXT: RefCell<Option<*mut Context>> = const { RefCell::new(None) };
+    /// Source text of the script/module currently being evaluated.
+    /// Set at Context::eval() entry, cleared on exit.
+    pub static CURRENT_SOURCE: RefCell<Option<&'static str>> = const { RefCell::new(None) };
+}
+
+/// Get the source text of the currently executing script/module.
+pub fn current_source() -> Option<&'static str> {
+    CURRENT_SOURCE.with(|cell| *cell.borrow())
 }
 
 /// Runtime context - holds the execution environment and globals
@@ -72,6 +80,13 @@ impl Context {
             *cell.borrow_mut() = Some(ctx_ptr);
         });
 
+        // Set source for function source_text capture
+        CURRENT_SOURCE.with(|cell| {
+            *cell.borrow_mut() = Some(unsafe {
+                std::mem::transmute::<&str, &str>(source as &str)
+            });
+        });
+
         let result = (|| {
             let program = self.parse(source)?;
             // Script code: set `this = globalThis` per ScriptDeclarationInstantiation
@@ -85,6 +100,9 @@ impl Context {
 
         // Clear thread-local after eval completes
         CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
         });
 

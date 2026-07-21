@@ -70,24 +70,27 @@ fn to_primitive_function(
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
-    // Only check OWN properties — walking the prototype chain and calling
-    // Object.prototype.valueOf/toString on a function recurses infinitely.
+    // Check own properties first (user-defined override)
     let first_method = f.get_property(first);
     let second_method = f.get_property(second);
 
     let this_val = Value::Function((**f).clone());
 
     let mut first_was_object = false;
-    if let Some(m) = first_method {
-        let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
-        if !matches!(v, Value::Object(_)) {
+    let mut first_found = false;
+    if let Some(ref m) = first_method {
+        first_found = true;
+        let v = crate::eval::call_value_with_this(m.clone(), vec![], this_val.clone())?;
+        if !matches!(v, Value::Object(_) | Value::Function(_)) {
             return Ok(v);
         }
         first_was_object = true;
     }
-    if let Some(m) = second_method {
-        let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
-        if !matches!(v, Value::Object(_)) {
+    let mut second_found = false;
+    if let Some(ref m) = second_method {
+        second_found = true;
+        let v = crate::eval::call_value_with_this(m.clone(), vec![], this_val.clone())?;
+        if !matches!(v, Value::Object(_) | Value::Function(_)) {
             return Ok(v);
         }
         if first_was_object {
@@ -99,9 +102,29 @@ fn to_primitive_function(
             return Err(crate::value::JsError("TypeError".to_string()));
         }
     }
-    // Fallback: match to_js_string's representation for Value::Function so that
-    // `f + ""` and `f.toString() + ""` agree.
-    Ok(Value::String("[Function]".to_string()))
+
+    // No own properties found — try inherited toString/valueOf from Function.prototype.
+    // This is safe: Function.prototype.toString returns the function's source text,
+    // not "[object Function]" like Object.prototype.toString.
+    if !first_found {
+        if let Some(proto) = f.get_prototype().borrow().get(first) {
+            let v = crate::eval::call_value_with_this(proto.clone(), vec![], this_val.clone())?;
+            if !matches!(v, Value::Object(_) | Value::Function(_)) {
+                return Ok(v);
+            }
+        }
+    }
+    if !second_found {
+        if let Some(proto) = f.get_prototype().borrow().get(second) {
+            let v = crate::eval::call_value_with_this(proto.clone(), vec![], this_val.clone())?;
+            if !matches!(v, Value::Object(_) | Value::Function(_)) {
+                return Ok(v);
+            }
+        }
+    }
+
+    // Final fallback: use source_text so `String(f)` and `f.toString()` agree.
+    Ok(Value::String(f.source_text()))
 }
 
 fn to_primitive_object(
