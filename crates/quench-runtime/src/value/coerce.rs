@@ -119,8 +119,8 @@ pub fn to_bool(v: &Value) -> bool {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Generator(_) | Value::Class(_)
-        | Value::BigInt(_)
         | Value::Symbol(_) => true,
+        Value::BigInt(bi) => **bi != num_bigint::BigInt::from(0i64),
     }
 }
 

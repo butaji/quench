@@ -469,33 +469,4 @@ fn call_object_as_constructor(
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::Context;
-
-    #[test]
-    fn sloppy_call_boxes_primitive_this() {
-        let mut ctx = Context::new().unwrap();
-        let res = ctx
-            .eval("function bar() { return typeof this; } bar.call(1);")
-            .unwrap();
-        assert_eq!(res, crate::value::Value::String("object".to_string()));
-    }
-
-    #[test]
-    fn strict_body_keeps_primitive_this() {
-        let mut ctx = Context::new().unwrap();
-        let res = ctx
-            .eval("function foo() { 'use strict'; return typeof this; } foo.call(1);")
-            .unwrap();
-        assert_eq!(res, crate::value::Value::String("number".to_string()));
-    }
-
-    #[test]
-    fn sloppy_call_object_this_passes_through() {
-        let mut ctx = Context::new().unwrap();
-        let res = ctx
-            .eval("var o = { name: 'x' }; function bar() { return typeof this; } bar.call(o);")
-            .unwrap();
-        assert_eq!(res, crate::value::Value::String("object".to_string()));
-    }
-}
+mod tests;
