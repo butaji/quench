@@ -35,6 +35,20 @@ pub fn eval_member_access(
             eval_number_member(obj_val, prop_name, env)
         }
         Value::Class(class) => eval_class_member(class, prop_name, env),
+        Value::Generator(gen) => {
+            match prop_name {
+                "next" => Ok(crate::value::generator::generator_next_fn(gen.clone())),
+                "return" => Ok(crate::value::generator::generator_return_fn(gen.clone())),
+                "throw" => Ok(crate::value::generator::generator_throw_fn(gen.clone())),
+                _ => {
+                    // Look up on Generator.prototype
+                    let proto = std::rc::Rc::new(std::cell::RefCell::new(
+                        crate::value::Object::new(crate::value::ObjectKind::Ordinary)
+                    ));
+                    eval_object_member(&proto, prop_name, Some(env))
+                }
+            }
+        }
         Value::Null | Value::Undefined => {
             let msg = format!("Cannot read property '{}' of {}", prop_name, obj_val);
             let (_, js_err) = create_js_error_with_type(&msg, "TypeError");

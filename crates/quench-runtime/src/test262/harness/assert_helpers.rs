@@ -58,7 +58,7 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
         Value::NativeFunction(_)
         | Value::Function(_)
         | Value::Object(_)
-        | Value::Class(_)
+        | Value::Generator(_) | Value::Class(_)
         | Value::NativeConstructor(_) => {
             crate::eval::call_value_with_this(fn_value.clone(), vec![], Value::Undefined)
         }
@@ -322,7 +322,7 @@ pub fn debug_string(v: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => format!("\"{}\"", s),
-        Value::Object(_) => "[object]".to_string(),
+        Value::Object(_) | Value::Generator(_) => "[object]".to_string(),
         Value::Function(_) => "[Function]".to_string(),
         Value::NativeFunction(_) => "[NativeFunction]".to_string(),
         Value::NativeConstructor(_) => "[NativeConstructor]".to_string(),

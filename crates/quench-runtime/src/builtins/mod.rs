@@ -89,6 +89,15 @@ impl serde::Serialize for JsValueProxy<'_> {
             #[allow(unused_variables)]
             Value::Class(_) => serializer.serialize_str("[Function]"),
             Value::BigInt(bi) => serializer.serialize_str(&format!("{}n", bi)),
+            Value::Generator(ref gen) => {
+                let state = gen.borrow().state.clone();
+                let label = match state {
+                    crate::value::generator::GeneratorState::Suspended => "Generator (suspended)",
+                    crate::value::generator::GeneratorState::Running => "Generator (running)",
+                    crate::value::generator::GeneratorState::Completed => "Generator (completed)",
+                };
+                serializer.serialize_str(label)
+            }
         }
     }
 }

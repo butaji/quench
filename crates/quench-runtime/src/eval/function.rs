@@ -243,10 +243,6 @@ pub(crate) fn call_js_function_impl_with_strict(
     let prev_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(in_strict);
 
-    // Set strict mode for function body evaluation
-    let prev_strict = crate::interpreter::is_strict_mode();
-    crate::interpreter::set_strict_mode(in_strict);
-
     let previous_eval_env = crate::interpreter::get_current_eval_env();
     crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
     let result = if f.is_arrow {
