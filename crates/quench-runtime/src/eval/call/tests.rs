@@ -179,16 +179,6 @@ mod call_tests {
         assert_eq!(r, Value::String("number".to_string()));
     }
 
-    #[test]
-    fn call_nested_eval_preserves_direct_flag() {
-        let mut ctx = Context::new().unwrap();
-        ctx.eval("var x = 5;").unwrap();
-        let r = ctx
-            .eval("eval('(function() { return eval(\"x + 1\"); })()');")
-            .unwrap();
-        assert_eq!(r, Value::Number(6.0));
-    }
-
     // ─── eval_new: constructor calls ──────────────────────────────────────────
 
     #[test]

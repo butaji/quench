@@ -8,3 +8,6 @@ pub mod proxy;
 pub use destructuring::*;
 pub use member::*;
 pub use proxy::*;
+
+#[cfg(test)]
+mod member_tests;

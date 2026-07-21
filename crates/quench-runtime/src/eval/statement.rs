@@ -94,6 +94,8 @@ pub(crate) fn acc_stack_pop_to(target_len: usize) {
 }
 
 /// Return a clone of the topmost value on the stack, or None if empty.
+/// Exists for test coverage of the accumulator stack.
+#[allow(dead_code)]
 pub(crate) fn acc_stack_top() -> Option<Value> {
     ACC_STACK.with(|cell| cell.borrow().last().cloned())
 }
@@ -232,6 +234,12 @@ pub fn eval_function_body(
     // If we broke out of the loop, a tail-call signal was set.
     // Return the last completion value; the trampoline will extract acc from
     // the signal and combine with the completion if needed.
+    // Also check for a pending Return from the last statement (e.g. `return g()` in
+    // try/catch, or a bare return inside an if/else chain).
+    if let Some(ControlFlow::Return(val)) = take_control_flow() {
+        set_control_flow(ControlFlow::Return(val.clone()));
+        return Ok(val);
+    }
     Ok(last_val)
 }
 
