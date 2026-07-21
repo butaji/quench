@@ -995,6 +995,151 @@ mod tests {
         assert_eq!(val, Value::Number(88.0));
     }
 
+    #[test]
+    fn class_instance_getter_function_call_twice_same_key() {
+        // get [f()]() and set [f()]() where f() is called twice in class body.
+        // Both calls return 1 → same key → single accessor with both getter and setter.
+        let r = eval(
+            r#"
+            function f() { return 1; }
+            class C {
+                get [f()]() { return 42; }
+                set [f()](v) { this._v = v; }
+            }
+            var c = new C();
+            var k = f();
+            [c[k], c[k] = 99, c[k], c._v];
+            "#,
+        );
+        let val = r.unwrap();
+        let obj = match val {
+            Value::Object(o) => o,
+            other => panic!("expected array, got {:?}", other),
+        };
+        let elems = obj.borrow().elements.clone();
+        assert_eq!(elems[0], Value::Number(42.0), "getter returns 42");
+        assert_eq!(elems[1], Value::Number(99.0), "setter result is 99");
+        assert_eq!(elems[2], Value::Number(42.0), "getter still returns 42");
+        assert_eq!(elems[3], Value::Number(99.0), "setter stored _v = 99");
+    }
+
+    #[test]
+    fn class_static_getter_function_call_twice_same_key() {
+        // Same as above but for static accessor
+        let r = eval(
+            r#"
+            function f() { return 1; }
+            class C {
+                static get [f()]() { return 42; }
+                static set [f()](v) { this._v = v; }
+            }
+            var k = f();
+            [C[k], C[k] = 99, C[k], C._v];
+            "#,
+        );
+        let val = r.unwrap();
+        let obj = match val {
+            Value::Object(o) => o,
+            other => panic!("expected array, got {:?}", other),
+        };
+        let elems = obj.borrow().elements.clone();
+        assert_eq!(elems[0], Value::Number(42.0), "static getter returns 42");
+        assert_eq!(elems[1], Value::Number(99.0), "static setter result is 99");
+        assert_eq!(elems[2], Value::Number(42.0), "static getter still returns 42");
+        assert_eq!(elems[3], Value::Number(99.0), "static setter stored _v = 99");
+    }
+
+    #[test]
+    fn class_static_setter_works() {
+        // Verify static setter actually writes to the class object
+        let r = eval(
+            r#"
+            function f() { return 1; }
+            class C {
+                static get [f()]() { return 42; }
+                static set [f()](v) { this._v = v; }
+            }
+            C[1] = 99;
+            C._v;
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(99.0), "static setter should set C._v = 99");
+    }
+
+    #[test]
+    fn class_static_non_computed_setter_works() {
+        // Non-computed static setter as baseline: must work
+        let r = eval(
+            r#"
+            class C {
+                static set foo(v) { this._v = v; }
+            }
+            C.foo = 99;
+            C._v;
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(99.0), "non-computed static setter should work");
+    }
+
+    #[test]
+    fn class_instance_setter_works() {
+        // Instance setter writes to instance
+        let r = eval(
+            r#"
+            function f() { return 1; }
+            class C {
+                set [f()](v) { this._v = v; }
+            }
+            var c = new C();
+            c[1] = 99;
+            c._v;
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(99.0), "instance setter should set _v = 99");
+    }
+
+    #[test]
+    fn class_instance_non_computed_setter_works() {
+        // Non-computed instance setter as baseline
+        let r = eval(
+            r#"
+            class C {
+                set foo(v) { this._v = v; }
+            }
+            var c = new C();
+            c.foo = 99;
+            c._v;
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(99.0), "non-computed instance setter should work");
+    }
+
+    #[test]
+    fn class_static_accessor_getter_and_setter_same_key() {
+        // Getter and setter both at key 1 → both work independently
+        let r = eval(
+            r#"
+            function makeKey(n) { return function() { return n; }; }
+            var f1 = makeKey(1);
+            var f2 = makeKey(1);
+            class C {
+                static get [f1()]() { return 42; }
+                static set [f2()](v) { this._v = v; }
+            }
+            C[1] = 99;
+            [C[1], C._v];
+            "#,
+        );
+        let val = r.unwrap();
+        let obj = match val {
+            Value::Object(o) => o,
+            other => panic!("expected array, got {:?}", other),
+        };
+        let elems = obj.borrow().elements.clone();
+        assert_eq!(elems[0], Value::Number(42.0), "getter returns 42");
+        assert_eq!(elems[1], Value::Number(99.0), "setter stored 99 in _v");
+    }
+
 
     #[test]
     fn class_static_computed_getter_direct_access() {
@@ -1054,5 +1199,96 @@ mod tests {
         );
         assert!(r.is_ok(), "Accessing computed setter with assignment should not panic: {:?}", r);
         assert_eq!(r.unwrap(), Value::Number(99.0));
+    }
+
+    // Reproducer for test262: cpn-class-decl-accessors-computed-property-name-from-function-declaration
+    // C[f()] = 1 must return 1 (the RHS value), not undefined.
+    #[test]
+    fn class_computed_setter_function_decl_returns_rhs() {
+        // function f() returns undefined; the computed key is "undefined".
+        // But the assignment expression itself must return the RHS value (1), not the setter's return.
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                set [f()](v) { return 1; }
+                static get [f()]() { return 1; }
+                static set [f()](v) { return 1; }
+            }
+            C[f()] = 1
+            "#,
+        );
+        assert!(r.is_ok(), "C[f()] = 1 must not error: {:?}", r);
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "C[f()] = 1 must return RHS value (1), not the setter's return"
+        );
+    }
+
+    #[test]
+    fn class_instance_computed_setter_function_decl_returns_rhs() {
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                set [f()](v) { return 1; }
+            }
+            var c = new C();
+            c[f()] = 1
+            "#,
+        );
+        assert!(r.is_ok(), "c[f()] = 1 must not error: {:?}", r);
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "c[f()] = 1 must return RHS value (1)"
+        );
+    }
+
+    // Test that string(coerced) keys work: String(f()) is the key
+    #[test]
+    fn class_computed_setter_string_coerced_key() {
+        // Test C[String(f())] = 99 (static setter) and verify the assignment returns 99.
+        let r = eval(
+            r#"
+            function f() { return 1; }
+            class C {
+                get [String(f())]() { return 42; }
+                set [String(f())](v) { this._v = v; }
+            }
+            var result = C[String(f())] = 99;
+            result;
+            "#,
+        );
+        assert!(r.is_ok(), "C[String(f())] = 99 must not error: {:?}", r);
+        assert_eq!(r.unwrap(), Value::Number(99.0), "assignment must return RHS");
+    }
+
+    // Diagnostic: what does evaluating Identifier("f") return when f is a function decl?
+    #[test]
+    fn function_decl_eval_returns_function() {
+        let r = eval("function f() { return 1; } f");
+        assert!(r.is_ok(), "evaluating Identifier 'f' should return a value: {:?}", r);
+        let val = r.unwrap();
+        assert!(
+            matches!(val, Value::Function(_)),
+            "f should be a Function, got {:?}",
+            val
+        );
+    }
+
+    // What does to_js_string produce for a Function value?
+    #[test]
+    fn to_js_string_function() {
+        let r = eval(r#"String(function f() {})"#);
+        assert!(r.is_ok(), "String(function f()) should work");
+        let val = r.unwrap();
+        if let Value::String(s) = val {
+            // ES spec: Function.prototype.toString produces a representation
+            eprintln!("String(function f() {{}}) = {:?}", s);
+        }
     }
 }

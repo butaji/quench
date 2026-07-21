@@ -178,6 +178,86 @@ assert.sameValue(d.get(), 42, 'getter returns 42');
         );
     }
 
+    /// Reproduce cpn-class-decl-accessors-computed-property-name-from-function-declaration.js
+    /// This mimics the test262 harness path exactly to see if C[f()] = 1 returns undefined.
+    #[test]
+    fn quench_host_class_computed_setter() {
+        let mut host = QuenchHost::new();
+        // C[f()] = 1 should return 1 (the RHS), not undefined
+        let result = host.run_script(
+            r#"
+function f() {}
+class C {
+    get [f()]() { return 1; }
+    set [f()](v) { return 1; }
+    static get [f()]() { return 1; }
+    static set [f()](v) { return 1; }
+}
+var c = new C();
+var r1 = C[f()] = 1;
+var r2 = c[f()] = 1;
+if (r1 !== 1) throw new Error('C[f()] = 1 returned ' + r1 + ', expected 1');
+if (r2 !== 1) throw new Error('c[f()] = 1 returned ' + r2 + ', expected 1');
+"#,
+        );
+        assert!(result.is_ok(), "computed setter assignment should return RHS: {:?}", result);
+    }
+
+    #[test]
+    fn quench_host_class_computed_setter_via_assert() {
+        let mut host = QuenchHost::new();
+        // Same as above but using assert.sameValue (like the actual test262 test)
+        let result = host.run_script(
+            r#"
+function f() {}
+class C {
+    get [f()]() { return 1; }
+    set [f()](v) { return 1; }
+    static get [f()]() { return 1; }
+    static set [f()](v) { return 1; }
+}
+var c = new C();
+assert.sameValue(C[f()] = 1, 1);
+assert.sameValue(c[f()] = 1, 1);
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "computed setter assert.sameValue should pass: {:?}",
+            result
+        );
+    }
+
+    /// Regression test: assignment to class setter via String() conversion
+    /// must return the RHS value (1), not the setter's return value.
+    /// Previously failed: C[String(f())] = 1 returned undefined.
+    #[test]
+    fn quench_host_class_computed_setter_string_conversion() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+function f() {}
+class C {
+    get [f()]() { return 1; }
+    set [f()](v) { return 1; }
+    static get [f()]() { return 1; }
+    static set [f()](v) { return 1; }
+}
+var c = new C();
+// All forms must return the assigned value, not the setter's return.
+assert.sameValue(C[String(f())] = 1, 1, 'C[String(f())] = 1 must return 1');
+assert.sameValue(C[f()] = 1, 1, 'C[f()] = 1 must return 1');
+assert.sameValue(c[String(f())] = 1, 1, 'c[String(f())] = 1 must return 1');
+assert.sameValue(c[f()] = 1, 1, 'c[f()] = 1 must return 1');
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "computed setter with String() conversion must return RHS: {:?}",
+            result
+        );
+    }
+
     #[test]
     fn quench_host_with_harness_verify_property_accessor_symbol() {
         // Full harness test: load assert.js + propertyHelper.js + run verifyProperty scenario
