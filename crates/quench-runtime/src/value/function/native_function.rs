@@ -68,6 +68,23 @@ impl NativeFunction {
         }
     }
 
+    /// Create a new native function with an explicit name
+    pub fn new_with_name<F>(name: &str, f: F) -> Self
+    where
+        F: Fn(Vec<Value>) -> Result<Value, JsError> + 'static,
+    {
+        NativeFunction {
+            func: std::rc::Rc::new(Box::new(f)),
+            own_prototype: None,
+            prototype: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            properties: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            property_flags: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
+            name: name.to_string(),
+        }
+    }
+
     /// Create a new native function with a prototype
     pub fn new_with_prototype<F>(f: F, prototype: Rc<RefCell<Object>>) -> Self
     where

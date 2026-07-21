@@ -175,3 +175,75 @@ pub fn eval_native_constructor_member(
         _ => Ok(Value::Undefined),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        Context::new().unwrap().eval(src)
+    }
+
+    // ─── eval_native_function_member: name ────────────────────────────────────
+
+    #[test]
+    fn native_function_name_named() {
+        let r = eval("Object.name").unwrap();
+        assert_eq!(r, Value::String("Object".into()));
+    }
+
+    #[test]
+    fn native_function_name_anonymous() {
+        // Built-in anonymous functions
+        let r = eval("Array.prototype.map.name").unwrap();
+        assert_eq!(r, Value::String("map".into()));
+    }
+
+    // ─── eval_native_function_member: length ───────────────────────────────────
+
+    #[test]
+    fn native_function_length_is_zero() {
+        let r = eval("Object.keys.length").unwrap();
+        assert_eq!(r, Value::Number(0.0));
+    }
+
+    // ─── eval_native_function_member: prototype ────────────────────────────────
+
+    #[test]
+    fn native_function_without_prototype_returns_undefined() {
+        // Most native functions have no prototype
+        let r = eval("Object.keys.prototype").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    // ─── eval_native_function_member: length ────────────────────────────────────
+
+    #[test]
+    fn native_constructor_function_length_is_one() {
+        let r = eval("Function.length").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn native_constructor_other_length_is_zero() {
+        let r = eval("Object.length").unwrap();
+        assert_eq!(r, Value::Number(0.0));
+    }
+
+    // ─── eval_native_constructor_member: prototype ──────────────────────────
+
+    #[test]
+    fn native_constructor_has_prototype() {
+        let r = eval("typeof Object.prototype").unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    // ─── eval_native_constructor_member: name ─────────────────────────────────
+
+    #[test]
+    fn native_constructor_name() {
+        let r = eval("Object.name").unwrap();
+        assert_eq!(r, Value::String("Object".into()));
+    }
+}

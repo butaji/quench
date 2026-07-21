@@ -5,7 +5,6 @@ mod native_function;
 mod value_function;
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests;
 
 pub use native_constructor::{ConstructorAccessor, NativeConstructor};

@@ -324,6 +324,28 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
+/// Get the superclass constructor's own `[[Prototype]]` (for Object.getPrototypeOf(class)).
+/// Returns:
+/// - None if class extends null (so Object.getPrototypeOf(C) === null)
+/// - The superclass constructor VALUE otherwise (for `extends Base`, returns `Value::Class(Base)`)
+pub fn get_super_class_own_proto(super_class_val: &Value) -> Option<Value> {
+    match super_class_val {
+        Value::Null => None,
+        // For `class Derived extends Base`, the superclass VALUE IS the class itself.
+        // Object.getPrototypeOf(Derived) should return `Base` as a Value.
+        Value::Class(class) => Some(Value::Class(class.clone())),
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+            // Function's own [[Prototype]] is %FunctionPrototype%
+            builtins::get_function_prototype().map(Value::Object)
+        }
+        Value::Object(_) => {
+            // Object's own [[Prototype]] is Object.prototype
+            builtins::get_object_prototype().map(Value::Object)
+        }
+        _ => builtins::get_object_prototype().map(Value::Object),
+    }
+}
+
 /// Create a prototype for a class value (helper for extends)
 pub fn create_class_prototype_helper_with_env(
     class: &ClassValue,
@@ -401,5 +423,173 @@ pub fn prop_key_to_string(
             let val = eval_expression(expr, env, in_arrow)?;
             Ok(crate::value::to_js_string(&val))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        Context::new().unwrap().eval(src)
+    }
+
+    // ─── finish_constructor: returns object ─────────────────────────────────
+
+    #[test]
+    fn constructor_returns_object() {
+        let r = eval("new function() { return {x: 1}; }").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+        if let Value::Object(o) = r {
+            assert_eq!(o.borrow().get("x"), Some(Value::Number(1.0)));
+        }
+    }
+
+    #[test]
+    fn constructor_returns_this_by_default() {
+        let r = eval("function F() { this.a = 5; } var f = new F(); f.a").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn constructor_returns_number_ignored() {
+        // Constructors returning primitives return `this` instead
+        let r = eval("function F() { return 42; } var f = new F(); typeof f").unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    // ─── check_first_is_super_call ───────────────────────────────────────────
+
+    #[test]
+    fn constructor_first_is_super_call() {
+        // This tests the helper indirectly via new class with extends
+        let r = eval("class Base { constructor(x) { this.x = x; } } class Derived extends Base { constructor(x) { super(x); } } new Derived(42).x").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── is_constructor_value ────────────────────────────────────────────────
+
+    #[test]
+    fn class_is_constructor() {
+        let r = eval("class C {} typeof C").unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn regular_function_is_constructor() {
+        let r = eval("function F() {} new F()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn arrow_function_not_constructor() {
+        let r = eval("var F = () => {}; new F()");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn native_constructor_is_constructor() {
+        let r = eval("new Object()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    // ─── class extends chain ─────────────────────────────────────────────────
+
+    #[test]
+    fn class_extends_proto_chain() {
+        let r = eval(
+            "class Base {} class Derived extends Base {} Object.getPrototypeOf(Derived) === Base",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_extends_null() {
+        let r = eval("class C extends null {} Object.getPrototypeOf(C)").unwrap();
+        assert_eq!(r, Value::Null);
+    }
+
+    // ─── prop_key_to_string ─────────────────────────────────────────────────
+
+    #[test]
+    fn class_method_identifier_key() {
+        let r = eval("class C { foo() { return 1; } } C.prototype.foo.name").unwrap();
+        assert_eq!(r, Value::String("foo".into()));
+    }
+
+    #[test]
+    fn class_method_string_key() {
+        let r = eval("class C { 'bar'() { return 2; } } C.prototype['bar'].name").unwrap();
+        assert_eq!(r, Value::String("bar".into()));
+    }
+
+    #[test]
+    fn class_method_number_key() {
+        let r = eval("class C { 42() { return 3; } } C.prototype[42].name").unwrap();
+        assert_eq!(r, Value::String("42".into()));
+    }
+
+    // ─── super in methods ────────────────────────────────────────────────────
+
+    #[test]
+    fn super_call_dispatches_to_parent() {
+        let r = eval("class Base { foo() { return 1; } } class Derived extends Base { foo() { return super.foo() + 10; } } new Derived().foo()").unwrap();
+        assert_eq!(r, Value::Number(11.0));
+    }
+
+    // ─── class static members ────────────────────────────────────────────────
+
+    #[test]
+    fn class_static_method() {
+        let r = eval("class C { static foo() { return 42; } } C.foo()").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn class_static_property() {
+        let r = eval("class C { static x = 7; } C.x").unwrap();
+        assert_eq!(r, Value::Number(7.0));
+    }
+
+    // ─── arguments object in constructor ─────────────────────────────────────
+
+    #[test]
+    fn constructor_arguments_object_accessed_via_this() {
+        // new Constructor() returns `this` by default (when constructor returns non-object).
+        // Test that arguments[0] is accessible and can be assigned to `this`.
+        let r = eval("function F(a, b) { this.x = arguments[0]; } var inst = new F(5, 6); inst.x")
+            .unwrap();
+        assert_eq!(
+            r,
+            Value::Number(5.0),
+            "arguments[0] should be assignable to this.x, got {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn constructor_arguments_length_via_this() {
+        let r = eval(
+            "function F(a, b) { this.len = arguments.length; } var inst = new F(5, 6, 7); inst.len",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn constructor_plain_object_access() {
+        // Control: plain object inside constructor works fine
+        let r = eval(
+            "function F(a, b) { var o = {x: 5}; this.y = o.x; } var inst = new F(1, 2); inst.y",
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            Value::Number(5.0),
+            "plain object access should work, got {:?}",
+            r
+        );
     }
 }
