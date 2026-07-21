@@ -353,7 +353,8 @@ fn test_to_bool_object_function_symbol_bigint() {
     ));
     assert!(crate::value::to_bool(&func));
     assert!(crate::value::to_bool(&Value::Symbol(std::rc::Rc::new(crate::value::Symbol { desc: None, global: false }))));
-    assert!(crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(num_bigint::BigInt::from(0i64)))));
+    assert!(!crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(num_bigint::BigInt::from(0i64)))));
+    assert!(crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(num_bigint::BigInt::from(1i64)))));
 }
 
 // ── try_to_number ─────────────────────────────────────────────────────────
