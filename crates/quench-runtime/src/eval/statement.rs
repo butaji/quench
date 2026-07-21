@@ -169,11 +169,37 @@ pub fn eval_statement(
                 .set_object_binding(Rc::clone(&obj_rc));
             {
                 let obj_borrowed = obj_rc.borrow();
+                // Check Symbol.unscopables (§13.11.7): properties blocked by
+                // unscopables are not added to the with-scope.
+                let unscopables_val = obj_borrowed
+                    .symbol_properties
+                    .iter()
+                    .find_map(|(k, v)| {
+                        if k.starts_with("Symbol(") && k.contains("unscopables") {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| obj_borrowed.properties.get("unscopables").cloned());
+                let blocked: std::collections::HashSet<String> =
+                    if let Some(Value::Object(u_obj)) = unscopables_val {
+                        let u = u_obj.borrow();
+                        u.properties
+                            .iter()
+                            .filter(|(_, v)| crate::value::to_bool(v))
+                            .map(|(k, _)| k.clone())
+                            .collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    };
                 for (key, value) in &obj_borrowed.properties {
-                    env.borrow_mut()
-                        .current_scope()
-                        .borrow_mut()
-                        .define(key.clone(), value.clone());
+                    if !blocked.contains(key) {
+                        env.borrow_mut()
+                            .current_scope()
+                            .borrow_mut()
+                            .define(key.clone(), value.clone());
+                    }
                 }
             }
             let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
