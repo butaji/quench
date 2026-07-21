@@ -181,7 +181,9 @@ pub fn eval_statement(
                             None
                         }
                     })
-                    .or_else(|| obj_borrowed.properties.get("unscopables").cloned());
+                    // Also check regular properties (the key might be the
+                    // Symbol description string like "Symbol.unscopables")
+                    .or_else(|| obj_borrowed.properties.get("Symbol.unscopables").cloned());
                 let blocked: std::collections::HashSet<String> =
                     if let Some(Value::Object(u_obj)) = unscopables_val {
                         let u = u_obj.borrow();
