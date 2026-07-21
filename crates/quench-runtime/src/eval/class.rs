@@ -53,6 +53,22 @@ pub fn eval_class_expr(
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
 
+    // Set the class constructor's own [[Prototype]] (the superclass constructor).
+    // This is what Object.getPrototypeOf(C) should return.
+    if let Some(ref super_class_expr) = new_value.super_class {
+        let super_class_val = eval_expression(super_class_expr, &class_scope, false)?;
+        let super_class_proto =
+            crate::eval::class::helpers::get_super_class_own_proto(&super_class_val);
+        new_value.set_super_class_own_proto(super_class_proto);
+    } else {
+        // No extends: C's own [[Prototype]] is %FunctionPrototype%
+        // (classes are functions, so they inherit from Function.prototype)
+        use crate::builtins;
+        if let Some(fp) = builtins::get_function_prototype() {
+            new_value.set_super_class_own_proto(Some(Value::Object(fp)));
+        }
+    }
+
     let class_value = Value::Class(new_value.clone());
     for (name, value_expr) in &new_value.static_fields {
         let child_env: Rc<RefCell<Environment>> =

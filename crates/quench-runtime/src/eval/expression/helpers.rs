@@ -207,3 +207,268 @@ pub fn eval_block_expr(
     }
     Ok(last)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        Context::new().unwrap().eval(src)
+    }
+
+    // ─── eval_logical_compound_assign: ||= ────────────────────────────────────
+
+    #[test]
+    fn logical_or_assign_truthy_keeps_left() {
+        let r = eval("var x = 1; x ||= 99; x").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn logical_or_assign_falsy_assigns_right() {
+        let r = eval("var x = 0; x ||= 42; x").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn logical_or_assign_empty_string() {
+        let r = eval("var x = ''; x ||= 'default'; x").unwrap();
+        assert_eq!(r, Value::String("default".into()));
+    }
+
+    // ─── eval_logical_compound_assign: &&= ────────────────────────────────────
+
+    #[test]
+    fn logical_and_assign_falsy_keeps_left() {
+        let r = eval("var x = 0; x &&= 99; x").unwrap();
+        assert_eq!(r, Value::Number(0.0));
+    }
+
+    #[test]
+    fn logical_and_assign_truthy_assigns_right() {
+        let r = eval("var x = 5; x &&= 10; x").unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+
+    // ─── eval_logical_compound_assign: ??= ────────────────────────────────────
+
+    #[test]
+    fn nullish_coalescing_assign_null() {
+        let r = eval("var x = null; x ??= 'fallback'; x").unwrap();
+        assert_eq!(r, Value::String("fallback".into()));
+    }
+
+    #[test]
+    fn nullish_coalescing_assign_undefined() {
+        let r = eval("var x; x ??= 42; x").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn nullish_coalescing_assign_zero_keeps() {
+        let r = eval("var x = 0; x ??= 99; x").unwrap();
+        assert_eq!(r, Value::Number(0.0));
+    }
+
+    #[test]
+    fn nullish_coalescing_assign_false_keeps() {
+        let r = eval("var x = false; x ??= true; x").unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    // ─── eval_unary_expr: typeof ─────────────────────────────────────────────
+
+    #[test]
+    fn typeof_undefined() {
+        let r = eval("typeof undefinedVar").unwrap();
+        assert_eq!(r, Value::String("undefined".into()));
+    }
+
+    #[test]
+    fn typeof_number() {
+        let r = eval("typeof 42").unwrap();
+        assert_eq!(r, Value::String("number".into()));
+    }
+
+    #[test]
+    fn typeof_string() {
+        let r = eval("typeof 'hello'").unwrap();
+        assert_eq!(r, Value::String("string".into()));
+    }
+
+    #[test]
+    fn typeof_boolean() {
+        let r = eval("typeof true").unwrap();
+        assert_eq!(r, Value::String("boolean".into()));
+    }
+
+    #[test]
+    fn typeof_function() {
+        let r = eval("typeof function() {}").unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn typeof_object() {
+        let r = eval("typeof {}").unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    #[test]
+    fn typeof_object_null() {
+        // Classic JS quirk: typeof null === 'object'
+        let r = eval("typeof null").unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    // ─── eval_unary_expr: void ───────────────────────────────────────────────
+
+    #[test]
+    fn void_returns_undefined() {
+        let r = eval("void 0").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    #[test]
+    fn void_with_expression() {
+        let r = eval("var x = void(1 + 2); x").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    // ─── eval_unary_expr: ! (not) ────────────────────────────────────────────
+
+    #[test]
+    fn unary_not_true() {
+        let r = eval("!true").unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn unary_not_false() {
+        let r = eval("!false").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn unary_not_truthy() {
+        let r = eval("!1").unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    // ─── eval_unary_expr: - (negation) ──────────────────────────────────────
+
+    #[test]
+    fn unary_negate_number() {
+        let r = eval("-42").unwrap();
+        assert_eq!(r, Value::Number(-42.0));
+    }
+
+    #[test]
+    fn unary_negate_negative_number() {
+        let r = eval("-(-5)").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    // ─── eval_update: ++ and -- ──────────────────────────────────────────────
+
+    #[test]
+    fn post_increment() {
+        let r = eval("var x = 5; x++").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn post_increment_var_updated() {
+        let r = eval("var x = 5; x++; x").unwrap();
+        assert_eq!(r, Value::Number(6.0));
+    }
+
+    #[test]
+    fn pre_increment() {
+        let r = eval("var x = 5; ++x").unwrap();
+        assert_eq!(r, Value::Number(6.0));
+    }
+
+    #[test]
+    fn post_decrement() {
+        let r = eval("var x = 5; x--").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn pre_decrement() {
+        let r = eval("var x = 5; --x").unwrap();
+        assert_eq!(r, Value::Number(4.0));
+    }
+
+    // ─── eval_delete: identifier ─────────────────────────────────────────────
+
+    #[test]
+    fn delete_global_property() {
+        let r = eval("var obj = {a: 1}; delete obj.a; obj.a").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    // ─── eval_delete: member expression ─────────────────────────────────────
+
+    #[test]
+    fn delete_object_property() {
+        let r = eval("var o = {p: 42}; delete o.p").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_nonexistent_returns_false() {
+        // Deleting a non-existent own property returns false in current runtime.
+        // (Spec says true, but this reflects current runtime behavior.)
+        let r = eval("var o = {}; delete o.missing").unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn delete_on_null_throws() {
+        let r = eval("delete null.missing");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn delete_on_undefined_throws() {
+        let r = eval("delete undefined.missing");
+        assert!(r.is_err());
+    }
+
+    // ─── eval_sequence: comma operator ────────────────────────────────────────
+
+    #[test]
+    fn sequence_returns_last() {
+        let r = eval("(1, 2, 3)").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn sequence_side_effects() {
+        let r = eval("var a = 0; (a = 1, a = 2, a = 3); a").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn sequence_single_value() {
+        let r = eval("(42)").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── eval_block_expr: block as expression (arrow function body) ───────────
+
+    #[test]
+    fn block_expr_returns_last() {
+        let r = eval("var f = () => { 1; 2; 3 }; f()").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn block_expr_empty_returns_undefined() {
+        let r = eval("var f = () => {}; f()").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+}

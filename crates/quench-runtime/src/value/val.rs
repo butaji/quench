@@ -84,8 +84,16 @@ pub struct ClassValue {
     pub static_fields: Vec<(PropertyKey, crate::ast::Expression)>,
     /// Superclass expression (None for no extends)
     pub(crate) super_class: Option<Box<crate::ast::Expression>>,
-    /// Cached prototype object for instanceof checks
-    /// Uses Rc so all clones of ClassValue share the same cache
+    /// The class constructor's own `[[Prototype]]` (the superclass constructor).
+    /// Used by Object.getPrototypeOf(class) to return the superclass, not
+    /// C.prototype (which is stored in prototype_cell). For `extends null`,
+    /// this is None, meaning Object.getPrototypeOf(C) returns null.
+    /// Uses Rc so all clones of ClassValue share the same value.
+    /// Stores `Value` directly: `Value::Class(super_class)` for `extends Base`,
+    /// or `Value::Object(Function.prototype)` for no-extends.
+    pub(crate) super_class_own_proto_cell: std::rc::Rc<std::cell::RefCell<Option<Value>>>,
+    /// Cached prototype object for instanceof checks (C.prototype).
+    /// Uses Rc so all clones of ClassValue share the same cache.
     pub(crate) prototype_cell:
         std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<std::cell::RefCell<Object>>>>>,
     /// Static field values (name -> value), initialized during class expression evaluation
@@ -132,6 +140,7 @@ impl ClassValue {
             instance_fields,
             static_fields,
             super_class: class.super_class.clone(),
+            super_class_own_proto_cell: std::rc::Rc::new(std::cell::RefCell::new(None::<Value>)),
             prototype_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_properties_cell: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
             deleted_properties: std::rc::Rc::new(std::cell::RefCell::new(
@@ -144,6 +153,14 @@ impl ClassValue {
     pub fn set_prototype(&self, proto: std::rc::Rc<std::cell::RefCell<Object>>) {
         let mut cell = self.prototype_cell.borrow_mut();
         *cell = Some(proto);
+    }
+
+    /// Set the class constructor's own `[[Prototype]]` (the superclass constructor).
+    /// For `extends null`, this should be set to None so that
+    /// Object.getPrototypeOf(class) returns null.
+    pub fn set_super_class_own_proto(&self, proto: Option<Value>) {
+        let mut cell = self.super_class_own_proto_cell.borrow_mut();
+        *cell = proto;
     }
 
     /// Set a static field value on this class

@@ -96,6 +96,16 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
         }
         Value::NativeFunction(nf) => Ok(nf.own_prototype.clone().unwrap_or(Value::Null)),
         Value::NativeConstructor(nc) => Ok(Value::Object(nc.prototype.clone())),
+        Value::Class(class) => {
+            // Object.getPrototypeOf(class) returns the class constructor's own
+            // [[Prototype]] — i.e., the superclass VALUE (or null for extends null).
+            // This is NOT C.prototype (stored in prototype_cell).
+            let cell = class.super_class_own_proto_cell.borrow();
+            if let Some(ref proto) = *cell {
+                return Ok(proto.clone());
+            }
+            Ok(Value::Null)
+        }
         _ => Err(JsError::from("Object.getPrototypeOf called on non-object")),
     }
 }

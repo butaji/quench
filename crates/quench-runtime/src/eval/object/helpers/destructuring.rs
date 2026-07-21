@@ -439,3 +439,149 @@ pub fn assign_to_identifier(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        Context::new().unwrap().eval(src)
+    }
+
+    // ─── box_primitive_for_set: Number ────────────────────────────────────────
+
+    #[test]
+    fn box_primitive_number() {
+        let r = eval("var n = Object(5); n.valueOf()").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn box_primitive_boolean() {
+        let r = eval("var b = Object(true); b.valueOf()").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    // ─── array destructuring ─────────────────────────────────────────────────
+
+    #[test]
+    fn array_destructuring_basic() {
+        let r = eval("var [a, b] = [1, 2]; a + b").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn array_destructuring_spread() {
+        let r = eval("var [first, ...rest] = [1, 2, 3]; rest[0] + rest[1]").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn array_destructuring_skip() {
+        let r = eval("var [, second] = [10, 20]; second").unwrap();
+        assert_eq!(r, Value::Number(20.0));
+    }
+
+    #[test]
+    fn array_destructuring_default() {
+        let r = eval("var [a = 1] = []; a").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn array_destructuring_nested() {
+        let r = eval("var [[inner]] = [[42]]; inner").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── object destructuring ────────────────────────────────────────────────
+
+    #[test]
+    fn object_destructuring_basic() {
+        let r = eval("var {x, y} = {x: 1, y: 2}; x + y").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn object_destructuring_rename() {
+        let r = eval("var {x: alias} = {x: 99}; alias").unwrap();
+        assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn object_destructuring_default() {
+        let r = eval("var {missing = 5} = {}; missing").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn object_destructuring_nested() {
+        let r = eval("var {outer: {inner}} = {outer: {inner: 7}}; inner").unwrap();
+        assert_eq!(r, Value::Number(7.0));
+    }
+
+    #[test]
+    fn object_destructuring_rest() {
+        let r = eval("var {a, ...rest} = {a: 1, b: 2, c: 3}; rest.b + rest.c").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    // ─── compute_property_key ────────────────────────────────────────────────
+
+    #[test]
+    fn destructuring_string_key() {
+        let r = eval("var {'foo': x} = {'foo': 42}; x").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── assign_binding_elem: identifier assignment ───────────────────────────
+
+    #[test]
+    fn binding_elem_identifier_const() {
+        let r = eval("const x = 5; x").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn binding_elem_identifier_let() {
+        let r = eval("let y = 10; y").unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+
+    // ─── assign_to_identifier: const assignment throws ─────────────────────
+
+    #[test]
+    fn assign_to_const_throws() {
+        let r = eval("const x = 1; x = 2");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn assign_to_undeclared_strict_throws() {
+        let r = eval("'use strict'; z = 1");
+        assert!(r.is_err());
+    }
+
+    // ─── string is iterable for destructuring ────────────────────────────────
+
+    #[test]
+    fn string_is_iterable_for_destructuring() {
+        let r = eval("var [a, b, c] = 'xyz'; a + b + c").unwrap();
+        assert_eq!(r, Value::String("xyz".into()));
+    }
+
+    // ─── assign_array_with_iterator: excess bindings ────────────────────────
+
+    #[test]
+    fn array_destructuring_fewer_values() {
+        let r = eval("var [a, b, c] = [1]; b").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    #[test]
+    fn array_destructuring_more_values() {
+        let r = eval("var [a] = [1, 2, 3]; a").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+}

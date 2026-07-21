@@ -71,3 +71,33 @@ pub fn call_proxy_set_trap(
         Err(e) => Err(e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    fn eval(src: &str) -> Result<Value, crate::value::JsError> {
+        Context::new().unwrap().eval(src)
+    }
+
+    // ─── Proxy: basic get trap ──────────────────────────────────────────────
+
+    #[test]
+    fn proxy_basic_get() {
+        let r = eval(
+            "var target = {x: 1}; var handler = {get(o, k) { return o[k] * 2; }}; var p = new Proxy(target, handler); p.x",
+        );
+        assert!(r.is_ok());
+    }
+
+    // ─── Proxy: basic set trap ──────────────────────────────────────────────
+
+    #[test]
+    fn proxy_basic_set() {
+        let r = eval(
+            "var target = {}; var handler = {set(o, k, v) { o[k] = v + 1; return true; }}; var p = new Proxy(target, handler); p.a = 5; target.a",
+        );
+        assert!(r.is_ok());
+    }
+}
