@@ -98,3 +98,74 @@ fn setup_intl_static_methods(intl: &Rc<RefCell<Object>>) {
     });
     intl.borrow_mut().set("supportedValuesOf", Value::NativeFunction(Rc::new(svo)));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Context;
+
+    fn eval_ok(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
+    #[test]
+    fn intl_exists_as_global() {
+        let result = eval_ok("typeof Intl");
+        assert_eq!(result.to_string(), "object");
+    }
+
+    #[test]
+    fn intl_datetimeformat_exists() {
+        let result = eval_ok("typeof Intl.DateTimeFormat");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_datetimeformat_creates_instance() {
+        let result = eval_ok("(new Intl.DateTimeFormat()).format");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_numberformat_exists() {
+        let result = eval_ok("typeof Intl.NumberFormat");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_numberformat_creates_instance() {
+        let result = eval_ok("(new Intl.NumberFormat()).format");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_segmenter_exists() {
+        let result = eval_ok("typeof Intl.Segmenter");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_get_canonical_locales_exists() {
+        let result = eval_ok("typeof Intl.getCanonicalLocales");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_get_canonical_locales_returns_array() {
+        let result = eval_ok("Array.isArray(Intl.getCanonicalLocales(['en-US']))");
+        assert_eq!(result.to_string(), "true");
+    }
+
+    #[test]
+    fn intl_supported_values_of_exists() {
+        let result = eval_ok("typeof Intl.supportedValuesOf");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn intl_supported_values_of_returns_array() {
+        let result = eval_ok("Array.isArray(Intl.supportedValuesOf('timeZone'))");
+        assert_eq!(result.to_string(), "true");
+    }
+}

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Do TDD. We need Rust core covered with unit tests.
+Do TDD. We need Rust core covered with unit tests. Dont duplicated test262 coverage, but cover with unit tests core stability, things not covered with test262.
 
 Dont do debug code. Dont do debug prints. Do unit tests.
 

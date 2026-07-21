@@ -1400,7 +1400,10 @@ mod do_while_statement {
     #[test]
     fn do_while_returns_last_body_value() {
         // When condition becomes false, return the body completion value
-        assert_eq!(eval("let x = 0; do { x++; } while (x < 3); x").unwrap(), Value::Number(3.0));
+        assert_eq!(
+            eval("let x = 0; do { x++; } while (x < 3); x").unwrap(),
+            Value::Number(3.0)
+        );
     }
 
     #[test]
@@ -1412,7 +1415,10 @@ mod do_while_statement {
 
     #[test]
     fn do_while_returns_expression_value() {
-        assert_eq!(eval("do { 42; } while (false)").unwrap(), Value::Number(42.0));
+        assert_eq!(
+            eval("do { 42; } while (false)").unwrap(),
+            Value::Number(42.0)
+        );
     }
 
     #[test]
@@ -1444,7 +1450,8 @@ mod do_while_statement {
         // i=1,2: continue skips j++. i=3,4: j++ runs. i=5: exit.
         // j ends at 3 (j=1 at i=3, j=2 at i=4, j=3 at i=5).
         assert_eq!(
-            eval("let i = 0, j = 0; do { i++; if (i < 3) continue; j++; } while (i < 5); j").unwrap(),
+            eval("let i = 0, j = 0; do { i++; if (i < 3) continue; j++; } while (i < 5); j")
+                .unwrap(),
             Value::Number(3.0)
         );
     }
@@ -1457,7 +1464,8 @@ mod do_while_statement {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var result = ''").unwrap();
         assert_eq!(
-            ctx.eval(r#"
+            ctx.eval(
+                r#"
                 var result = "";
                 do_out: do {
                     result += "A";
@@ -1469,7 +1477,9 @@ mod do_while_statement {
                     result += "C";
                 } while (2==1);
                 result;
-            "#).unwrap(),
+            "#
+            )
+            .unwrap(),
             Value::String("ABC".to_string())
         );
     }
@@ -1477,6 +1487,9 @@ mod do_while_statement {
     #[test]
     fn do_while_body_completion_from_expression() {
         // The test S12.6.1_A3: do __in__do=1; while(false) should return 1
-        assert_eq!(eval("var x = 0; do x = 1; while (false); x").unwrap(), Value::Number(1.0));
+        assert_eq!(
+            eval("var x = 0; do x = 1; while (false); x").unwrap(),
+            Value::Number(1.0)
+        );
     }
 }

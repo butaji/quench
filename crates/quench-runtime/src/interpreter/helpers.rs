@@ -500,3 +500,252 @@ pub fn has_legacy_octal(source: &str) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::{Expression, Statement, VarKind};
+
+    // ── check_use_strict_directive ───────────────────────────────────────────────
+
+    #[test]
+    fn test_check_use_strict_true() {
+        let stmts = vec![Statement::Expression(Box::new(Expression::String(
+            "use strict".to_string(),
+        )))];
+        assert!(crate::interpreter::helpers::check_use_strict_directive(
+            &stmts
+        ));
+    }
+
+    #[test]
+    fn test_check_use_strict_with_whitespace() {
+        let stmts = vec![Statement::Expression(Box::new(Expression::String(
+            "  use strict  ".to_string(),
+        )))];
+        assert!(crate::interpreter::helpers::check_use_strict_directive(
+            &stmts
+        ));
+    }
+
+    #[test]
+    fn test_check_use_strict_false_number() {
+        let stmts = vec![Statement::Expression(Box::new(Expression::Number(1.0)))];
+        assert!(!crate::interpreter::helpers::check_use_strict_directive(
+            &stmts
+        ));
+    }
+
+    #[test]
+    fn test_check_use_strict_false_identifier() {
+        let stmts = vec![Statement::Expression(Box::new(Expression::Identifier(
+            "use strict".to_string(),
+        )))];
+        assert!(!crate::interpreter::helpers::check_use_strict_directive(
+            &stmts
+        ));
+    }
+
+    #[test]
+    fn test_check_use_strict_empty() {
+        let stmts: Vec<Statement> = vec![];
+        assert!(!crate::interpreter::helpers::check_use_strict_directive(
+            &stmts
+        ));
+    }
+
+    // ── collect_var_names ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_collect_var_names_simple() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Var,
+            name: "x".to_string(),
+            init: None,
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(names.contains(&"x".to_string()));
+    }
+
+    #[test]
+    fn test_collect_var_names_ignores_let() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Let,
+            name: "y".to_string(),
+            init: None,
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(!names.contains(&"y".to_string()));
+    }
+
+    #[test]
+    fn test_collect_var_names_ignores_const() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Const,
+            name: "z".to_string(),
+            init: None,
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(!names.contains(&"z".to_string()));
+    }
+
+    #[test]
+    fn test_collect_var_names_deduplicates() {
+        let stmts = vec![
+            Statement::VarDeclaration {
+                kind: VarKind::Var,
+                name: "x".to_string(),
+                init: None,
+            },
+            Statement::VarDeclaration {
+                kind: VarKind::Var,
+                name: "x".to_string(),
+                init: None,
+            },
+        ];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert_eq!(names.iter().filter(|n| *n == "x").count(), 1);
+    }
+
+    #[test]
+    fn test_collect_var_names_nested() {
+        let stmts = vec![Statement::Block(vec![Statement::VarDeclaration {
+            kind: VarKind::Var,
+            name: "nested".to_string(),
+            init: None,
+        }])];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(names.contains(&"nested".to_string()));
+    }
+
+    // ── collect_let_const_declarations ──────────────────────────────────────────
+
+    #[test]
+    fn test_collect_let_const_let() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Let,
+            name: "a".to_string(),
+            init: None,
+        }];
+        let decls = crate::interpreter::helpers::collect_let_const_declarations(&stmts);
+        assert!(decls.contains(&("a".to_string(), VarKind::Let)));
+    }
+
+    #[test]
+    fn test_collect_let_const_const() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Const,
+            name: "b".to_string(),
+            init: None,
+        }];
+        let decls = crate::interpreter::helpers::collect_let_const_declarations(&stmts);
+        assert!(decls.contains(&("b".to_string(), VarKind::Const)));
+    }
+
+    #[test]
+    fn test_collect_let_const_ignores_var() {
+        let stmts = vec![Statement::VarDeclaration {
+            kind: VarKind::Var,
+            name: "c".to_string(),
+            init: None,
+        }];
+        let decls = crate::interpreter::helpers::collect_let_const_declarations(&stmts);
+        assert!(decls.is_empty());
+    }
+
+    #[test]
+    fn test_collect_let_const_deduplicates() {
+        let stmts = vec![
+            Statement::VarDeclaration {
+                kind: VarKind::Let,
+                name: "dup".to_string(),
+                init: None,
+            },
+            Statement::VarDeclaration {
+                kind: VarKind::Let,
+                name: "dup".to_string(),
+                init: None,
+            },
+        ];
+        let decls = crate::interpreter::helpers::collect_let_const_declarations(&stmts);
+        assert_eq!(decls.len(), 1);
+    }
+
+    // ── has_legacy_octal ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_legacy_octal_basic() {
+        assert!(crate::interpreter::helpers::has_legacy_octal("01"));
+        assert!(crate::interpreter::helpers::has_legacy_octal("07"));
+        assert!(crate::interpreter::helpers::has_legacy_octal("010"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_zero_alone() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0;"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal(""));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_hex_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0xFF"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0x1"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_binary_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0b01"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0B1"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_after_digit() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("10"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("20"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_in_string_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("\"01\""));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("'07'"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_in_template_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("`01`"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_in_comment_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal(
+            "// 01\nvar x;"
+        ));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("/* 07 */"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_regex_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("/01/"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("x = /01/"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_8_9_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("08"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("09"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_after_e_ignored() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal("1e01"));
+        assert!(!crate::interpreter::helpers::has_legacy_octal("1E07"));
+    }
+
+    #[test]
+    fn test_has_legacy_octal_n_suffix_ignored() {
+        // 0n (BigInt zero) should not be flagged as octal
+        assert!(!crate::interpreter::helpers::has_legacy_octal("0n"));
+        // But 01n is still legacy octal (01 before the n)
+        assert!(crate::interpreter::helpers::has_legacy_octal("01n"));
+    }
+}

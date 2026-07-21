@@ -200,7 +200,11 @@ if (r1 !== 1) throw new Error('C[f()] = 1 returned ' + r1 + ', expected 1');
 if (r2 !== 1) throw new Error('c[f()] = 1 returned ' + r2 + ', expected 1');
 "#,
         );
-        assert!(result.is_ok(), "computed setter assignment should return RHS: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "computed setter assignment should return RHS: {:?}",
+            result
+        );
     }
 
     #[test]

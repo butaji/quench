@@ -465,7 +465,6 @@ fn symbol_to_primitive_object_result_throws_type_error() {
     );
 }
 
-
 #[test]
 fn sloppy_delete_global_property_succeeds() {
     let mut ctx = Context::new().unwrap();
@@ -475,7 +474,6 @@ fn sloppy_delete_global_property_succeeds() {
     let after = ctx.eval("typeof __ref").unwrap();
     assert_eq!(after, crate::value::Value::String("undefined".to_string()));
 }
-
 
 #[test]
 fn debug_known_global() {
@@ -491,7 +489,6 @@ fn debug_set_global_directly() {
     let v = ctx.eval("typeof test_var").unwrap();
     assert_eq!(v, crate::value::Value::String("number".to_string()));
 }
-
 
 #[test]
 fn debug_symbol_member() {

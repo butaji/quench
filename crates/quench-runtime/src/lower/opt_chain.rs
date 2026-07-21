@@ -183,3 +183,59 @@ fn make_nullish_check(base: &Expression) -> Expression {
         right: Box::new(undefined_check),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::{BinaryOp, Expression, PropertyKey};
+
+    #[test]
+    fn test_expression_equality() {
+        let a = Expression::Number(1.0);
+        let b = Expression::Number(1.0);
+        let c = Expression::Number(2.0);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_expression_null_undefined() {
+        assert_eq!(Expression::Null, Expression::Null);
+        assert_eq!(Expression::Undefined, Expression::Undefined);
+        assert_ne!(Expression::Null, Expression::Undefined);
+    }
+
+    #[test]
+    fn test_property_key_comparison() {
+        let k1 = PropertyKey::Ident("a".to_string());
+        let k2 = PropertyKey::Ident("a".to_string());
+        let k3 = PropertyKey::Ident("b".to_string());
+        assert_eq!(k1, k2);
+        assert_ne!(k1, k3);
+    }
+
+    #[test]
+    fn test_binary_op_precedence_different_ops() {
+        assert_eq!(BinaryOp::And.precedence(), 2);
+        assert_eq!(BinaryOp::Or.precedence(), 1);
+        assert!(BinaryOp::And.precedence() > BinaryOp::Or.precedence());
+    }
+
+    #[test]
+    fn test_expression_member() {
+        let expr = Expression::Member {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            property: PropertyKey::Ident("prop".to_string()),
+            computed: false,
+        };
+        assert_eq!(expr, expr);
+    }
+
+    #[test]
+    fn test_expression_call() {
+        let expr = Expression::Call {
+            callee: Box::new(Expression::Identifier("fn".to_string())),
+            arguments: vec![Expression::Number(1.0)],
+        };
+        assert_eq!(expr, expr);
+    }
+}

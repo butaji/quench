@@ -14,6 +14,7 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
         BinaryOp::Mul => Ok(Value::Number(to_number(left) * to_number(right))),
         BinaryOp::Div => Ok(Value::Number(to_number(left) / to_number(right))),
         BinaryOp::Mod => Ok(Value::Number(to_number(left) % to_number(right))),
+        BinaryOp::Pow => Ok(Value::Number(to_number(left).powf(to_number(right)))),
         BinaryOp::Eq => Ok(Value::Boolean(loose_eq(left, right))),
         BinaryOp::Neq => Ok(Value::Boolean(!loose_eq(left, right))),
         BinaryOp::LooseEq => Ok(Value::Boolean(loose_eq(left, right))),

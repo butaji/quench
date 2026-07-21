@@ -6,6 +6,7 @@
 pub mod assert_helpers;
 pub mod host262;
 pub mod property_helpers;
+pub mod test_deep_equal;
 
 use crate::value::function::NativeConstructor;
 use crate::value::{Object, ObjectKind};

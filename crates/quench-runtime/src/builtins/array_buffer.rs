@@ -46,3 +46,54 @@ pub fn register_array_buffer(ctx: &mut Context) {
 
     ctx.set_global("ArrayBuffer".to_string(), ab_fn);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Context;
+
+    fn eval_ok(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
+    fn eval_err(src: &str) -> bool {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).is_err()
+    }
+
+    #[test]
+    fn array_buffer_exists_as_global() {
+        let result = eval_ok("typeof ArrayBuffer");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn array_buffer_constructor_name() {
+        let result = eval_ok("ArrayBuffer.name");
+        assert!(!result.to_string().is_empty());
+    }
+
+    #[test]
+    fn array_buffer_constructor_with_length() {
+        let result = eval_ok("(new ArrayBuffer(8)).byteLength");
+        assert_eq!(result.to_string(), "8");
+    }
+
+    #[test]
+    fn array_buffer_constructor_with_zero_length() {
+        let result = eval_ok("(new ArrayBuffer(0)).byteLength");
+        assert_eq!(result.to_string(), "0");
+    }
+
+    #[test]
+    fn array_buffer_constructor_without_new_throws() {
+        assert!(eval_err("ArrayBuffer(8)"));
+    }
+
+    #[test]
+    fn array_buffer_prototype_exists() {
+        let result = eval_ok("ArrayBuffer.prototype");
+        assert!(!matches!(result, Value::Undefined));
+    }
+}
