@@ -19,7 +19,7 @@ mod tests;
 pub use helpers::*;
 
 /// Control flow for break/continue/return statements
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant, dead_code)]
 pub(crate) enum ControlFlow {
     Break,

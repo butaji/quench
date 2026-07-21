@@ -133,9 +133,15 @@ fn test_to_bool_objects_are_truthy() {
 }
 
 #[test]
-fn test_to_bool_bigint_is_truthy() {
+fn test_to_bool_bigint_zero_is_falsy() {
     let bi = num_bigint::BigInt::from(0);
-    assert!(to_bool(&Value::BigInt(Rc::new(bi))), "BigInt(0) is truthy");
+    assert!(!to_bool(&Value::BigInt(Rc::new(bi))), "BigInt(0) is falsy");
+}
+
+#[test]
+fn test_to_bool_bigint_nonzero_is_truthy() {
+    let bi = num_bigint::BigInt::from(1);
+    assert!(to_bool(&Value::BigInt(Rc::new(bi))), "BigInt(1) is truthy");
 }
 
 // ─── to_number ──────────────────────────────────────────────────────────────
