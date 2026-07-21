@@ -401,11 +401,10 @@ pub fn eval_statement(
         Statement::Break(label) => {
             if let Some(name) = label {
                 if !has_label(name) {
-                    let (err_val, js_err) =
-                        crate::value::error::create_js_error_with_type(
-                            &format!("undefined label '{}'", name),
-                            "SyntaxError",
-                        );
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        &format!("undefined label '{}'", name),
+                        "SyntaxError",
+                    );
                     crate::value::set_thrown_value(err_val);
                     return Err(js_err);
                 }
@@ -416,11 +415,10 @@ pub fn eval_statement(
         Statement::Continue(label) => {
             if let Some(name) = label {
                 if !has_label(name) {
-                    let (err_val, js_err) =
-                        crate::value::error::create_js_error_with_type(
-                            &format!("undefined label '{}'", name),
-                            "SyntaxError",
-                        );
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        &format!("undefined label '{}'", name),
+                        "SyntaxError",
+                    );
                     crate::value::set_thrown_value(err_val);
                     return Err(js_err);
                 }
@@ -428,11 +426,12 @@ pub fn eval_statement(
             set_control_flow(ControlFlow::Continue);
             Ok(Value::Undefined)
         }
-        Statement::TryCatch {
+        Statement::Try {
             body,
             param,
             handler,
-        } => eval_try_catch(body, param, handler, env, in_arrow_function),
+            finalizer,
+        } => eval_try(body, param, handler, finalizer, env, in_arrow_function),
         Statement::Throw(expr) => {
             let value = eval_expression(expr, env, in_arrow_function)?;
             let msg = to_js_string(&value);
@@ -699,10 +698,12 @@ fn eval_block(
     result
 }
 
-fn eval_try_catch(
+/// Evaluate a try-catch-finally statement
+fn eval_try(
     body: &Statement,
     param: &Option<String>,
-    handler: &Statement,
+    handler: &Option<Box<Statement>>,
+    finalizer: &Option<Box<Statement>>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -716,17 +717,113 @@ fn eval_try_catch(
             env.borrow_mut().declare_var(name, VarKind::Var);
         }
     }
-    match eval_statement(body, env, false, in_arrow_function) {
-        Ok(v) => Ok(v),
-        Err(_e) => {
-            // Take the thrown value and bind it to the catch param.
-            let thrown_value = take_thrown_value();
-            let thrown_value = thrown_value.unwrap_or(Value::Undefined);
-            if let Some(name) = param {
-                env.borrow_mut()
-                    .define(name.to_string(), thrown_value.clone());
+
+    // Evaluate the try body
+    let try_result = eval_statement(body, env, false, in_arrow_function);
+
+    // Handle the result
+    match try_result {
+        Ok(try_val) => {
+            // Try succeeded - run finally if present, propagate control flow if needed
+            if let Some(fin) = finalizer {
+                // Check for pending control flow before finally
+                let pending_cf = take_control_flow();
+                drop(pending_cf);
+
+                let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                match fin_result {
+                    Ok(_) => {
+                        // Finally completed normally - check if it set a new control flow
+                        if let Some(cf) = take_control_flow() {
+                            match cf {
+                                ControlFlow::Return(val) => {
+                                    set_control_flow(ControlFlow::Return(val));
+                                }
+                                ControlFlow::Break => {
+                                    set_control_flow(ControlFlow::Break);
+                                }
+                                ControlFlow::Continue => {
+                                    set_control_flow(ControlFlow::Continue);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Return the try value if no control flow override
+                        Ok(try_val)
+                    }
+                    Err(e) => Err(e), // Finally threw - propagate
+                }
+            } else {
+                Ok(try_val)
             }
-            eval_statement(handler, env, false, in_arrow_function)
+        }
+        Err(_e) => {
+            // Try threw - handle with catch if present
+            let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
+            let thrown_for_catch = thrown_value.clone();
+
+            if let Some(name) = param {
+                env.borrow_mut().define(name.to_string(), thrown_for_catch);
+            }
+
+            if let Some(h) = handler {
+                // Run catch block
+                let catch_result = eval_statement(h, env, false, in_arrow_function);
+
+                // Run finally if present
+                if let Some(fin) = finalizer {
+                    let pending_cf = take_control_flow();
+                    drop(pending_cf);
+
+                    let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                    match fin_result {
+                        Ok(_) => {
+                            // Propagate control flow from catch or finally
+                            if let Some(cf) = take_control_flow() {
+                                match cf {
+                                    ControlFlow::Return(val) => {
+                                        set_control_flow(ControlFlow::Return(val));
+                                    }
+                                    ControlFlow::Break => {
+                                        set_control_flow(ControlFlow::Break);
+                                    }
+                                    ControlFlow::Continue => {
+                                        set_control_flow(ControlFlow::Continue);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            // Return catch result if no control flow override
+                            catch_result
+                        }
+                        Err(e) => Err(e), // Finally threw
+                    }
+                } else {
+                    catch_result
+                }
+            } else {
+                // No catch - run finally if present, then rethrow
+                if let Some(fin) = finalizer {
+                    let pending_cf = take_control_flow();
+                    drop(pending_cf);
+
+                    let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                    match fin_result {
+                        Ok(_) => {
+                            // Finally completed normally - rethrow
+                            let msg = to_js_string(&thrown_value);
+                            set_thrown_value(thrown_value);
+                            Err(JsError(msg))
+                        }
+                        Err(e) => Err(e), // Finally threw - propagate that instead
+                    }
+                } else {
+                    // No finally, no catch - rethrow
+                    let msg = to_js_string(&thrown_value);
+                    set_thrown_value(thrown_value);
+                    Err(JsError(msg))
+                }
+            }
         }
     }
 }

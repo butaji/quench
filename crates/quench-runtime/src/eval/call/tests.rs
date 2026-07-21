@@ -592,4 +592,36 @@ mod call_tests {
         let r = ctx.eval("class C { method() { return (() => super.foo)(); } }");
         assert!(r.is_err() || r.as_ref().is_ok_and(|v| v == &Value::Undefined));
     }
+
+    // ─── spread operator tests ───────────────────────────────────────────────
+
+    #[test]
+    fn call_arguments_spread_nested() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval("function f(a, b, c, d) { return [a, b, c, d]; } f(1, ...[2, 3], 4);")
+            .unwrap();
+        // Result is an array-like object
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn call_arguments_spread_with_rest() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval("function f(a, ...rest) { return rest; } f(1, ...[2, 3, 4]);")
+            .unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    // ─── constructor with spread ─────────────────────────────────────────────
+
+    #[test]
+    fn new_with_spread() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval("function C(a, b, c) { this.arr = [a, b, c]; } var c = new C(...[1, 2, 3]); c.arr[0];")
+            .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
 }

@@ -304,7 +304,7 @@ fn test_to_bool_objects() {
 
 #[test]
 fn test_to_bool_class_gen_sym_bigint() {
-    let cls_val = Value::Class(ClassValue {
+    let cls_val = Value::Class(Box::new(ClassValue {
         id: 0,
         name: None,
         constructor_params: vec![],
@@ -323,7 +323,7 @@ fn test_to_bool_class_gen_sym_bigint() {
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
         class_def_env_cell: Rc::new(RefCell::new(None)),
-    });
+    }));
     assert!(to_bool(&cls_val));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
         Rc::new(vec![]),
@@ -460,7 +460,7 @@ fn test_to_object_identity_preserved() {
     ));
     assert!(matches!(to_object(&f), Value::Function(_)));
     assert!(matches!(to_object(&nf()), Value::NativeFunction(_)));
-    let cls_val = Value::Class(ClassValue {
+    let cls_val = Value::Class(Box::new(ClassValue {
         id: 0,
         name: None,
         constructor_params: vec![],
@@ -479,7 +479,7 @@ fn test_to_object_identity_preserved() {
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
         class_def_env_cell: Rc::new(RefCell::new(None)),
-    });
+    }));
     assert!(matches!(to_object(&cls_val), Value::Class(_)));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
         Rc::new(vec![]),

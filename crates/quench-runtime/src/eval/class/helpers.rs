@@ -27,7 +27,7 @@ pub fn instantiate_simple(
     let this_val = Value::Object(Rc::clone(&instance_rc));
     instance_rc
         .borrow_mut()
-        .set("constructor", Value::Class(class.clone()));
+        .set("constructor", Value::Class(Box::new(class.clone())));
 
     let body = class.constructor_body.clone();
     let call_env = build_constructor_env(class, &args, &this_val, env)?;
@@ -74,7 +74,7 @@ pub fn instantiate_with_fields(
     let this_val = Value::Object(Rc::clone(&instance_rc));
     instance_rc
         .borrow_mut()
-        .set("constructor", Value::Class(class.clone()));
+        .set("constructor", Value::Class(Box::new(class.clone())));
 
     let body = class.constructor_body.clone();
     let call_env = build_constructor_env(class, &args, &this_val, env)?;
@@ -171,7 +171,7 @@ pub fn call_super_or_default(
     match super_val {
         Value::Class(super_class) => {
             crate::eval::class::call_super_constructor(
-                super_class.clone(),
+                super_class.as_ref().clone(),
                 args,
                 this_val.clone(),
                 env,
@@ -240,8 +240,19 @@ fn stmt_contains_super_call(stmt: &Statement) -> bool {
         Statement::While { body, .. }
         | Statement::For { body, .. }
         | Statement::ForIn { body, .. } => stmt_contains_super_call(body),
-        Statement::TryCatch { body, handler, .. } => {
-            stmt_contains_super_call(body) || stmt_contains_super_call(handler)
+        Statement::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } => {
+            let in_handler = handler
+                .as_ref()
+                .is_some_and(|h| stmt_contains_super_call(h));
+            let in_finally = finalizer
+                .as_ref()
+                .is_some_and(|f| stmt_contains_super_call(f));
+            stmt_contains_super_call(body) || in_handler || in_finally
         }
         Statement::Return(Some(expr)) => expr_contains_super_call(expr),
         _ => false,
@@ -377,15 +388,15 @@ pub fn create_class_prototype_helper_with_env(
     }
     let member_closure = capture_env_for_closure(&closure);
 
-    for (name, params, body) in &class.methods {
+    for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
         let mut func = ValueFunction::new(
             Some(key_str.clone()),
             params.clone(),
             body.clone(),
             Rc::clone(&member_closure),
-            false,
-            false,
+            *is_async,
+            *is_generator,
         );
         func.strict = true;
         proto.set(&key_str, Value::Function(func));
@@ -592,5 +603,456 @@ mod tests {
             "plain object access should work, got {:?}",
             r
         );
+    }
+
+    // ─── instantiate_simple: class instantiation ───────────────────────────
+
+    #[test]
+    fn instantiate_simple_empty_class() {
+        let r = eval("class C {} new C()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn instantiate_simple_with_params() {
+        let r =
+            eval("class C { constructor(x, y) { this.sum = x + y; } } new C(3, 4).sum").unwrap();
+        assert_eq!(r, Value::Number(7.0));
+    }
+
+    #[test]
+    fn instantiate_simple_excess_args_ignored() {
+        let r = eval("class C { constructor(a) { this.a = a; } } new C(1, 2, 3).a").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn instantiate_simple_explicit_args() {
+        let r =
+            eval("class C { constructor(x, y) { this.val = x + y; } } new C(10, 20).val").unwrap();
+        assert_eq!(r, Value::Number(30.0));
+    }
+
+    #[test]
+    fn instantiate_simple_empty_body_no_super() {
+        // Empty class with no extends: should instantiate fine
+        let r = eval("class C {} var c = new C(); c instanceof C").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    // ─── instantiate_simple: with extends ──────────────────────────────────
+
+    #[test]
+    fn instantiate_simple_extends_calls_super() {
+        let r = eval(
+            "class Base { constructor(x) { this.x = x * 2; } } class Derived extends Base { constructor(x) { super(x); } } new Derived(5).x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+
+    #[test]
+    fn instantiate_simple_extends_proto_chain() {
+        let r = eval("class Base {} class Derived extends Base {} new Derived() instanceof Base")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    // ─── instantiate_simple: method on prototype ───────────────────────────
+
+    #[test]
+    fn instantiate_simple_method_accessible() {
+        let r = eval("class C { foo() { return 42; } } new C().foo()").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── create_class_prototype_helper_with_env ─────────────────────────────
+
+    #[test]
+    fn class_prototype_has_method() {
+        let r = eval("class C { bar() { return 'bar'; } } typeof C.prototype.bar").unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn class_prototype_getter() {
+        let r = eval("class C { get val() { return 99; } } new C().val").unwrap();
+        assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn class_prototype_setter() {
+        let r =
+            eval("class C { set val(v) { this._v = v * 2; } } var c = new C(); c.val = 5; c._v")
+                .unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+
+    #[test]
+    fn class_multiple_methods() {
+        let r = eval(
+            "class C { m1() { return 1; } m2() { return 2; } m3() { return 3; } } [new C().m1(), new C().m2(), new C().m3()]",
+        )
+        .unwrap();
+        assert!(matches!(r, Value::Object(_)));
+        if let Value::Object(o) = &r {
+            assert_eq!(o.borrow().get("length"), Some(Value::Number(3.0)));
+        }
+    }
+
+    // ─── create_class_prototype_helper_with_env: error cases ───────────────
+
+    #[test]
+    fn class_extends_non_constructor_throws() {
+        let r = eval("class C extends 42 {}");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn class_extends_string_throws() {
+        let r = eval("class C extends 'hello' {}");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn class_extends_object_not_constructor() {
+        let r = eval("var obj = {}; class C extends obj {}");
+        assert!(r.is_err());
+    }
+
+    // ─── prop_key_to_string ────────────────────────────────────────────────
+
+    #[test]
+    fn prop_key_computed_expression() {
+        let r = eval(
+            "var k = 'dynamic'; class C { [k]() { return 'found'; } } C.prototype['dynamic'].name",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("dynamic".into()));
+    }
+
+    #[test]
+    fn prop_key_computed_number() {
+        let r = eval("class C { [1 + 2]() { return 'three'; } } C.prototype['3'].name").unwrap();
+        assert_eq!(r, Value::String("3".into()));
+    }
+
+    #[test]
+    fn prop_key_computed_symbol() {
+        let r = eval(
+            "class C { [Symbol.for('test')]() { return 'symbol'; } } var desc = Object.getOwnPropertyNames(C.prototype)[0]; desc !== 'constructor'",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn prop_key_method_name_on_prototype() {
+        let r = eval("class C { someMethod() {} } C.prototype.someMethod.name").unwrap();
+        assert_eq!(r, Value::String("someMethod".into()));
+    }
+
+    // ─── build_constructor_env ───────────────────────────────────────────────
+
+    #[test]
+    fn constructor_env_sets_this() {
+        let r = eval("class C { constructor() { this.check = this !== null; } } new C().check")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn constructor_env_has_arguments() {
+        let r = eval(
+            "class C { constructor(a, b, c) { this.first = arguments[0]; this.len = arguments.length; } } new C(1, 2).first",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn constructor_env_no_extra_args() {
+        let r = eval(
+            "class C { constructor() { this.len = arguments.length; } } new C(1, 2, 3, 4, 5).len",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    // ─── finish_constructor ─────────────────────────────────────────────────
+
+    #[test]
+    fn finish_constructor_returns_function() {
+        let r = eval("new function() { return function() {}; }").unwrap();
+        assert!(matches!(r, Value::Function(_)));
+    }
+
+    #[test]
+    fn finish_constructor_returns_native_constructor() {
+        let r = eval("new function() { return Object; }").unwrap();
+        assert!(matches!(r, Value::NativeConstructor(_)));
+    }
+
+    #[test]
+    fn finish_constructor_returns_null_uses_this() {
+        let r = eval("new function() { return null; }").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn finish_constructor_returns_undefined_uses_this() {
+        let r = eval("new function() { return; }").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn finish_constructor_returns_string_uses_this() {
+        let r = eval("new function() { return 'string'; }").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    // ─── instantiate_simple: edge cases ────────────────────────────────────
+
+    #[test]
+    fn instantiate_with_field_init_order() {
+        // Fields should be initialized in order
+        let r = eval(
+            "class C { x = 1; y = this.x + 1; z = this.y + 1; } var c = new C(); [c.x, c.y, c.z]",
+        )
+        .unwrap();
+        assert!(matches!(r, Value::Object(_)));
+        if let Value::Object(o) = &r {
+            assert_eq!(o.borrow().get("length"), Some(Value::Number(3.0)));
+        }
+    }
+
+    #[test]
+    fn class_constructor_reassigns_this_prop() {
+        // Constructor can reassign properties set by fields
+        let r = eval("class C { x = 10; constructor() { this.x = 20; } } new C().x").unwrap();
+        assert_eq!(r, Value::Number(20.0));
+    }
+
+    // ─── check_first_is_super_call and body_calls_super_call ───────────────
+
+    #[test]
+    fn super_call_not_first() {
+        // super() is not the first statement, but is called
+        let r = eval(
+            "class Base { constructor(x) { this.x = x; } } class Derived extends Base { constructor(x) { this.y = 1; super(x); } } new Derived(42).x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn super_call_in_conditional() {
+        // super() in conditional expression
+        let r = eval(
+            "class Base { constructor(x) { this.x = x; } } class Derived extends Base { constructor(x) { true && super(x); } } new Derived(7).x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(7.0));
+    }
+
+    #[test]
+    fn super_reference_in_closure() {
+        // super reference captured in closure called from constructor
+        let r = eval(
+            "class Base { getX() { return 42; } } class Derived extends Base { constructor() { var self = this; this.result = self.getX(); } } new Derived().result",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    // ─── is_constructor_value ───────────────────────────────────────────────
+
+    #[test]
+    fn bound_function_not_constructor() {
+        let r = eval("var fn = function() {}.bind(null); new fn()");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn class_expression_is_constructor() {
+        let r = eval("var C = class {}; new C()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    // ─── get_super_class_own_proto ─────────────────────────────────────────
+
+    #[test]
+    fn class_extends_function() {
+        // Class extending Function should work
+        let r = eval("class C extends Function {} typeof C");
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn class_extends_object() {
+        // Class extending Object should work
+        let r = eval("class C extends Object {} new C()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    // ─── create_arguments_object_simple ───────────────────────────────────
+
+    #[test]
+    fn arguments_object_index_access() {
+        let r = eval("function f(a, b) { return arguments[1]; } f(1, 2)").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn arguments_object_length() {
+        let r = eval("function f() { return arguments.length; } f(1, 2, 3, 4)").unwrap();
+        assert_eq!(r, Value::Number(4.0));
+    }
+
+    #[test]
+    fn arguments_object_callee() {
+        let r = eval("function f() { return arguments.callee === f; } f()").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_static_getter_with_or_assign_computed_key() {
+        // Computed property key containing `x |= 1` assignment in STATIC getter.
+        // The key evaluation should NOT panic with RefCell already borrowed.
+        let r = eval(
+            r#"
+            var x = 0;
+            class C {
+                static get [x |= 1]() { return 2; }
+            }
+            C[x |= 1]
+            "#,
+        );
+        assert!(r.is_ok(), "Accessing computed static getter with |= assignment should not panic: {:?}", r);
+        assert_eq!(r.unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn class_instance_getter_with_or_assign_computed_key() {
+        // Instance getter (non-static) with |= computed key
+        let r = eval(
+            r#"
+            var x = 0;
+            class C {
+                get [x |= 1]() { return 3; }
+            }
+            new C()[x |= 1]
+            "#,
+        );
+        assert!(r.is_ok(), "Instance getter with |= computed key should work: {:?}", r);
+        assert_eq!(r.unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn class_static_computed_getter_simple_var() {
+        // Minimal test: computed static getter with a simple var reference
+        let r = eval(
+            r#"
+            var k = "foo";
+            class C {
+                static get [k]() { return 99; }
+            }
+            C[k]
+            "#,
+        );
+        let val = r.unwrap();
+        assert_eq!(val, Value::Number(99.0), "k='foo', getter at 'foo' should return 99");
+    }
+
+    #[test]
+    fn class_static_computed_getter_expr_no_side_effect() {
+        // Computed key with expression but no assignment side effects
+        let r = eval(
+            r#"
+            class C {
+                static get [1 + 1]() { return 77; }
+            }
+            C[2]
+            "#,
+        );
+        let val = r.unwrap();
+        assert_eq!(val, Value::Number(77.0));
+    }
+
+    #[test]
+    fn class_static_computed_getter_with_assignment_only() {
+        // Computed key with assignment, no member access side effect
+        let r = eval(
+            r#"
+            var x = 0;
+            class C {
+                static get [x = 5]() { return 88; }
+            }
+            C[5]
+            "#,
+        );
+        let val = r.unwrap();
+        assert_eq!(val, Value::Number(88.0));
+    }
+
+
+    #[test]
+    fn class_static_computed_getter_direct_access() {
+        // Direct access to the computed key getter on class
+        let r = eval(
+            r#"
+            var x = 0;
+            class C {
+                static get [x = 1]() { return 42; }
+            }
+            C[1]
+            "#,
+        );
+        let val = r.unwrap();
+        assert_eq!(val, Value::Number(42.0), "C[1] should return 42 from static getter");
+    }
+
+    #[test]
+    fn class_instance_getter_computed_undefined_key() {
+        // test262: cpn-class-decl-accessors-computed-property-name-from-function-declaration.js
+        // A function returning undefined as a computed property name.
+        // The getter should be callable on both the class (static) and instance.
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            var staticResult = C[f()];
+            var instanceResult = c[f()];
+            [staticResult, instanceResult]
+            "#,
+        );
+        assert!(r.is_ok(), "Class getter access should work: {:?}", r);
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(obj.get("0"), Some(Value::Number(1.0)), "static getter should return 1");
+            assert_eq!(obj.get("1"), Some(Value::Number(1.0)), "instance getter should return 1");
+        } else {
+            panic!("expected array result, got: {:?}", arr);
+        }
+    }
+
+    #[test]
+    fn class_with_computed_setter_using_assignment() {
+        let r = eval(
+            r#"
+            var x = 0;
+            class C {
+                set [x |= 1](v) { return 2; }
+            }
+            C[x |= 1] = 99
+            "#,
+        );
+        assert!(r.is_ok(), "Accessing computed setter with assignment should not panic: {:?}", r);
+        assert_eq!(r.unwrap(), Value::Number(99.0));
     }
 }

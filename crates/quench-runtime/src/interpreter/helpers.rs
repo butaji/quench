@@ -158,9 +158,19 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             Statement::For { body, .. } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
             }
-            Statement::TryCatch { body, handler, .. } => {
+            Statement::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
-                collect_var_names_recursive(std::slice::from_ref(handler.as_ref()), names);
+                if let Some(h) = handler {
+                    collect_var_names_recursive(std::slice::from_ref(h.as_ref()), names);
+                }
+                if let Some(f) = finalizer {
+                    collect_var_names_recursive(std::slice::from_ref(f.as_ref()), names);
+                }
             }
             Statement::SequenceDecls(inner) => collect_var_names_recursive(inner, names),
             Statement::ForIn { variable, body, .. } => {

@@ -445,3 +445,282 @@ fn test_primitive_hint_variants() {
     assert_eq!(PrimitiveHint::String, PrimitiveHint::String);
     assert_ne!(PrimitiveHint::Number, PrimitiveHint::String);
 }
+
+// ─── to_number edge cases ───────────────────────────────────────────────────
+
+#[test]
+fn test_to_number_undefined() {
+    assert!(to_number(&Value::Undefined).is_nan());
+}
+
+#[test]
+fn test_to_number_null() {
+    assert_eq!(to_number(&Value::Null), 0.0);
+}
+
+#[test]
+fn test_to_number_boolean() {
+    assert_eq!(to_number(&Value::Boolean(true)), 1.0);
+    assert_eq!(to_number(&Value::Boolean(false)), 0.0);
+}
+
+#[test]
+fn test_to_number_string_trimmed() {
+    assert_eq!(to_number(&Value::String("  42  ".to_string())), 42.0);
+}
+
+#[test]
+fn test_to_number_string_leading_plus() {
+    assert_eq!(to_number(&Value::String("+42".to_string())), 42.0);
+}
+
+#[test]
+fn test_to_number_string_leading_minus() {
+    assert_eq!(to_number(&Value::String("-42".to_string())), -42.0);
+}
+
+#[test]
+fn test_to_number_string_decimal_point() {
+    // "3.14" parses as 3.14 exactly (157/50)
+    assert_eq!(
+        to_number(&Value::String("3.14".to_string())),
+        157.0_f64 / 50.0
+    );
+}
+
+#[test]
+fn test_to_number_string_trailing_dot() {
+    assert_eq!(to_number(&Value::String("42.".to_string())), 42.0);
+}
+
+#[test]
+fn test_to_number_string_leading_dot() {
+    assert_eq!(to_number(&Value::String(".5".to_string())), 0.5);
+}
+
+// ─── to_primitive via Context ────────────────────────────────────────────
+
+// Note: to_primitive on plain objects requires Context for valueOf/toString evaluation.
+// These tests use Context::eval to test the full round-trip.
+
+#[test]
+fn test_to_primitive_with_valueof() {
+    let mut ctx = crate::Context::new().unwrap();
+    let r = ctx
+        .eval(
+            "var obj = { valueOf: function() { return 42; } }; \
+         Number(obj);",
+        )
+        .unwrap();
+    assert_eq!(r, Value::Number(42.0));
+}
+
+#[test]
+fn test_to_primitive_with_tostring() {
+    let mut ctx = crate::Context::new().unwrap();
+    let r = ctx
+        .eval(
+            "var obj = { toString: function() { return 'hello'; } }; \
+         String(obj);",
+        )
+        .unwrap();
+    assert_eq!(r, Value::String("hello".to_string()));
+}
+
+#[test]
+fn test_to_primitive_valueof_takes_precedence() {
+    let mut ctx = crate::Context::new().unwrap();
+    // When both valueOf and toString exist, valueOf takes precedence for number hint
+    let r = ctx
+        .eval(
+            "var obj = { \
+           valueOf: function() { return 42; }, \
+           toString: function() { return 'str'; } \
+         }; \
+         Number(obj);",
+        )
+        .unwrap();
+    assert_eq!(r, Value::Number(42.0));
+}
+
+#[test]
+fn test_to_number_empty_string() {
+    assert_eq!(to_number(&Value::String(String::new())), 0.0);
+}
+
+#[test]
+fn test_to_number_whitespace_string() {
+    assert_eq!(to_number(&Value::String("   ".to_string())), 0.0);
+    assert_eq!(to_number(&Value::String("\t\n".to_string())), 0.0);
+}
+
+#[test]
+fn test_to_number_leading_trailing_whitespace() {
+    assert_eq!(to_number(&Value::String("  42  ".to_string())), 42.0);
+    assert_eq!(to_number(&Value::String("\t123\n".to_string())), 123.0);
+}
+
+#[test]
+fn test_to_number_leading_plus() {
+    assert_eq!(to_number(&Value::String("+42".to_string())), 42.0);
+}
+
+#[test]
+fn test_to_number_leading_minus() {
+    assert_eq!(to_number(&Value::String("-42".to_string())), -42.0);
+}
+
+#[test]
+fn test_to_number_decimal_formats() {
+    assert_eq!(
+        to_number(&Value::String("3.14".to_string())),
+        157.0_f64 / 50.0
+    );
+    assert_eq!(to_number(&Value::String("42.".to_string())), 42.0);
+    assert_eq!(to_number(&Value::String(".5".to_string())), 0.5);
+    assert_eq!(to_number(&Value::String("-0.5".to_string())), -0.5);
+}
+
+#[test]
+fn test_to_number_scientific_notation() {
+    assert_eq!(to_number(&Value::String("1e3".to_string())), 1000.0);
+    assert_eq!(to_number(&Value::String("2.5e2".to_string())), 250.0);
+    assert_eq!(to_number(&Value::String("1E-1".to_string())), 0.1);
+}
+
+#[test]
+fn test_to_number_explicit_infinity() {
+    assert_eq!(
+        to_number(&Value::String("Infinity".to_string())),
+        f64::INFINITY
+    );
+    assert_eq!(
+        to_number(&Value::String("-Infinity".to_string())),
+        f64::NEG_INFINITY
+    );
+    assert_eq!(
+        to_number(&Value::String("+Infinity".to_string())),
+        f64::INFINITY
+    );
+}
+
+#[test]
+fn test_to_number_invalid_returns_nan() {
+    assert!(to_number(&Value::String("hello".to_string())).is_nan());
+    assert!(to_number(&Value::String("0xGG".to_string())).is_nan());
+    assert!(to_number(&Value::String("0b123".to_string())).is_nan());
+    assert!(to_number(&Value::String("0o89".to_string())).is_nan());
+    assert!(to_number(&Value::String("true".to_string())).is_nan());
+    assert!(to_number(&Value::String("null".to_string())).is_nan());
+}
+
+#[test]
+fn test_to_number_undefined_is_nan() {
+    assert!(to_number(&Value::Undefined).is_nan());
+}
+
+#[test]
+fn test_to_number_object_is_nan() {
+    let obj = Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+    assert!(to_number(&obj).is_nan());
+}
+
+// ─── strict_eq BigInt / Symbol ─────────────────────────────────────────
+
+#[test]
+fn test_strict_eq_same_bigint() {
+    let bi = num_bigint::BigInt::from(42);
+    assert!(strict_eq(
+        &Value::BigInt(Rc::new(bi.clone())),
+        &Value::BigInt(Rc::new(bi))
+    ));
+}
+
+#[test]
+fn test_strict_eq_different_bigint() {
+    let a = Value::BigInt(Rc::new(num_bigint::BigInt::from(1)));
+    let b = Value::BigInt(Rc::new(num_bigint::BigInt::from(2)));
+    assert!(!strict_eq(&a, &b));
+}
+
+#[test]
+fn test_strict_eq_bigint_zero() {
+    let a = Value::BigInt(Rc::new(num_bigint::BigInt::from(0)));
+    let b = Value::BigInt(Rc::new(num_bigint::BigInt::from(0)));
+    assert!(strict_eq(&a, &b));
+}
+
+#[test]
+fn test_strict_eq_same_symbol() {
+    let sym = Rc::new(Symbol {
+        desc: Some("test".into()),
+        global: false,
+    });
+    assert!(strict_eq(&Value::Symbol(sym.clone()), &Value::Symbol(sym)));
+}
+
+#[test]
+fn test_strict_eq_different_symbols() {
+    let a = Value::Symbol(Rc::new(Symbol {
+        desc: Some("a".into()),
+        global: false,
+    }));
+    let b = Value::Symbol(Rc::new(Symbol {
+        desc: Some("a".into()),
+        global: false,
+    }));
+    assert!(
+        !strict_eq(&a, &b),
+        "Symbols with same desc are different objects"
+    );
+}
+
+#[test]
+fn test_strict_eq_symbol_no_desc() {
+    let sym = Rc::new(Symbol {
+        desc: None,
+        global: false,
+    });
+    assert!(strict_eq(&Value::Symbol(sym.clone()), &Value::Symbol(sym)));
+}
+
+// ─── to_primitive deeper cases ────────────────────────────────────────
+
+#[test]
+fn test_to_primitive_valueof_returns_object_falls_back_to_string() {
+    let mut ctx = crate::Context::new().unwrap();
+    // valueOf returns object → used as fallback
+    let r = ctx.eval(
+        "var obj = { valueOf: function() { return {}; }, toString: function() { return 'fallback'; } }; String(obj)"
+    ).unwrap();
+    assert_eq!(r, Value::String("fallback".to_string()));
+}
+
+#[test]
+fn test_to_primitive_both_return_object() {
+    let mut ctx = crate::Context::new().unwrap();
+    // Both return objects → default to "[object Object]"
+    let r = ctx.eval(
+        "var obj = { valueOf: function() { return {}; }, toString: function() { return {}; } }; String(obj)"
+    ).unwrap();
+    assert_eq!(r, Value::String("[object Object]".to_string()));
+}
+
+#[test]
+fn test_to_primitive_tostring_only_for_string_hint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let r = ctx
+        .eval("var obj = { toString: function() { return 'custom'; } }; String(obj)")
+        .unwrap();
+    assert_eq!(r, Value::String("custom".to_string()));
+}
+
+#[test]
+fn test_to_primitive_function_identity() {
+    // Two different function objects are never strict-equal
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("function f(){} function g(){} f !== g").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+    let result = ctx.eval("function f(){} f === f").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}

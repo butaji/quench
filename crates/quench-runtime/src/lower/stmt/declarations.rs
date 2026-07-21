@@ -312,17 +312,23 @@ fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
             }
         }
         _ => {
+            let is_async = method.value.r#async;
+            let is_generator = method.value.generator;
             if is_static {
                 Some(ClassMember::StaticMethod {
                     name,
                     params: ps,
                     body,
+                    is_async,
+                    is_generator,
                 })
             } else {
                 Some(ClassMember::Method {
                     name,
                     params: ps,
                     body,
+                    is_async,
+                    is_generator,
                 })
             }
         }

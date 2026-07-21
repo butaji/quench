@@ -40,7 +40,7 @@ pub fn eval_class_expr(
             .current_scope()
             .borrow_mut()
             .declare_var(name.to_string(), VarKind::Const);
-        let class_val = Value::Class(new_value.clone());
+        let class_val = Value::Class(Box::new(new_value.clone()));
         scope_env
             .borrow_mut()
             .current_scope()
@@ -72,8 +72,10 @@ pub fn eval_class_expr(
         }
     }
 
-    let class_value = Value::Class(new_value.clone());
-    for (name, value_expr) in &new_value.static_fields {
+    let class_value = Value::Class(Box::new(new_value.clone()));
+    // Extract static fields and evaluate outside the borrow of new_value.
+    let extracted_static_fields = std::mem::take(&mut new_value.static_fields);
+    for (name, value_expr) in extracted_static_fields {
         let child_env: Rc<RefCell<Environment>> =
             Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
         child_env
@@ -81,8 +83,8 @@ pub fn eval_class_expr(
             .current_scope()
             .borrow_mut()
             .set_this(class_value.clone());
-        let field_value = eval_expression(value_expr, &child_env, false)?;
-        let key_str = prop_key_to_string(name, &child_env, true)?;
+        let field_value = eval_expression(&value_expr, &child_env, false)?;
+        let key_str = prop_key_to_string(&name, &child_env, true)?;
         if key_str == "prototype" || key_str == "constructor" {
             return Err(JsError(format!(
                 "TypeError: static class field may not be named '{}'",
@@ -104,7 +106,15 @@ pub fn eval_class_expr(
         let _key_str = prop_key_to_string(name, &class_scope, false)?;
     }
 
-    Ok(Value::Class(new_value))
+    // Eagerly evaluate instance field property keys during class definition.
+    // Per ES §15.7.14 (ClassDefinitionEvaluation), ClassElementEvaluation
+    // is performed for each element, and property key evaluation can throw.
+    // If a computed key throws, the class declaration must throw.
+    for (name, _value) in &new_value.instance_fields {
+        let _key_str = prop_key_to_string(name, &class_scope, true)?;
+    }
+
+    Ok(Value::Class(Box::new(new_value)))
 }
 
 #[allow(dead_code)]

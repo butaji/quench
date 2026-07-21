@@ -381,16 +381,16 @@ pub fn assign_to_identifier(
         }
         Value::Class(ref c) => {
             let has_name = c.name.is_some()
-                || c.static_methods.iter().any(|(k, _, _)| match k {
+                || c.static_methods.iter().any(|(k, _, _, _, _)| match k {
                     crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => {
                         s == "name"
                     }
                     _ => false,
                 });
             if !has_name {
-                let mut cloned = c.clone();
+                let mut cloned = c.as_ref().clone();
                 cloned.name = Some(name.to_string());
-                Value::Class(cloned)
+                Value::Class(Box::new(cloned))
             } else {
                 value.clone()
             }

@@ -9,14 +9,23 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::env::Environment;
-use crate::JsError;
 use crate::value::SetterStorage;
+use crate::JsError;
 
 use num_bigint::BigInt;
 
 use crate::ast::{Class, ClassMember, Param, PropertyKey};
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
+
+/// A class method: (name, params, body, is_async, is_generator)
+pub type ClassMethod = (
+    PropertyKey,
+    Vec<Param>,
+    Vec<crate::ast::Statement>,
+    bool,
+    bool,
+);
 
 #[allow(unused_imports)] // Re-exported for external use
 pub use crate::value::convert::{
@@ -50,7 +59,7 @@ pub enum Value {
     /// Symbols for unique property keys (TComp: Rc<Symbol> per spec 6.1.6)
     Symbol(Rc<Symbol>),
     /// ES6 class - callable constructor with prototype chain
-    Class(ClassValue),
+    Class(Box<ClassValue>),
     /// BigInt arbitrary-precision integer
     BigInt(Rc<BigInt>),
     /// Generator object — returned by generator functions (function*)
@@ -74,10 +83,10 @@ pub struct ClassValue {
     pub constructor_params: Vec<String>,
     /// Constructor body statements
     pub constructor_body: Vec<crate::ast::Statement>,
-    /// Instance methods (name -> (params, body))
-    pub methods: Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
-    /// Static methods (name -> (params, body))
-    pub static_methods: Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
+    /// Instance methods
+    pub methods: Vec<ClassMethod>,
+    /// Static methods
+    pub static_methods: Vec<ClassMethod>,
     /// Instance getters (name -> body)
     pub getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     /// Static getters (name -> body)
@@ -111,7 +120,8 @@ pub struct ClassValue {
         std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
     /// Class definition environment - used to evaluate computed property keys
     /// for static accessors with the correct lexical scope.
-    pub(crate) class_def_env_cell: std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Environment>>>>>,
+    pub(crate) class_def_env_cell:
+        std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Environment>>>>>,
 }
 
 impl ClassValue {
@@ -229,14 +239,17 @@ impl ClassValue {
     ) -> Result<(), JsError> {
         // Check if there's a static setter
         let eval_env = self.class_def_env_cell.borrow();
-        let env = eval_env.as_ref().map(Rc::clone).unwrap_or_else(|| Rc::clone(env));
+        let env = eval_env
+            .as_ref()
+            .map(Rc::clone)
+            .unwrap_or_else(|| Rc::clone(env));
 
         for (key, param, body) in &self.static_setters {
             let key_str = crate::eval::class::helpers::prop_key_to_string(key, &env, false)?;
             if key_str == name {
                 // Create `this` object with constructor reference
                 let mut this_obj = Object::new(crate::value::ObjectKind::Ordinary);
-                this_obj.set("constructor", Value::Class(self.clone()));
+                this_obj.set("constructor", Value::Class(Box::new(self.clone())));
                 let this_rc = Rc::new(RefCell::new(this_obj));
 
                 // Create setter storage and call it
@@ -271,8 +284,8 @@ fn fill_members_from_ast(
     members: &[ClassMember],
     constructor_params: &mut Vec<String>,
     constructor_body: &mut Vec<crate::ast::Statement>,
-    methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
-    static_methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
+    methods: &mut Vec<ClassMethod>,
+    static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     static_getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
@@ -286,11 +299,35 @@ fn fill_members_from_ast(
                 *constructor_params = params.clone();
                 *constructor_body = body.clone();
             }
-            ClassMember::Method { name, params, body } => {
-                methods.push((name.clone(), params.clone(), body.clone()));
+            ClassMember::Method {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
+                methods.push((
+                    name.clone(),
+                    params.clone(),
+                    body.clone(),
+                    *is_async,
+                    *is_generator,
+                ));
             }
-            ClassMember::StaticMethod { name, params, body } => {
-                static_methods.push((name.clone(), params.clone(), body.clone()));
+            ClassMember::StaticMethod {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
+                static_methods.push((
+                    name.clone(),
+                    params.clone(),
+                    body.clone(),
+                    *is_async,
+                    *is_generator,
+                ));
             }
             ClassMember::Getter { name, body } => {
                 getters.push((name.clone(), body.clone()));

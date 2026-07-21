@@ -8,16 +8,80 @@ use crate::ast::{Expression, PropertyKey};
 use oxc::ast::ast;
 
 /// Lower optional chaining expression
+/// Produces: base == null || base == undefined ? undefined : chain_result
 pub fn lower_opt_chain(chain: &ast::ChainExpression) -> Result<Expression, LowerError> {
-    lower_chain_element(&chain.expression)
+    // Recursively lower the chain, tracking the base expression
+    lower_chain_recursive(&chain.expression, None)
 }
 
-fn lower_chain_element(element: &ast::ChainElement) -> Result<Expression, LowerError> {
+/// Recursively lower chain elements, building up the expression
+fn lower_chain_recursive(
+    element: &ast::ChainElement,
+    prev_expr: Option<&Expression>,
+) -> Result<Expression, LowerError> {
     match element {
+        ast::ChainElement::StaticMemberExpression(member) => {
+            // Build: prev?.prop or obj.prop (for first element)
+            let object_expr = lower_expr(&member.object)?;
+            let property = PropertyKey::Ident(member.property.name.as_str().to_string());
+
+            if let Some(prev) = prev_expr {
+                // Chained: check prev for nullish, then access property
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(prev);
+                let member_access = Expression::Member {
+                    object: Box::new(prev.clone()),
+                    property,
+                    computed: false,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else {
+                // First element: direct member access
+                Ok(Expression::Member {
+                    object: Box::new(object_expr),
+                    property,
+                    computed: false,
+                })
+            }
+        }
+        ast::ChainElement::ComputedMemberExpression(member) => {
+            let object_expr = lower_expr(&member.object)?;
+            let prop_expr = lower_expr(&member.expression)?;
+
+            if let Some(prev) = prev_expr {
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(prev);
+                let member_access = Expression::Member {
+                    object: Box::new(prev.clone()),
+                    property: PropertyKey::Computed(Box::new(prop_expr)),
+                    computed: true,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else {
+                Ok(Expression::Member {
+                    object: Box::new(object_expr),
+                    property: PropertyKey::Computed(Box::new(prop_expr)),
+                    computed: true,
+                })
+            }
+        }
         ast::ChainElement::CallExpression(call) => {
-            // In OXC, ChainElement::CallExpression contains a CallExpression
-            // The callee is a regular Expression (can be a MemberExpression from previous opt chain)
-            let callee_expr = lower_expr(&call.callee)?;
+            // Determine the object to check for nullish
+            let base_for_check = if let Some(prev) = prev_expr {
+                // Previous element's result is what we check
+                prev.clone()
+            } else {
+                // First element - extract from callee if it's a member access
+                extract_base_from_callee(&call.callee)?
+            };
 
             // Lower arguments
             let args: Vec<Expression> = call
@@ -34,39 +98,88 @@ fn lower_chain_element(element: &ast::ChainElement) -> Result<Expression, LowerE
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            Ok(Expression::Call {
-                callee: Box::new(callee_expr),
+            // Build the full call expression: base(args)
+            let full_call = Expression::Call {
+                callee: Box::new(lower_expr(&call.callee)?),
                 arguments: args,
-            })
-        }
-        ast::ChainElement::StaticMemberExpression(member) => {
-            let obj_expr = lower_expr(&member.object)?;
-            let property = PropertyKey::Ident(member.property.name.as_str().to_string());
-            Ok(Expression::Member {
-                object: Box::new(obj_expr),
-                property,
-                computed: false,
-            })
-        }
-        ast::ChainElement::ComputedMemberExpression(member) => {
-            let obj_expr = lower_expr(&member.object)?;
-            let property = PropertyKey::Computed(Box::new(lower_expr(&member.expression)?));
-            Ok(Expression::Member {
-                object: Box::new(obj_expr),
-                property,
-                computed: true,
+            };
+
+            // Check base for nullish
+            let undefined = Expression::Undefined;
+            let is_nullish = make_nullish_check(&base_for_check);
+
+            Ok(Expression::Conditional {
+                condition: Box::new(is_nullish),
+                consequent: Box::new(undefined),
+                alternate: Box::new(full_call),
             })
         }
         ast::ChainElement::PrivateFieldExpression(member) => {
-            let obj_expr = lower_expr(&member.object)?;
+            let object_expr = lower_expr(&member.object)?;
             let property = PropertyKey::Ident(member.field.name.as_str().to_string());
-            Ok(Expression::Member {
-                object: Box::new(obj_expr),
-                property,
-                computed: false,
-            })
+
+            if let Some(prev) = prev_expr {
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(prev);
+                let member_access = Expression::Member {
+                    object: Box::new(prev.clone()),
+                    property,
+                    computed: false,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else {
+                Ok(Expression::Member {
+                    object: Box::new(object_expr),
+                    property,
+                    computed: false,
+                })
+            }
         }
         // TypeScript non-null assertion in optional chain
         ast::ChainElement::TSNonNullExpression(e) => lower_expr(&e.expression),
+    }
+}
+
+/// Extract the base expression from a callee for nullish checking
+fn extract_base_from_callee(callee: &ast::Expression) -> Result<Expression, LowerError> {
+    match callee {
+        ast::Expression::StaticMemberExpression(member) => {
+            // For a?.b, the base is a
+            lower_expr(&member.object)
+        }
+        ast::Expression::ComputedMemberExpression(member) => lower_expr(&member.object),
+        ast::Expression::PrivateFieldExpression(member) => lower_expr(&member.object),
+        ast::Expression::Identifier(ident) => {
+            // For foo?.(), the base is foo
+            Ok(Expression::Identifier(ident.name.as_str().to_string()))
+        }
+        ast::Expression::ChainExpression(chain) => {
+            // Recursively extract from nested chain
+            lower_opt_chain(chain)
+        }
+        _ => lower_expr(callee),
+    }
+}
+
+/// Create a nullish check: base == null || base == undefined
+fn make_nullish_check(base: &Expression) -> Expression {
+    let null_check = Expression::Binary {
+        op: crate::ast::BinaryOp::Eq,
+        left: Box::new(base.clone()),
+        right: Box::new(Expression::Null),
+    };
+    let undefined_check = Expression::Binary {
+        op: crate::ast::BinaryOp::Eq,
+        left: Box::new(base.clone()),
+        right: Box::new(Expression::Undefined),
+    };
+    Expression::Binary {
+        op: crate::ast::BinaryOp::Or,
+        left: Box::new(null_check),
+        right: Box::new(undefined_check),
     }
 }

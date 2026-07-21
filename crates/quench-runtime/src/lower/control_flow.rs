@@ -162,7 +162,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
     }
 }
 
-/// Lower a try-catch statement
+/// Lower a try-catch-finally statement
 pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
     let body = try_stmt
         .block
@@ -181,17 +181,21 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
                 _ => None,
             })
     });
-    let handler = if let Some(catch) = &try_stmt.handler {
+    let handler = try_stmt.handler.as_ref().map(|catch| {
         Box::new(Statement::Block(
             catch.body.body.iter().filter_map(lower_stmt).collect(),
         ))
-    } else {
-        Box::new(Statement::Empty)
-    };
-    Some(Statement::TryCatch {
+    });
+    let finalizer = try_stmt.finalizer.as_ref().map(|fin| {
+        Box::new(Statement::Block(
+            fin.body.iter().filter_map(lower_stmt).collect(),
+        ))
+    });
+    Some(Statement::Try {
         body: Box::new(Statement::Block(body)),
         param: catch_param,
         handler,
+        finalizer,
     })
 }
 

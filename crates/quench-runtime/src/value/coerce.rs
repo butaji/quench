@@ -107,7 +107,7 @@ pub fn number_to_string(n: f64) -> String {
     }
     let abs = n.abs();
     // Use exponential notation for very small or very large numbers.
-    if abs < 1e-6 || abs >= 1e21 {
+    if !(1e-6..1e21).contains(&abs) {
         return canonical_exponential(n);
     }
     // For normal numbers, find the shortest representation.
@@ -142,8 +142,7 @@ fn has_redundant_decimal(s: &str) -> bool {
 
 fn strip_trailing_zeros(s: &str) -> String {
     if let Some(pos) = s.rfind('.') {
-        let without_trailing = s[..pos + 1].to_string()
-            + &s[pos + 1..].trim_end_matches('0');
+        let without_trailing = s[..pos + 1].to_string() + s[pos + 1..].trim_end_matches('0');
         if without_trailing.ends_with('.') {
             without_trailing.trim_end_matches('.').to_string()
         } else {

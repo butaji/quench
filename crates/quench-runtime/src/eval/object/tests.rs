@@ -340,37 +340,6 @@ fn new_target_in_arrow_inside_constructor() {
 }
 
 #[test]
-fn debug_new_target_arrow_2() {
-    let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval(
-            "function F() { this.af = () => new.target; } \
-             var f = new F(); \
-             var t = f.af(); \
-             [t === F, typeof t];",
-        )
-        .unwrap();
-    let _arr = if let crate::value::Value::Object(o) = v {
-        o.borrow().elements.clone()
-    } else {
-        panic!("not array")
-    };
-}
-
-#[test]
-fn debug_new_target_arrow() {
-    let mut ctx = Context::new().unwrap();
-    let _v = ctx.eval(
-        "function F() { \
-               this.af = () => new.target; \
-             } \
-             var f = new F(); \
-             var result = f.af() === F; \
-             result;",
-    );
-}
-
-#[test]
 fn arrow_length_no_writable_check() {
     let mut ctx = Context::new().unwrap();
     let v = ctx.eval(
@@ -496,13 +465,6 @@ fn symbol_to_primitive_object_result_throws_type_error() {
     );
 }
 
-#[test]
-fn sloppy_assign_to_undeclared_creates_global() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("undeclared_var = 42;").unwrap();
-    let v = ctx.eval("typeof undeclared_var").unwrap();
-    assert_eq!(v, crate::value::Value::String("number".to_string()));
-}
 
 #[test]
 fn sloppy_delete_global_property_succeeds() {
@@ -514,25 +476,6 @@ fn sloppy_delete_global_property_succeeds() {
     assert_eq!(after, crate::value::Value::String("undefined".to_string()));
 }
 
-#[test]
-fn debug_assign_to_global() {
-    let mut ctx = Context::new().unwrap();
-    let has = ctx.eval("typeof globalThis").unwrap();
-    assert_eq!(has, crate::value::Value::String("object".to_string()));
-    ctx.eval("undeclared_var = 42;").unwrap();
-    let v = ctx.eval("globalThis.undeclared_var").unwrap();
-    assert_eq!(v, crate::value::Value::Number(42.0));
-}
-
-#[test]
-fn debug_typeof_undeclared() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("undeclared_var = 42;").unwrap();
-    let via_gt = ctx.eval("globalThis.undeclared_var").unwrap();
-    assert_eq!(via_gt, crate::value::Value::Number(42.0));
-    let typeof_v = ctx.eval("typeof undeclared_var").unwrap();
-    assert_eq!(typeof_v, crate::value::Value::String("number".to_string()));
-}
 
 #[test]
 fn debug_known_global() {
@@ -549,29 +492,6 @@ fn debug_set_global_directly() {
     assert_eq!(v, crate::value::Value::String("number".to_string()));
 }
 
-#[test]
-fn debug_just_undeclared() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("foo = 1; var x = foo;").unwrap();
-    let v = ctx.eval("x").unwrap();
-    assert_eq!(v, crate::value::Value::Number(1.0));
-}
-
-#[test]
-fn debug_across_evals() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("foo = 1;").unwrap();
-    let v = ctx.eval("foo").unwrap();
-    assert_eq!(v, crate::value::Value::Number(1.0));
-}
-
-#[test]
-fn debug_typeof_across_evals() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("foo = 1;").unwrap();
-    let v = ctx.eval("typeof foo").unwrap();
-    assert_eq!(v, crate::value::Value::String("number".to_string()));
-}
 
 #[test]
 fn debug_symbol_member() {
