@@ -9,7 +9,7 @@ use super::pattern::{
 };
 use super::stmt::lower_stmt;
 use crate::ast::{
-    BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, UnaryOp, VarKind,
+    BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, VarKind,
 };
 use oxc::ast::ast;
 
@@ -39,21 +39,15 @@ pub fn lower_while_stmt(while_stmt: &ast::WhileStatement) -> Option<Statement> {
 }
 
 /// Lower a do-while statement: do { body } while (cond)
-/// Desugars to: while (true) { body; if (!cond) break; }
+/// Emits Statement::DoWhile so eval_do_while can capture the body completion
+/// value and return it when the condition is false.
 pub fn lower_do_while_stmt(do_while: &ast::DoWhileStatement) -> Option<Statement> {
     let condition = lower_expr(&do_while.test).ok()?;
     let body = lower_stmt(&do_while.body).unwrap_or(Statement::Empty);
-    let break_check = Statement::If {
-        condition: Box::new(Expression::Unary {
-            op: UnaryOp::Not,
-            argument: Box::new(condition),
-        }),
-        consequent: Box::new(Statement::Break(None)),
-        alternate: None,
-    };
-    Some(Statement::While {
-        condition: Box::new(Expression::Boolean(true)),
-        body: Box::new(Statement::Block(vec![body, break_check])),
+    Some(Statement::DoWhile {
+        body: Box::new(body),
+        condition: Box::new(condition),
+        labels: Vec::new(),
     })
 }
 
