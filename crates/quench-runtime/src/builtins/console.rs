@@ -43,3 +43,45 @@ pub fn register_console(ctx: &mut Context) {
 
     ctx.set_global("console".to_string(), Value::Object(console));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Context;
+
+    fn eval_ok(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
+    #[test]
+    fn console_exists_as_global() {
+        let result = eval_ok("typeof console");
+        assert_eq!(result.to_string(), "object");
+    }
+
+    #[test]
+    fn console_log_exists() {
+        let result = eval_ok("typeof console.log");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn console_error_exists() {
+        let result = eval_ok("typeof console.error");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn console_warn_exists() {
+        let result = eval_ok("typeof console.warn");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn console_log_returns_undefined() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("console.log('test')");
+        assert!(result.is_ok());
+    }
+}

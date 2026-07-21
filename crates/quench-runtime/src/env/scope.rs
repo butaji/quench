@@ -245,3 +245,173 @@ impl Default for Scope {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::VarKind;
+    use crate::value::Value;
+
+    #[test]
+    fn test_scope_new_is_empty() {
+        let scope = Scope::new();
+        assert!(scope.is_empty());
+        assert!(scope.bindings.is_empty());
+        assert!(scope.declarations.is_empty());
+    }
+
+    #[test]
+    fn test_scope_define_and_get() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(42.0));
+        assert!(!scope.is_empty());
+        assert_eq!(scope.get("x"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn test_scope_get_missing() {
+        let scope = Scope::new();
+        assert_eq!(scope.get("missing"), None);
+    }
+
+    #[test]
+    fn test_scope_set_existing() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(1.0));
+        assert!(scope.set("x".to_string(), Value::Number(2.0), false));
+        assert_eq!(scope.get("x"), Some(Value::Number(2.0)));
+    }
+
+    #[test]
+    fn test_scope_set_missing_returns_false() {
+        let mut scope = Scope::new();
+        assert!(!scope.set("x".to_string(), Value::Number(1.0), false));
+    }
+
+    #[test]
+    fn test_scope_const_immutable() {
+        let mut scope = Scope::new();
+        scope.declare_var("const_val".to_string(), VarKind::Const);
+        scope.initialize_declared("const_val", Value::Number(1.0));
+        assert!(!scope.set("const_val".to_string(), Value::Number(2.0), false));
+        assert_eq!(scope.get("const_val"), Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn test_scope_declare_var_kind() {
+        let mut scope = Scope::new();
+        scope.declare_var("myvar".to_string(), VarKind::Var);
+        scope.declare_var("mylet".to_string(), VarKind::Let);
+        scope.declare_var("myconst".to_string(), VarKind::Const);
+
+        assert_eq!(scope.get_kind("myvar"), Some(VarKind::Var));
+        assert_eq!(scope.get_kind("mylet"), Some(VarKind::Let));
+        assert_eq!(scope.get_kind("myconst"), Some(VarKind::Const));
+        assert_eq!(scope.get_kind("missing"), None);
+    }
+
+    #[test]
+    fn test_scope_tdz() {
+        let mut scope = Scope::new();
+        scope.mark_tdz("x".to_string());
+        assert!(scope.is_tdz("x"));
+        assert_eq!(scope.get("x"), None);
+        assert!(scope.has_declaration("x"));
+    }
+
+    #[test]
+    fn test_scope_declared_only() {
+        let mut scope = Scope::new();
+        scope.declare_var("y".to_string(), VarKind::Var);
+        assert!(scope.is_declared_only("y"));
+        assert_eq!(scope.get("y"), Some(Value::Undefined));
+    }
+
+    #[test]
+    fn test_scope_initialize_declared() {
+        let mut scope = Scope::new();
+        scope.declare_var("z".to_string(), VarKind::Var);
+        assert_eq!(scope.get("z"), Some(Value::Undefined));
+        scope.initialize_declared("z", Value::Number(99.0));
+        assert_eq!(scope.get("z"), Some(Value::Number(99.0)));
+    }
+
+    #[test]
+    fn test_scope_delete() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(1.0));
+        assert!(scope.delete("x"));
+        assert_eq!(scope.get("x"), None);
+        assert!(!scope.delete("x"));
+    }
+
+    #[test]
+    fn test_scope_has() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(1.0));
+        scope.declare_var("y".to_string(), VarKind::Var);
+        assert!(scope.has("x"));
+        assert!(scope.has("y"));
+        assert!(!scope.has("z"));
+    }
+
+    #[test]
+    fn test_scope_this_binding() {
+        let mut scope = Scope::new();
+        assert_eq!(scope.get_this(), None);
+        scope.set_this(Value::Number(42.0));
+        assert_eq!(scope.get_this(), Some(Value::Number(42.0)));
+        assert!(scope.is_this_initialized());
+    }
+
+    #[test]
+    fn test_scope_set_this_value() {
+        let mut scope = Scope::new();
+        scope.set_this_value(Value::String("hello".to_string()));
+        assert_eq!(scope.get_this(), Some(Value::String("hello".to_string())));
+        assert!(!scope.is_this_initialized());
+    }
+
+    #[test]
+    fn test_scope_clone() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(1.0));
+        scope.set_this(Value::Number(42.0));
+
+        let cloned = scope.clone();
+        assert_eq!(cloned.get("x"), Some(Value::Number(1.0)));
+        assert_eq!(cloned.get_this(), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn test_scope_debug() {
+        let mut scope = Scope::new();
+        scope.define("a".to_string(), Value::Number(1.0));
+        scope.declare_var("b".to_string(), VarKind::Var);
+        let debug = format!("{:?}", scope);
+        assert!(debug.contains("a"));
+        assert!(debug.contains("b"));
+    }
+
+    #[test]
+    fn test_scope_bindings_iter() {
+        let mut scope = Scope::new();
+        scope.define("x".to_string(), Value::Number(1.0));
+        scope.define("y".to_string(), Value::Number(2.0));
+
+        let names: Vec<_> = scope.bindings().map(|(k, _)| k.clone()).collect();
+        assert!(names.contains(&"x".to_string()));
+        assert!(names.contains(&"y".to_string()));
+    }
+
+    #[test]
+    fn test_scope_object_binding() {
+        let mut scope = Scope::new();
+        let obj = std::rc::Rc::new(std::cell::RefCell::new(crate::value::Object::new(
+            crate::value::ObjectKind::Ordinary,
+        )));
+        scope.set_object_binding(obj.clone());
+        assert!(scope.is_object_binding());
+        assert!(scope.object_binding_has("missing").is_none());
+    }
+}

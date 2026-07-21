@@ -43,3 +43,56 @@ where
 pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     crate::builtins::register_builtins(ctx);
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Context, Value};
+
+    #[test]
+    fn test_register_native_creates_global() {
+        let mut ctx = Context::new().unwrap();
+        super::register_native(&mut ctx, "myHostFunc", |args| {
+            Ok(Value::Number(args.len() as f64))
+        });
+        let result = ctx.eval("typeof myHostFunc");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn test_register_native_executes() {
+        let mut ctx = Context::new().unwrap();
+        super::register_native(&mut ctx, "addNums", |args| {
+            let sum: f64 = args
+                .iter()
+                .filter_map(|v| match v {
+                    Value::Number(n) => Some(*n),
+                    _ => None,
+                })
+                .sum();
+            Ok(Value::Number(sum))
+        });
+        let result = ctx.eval("addNums(1, 2, 3)");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn test_register_native_has_name_property() {
+        let mut ctx = Context::new().unwrap();
+        super::register_native(&mut ctx, "greet", |_| Ok(Value::Undefined));
+        let result = ctx.eval("greet.name");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::String("greet".to_string()));
+    }
+
+    #[test]
+    fn test_register_native_returns_error() {
+        let mut ctx = Context::new().unwrap();
+        super::register_native(&mut ctx, "boom", |_| {
+            Err(crate::value::JsError::new("intentional error"))
+        });
+        let result = ctx.eval("boom()");
+        assert!(result.is_err());
+    }
+}

@@ -281,16 +281,30 @@ fn generate_source_text(f: &ValueFunction) -> String {
     }
 
     fn fmt_params(params: &[crate::ast::Param]) -> String {
-        params.iter().map(|p| fmt_param(&p.name, &p.default, p.rest)).collect::<Vec<_>>().join(", ")
+        params
+            .iter()
+            .map(|p| fmt_param(&p.name, &p.default, p.rest))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn class_member_to_string(member: &crate::ast::ClassMember) -> String {
         match member {
             crate::ast::ClassMember::Constructor { params, body } => {
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("constructor({}) {{{}}}", params.join(", "), body_str)
             }
-            crate::ast::ClassMember::Method { name, params, body, is_async, is_generator } => {
+            crate::ast::ClassMember::Method {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
                 let prefix = match (*is_async, *is_generator) {
                     (true, true) => "async function*",
                     (true, false) => "async ",
@@ -298,20 +312,44 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     (false, false) => "",
                 };
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                format!("{}{}({}) {{{}}}", prefix, name_str, fmt_params(params), body_str)
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "{}{}({}) {{{}}}",
+                    prefix,
+                    name_str,
+                    fmt_params(params),
+                    body_str
+                )
             }
             crate::ast::ClassMember::Getter { name, body } => {
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("get {}() {{{}}}", name_str, body_str)
             }
             crate::ast::ClassMember::Setter { name, param, body } => {
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("set {}({}) {{{}}}", name_str, param, body_str)
             }
-            crate::ast::ClassMember::StaticMethod { name, params, body, is_async, is_generator } => {
+            crate::ast::ClassMember::StaticMethod {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
                 let prefix = match (*is_async, *is_generator) {
                     (true, true) => "async static function*",
                     (true, false) => "async static ",
@@ -319,8 +357,18 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     (false, false) => "static ",
                 };
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                format!("{}{}({}) {{{}}}", prefix, name_str, fmt_params(params), body_str)
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "{}{}({}) {{{}}}",
+                    prefix,
+                    name_str,
+                    fmt_params(params),
+                    body_str
+                )
             }
             crate::ast::ClassMember::Field { name, value } => {
                 let name_str = prop_key_to_string(name);
@@ -332,12 +380,20 @@ fn generate_source_text(f: &ValueFunction) -> String {
             }
             crate::ast::ClassMember::StaticGetter { name, body } => {
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("static get {}() {{{}}}", name_str, body_str)
             }
             crate::ast::ClassMember::StaticSetter { name, param, body } => {
                 let name_str = prop_key_to_string(name);
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("static set {}({}) {{{}}}", name_str, param, body_str)
             }
         }
@@ -354,11 +410,23 @@ fn generate_source_text(f: &ValueFunction) -> String {
             }
             Statement::Expression(expr) => expr_to_string(expr),
             Statement::Block(stmts) => {
-                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let inner = stmts
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("{{ {} }}", inner)
             }
-            Statement::If { condition, consequent, alternate } => {
-                let s = format!("if ({}) {}", expr_to_string(condition), stmt_to_string(consequent));
+            Statement::If {
+                condition,
+                consequent,
+                alternate,
+            } => {
+                let s = format!(
+                    "if ({}) {}",
+                    expr_to_string(condition),
+                    stmt_to_string(consequent)
+                );
                 if let Some(alt) = alternate {
                     format!("{} else {}", s, stmt_to_string(alt))
                 } else {
@@ -366,9 +434,18 @@ fn generate_source_text(f: &ValueFunction) -> String {
                 }
             }
             Statement::While { condition, body } => {
-                format!("while ({}) {}", expr_to_string(condition), stmt_to_string(body))
+                format!(
+                    "while ({}) {}",
+                    expr_to_string(condition),
+                    stmt_to_string(body)
+                )
             }
-            Statement::For { init, condition, update, body } => {
+            Statement::For {
+                init,
+                condition,
+                update,
+                body,
+            } => {
                 let init_str = match init {
                     Some(crate::ast::ForInit::Expression(e)) => expr_to_string(e),
                     Some(crate::ast::ForInit::VarDeclaration { kind, name, init }) => {
@@ -384,12 +461,33 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     }
                     None => String::new(),
                 };
-                let cond_str = condition.as_ref().map(|c| expr_to_string(c)).unwrap_or_default();
-                let upd_str = update.as_ref().map(|u| expr_to_string(u)).unwrap_or_default();
-                format!("for ({}; {}; {}) {}", init_str, cond_str, upd_str, stmt_to_string(body))
+                let cond_str = condition
+                    .as_ref()
+                    .map(|c| expr_to_string(c))
+                    .unwrap_or_default();
+                let upd_str = update
+                    .as_ref()
+                    .map(|u| expr_to_string(u))
+                    .unwrap_or_default();
+                format!(
+                    "for ({}; {}; {}) {}",
+                    init_str,
+                    cond_str,
+                    upd_str,
+                    stmt_to_string(body)
+                )
             }
-            Statement::ForIn { variable, object, body } => {
-                format!("for ({} in {}) {}", expr_to_string(variable), expr_to_string(object), stmt_to_string(body))
+            Statement::ForIn {
+                variable,
+                object,
+                body,
+            } => {
+                format!(
+                    "for ({} in {}) {}",
+                    expr_to_string(variable),
+                    expr_to_string(object),
+                    stmt_to_string(body)
+                )
             }
             Statement::VarDeclaration { kind, name, init } => {
                 let k = match kind {
@@ -402,27 +500,55 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     None => format!("{} {}", k, name),
                 }
             }
-            Statement::FunctionDeclaration { name, params, body, is_async, is_generator } => {
+            Statement::FunctionDeclaration {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
                 let prefix = match (*is_async, *is_generator) {
                     (true, true) => "async function*",
                     (true, false) => "async function",
                     (false, true) => "function*",
                     (false, false) => "function",
                 };
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                format!("{} {}({}) {{ {} }}", prefix, name, fmt_params(params), body_str)
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "{} {}({}) {{ {} }}",
+                    prefix,
+                    name,
+                    fmt_params(params),
+                    body_str
+                )
             }
-            Statement::Try { body, param, handler, finalizer } => {
-                let catch_str = handler.as_ref().map(|h| {
-                    match param {
+            Statement::Try {
+                body,
+                param,
+                handler,
+                finalizer,
+            } => {
+                let catch_str = handler
+                    .as_ref()
+                    .map(|h| match param {
                         Some(p) => format!(" catch ({}) {}", p, stmt_to_string(h)),
                         None => format!(" catch {}", stmt_to_string(h)),
-                    }
-                }).unwrap_or_default();
-                let finally_str = finalizer.as_ref().map(|f| {
-                    format!(" finally {}", stmt_to_string(f))
-                }).unwrap_or_default();
-                format!("try {{ {} }}{}{}", stmt_to_string(body), catch_str, finally_str)
+                    })
+                    .unwrap_or_default();
+                let finally_str = finalizer
+                    .as_ref()
+                    .map(|f| format!(" finally {}", stmt_to_string(f)))
+                    .unwrap_or_default();
+                format!(
+                    "try {{ {} }}{}{}",
+                    stmt_to_string(body),
+                    catch_str,
+                    finally_str
+                )
             }
             Statement::Throw(expr) => {
                 format!("throw {}", expr_to_string(expr))
@@ -432,8 +558,14 @@ fn generate_source_text(f: &ValueFunction) -> String {
             Statement::Labeled { label, body } => {
                 format!("{}: {}", label, stmt_to_string(body))
             }
-            Statement::DoWhile { body, condition, .. } => {
-                format!("do {} while ({})", stmt_to_string(body), expr_to_string(condition))
+            Statement::DoWhile {
+                body, condition, ..
+            } => {
+                format!(
+                    "do {} while ({})",
+                    stmt_to_string(body),
+                    expr_to_string(condition)
+                )
             }
             Statement::With { object, body } => {
                 format!("with ({}) {}", expr_to_string(object), stmt_to_string(body))
@@ -443,8 +575,13 @@ fn generate_source_text(f: &ValueFunction) -> String {
             Statement::Export(_) => String::new(),
             Statement::Import { .. } => String::new(),
             Statement::ClassDeclaration { name, class } => {
-                let extends_str = class.super_class.as_ref().map(|e| format!(" extends {}", expr_to_string(e))).unwrap_or_default();
-                let member_strs: Vec<String> = class.body.iter().map(class_member_to_string).collect();
+                let extends_str = class
+                    .super_class
+                    .as_ref()
+                    .map(|e| format!(" extends {}", expr_to_string(e)))
+                    .unwrap_or_default();
+                let member_strs: Vec<String> =
+                    class.body.iter().map(class_member_to_string).collect();
                 format!("class {}{} {{{}}}", name, extends_str, member_strs.join(""))
             }
         }
@@ -462,7 +599,12 @@ fn generate_source_text(f: &ValueFunction) -> String {
     fn expr_to_string(expr: &Expression) -> String {
         match expr {
             Expression::Number(n) => n.to_string(),
-            Expression::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")),
+            Expression::String(s) => format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+            ),
             Expression::Boolean(b) => b.to_string(),
             Expression::Null => "null".to_string(),
             Expression::Undefined => "undefined".to_string(),
@@ -497,8 +639,14 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     crate::ast::BinaryOp::In => "in",
                     crate::ast::BinaryOp::Instanceof => "instanceof",
                     crate::ast::BinaryOp::NullishCoalescing => "??",
+                    crate::ast::BinaryOp::Pow => "**",
                 };
-                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+                format!(
+                    "({} {} {})",
+                    expr_to_string(left),
+                    op_str,
+                    expr_to_string(right)
+                )
             }
             Expression::Unary { op, argument } => {
                 let op_str = match op {
@@ -520,6 +668,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     crate::ast::CompoundOp::Add => "+=",
                     crate::ast::CompoundOp::Sub => "-=",
                     crate::ast::CompoundOp::Mul => "*=",
+                    crate::ast::CompoundOp::Pow => "**=",
                     crate::ast::CompoundOp::Div => "/=",
                     crate::ast::CompoundOp::Mod => "%=",
                     crate::ast::CompoundOp::BitAnd => "&=",
@@ -532,7 +681,12 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     crate::ast::CompoundOp::LogicalAndAssign => "&&=",
                     crate::ast::CompoundOp::NullishCoalescingAssign => "??=",
                 };
-                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+                format!(
+                    "({} {} {})",
+                    expr_to_string(left),
+                    op_str,
+                    expr_to_string(right)
+                )
             }
             Expression::LogicalCompoundAssignment { op, left, right } => {
                 let op_str = match op {
@@ -541,34 +695,77 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     crate::ast::CompoundOp::NullishCoalescingAssign => "??=",
                     _ => unreachable!(),
                 };
-                format!("({} {} {})", expr_to_string(left), op_str, expr_to_string(right))
+                format!(
+                    "({} {} {})",
+                    expr_to_string(left),
+                    op_str,
+                    expr_to_string(right)
+                )
             }
             Expression::Call { callee, arguments } => {
-                let args = arguments.iter().map(expr_to_string).collect::<Vec<_>>().join(", ");
+                let args = arguments
+                    .iter()
+                    .map(expr_to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("{}({})", expr_to_string(callee), args)
             }
-            Expression::New { constructor, arguments } => {
-                let args = arguments.iter().map(expr_to_string).collect::<Vec<_>>().join(", ");
+            Expression::New {
+                constructor,
+                arguments,
+            } => {
+                let args = arguments
+                    .iter()
+                    .map(expr_to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("new {}({})", expr_to_string(constructor), args)
             }
-            Expression::Member { object, property, computed } => {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
                 if *computed {
-                    format!("{}[{}]", expr_to_string(object), prop_key_to_string(property))
+                    format!(
+                        "{}[{}]",
+                        expr_to_string(object),
+                        prop_key_to_string(property)
+                    )
                 } else {
                     match property {
-                        crate::ast::PropertyKey::Ident(s) => format!("{}.{}", expr_to_string(object), s),
-                        crate::ast::PropertyKey::String(s) => format!("{}.{}", expr_to_string(object), s),
-                        crate::ast::PropertyKey::Number(n) => format!("{}.{}", expr_to_string(object), n),
+                        crate::ast::PropertyKey::Ident(s) => {
+                            format!("{}.{}", expr_to_string(object), s)
+                        }
+                        crate::ast::PropertyKey::String(s) => {
+                            format!("{}.{}", expr_to_string(object), s)
+                        }
+                        crate::ast::PropertyKey::Number(n) => {
+                            format!("{}.{}", expr_to_string(object), n)
+                        }
                         crate::ast::PropertyKey::Computed(e) => {
                             format!("{}[{}]", expr_to_string(object), expr_to_string(e))
                         }
                     }
                 }
             }
-            Expression::Conditional { condition, consequent, alternate } => {
-                format!("({} ? {} : {})", expr_to_string(condition), expr_to_string(consequent), expr_to_string(alternate))
+            Expression::Conditional {
+                condition,
+                consequent,
+                alternate,
+            } => {
+                format!(
+                    "({} ? {} : {})",
+                    expr_to_string(condition),
+                    expr_to_string(consequent),
+                    expr_to_string(alternate)
+                )
             }
-            Expression::Update { op, argument, prefix } => {
+            Expression::Update {
+                op,
+                argument,
+                prefix,
+            } => {
                 let op_str = match op {
                     crate::ast::UpdateOp::Increment => "++",
                     crate::ast::UpdateOp::Decrement => "--",
@@ -584,28 +781,49 @@ fn generate_source_text(f: &ValueFunction) -> String {
                 format!("[{}]", els.join(","))
             }
             Expression::Object(props) => {
-                let prop_strs: Vec<String> = props.iter().map(|(k, v)| {
-                    let key_str = match k {
-                        crate::ast::PropertyKey::Ident(s) => s.clone(),
-                        crate::ast::PropertyKey::String(s) => format!("\"{}\"", s),
-                        crate::ast::PropertyKey::Number(n) => n.to_string(),
-                        crate::ast::PropertyKey::Computed(e) => format!("[{}]", expr_to_string(e)),
-                    };
-                    match v {
-                        crate::ast::PropertyValue::Value(e) => format!("{}: {}", key_str, expr_to_string(e)),
-                        crate::ast::PropertyValue::Getter { params: _, body } => {
-                            let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                            format!("get {}() {{ {} }}", key_str, body_str)
+                let prop_strs: Vec<String> = props
+                    .iter()
+                    .map(|(k, v)| {
+                        let key_str = match k {
+                            crate::ast::PropertyKey::Ident(s) => s.clone(),
+                            crate::ast::PropertyKey::String(s) => format!("\"{}\"", s),
+                            crate::ast::PropertyKey::Number(n) => n.to_string(),
+                            crate::ast::PropertyKey::Computed(e) => {
+                                format!("[{}]", expr_to_string(e))
+                            }
+                        };
+                        match v {
+                            crate::ast::PropertyValue::Value(e) => {
+                                format!("{}: {}", key_str, expr_to_string(e))
+                            }
+                            crate::ast::PropertyValue::Getter { params: _, body } => {
+                                let body_str = body
+                                    .iter()
+                                    .map(stmt_to_string)
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("get {}() {{ {} }}", key_str, body_str)
+                            }
+                            crate::ast::PropertyValue::Setter { param, body } => {
+                                let body_str = body
+                                    .iter()
+                                    .map(stmt_to_string)
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("set {}({}) {{ {} }}", key_str, param, body_str)
+                            }
                         }
-                        crate::ast::PropertyValue::Setter { param, body } => {
-                            let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                            format!("set {}({}) {{ {} }}", key_str, param, body_str)
-                        }
-                    }
-                }).collect();
+                    })
+                    .collect();
                 format!("{{{}}}", prop_strs.join(", "))
             }
-            Expression::FunctionExpression { name, params, body, is_async, is_generator } => {
+            Expression::FunctionExpression {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } => {
                 let prefix = match (*is_async, *is_generator) {
                     (true, true) => "async function*",
                     (true, false) => "async function",
@@ -613,34 +831,72 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     (false, false) => "function",
                 };
                 let name_str = name.as_ref().map(|n| format!(" {}", n)).unwrap_or_default();
-                let body_str = body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
-                format!("{} {}({}) {{ {} }}", prefix, name_str, fmt_params(params), body_str)
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!(
+                    "{} {}({}) {{ {} }}",
+                    prefix,
+                    name_str,
+                    fmt_params(params),
+                    body_str
+                )
             }
             Expression::ArrowFunction { params, body } => {
                 let body_str = match body.as_ref() {
                     ArrowBody::Expression(e) => expr_to_string(e),
                     ArrowBody::Block(stmts) => {
-                        let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                        let inner = stmts
+                            .iter()
+                            .map(stmt_to_string)
+                            .collect::<Vec<_>>()
+                            .join("; ");
                         format!("{{ {} }}", inner)
                     }
                 };
                 format!("({}) => {}", fmt_params(params), body_str)
             }
-            Expression::Sequence(exprs) => {
-                exprs.iter().map(expr_to_string).collect::<Vec<_>>().join(", ")
-            }
+            Expression::Sequence(exprs) => exprs
+                .iter()
+                .map(expr_to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
             Expression::Class(_) => "[Class]".to_string(),
             Expression::BlockExpr(stmts) => {
-                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let inner = stmts
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("{{ {} }}", inner)
             }
             Expression::ArrayPattern(_) => "[ArrayPattern]".to_string(),
             Expression::ObjectPattern(_) => "[ObjectPattern]".to_string(),
-            Expression::ForOf { variable, iterable, body } => {
-                format!("for ({} of {}) {}", expr_to_string(variable), expr_to_string(iterable), stmt_to_string(body))
+            Expression::ForOf {
+                variable,
+                iterable,
+                body,
+            } => {
+                format!(
+                    "for ({} of {}) {}",
+                    expr_to_string(variable),
+                    expr_to_string(iterable),
+                    stmt_to_string(body)
+                )
             }
-            Expression::ForIn { variable, object, body } => {
-                format!("for ({} in {}) {}", expr_to_string(variable), expr_to_string(object), stmt_to_string(body))
+            Expression::ForIn {
+                variable,
+                object,
+                body,
+            } => {
+                format!(
+                    "for ({} in {}) {}",
+                    expr_to_string(variable),
+                    expr_to_string(object),
+                    stmt_to_string(body)
+                )
             }
             Expression::Yield(opt_expr) => {
                 if let Some(e) = opt_expr {
@@ -664,7 +920,11 @@ fn generate_source_text(f: &ValueFunction) -> String {
         let body_str = match f.arrow_body.as_ref() {
             Some(ArrowBody::Expression(e)) => expr_to_string(e),
             Some(ArrowBody::Block(stmts)) => {
-                let inner = stmts.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+                let inner = stmts
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 format!("{{ {} }}", inner)
             }
             None => "{}".to_string(),
@@ -677,11 +937,22 @@ fn generate_source_text(f: &ValueFunction) -> String {
             (false, true) => ("function*", f.name.as_deref().unwrap_or("")),
             (false, false) => ("function", f.name.as_deref().unwrap_or("")),
         };
-        let body_str = f.body.iter().map(stmt_to_string).collect::<Vec<_>>().join("; ");
+        let body_str = f
+            .body
+            .iter()
+            .map(stmt_to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
         if body_str.is_empty() {
             format!("{} {}({}) {{}}", keyword, name_str, fmt_params(&f.params))
         } else {
-            format!("{} {}({}) {{{}}}", keyword, name_str, fmt_params(&f.params), body_str)
+            format!(
+                "{} {}({}) {{{}}}",
+                keyword,
+                name_str,
+                fmt_params(&f.params),
+                body_str
+            )
         }
     }
 }

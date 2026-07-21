@@ -82,9 +82,7 @@ impl Context {
 
         // Set source for function source_text capture
         CURRENT_SOURCE.with(|cell| {
-            *cell.borrow_mut() = Some(unsafe {
-                std::mem::transmute::<&str, &str>(source as &str)
-            });
+            *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source as &str) });
         });
 
         let result = (|| {

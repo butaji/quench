@@ -251,9 +251,15 @@ fn test_assignment_expression_returns_rhs_simple() {
 fn test_assignment_expression_returns_rhs_object() {
     // Member expression assignment returns RHS
     assert_eq!(eval("let o = {}; (o.x = 5)").unwrap(), Value::Number(5.0));
-    assert_eq!(eval("let o = {}; (o['x'] = 5)").unwrap(), Value::Number(5.0));
+    assert_eq!(
+        eval("let o = {}; (o['x'] = 5)").unwrap(),
+        Value::Number(5.0)
+    );
     // Chained
-    assert_eq!(eval("let o = {}; let r = (o.x = 5); r").unwrap(), Value::Number(5.0));
+    assert_eq!(
+        eval("let o = {}; let r = (o.x = 5); r").unwrap(),
+        Value::Number(5.0)
+    );
 }
 
 #[test]
@@ -274,7 +280,11 @@ fn test_assignment_to_computed_class_member_returns_rhs() {
     let result = eval(
         "function f() { return 'x'; } class C { set [f()](v) { } } let c = new C(); c[f()] = 1; c.x",
     );
-    assert!(result.is_ok(), "computed setter assignment should not panic: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "computed setter assignment should not panic: {:?}",
+        result
+    );
     // The RHS (1) is returned by the assignment expression
     assert_eq!(
         eval("function f() { return 'x'; } class C { set [f()](v) { } } let c = new C(); (c[f()] = 1)").unwrap(),
@@ -286,15 +296,15 @@ fn test_assignment_to_computed_class_member_returns_rhs() {
 #[test]
 fn test_assignment_to_computed_static_class_member_returns_rhs() {
     // Static computed setter - this is the failing case
-    let result = eval(
-        "function f() {} class C { static set [f()](v) { } } C[f()] = 1;",
+    let result = eval("function f() {} class C { static set [f()](v) { } } C[f()] = 1;");
+    assert!(
+        result.is_ok(),
+        "static computed setter assignment should not panic: {:?}",
+        result
     );
-    assert!(result.is_ok(), "static computed setter assignment should not panic: {:?}", result);
 
     // The RHS (1) is returned by the assignment expression
-    let r = eval(
-        "function f() {} class C { static set [f()](v) { } } (C[f()] = 1)",
-    );
+    let r = eval("function f() {} class C { static set [f()](v) { } } (C[f()] = 1)");
     assert!(
         r.is_ok(),
         "evaluating assignment to static computed setter should not error: {:?}",
@@ -331,7 +341,11 @@ assert.sameValue(C[f()] = 1, 1);
 assert.sameValue(c[f()] = 1, 1);
 "#,
     );
-    assert!(r.is_ok(), "computed setter with harness should pass: {:?}", r);
+    assert!(
+        r.is_ok(),
+        "computed setter with harness should pass: {:?}",
+        r
+    );
 }
 
 #[test]

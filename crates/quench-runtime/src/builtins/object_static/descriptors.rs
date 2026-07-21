@@ -385,21 +385,21 @@ pub fn get_class_property_descriptor(
         "prototype" => Ok(Value::Undefined), // handled by eval_class_member
         _ => {
             // Check static accessors (instance accessors live on C.prototype)
-            let has_getter = c.static_getters.iter().any(|(k, _)| {
-                matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop)
-            });
-            let has_setter = c.static_setters.iter().any(|(k, _, _)| {
-                matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop)
-            });
+            let has_getter = c
+                .static_getters
+                .iter()
+                .any(|(k, _)| matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop));
+            let has_setter = c
+                .static_setters
+                .iter()
+                .any(|(k, _, _)| matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop));
             if has_getter || has_setter {
                 let mut desc = Object::new(ObjectKind::Ordinary);
                 if has_getter {
-                    desc.properties
-                        .insert("get".to_string(), Value::Undefined);
+                    desc.properties.insert("get".to_string(), Value::Undefined);
                 }
                 if has_setter {
-                    desc.properties
-                        .insert("set".to_string(), Value::Undefined);
+                    desc.properties.insert("set".to_string(), Value::Undefined);
                 }
                 desc.properties
                     .insert("enumerable".to_string(), Value::Boolean(true));

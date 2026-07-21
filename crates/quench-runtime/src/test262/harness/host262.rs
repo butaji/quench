@@ -156,3 +156,199 @@ pub fn inject(ctx: &mut Context) {
         o.set("detachArrayBuffer", make_native(host_262_detach_buffer));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test262::harness::try_inject_harness;
+
+    fn harness_ctx() -> crate::Context {
+        let mut ctx = crate::Context::new().unwrap();
+        try_inject_harness(&mut ctx).unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_create_realm_returns_object() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof $262.createRealm() === 'object'");
+        assert!(
+            result.is_ok(),
+            "$262.createRealm should return object: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_has_global() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof $262.createRealm().global === 'object'");
+        assert!(
+            result.is_ok(),
+            "realm.global should be object: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_has_eval_script() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof $262.createRealm().evalScript === 'function'");
+        assert!(
+            result.is_ok(),
+            "realm.evalScript should be function: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_eval_script_runs() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); realm.evalScript('var x = 42'); realm.global.x === 42",
+        );
+        assert!(
+            result.is_ok(),
+            "realm.evalScript should run code: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_separate_globals() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm1 = $262.createRealm(); var realm2 = $262.createRealm(); realm1.global.x = 1; realm2.global.x = 2; (realm1.global.x === 1 && realm2.global.x === 2)",
+        );
+        assert!(
+            result.is_ok(),
+            "realms should have separate globals: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_preserves_modifications() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); realm.evalScript('Object.prototype.customProp = 42'); realm.global.Object.prototype.customProp === 42",
+        );
+        assert!(
+            result.is_ok(),
+            "realm modifications should persist: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_realm_has_error_constructors() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); var err = new realm.global.TypeError('test'); err.constructor === realm.global.TypeError",
+        );
+        assert!(result.is_ok(), "realm should have TypeError: {:?}", result);
+    }
+
+    #[test]
+    fn test_eval_script_runs() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("$262.evalScript('var y = 123'); y === 123");
+        assert!(result.is_ok(), "$262.evalScript should run: {:?}", result);
+    }
+
+    #[test]
+    fn test_eval_script_returns_value() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("$262.evalScript('42') === 42");
+        assert!(
+            result.is_ok(),
+            "$262.evalScript should return value: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_gc_throws_reference_error() {
+        let mut ctx = harness_ctx();
+        let result =
+            ctx.eval("var threw = false; try { $262.gc(); } catch(e) { threw = true; } threw");
+        assert!(result.is_ok(), "$262.gc should throw: {:?}", result);
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_detach_array_buffer() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(8); $262.detachArrayBuffer(buf); buf.byteLength === 0 && buf.detached === true",
+        );
+        assert!(
+            result.is_ok(),
+            "detachArrayBuffer should work: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_detach_array_buffer_wrong_type() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var threw = false; try { $262.detachArrayBuffer({}); } catch(e) { threw = true; } threw",
+        );
+        assert!(
+            result.is_ok(),
+            "detachArrayBuffer wrong type should throw: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_agent_stub_methods_exist() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "$262.agent.sleep !== undefined && $262.agent.getReport !== undefined && $262.agent.report !== undefined",
+        );
+        assert!(
+            result.is_ok(),
+            "$262.agent stubs should exist: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_agent_timeouts() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval("typeof $262.agent.timeouts === 'object'");
+        assert!(
+            result.is_ok(),
+            "$262.agent.timeouts should exist: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cross_realm_typeerror_identity() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); var localTE = TypeError; var realmTE = realm.global.TypeError; localTE !== realmTE",
+        );
+        assert!(
+            result.is_ok(),
+            "cross-realm constructors should differ: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cross_realm_error_throws_type_mismatch() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); var threw = false; try { assert.throws(TypeError, function() { throw new realm.global.TypeError(); }); } catch(e) { threw = true; } threw",
+        );
+        assert!(
+            result.is_ok(),
+            "cross-realm TypeError should not match local: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
+    }
+}

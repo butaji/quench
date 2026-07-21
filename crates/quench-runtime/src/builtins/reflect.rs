@@ -98,3 +98,92 @@ fn register_proxy(ctx: &mut Context) {
     }
     ctx.set_global("Proxy".to_string(), proxy_ctor);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Context;
+
+    fn eval_ok(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
+    fn eval_err(src: &str) -> bool {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(src).is_err()
+    }
+
+    #[test]
+    fn reflect_own_keys_empty_object() {
+        let result = eval_ok("Reflect.ownKeys({})");
+        assert!(matches!(result, Value::Object(_)));
+    }
+
+    #[test]
+    fn reflect_own_keys_with_properties() {
+        let result = eval_ok("Reflect.ownKeys({a: 1, b: 2})");
+        let arr = match result {
+            Value::Object(rc) => rc.borrow().clone(),
+            _ => panic!("expected Object"),
+        };
+        assert_eq!(arr.elements.len(), 2);
+    }
+
+    #[test]
+    fn reflect_own_keys_non_object_throws() {
+        assert!(eval_err("Reflect.ownKeys(null)"));
+        assert!(eval_err("Reflect.ownKeys(42)"));
+    }
+
+    #[test]
+    fn reflect_exists_as_global() {
+        let result = eval_ok("typeof Reflect");
+        assert_eq!(result.to_string(), "object");
+    }
+
+    #[test]
+    fn reflect_own_keys_exists() {
+        let result = eval_ok("typeof Reflect.ownKeys");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn proxy_constructor_basic() {
+        let result = eval_ok("typeof Proxy");
+        assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn proxy_constructor_name() {
+        let result = eval_ok("Proxy.name");
+        assert_eq!(result.to_string(), "Proxy");
+    }
+
+    #[test]
+    fn proxy_with_empty_handler() {
+        let result =
+            eval_ok("var target = {x: 1}; var proxy = new Proxy(target, {}); typeof proxy");
+        assert_eq!(result.to_string(), "object");
+    }
+
+    #[test]
+    fn proxy_target_must_be_object() {
+        assert!(eval_err("new Proxy(42, {})"));
+        assert!(eval_err("new Proxy('str', {})"));
+        assert!(eval_err("new Proxy(null, {})"));
+    }
+
+    #[test]
+    fn proxy_handler_must_be_object() {
+        assert!(eval_err("new Proxy({}, 42)"));
+        assert!(eval_err("new Proxy({}, 'str')"));
+        assert!(eval_err("new Proxy({}, null)"));
+    }
+
+    #[test]
+    fn proxy_missing_arguments() {
+        assert!(eval_err("new Proxy()"));
+        assert!(eval_err("new Proxy({})"));
+    }
+}

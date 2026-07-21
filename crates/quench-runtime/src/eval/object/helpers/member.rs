@@ -203,3 +203,85 @@ pub fn is_readonly_constructor_property(constructor: &str, property: &str) -> bo
                 | "EPSILON"
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::PropertyKey;
+
+    #[test]
+    fn test_name_matches_prop_ident() {
+        let key = PropertyKey::Ident("foo".to_string());
+        assert!(super::name_matches_prop(&key, "foo"));
+        assert!(!super::name_matches_prop(&key, "bar"));
+    }
+
+    #[test]
+    fn test_name_matches_prop_string() {
+        let key = PropertyKey::String("hello".to_string());
+        assert!(super::name_matches_prop(&key, "hello"));
+        assert!(!super::name_matches_prop(&key, "world"));
+    }
+
+    #[test]
+    fn test_name_matches_prop_number() {
+        let key = PropertyKey::Number(42.0);
+        assert!(super::name_matches_prop(&key, "42"));
+        assert!(!super::name_matches_prop(&key, "43"));
+    }
+
+    #[test]
+    fn test_name_matches_prop_computed() {
+        let key = PropertyKey::Computed(Box::new(crate::ast::Expression::Identifier(
+            "computed".to_string(),
+        )));
+        assert!(!super::name_matches_prop(&key, "computed"));
+    }
+
+    #[test]
+    fn test_is_readonly_constructor_property_length() {
+        assert!(super::is_readonly_constructor_property("Foo", "length"));
+        assert!(super::is_readonly_constructor_property("Bar", "name"));
+    }
+
+    #[test]
+    fn test_is_readonly_constructor_property_number_static() {
+        assert!(super::is_readonly_constructor_property(
+            "Number",
+            "MAX_VALUE"
+        ));
+        assert!(super::is_readonly_constructor_property(
+            "Number",
+            "MIN_VALUE"
+        ));
+        assert!(super::is_readonly_constructor_property("Number", "NaN"));
+        assert!(super::is_readonly_constructor_property(
+            "Number",
+            "POSITIVE_INFINITY"
+        ));
+        assert!(super::is_readonly_constructor_property(
+            "Number",
+            "MAX_SAFE_INTEGER"
+        ));
+    }
+
+    #[test]
+    fn test_is_readonly_constructor_property_not_number() {
+        assert!(!super::is_readonly_constructor_property(
+            "String",
+            "MAX_VALUE"
+        ));
+        assert!(!super::is_readonly_constructor_property(
+            "Array",
+            "MAX_VALUE"
+        ));
+    }
+
+    #[test]
+    fn test_is_readonly_constructor_property_other_props() {
+        assert!(!super::is_readonly_constructor_property(
+            "Number",
+            "prototype"
+        ));
+        assert!(!super::is_readonly_constructor_property("Number", "foo"));
+    }
+}

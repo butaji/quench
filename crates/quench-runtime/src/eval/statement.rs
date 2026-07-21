@@ -366,9 +366,11 @@ pub fn eval_statement(
             }
         }
         Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
-        Statement::DoWhile { body, condition, labels } => {
-            eval_do_while(body, condition, labels.clone(), env, in_arrow_function)
-        }
+        Statement::DoWhile {
+            body,
+            condition,
+            labels,
+        } => eval_do_while(body, condition, labels.clone(), env, in_arrow_function),
         Statement::For {
             init,
             condition,
@@ -400,10 +402,16 @@ pub fn eval_statement(
             // Transfer this label (and any others already in scope) to a
             // DoWhile body so break/continue can find it. This is needed because
             // DoWhile is evaluated outside the Labeled statement's scope.
-            if let Statement::DoWhile { body: inner_body, condition, labels } = body.as_ref() {
+            if let Statement::DoWhile {
+                body: inner_body,
+                condition,
+                labels,
+            } = body.as_ref()
+            {
                 let mut all_labels = vec![label.clone()];
                 all_labels.extend(labels.iter().cloned());
-                let result = eval_do_while(inner_body, condition, all_labels, env, in_arrow_function);
+                let result =
+                    eval_do_while(inner_body, condition, all_labels, env, in_arrow_function);
                 pop_label_scope();
                 return result;
             }
