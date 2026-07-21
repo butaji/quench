@@ -55,6 +55,16 @@ pub(crate) fn call_value_impl(
                         )
                     }
                 }
+            } else if f.is_generator {
+                // Generator function: return a GeneratorObject (body not executed yet).
+                // Parameters are evaluated when generator.next() is first called.
+                let gen_obj = crate::value::GeneratorObject::new(
+                    f.body.clone(),
+                    f.params.clone(),
+                    Rc::clone(&f.closure),
+                    f.strict,
+                );
+                Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
             } else {

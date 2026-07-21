@@ -275,6 +275,10 @@ pub enum Expression {
     },
     /// BigInt literal: 123n, 0xFFn, etc.
     BigInt(String),
+    /// Yield expression: yield expr (in generator functions)
+    Yield(Option<Box<Expression>>),
+    /// Yield* expression: yield* expr (delegate to another generator)
+    YieldDelegate(Box<Expression>),
 }
 
 /// JSX tag name (element name or component reference)

@@ -6,6 +6,7 @@ pub mod call;
 pub mod class;
 pub mod expression;
 pub mod function;
+pub mod generator;
 pub mod iteration;
 pub mod jsx;
 pub mod literal;
