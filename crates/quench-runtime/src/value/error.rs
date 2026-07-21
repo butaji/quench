@@ -8,7 +8,7 @@ use super::{Object, ObjectKind, Value};
 use crate::context::CURRENT_CONTEXT;
 
 /// JavaScript error - wraps error messages
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct JsError(pub String);
 
 impl JsError {

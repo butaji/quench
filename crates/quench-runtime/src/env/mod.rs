@@ -227,6 +227,18 @@ impl Environment {
         if let Some(ref parent) = self.parent {
             return parent.borrow_mut().set(name, value);
         }
+        // No binding found in scope chain. In sloppy mode, create implicit global
+        // in the global scope (first scope). In strict mode, return false so
+        // the caller throws ReferenceError.
+        if !crate::interpreter::is_strict_mode() {
+            if let Some(global_scope) = self.scopes.first() {
+                global_scope
+                    .borrow_mut()
+                    .bindings_mut()
+                    .insert(name.to_string(), Rc::new(value));
+                return true;
+            }
+        }
         false
     }
 
@@ -308,6 +320,27 @@ impl Environment {
             return parent.borrow().has(name);
         }
         self.get_global_this_property(name).is_some()
+    }
+
+    /// Delete a binding from the innermost scope that has it.
+    /// Returns true if an implicit-global binding was found and deleted.
+    /// Returns false for declared bindings (var/let/const) or if not found.
+    pub fn delete_binding(&mut self, name: &str) -> bool {
+        for scope_rc in self.scopes.iter_mut().rev() {
+            let mut scope = scope_rc.borrow_mut();
+            if scope.has(name) {
+                // Don't delete declared bindings (var/let/const) — only implicit globals
+                if scope.get_kind(name).is_some() {
+                    return false;
+                }
+                let deleted = scope.delete(name);
+                return deleted;
+            }
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().delete_binding(name);
+        }
+        false
     }
 
     pub fn push_scope(&mut self) {

@@ -107,6 +107,16 @@ pub enum Statement {
         object: Box<Expression>,
         body: Box<Statement>,
     },
+    /// Do-while statement — `do { body } while (cond)`
+    /// Kept as its own variant (not desugared) so the eval can capture the
+    /// body completion value and return it when condition is false.
+    /// `labels` stores any labels from the enclosing Statement::Labeled that
+    /// should be visible to break/continue inside the body.
+    DoWhile {
+        body: Box<Statement>,
+        condition: Box<Expression>,
+        labels: Vec<String>,
+    },
 }
 
 impl Statement {
@@ -128,6 +138,7 @@ impl Statement {
             }
             Statement::While { body, .. } => body.has_explicit_return(),
             Statement::For { body, .. } => body.has_explicit_return(),
+            Statement::DoWhile { body, .. } => body.has_explicit_return(),
             Statement::Try {
                 body,
                 handler,

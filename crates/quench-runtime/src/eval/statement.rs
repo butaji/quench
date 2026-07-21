@@ -366,6 +366,9 @@ pub fn eval_statement(
             }
         }
         Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
+        Statement::DoWhile { body, condition, labels } => {
+            eval_do_while(body, condition, labels.clone(), env, in_arrow_function)
+        }
         Statement::For {
             init,
             condition,
@@ -394,6 +397,16 @@ pub fn eval_statement(
         Statement::Labeled { label, body } => {
             push_label_scope();
             add_label(label);
+            // Transfer this label (and any others already in scope) to a
+            // DoWhile body so break/continue can find it. This is needed because
+            // DoWhile is evaluated outside the Labeled statement's scope.
+            if let Statement::DoWhile { body: inner_body, condition, labels } = body.as_ref() {
+                let mut all_labels = vec![label.clone()];
+                all_labels.extend(labels.iter().cloned());
+                let result = eval_do_while(inner_body, condition, all_labels, env, in_arrow_function);
+                pop_label_scope();
+                return result;
+            }
             let result = eval_statement(body, env, false, in_arrow_function);
             pop_label_scope();
             result
@@ -627,6 +640,53 @@ fn eval_while(
             }
             Some(ControlFlow::Continue) => {}
             None => {}
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn eval_do_while(
+    body: &Statement,
+    condition: &Expression,
+    labels: Vec<String>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    // Push label scope so break/continue inside body can find these labels
+    push_label_scope();
+    for lbl in &labels {
+        add_label(lbl);
+    }
+    let result = eval_do_while_impl(body, condition, env, in_arrow_function);
+    pop_label_scope();
+    result
+}
+
+fn eval_do_while_impl(
+    body: &Statement,
+    condition: &Expression,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    loop {
+        take_control_flow();
+        let body_val = eval_statement(body, env, false, in_arrow_function)?;
+        match take_control_flow() {
+            Some(ControlFlow::Break) => break,
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            Some(ControlFlow::YieldDelegate(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            Some(ControlFlow::Continue) => {}
+            None => {}
+        }
+        // Check condition; if false, return the body completion value
+        if !to_bool(&eval_expression(condition, env, in_arrow_function)?) {
+            return Ok(body_val);
         }
     }
     Ok(Value::Undefined)
