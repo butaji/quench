@@ -34,9 +34,10 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     use std::rc::Rc;
 
     let m = |name: &str, f: fn(Vec<Value>) -> Result<Value, crate::JsError>| {
-        proto
-            .borrow_mut()
-            .set(name, Value::NativeFunction(Rc::new(NativeFunction::new(f))));
+        proto.borrow_mut().set(
+            name,
+            Value::NativeFunction(Rc::new(NativeFunction::new_with_name(name, f))),
+        );
     };
 
     setup_transformation_methods(&m);
