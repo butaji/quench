@@ -193,7 +193,7 @@ pub fn assign_to_member(
             assign_to_native_constructor(&nc, &prop_name, value.clone())
         }
         Value::Class(class) => {
-            class.set_static_field(&prop_name, value.clone());
+            class.set_static_property(&prop_name, value.clone(), env)?;
             Ok(())
         }
         _ => Err(JsError(format!(

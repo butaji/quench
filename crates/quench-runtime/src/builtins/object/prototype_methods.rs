@@ -19,7 +19,8 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                     return Ok(Value::Boolean(true));
                 }
                 // Also check getters/setters for Symbol-keyed accessor properties
-                let key_str = crate::builtins::object_static::to_property_key(key_val);
+                let key_str = crate::builtins::object_static::to_property_key(key_val)
+                    .unwrap_or_else(|_| String::new());
                 if obj.has_getter(&key_str) || obj.has_setter(&key_str) {
                     return Ok(Value::Boolean(true));
                 }

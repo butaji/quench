@@ -124,8 +124,8 @@ fn to_primitive_object(
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
-    let first_called = obj.borrow().get(first).is_some();
-    let second_called = obj.borrow().get(second).is_some();
+    let first_method_exists = obj.borrow().get(first).is_some();
+    let second_method_exists = obj.borrow().get(second).is_some();
 
     if let Some(result) = try_method(obj, first)? {
         return Ok(result);
@@ -134,9 +134,9 @@ fn to_primitive_object(
         return Ok(result);
     }
 
-    // Both methods were called and returned non-primitive (object) values —
-    // per ES spec, ToPrimitive must throw TypeError.
-    if first_called && second_called {
+    // ES 7.1.1.1 OrdinaryToPrimitive: both methods were called and returned
+    // non-primitive (object) values, OR neither method exists → throw TypeError.
+    if (first_method_exists && second_method_exists) || (!first_method_exists && !second_method_exists) {
         let (err, _) = crate::value::create_js_error_with_type(
             "Cannot convert object to primitive value",
             "TypeError",

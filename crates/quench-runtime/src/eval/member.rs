@@ -15,6 +15,8 @@ pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;
+use crate::eval::class::helpers::prop_key_to_string;
+use crate::eval::object::call_getter;
 use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -104,6 +106,53 @@ pub fn eval_class_member(
                     // Class bodies are always strict mode (ES spec 15.7).
                     func.strict = true;
                     return Ok(Value::Function(func));
+                }
+            }
+            // Check static getters
+            for (name, body) in &class.static_getters {
+                // Use the class definition environment to evaluate computed property keys,
+                // so that variables in the class scope are visible.
+                let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                if key_str == prop_name {
+                    // Create a synthetic object with the getter and invoke it.
+                    // `this` inside the getter is the class constructor itself.
+                    let mut this_obj = Object::new(ObjectKind::Ordinary);
+                    this_obj.set("constructor", Value::Class(class.clone()));
+                    let this_rc = Rc::new(RefCell::new(this_obj));
+                    let mut getter_obj = Object::new(ObjectKind::Ordinary);
+                    getter_obj.set_getter(
+                        &key_str,
+                        Rc::new(body.clone()),
+                        Rc::clone(&eval_env),
+                    );
+                    let getter_obj_rc = Rc::new(RefCell::new(getter_obj));
+                    return call_getter(
+                        &this_rc,
+                        &getter_obj_rc.borrow().get_getter(&key_str).unwrap(),
+                        &eval_env,
+                    );
+                }
+            }
+            // Check static setters
+            for (name, param, body) in &class.static_setters {
+                let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                if key_str == prop_name {
+                    // Return a function that wraps the setter call.
+                    let param_name = param.clone();
+                    let setter_body = body.clone();
+                    let setter_closure = Rc::clone(&eval_env);
+                    let mut setter_func = crate::value::ValueFunction::new(
+                        Some(key_str),
+                        vec![crate::ast::Param::new(&param_name)],
+                        setter_body,
+                        setter_closure,
+                        false,
+                        false,
+                    );
+                    setter_func.strict = true;
+                    return Ok(Value::Function(setter_func));
                 }
             }
             // Look up the superclass chain for inherited static members

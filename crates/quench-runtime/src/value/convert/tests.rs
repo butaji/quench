@@ -329,10 +329,15 @@ fn test_to_primitive_function_hint_string() {
     assert!(matches!(result, Value::String(_)));
 }
 
+fn eval_val(src: &str) -> Value {
+    crate::Context::new().unwrap().eval(src).unwrap()
+}
+
 #[test]
 fn test_to_primitive_object_plain() {
-    // Plain object with no custom valueOf/toString falls back to "[object Object]"
-    let obj = Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+    // Plain object (created via eval) inherits valueOf/toString from Object.prototype.
+    // When called without custom methods, they return "[object Object]".
+    let obj = eval_val("({})");
     let result = to_primitive(&obj, None).unwrap();
     assert_eq!(result, Value::String("[object Object]".to_string()));
 }

@@ -35,7 +35,7 @@ pub fn object_has_own(args: Vec<Value>) -> Result<Value, JsError> {
         .first()
         .ok_or_else(|| JsError::from("Object.hasOwn requires argument"))?;
     let key_val = args.get(1);
-    let key = key_val.map(to_property_key).unwrap_or_default();
+    let key = key_val.map(to_property_key).unwrap_or(Ok("".to_string()))?;
 
     if let Value::Object(o) = obj {
         let o = o.borrow();
@@ -98,7 +98,7 @@ pub fn object_from_entries(args: Vec<Value>) -> Result<Value, JsError> {
                 .elements
                 .first()
                 .map(to_property_key)
-                .unwrap_or_default();
+                .unwrap_or(Ok("".to_string()))?;
             let value = pair_borrowed
                 .elements
                 .get(1)
