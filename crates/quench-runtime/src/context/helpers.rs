@@ -50,6 +50,8 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = Some(ctx_ptr);
     });
+    // Save label stack depth before parse so we can restore on any exit path.
+    let label_depth = crate::interpreter::label_stack_depth();
     let program = match ctx.parse(&source) {
         Ok(program) => program,
         Err(e) => {
@@ -63,6 +65,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     };
     reject_eval_var_lexical_conflict(&program, ctx)?;
+    // Establish the eval barrier so eval code cannot see outer labels.
+    // has_label will only search up to this depth.
+    crate::interpreter::set_eval_barrier_depth(label_depth);
+    crate::interpreter::push_label_scope();
     let result = if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
         crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
     } else {
@@ -78,6 +84,9 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         crate::interpreter::set_this_binding(&ctx.env, this_value);
         crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };
+    // Exit eval: restore label stack and clear barrier.
+    crate::interpreter::pop_label_scope();
+    crate::interpreter::clear_eval_barrier_depth();
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = prev_ctx;
     });

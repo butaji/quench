@@ -98,8 +98,12 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
             let stmts: Vec<Statement> = block.body.iter().filter_map(lower_stmt).collect();
             Some(Statement::Block(stmts))
         }
-        ast::Statement::BreakStatement(_) => Some(Statement::Break(None)),
-        ast::Statement::ContinueStatement(_) => Some(Statement::Continue(None)),
+        ast::Statement::BreakStatement(b) => Some(Statement::Break(
+            b.label.as_ref().map(|l| l.name.as_str().to_string()),
+        )),
+        ast::Statement::ContinueStatement(c) => Some(Statement::Continue(
+            c.label.as_ref().map(|l| l.name.as_str().to_string()),
+        )),
         ast::Statement::DebuggerStatement(_) => Some(Statement::Empty),
         ast::Statement::WithStatement(w) => {
             let object = lower_expr(&w.object).ok()?;
@@ -116,7 +120,10 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
             let expr = ret.argument.as_ref().and_then(|e| lower_expr(e).ok());
             Some(Statement::Return(expr.map(Box::new)))
         }
-        ast::Statement::LabeledStatement(labeled) => lower_stmt(&labeled.body),
+        ast::Statement::LabeledStatement(labeled) => Some(Statement::Labeled {
+            label: labeled.label.name.as_str().to_string(),
+            body: Box::new(lower_stmt(&labeled.body)?),
+        }),
         ast::Statement::IfStatement(if_stmt) => lower_if_stmt(if_stmt),
         ast::Statement::SwitchStatement(switch) => lower_switch(switch),
         ast::Statement::ThrowStatement(throw) => {

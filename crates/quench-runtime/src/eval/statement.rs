@@ -4,8 +4,8 @@ use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::interpreter::{
-    collect_var_names_recursive, predeclare_let_const, set_control_flow, take_control_flow,
-    ControlFlow,
+    add_label, collect_var_names_recursive, has_label, pop_label_scope, predeclare_let_const,
+    push_label_scope, set_control_flow, take_control_flow, ControlFlow,
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
@@ -391,11 +391,40 @@ pub fn eval_statement(
         }
         Statement::Expression(expr) => eval_expression(expr, env, in_arrow_function),
         Statement::Empty => Ok(Value::Undefined),
-        Statement::Break(_) => {
+        Statement::Labeled { label, body } => {
+            push_label_scope();
+            add_label(label);
+            let result = eval_statement(body, env, false, in_arrow_function);
+            pop_label_scope();
+            result
+        }
+        Statement::Break(label) => {
+            if let Some(name) = label {
+                if !has_label(name) {
+                    let (err_val, js_err) =
+                        crate::value::error::create_js_error_with_type(
+                            &format!("undefined label '{}'", name),
+                            "SyntaxError",
+                        );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+            }
             set_control_flow(ControlFlow::Break);
             Ok(Value::Undefined)
         }
-        Statement::Continue(_) => {
+        Statement::Continue(label) => {
+            if let Some(name) = label {
+                if !has_label(name) {
+                    let (err_val, js_err) =
+                        crate::value::error::create_js_error_with_type(
+                            &format!("undefined label '{}'", name),
+                            "SyntaxError",
+                        );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+            }
             set_control_flow(ControlFlow::Continue);
             Ok(Value::Undefined)
         }
