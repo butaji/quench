@@ -178,15 +178,6 @@ pub(crate) fn label_stack_depth() -> usize {
     LABEL_STACK.with(|cell| cell.borrow().len())
 }
 
-/// Restore the label stack to a saved depth, discarding any scopes
-/// pushed during eval execution.
-pub(crate) fn restore_label_stack(depth: usize) {
-    LABEL_STACK.with(|cell| {
-        let mut stack = cell.borrow_mut();
-        stack.truncate(depth);
-    });
-}
-
 pub(crate) fn set_current_eval_env(env: Option<Rc<RefCell<Environment>>>) {
     CURRENT_EVAL_ENV.with(|cell| *cell.borrow_mut() = env);
 }

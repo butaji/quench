@@ -256,16 +256,20 @@ fn strict_eq_native_constructor_same_reference() {
 
 #[test]
 fn strict_eq_class_different_identity() {
-    let a = Value::Class(crate::value::ClassValue::from_ast(&crate::ast::Class {
-        name: Some("C1".into()),
-        super_class: None,
-        body: vec![],
-    }));
-    let b = Value::Class(crate::value::ClassValue::from_ast(&crate::ast::Class {
-        name: Some("C2".into()),
-        super_class: None,
-        body: vec![],
-    }));
+    let a = Value::Class(Box::new(crate::value::ClassValue::from_ast(
+        &crate::ast::Class {
+            name: Some("C1".into()),
+            super_class: None,
+            body: vec![],
+        },
+    )));
+    let b = Value::Class(Box::new(crate::value::ClassValue::from_ast(
+        &crate::ast::Class {
+            name: Some("C2".into()),
+            super_class: None,
+            body: vec![],
+        },
+    )));
     assert!(!strict_eq(&a, &b));
 }
 
@@ -457,4 +461,43 @@ fn to_primitive_for_compare_strict_primitives() {
         to_primitive_for_compare_strict(&Value::String("hello".into())).unwrap(),
         Value::String("hello".into())
     );
+}
+
+// ─── strict_eq cross-type comparisons ────────────────────────────────────────
+
+#[test]
+fn strict_eq_undefined_vs_null() {
+    assert!(!strict_eq(&Value::Undefined, &Value::Null));
+    assert!(!strict_eq(&Value::Null, &Value::Undefined));
+}
+
+#[test]
+fn strict_eq_number_vs_string() {
+    assert!(!strict_eq(
+        &Value::Number(42.0),
+        &Value::String("42".to_string())
+    ));
+    assert!(!strict_eq(
+        &Value::String("42".to_string()),
+        &Value::Number(42.0)
+    ));
+}
+
+#[test]
+fn strict_eq_boolean_vs_number() {
+    assert!(!strict_eq(&Value::Boolean(true), &Value::Number(1.0)));
+    assert!(!strict_eq(&Value::Boolean(false), &Value::Number(0.0)));
+}
+
+#[test]
+fn strict_eq_nan() {
+    // NaN !== NaN (per spec)
+    let nan = Value::Number(f64::NAN);
+    assert!(!strict_eq(&nan, &nan));
+}
+
+#[test]
+fn strict_eq_positive_zero_negative_zero() {
+    // +0 === -0 per strict equality
+    assert!(strict_eq(&Value::Number(0.0), &Value::Number(-0.0)));
 }

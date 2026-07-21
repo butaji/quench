@@ -57,8 +57,7 @@ mod break_continue {
     #[test]
     fn break_with_label_exits_labeled_loop() {
         assert_eq!(
-            eval("let i = 0; LABEL: while (true) { i++; if (i > 2) break LABEL; } i")
-                .unwrap(),
+            eval("let i = 0; LABEL: while (true) { i++; if (i > 2) break LABEL; } i").unwrap(),
             Value::Number(3.0)
         );
     }
@@ -67,9 +66,8 @@ mod break_continue {
     fn break_label_in_eval_throws_when_label_is_outer() {
         // eval("break LABEL") where LABEL is defined OUTSIDE the eval should throw
         // SyntaxError per ES §13.12.1 (BreakStatement evaluation).
-        let result = eval(
-            "var x = 0, y = 0; LABEL: do { x++; eval('break LABEL'); y++; } while(false); x",
-        );
+        let result =
+            eval("var x = 0, y = 0; LABEL: do { x++; eval('break LABEL'); y++; } while(false); x");
         assert!(
             result.is_err(),
             "break LABEL in eval pointing to outer label should throw SyntaxError"
@@ -307,6 +305,16 @@ mod try_catch_statement {
     }
 }
 
+mod try_catch_finally_statement {
+    use super::*;
+
+    #[test]
+    fn try_catch_works() {
+        let r = eval("try { throw 42; } catch (e) { e }").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+}
+
 mod for_in_statement {
     use super::*;
 
@@ -399,13 +407,21 @@ mod class_declaration {
         // Computed property name in accessor should evaluate the expression.
         // If it throws, the class declaration should throw.
         let r = eval("var t = function() { throw new Error(); }; class C { get [t()]() {} }");
-        assert!(r.is_err(), "computed getter name throwing should propagate to class decl, got {:?}", r);
+        assert!(
+            r.is_err(),
+            "computed getter name throwing should propagate to class decl, got {:?}",
+            r
+        );
     }
 
     #[test]
     fn class_computed_setter_name_throws_on_abrupt() {
         let r = eval("var t = function() { throw new Error(); }; class C { set [t()](_) {} }");
-        assert!(r.is_err(), "computed setter name throwing should propagate to class decl, got {:?}", r);
+        assert!(
+            r.is_err(),
+            "computed setter name throwing should propagate to class decl, got {:?}",
+            r
+        );
     }
 }
 
@@ -1259,5 +1275,115 @@ mod non_tail_call {
             .unwrap(),
             Value::Number(1.0)
         );
+    }
+}
+
+// ─── try-finally ────────────────────────────────────────────────────────
+// Note: try-finally (try without catch) is not yet implemented.
+// These tests are ignored until the feature is added.
+
+// ─── optional chaining ──────────────────────────────────────────────────
+// Note: optional chaining on null/undefined is not fully implemented.
+// These tests cover the supported cases.
+
+mod optional_chaining {
+    use super::*;
+
+    #[test]
+    fn optional_member_on_object() {
+        let r = eval("var o = {a: 1}; o?.a").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn optional_member_on_missing_property() {
+        let r = eval("({})?.missing").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    #[test]
+    fn optional_call_on_function() {
+        let r = eval("var f = () => 42; f?.()").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn optional_chain_with_method() {
+        let r = eval("var o = {m() { return 5; }}; o.m?.()").unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn optional_chain_on_array() {
+        let r = eval("[1,2,3]?.[1]").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+}
+
+// ─── array spread in literals ──────────────────────────────────────────
+
+mod array_spread {
+    use super::*;
+
+    #[test]
+    fn spread_in_array_literal() {
+        let r = eval("[1, ...[2, 3], 4]").unwrap();
+        match r {
+            Value::Object(ref o) => {
+                let arr = o.borrow();
+                assert_eq!(arr.elements.len(), 4);
+                assert_eq!(arr.elements.first(), Some(&Value::Number(1.0)));
+                assert_eq!(arr.elements.get(1), Some(&Value::Number(2.0)));
+                assert_eq!(arr.elements.get(2), Some(&Value::Number(3.0)));
+                assert_eq!(arr.elements.get(3), Some(&Value::Number(4.0)));
+            }
+            _ => panic!("expected array"),
+        }
+    }
+
+    #[test]
+    fn spread_empty_array() {
+        let r = eval("[1, ...[], 2]").unwrap();
+        match r {
+            Value::Object(ref o) => {
+                let arr = o.borrow();
+                assert_eq!(arr.elements.len(), 2);
+                assert_eq!(arr.elements.first(), Some(&Value::Number(1.0)));
+                assert_eq!(arr.elements.get(1), Some(&Value::Number(2.0)));
+            }
+            _ => panic!("expected array"),
+        }
+    }
+
+    #[test]
+    fn spread_string() {
+        let r = eval("[...'abc']").unwrap();
+        match r {
+            Value::Object(ref o) => {
+                let arr = o.borrow();
+                assert_eq!(arr.elements.len(), 3);
+                assert_eq!(arr.elements.first(), Some(&Value::String("a".to_string())));
+                assert_eq!(arr.elements.get(1), Some(&Value::String("b".to_string())));
+                assert_eq!(arr.elements.get(2), Some(&Value::String("c".to_string())));
+            }
+            _ => panic!("expected array"),
+        }
+    }
+
+    #[test]
+    fn spread_nested() {
+        let r = eval("[1, ...['a', ...['b', 'c']], 2]").unwrap();
+        match r {
+            Value::Object(ref o) => {
+                let arr = o.borrow();
+                assert_eq!(arr.elements.len(), 5);
+                assert_eq!(arr.elements.first(), Some(&Value::Number(1.0)));
+                assert_eq!(arr.elements.get(1), Some(&Value::String("a".to_string())));
+                assert_eq!(arr.elements.get(2), Some(&Value::String("b".to_string())));
+                assert_eq!(arr.elements.get(3), Some(&Value::String("c".to_string())));
+                assert_eq!(arr.elements.get(4), Some(&Value::Number(2.0)));
+            }
+            _ => panic!("expected array"),
+        }
     }
 }

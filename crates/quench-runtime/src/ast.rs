@@ -71,11 +71,12 @@ pub enum Statement {
     Continue(Option<String>),
     /// Labeled statement — `label: body`
     Labeled { label: String, body: Box<Statement> },
-    /// Try-catch statement
-    TryCatch {
+    /// Try statement with optional catch and finally
+    Try {
         body: Box<Statement>,
         param: Option<String>,
-        handler: Box<Statement>,
+        handler: Option<Box<Statement>>,
+        finalizer: Option<Box<Statement>>,
     },
     /// Throw statement
     Throw(Box<Expression>),
@@ -127,8 +128,15 @@ impl Statement {
             }
             Statement::While { body, .. } => body.has_explicit_return(),
             Statement::For { body, .. } => body.has_explicit_return(),
-            Statement::TryCatch { body, handler, .. } => {
-                body.has_explicit_return() || handler.has_explicit_return()
+            Statement::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
+                body.has_explicit_return()
+                    || handler.as_ref().is_some_and(|h| h.has_explicit_return())
+                    || finalizer.as_ref().is_some_and(|f| f.has_explicit_return())
             }
             // Do not recurse into nested function declarations
             _ => false,
@@ -413,6 +421,8 @@ pub enum ClassMember {
         name: PropertyKey,
         params: Vec<Param>,
         body: Vec<Statement>,
+        is_async: bool,
+        is_generator: bool,
     },
     /// Getter
     Getter {
@@ -430,6 +440,8 @@ pub enum ClassMember {
         name: PropertyKey,
         params: Vec<Param>,
         body: Vec<Statement>,
+        is_async: bool,
+        is_generator: bool,
     },
     /// Instance field: x = expr
     Field {
@@ -466,6 +478,7 @@ pub enum BinaryOp {
     Or,
     Eq,
     Neq,
+    LooseEq,
     StrictEq,
     StrictNeq,
     Lt,
@@ -500,7 +513,11 @@ impl BinaryOp {
             BinaryOp::BitOr => 3,
             BinaryOp::BitXor => 4,
             BinaryOp::BitAnd => 5,
-            BinaryOp::Eq | BinaryOp::Neq | BinaryOp::StrictEq | BinaryOp::StrictNeq => 6,
+            BinaryOp::Eq
+            | BinaryOp::Neq
+            | BinaryOp::LooseEq
+            | BinaryOp::StrictEq
+            | BinaryOp::StrictNeq => 6,
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => 7,
             BinaryOp::In | BinaryOp::Instanceof => 7,
             BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Ushr => 8,
