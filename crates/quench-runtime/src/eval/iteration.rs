@@ -97,7 +97,7 @@ pub fn eval_for_of(
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -105,7 +105,7 @@ pub fn eval_for_of(
             None => {}
         }
     }
-    if let Some(ControlFlow::Return(val)) = take_control_flow() {
+    if let Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) | Some(ControlFlow::YieldDelegate(val)) = take_control_flow() {
         Ok(val)
     } else {
         Ok(Value::Undefined)
@@ -127,7 +127,7 @@ pub fn eval_for_in(
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -135,7 +135,7 @@ pub fn eval_for_in(
             None => {}
         }
     }
-    if let Some(ControlFlow::Return(val)) = take_control_flow() {
+    if let Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) | Some(ControlFlow::YieldDelegate(val)) = take_control_flow() {
         Ok(val)
     } else {
         Ok(Value::Undefined)

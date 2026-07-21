@@ -30,7 +30,12 @@ pub fn eval_statements(
             last_val = val;
         }
         match take_control_flow() {
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            // YieldDelegate: also propagate as Return (the generator handles it)
+            Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -56,7 +61,7 @@ pub fn eval_function_body(
         eval_statement(stmt, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Return(val)) => return Ok(val),
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue | ControlFlow::Yield(_) | ControlFlow::YieldDelegate(_))) => {
                 set_control_flow(cf);
                 return Ok(Value::Undefined);
             }
@@ -322,7 +327,12 @@ fn eval_while(
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            // YieldDelegate: also propagate as Return (the generator handles it)
+            Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -368,7 +378,12 @@ fn eval_for(
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            // YieldDelegate: also propagate as Return (the generator handles it)
+            Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -532,7 +547,12 @@ fn eval_for_in_stmt(
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val)) => {
+            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(val);
+            }
+            // YieldDelegate: also propagate as Return (the generator handles it)
+            Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }

@@ -273,11 +273,17 @@ fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, 
 
 fn lower_yield_expr(yield_expr: &ast::YieldExpression) -> Result<Expression, LowerError> {
     if yield_expr.delegate {
-        return Err(LowerError::new("Yield delegate not supported"));
-    }
-    match &yield_expr.argument {
-        Some(expr) => lower_expr(expr),
-        None => Ok(Expression::Undefined),
+        let arg = match &yield_expr.argument {
+            Some(expr) => lower_expr(expr)?,
+            None => Expression::Undefined,
+        };
+        Ok(Expression::YieldDelegate(Box::new(arg)))
+    } else {
+        let arg = match &yield_expr.argument {
+            Some(expr) => Some(Box::new(lower_expr(expr)?)),
+            None => None,
+        };
+        Ok(Expression::Yield(arg))
     }
 }
 

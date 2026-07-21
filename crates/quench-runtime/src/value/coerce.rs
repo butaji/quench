@@ -41,7 +41,7 @@ pub fn to_js_string(v: &Value) -> String {
         Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => "[Function]".to_string(),
+        | Value::Generator(_) | Value::Class(_) => "[Function]".to_string(),
         Value::Symbol(s) => format!("Symbol({})", s.desc.as_deref().unwrap_or("")),
         _ => "undefined".to_string(),
     }
@@ -118,7 +118,7 @@ pub fn to_bool(v: &Value) -> bool {
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_)
+        | Value::Generator(_) | Value::Class(_)
         | Value::BigInt(_)
         | Value::Symbol(_) => true,
     }
@@ -176,7 +176,7 @@ fn to_number_complex(v: &Value) -> Result<f64, JsError> {
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => Ok(to_number(&crate::value::to_primitive(v, Some("number"))?)),
+        | Value::Generator(_) | Value::Class(_) => Ok(to_number(&crate::value::to_primitive(v, Some("number"))?)),
         Value::Symbol(_) => {
             let (err_val, err) = crate::value::error::create_js_error_with_type(
                 "Cannot convert a Symbol to a number",

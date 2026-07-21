@@ -20,7 +20,7 @@ pub use helpers::*;
 
 /// Control flow for break/continue/return statements
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant, dead_code)]
 pub(crate) enum ControlFlow {
     Break,
     Continue,
@@ -82,7 +82,7 @@ pub(crate) fn set_generator_resume_value(val: Value) {
 }
 
 pub(crate) fn take_generator_resume_value() -> Value {
-    GENERATOR_RESUME_VALUE.with(|cell| cell.borrow_mut().take())
+    GENERATOR_RESUME_VALUE.with(|cell| cell.replace(Value::Undefined))
 }
 
 pub(crate) fn set_generator_yield(val: Value) {
@@ -98,6 +98,7 @@ thread_local! {
     static GENERATOR_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
+#[allow(dead_code)]
 pub(crate) fn set_generator_return(val: Value) {
     GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
 }
