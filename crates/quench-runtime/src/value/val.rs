@@ -208,6 +208,14 @@ fn fill_members_from_ast(
 }
 
 impl Value {
+    /// Check if this value is a Symbol whose description contains the given substring.
+    pub fn is_symbol_with(&self, desc_contains: &str) -> bool {
+        match self {
+            Value::Symbol(s) => s.desc.as_ref().is_some_and(|d| d.contains(desc_contains)),
+            _ => false,
+        }
+    }
+
     /// Check if this value is callable (a function).
     pub fn is_callable(&self) -> bool {
         matches!(
@@ -289,7 +297,8 @@ fn debug_value(v: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Generator(_) | Value::Class(_) => {
+        | Value::Generator(_)
+        | Value::Class(_) => {
             write!(f, "Function(...)")
         }
         Value::BigInt(bi) => write!(f, "{}n", bi),

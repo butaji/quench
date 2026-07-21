@@ -219,7 +219,8 @@ pub fn to_bigint_value(val: &Value) -> Result<BigInt, crate::value::JsError> {
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Generator(_) | Value::Class(_) => {
+        | Value::Generator(_)
+        | Value::Class(_) => {
             let prim = to_primitive(val, Some("number"))?;
             to_bigint_value(&prim)
         }

@@ -29,9 +29,10 @@ pub fn to_primitive(value: &Value, hint: Option<&str>) -> Result<Value, JsError>
     match value {
         Value::Object(obj) => to_primitive_object(obj, hint),
         Value::Function(f) => to_primitive_function(&Rc::new(f.clone()), hint),
-        Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Generator(_) | Value::Class(_) => {
-            Ok(Value::String("[Function]".to_string()))
-        }
+        Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Generator(_)
+        | Value::Class(_) => Ok(Value::String("[Function]".to_string())),
         _ => Ok(Value::Undefined),
     }
 }
@@ -248,7 +249,8 @@ pub fn to_object(value: &Value) -> Value {
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Generator(_) | Value::Class(_) => value.clone(),
+        | Value::Generator(_)
+        | Value::Class(_) => value.clone(),
         Value::Symbol(_s) => Value::Object(Rc::new(RefCell::new(
             crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
         ))),

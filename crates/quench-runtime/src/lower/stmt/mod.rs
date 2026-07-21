@@ -77,7 +77,8 @@ pub fn lower_script(script: &ast::Program) -> Result<crate::ast::Program, LowerE
 fn lower_stmt_checked(stmt: &ast::Statement) -> Result<Option<Statement>, LowerError> {
     match stmt {
         ast::Statement::WithStatement(with_stmt) => {
-            let object = lower_expr(&with_stmt.object).map_err(|e| LowerError::new(format!("with object: {}", e)))?;
+            let object = lower_expr(&with_stmt.object)
+                .map_err(|e| LowerError::new(format!("with object: {}", e)))?;
             let body = lower_stmt(&with_stmt.body).unwrap_or(Statement::Empty);
             Ok(Some(Statement::With {
                 object: Box::new(object),

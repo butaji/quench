@@ -51,15 +51,28 @@ fn lower_array_destructure_basic() {
     assert_eq!(var_names(&stmts), &["__arr_src_0", "a", "b"]);
 
     let src = find_var(&stmts, "__arr_src_0").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), .. } = src {
+    if let Statement::VarDeclaration {
+        init: Some(expr), ..
+    } = src
+    {
         assert!(matches!(expr, Expression::Identifier(i) if i == "arr"));
     } else {
         panic!("expected VarDeclaration with init");
     }
 
     let a_stmt = find_var(&stmts, "a").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), kind: VarKind::Let, .. } = a_stmt {
-        if let Expression::Member { property: PropertyKey::String(k), computed: false, .. } = expr {
+    if let Statement::VarDeclaration {
+        init: Some(expr),
+        kind: VarKind::Let,
+        ..
+    } = a_stmt
+    {
+        if let Expression::Member {
+            property: PropertyKey::String(k),
+            computed: false,
+            ..
+        } = expr
+        {
             assert_eq!(k, "0");
         } else {
             panic!("expected Member with string key '0', got {:?}", expr);
@@ -69,8 +82,18 @@ fn lower_array_destructure_basic() {
     }
 
     let b_stmt = find_var(&stmts, "b").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), kind: VarKind::Let, .. } = b_stmt {
-        if let Expression::Member { property: PropertyKey::String(k), computed: false, .. } = expr {
+    if let Statement::VarDeclaration {
+        init: Some(expr),
+        kind: VarKind::Let,
+        ..
+    } = b_stmt
+    {
+        if let Expression::Member {
+            property: PropertyKey::String(k),
+            computed: false,
+            ..
+        } = expr
+        {
             assert_eq!(k, "1");
         } else {
             panic!("expected Member with string key '1'");
@@ -86,7 +109,11 @@ fn lower_array_destructure_with_hole() {
     assert_eq!(var_names(&stmts), &["__arr_src_0", "b"]);
     let b_stmt = find_var(&stmts, "b").unwrap();
     if let Statement::VarDeclaration {
-        init: Some(Expression::Member { property: PropertyKey::String(k), .. }),
+        init:
+            Some(Expression::Member {
+                property: PropertyKey::String(k),
+                ..
+            }),
         ..
     } = b_stmt
     {
@@ -114,9 +141,21 @@ fn lower_array_destructure_nested() {
 fn lower_array_destructure_default() {
     let stmts = parse_statements("let [a = 1] = maybe;");
     let a_stmt = find_var(&stmts, "a").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), .. } = a_stmt {
-        assert!(matches!(expr, Expression::Binary { op: crate::ast::BinaryOp::NullishCoalescing, .. }),
-            "expected NullishCoalescing for default, got {:?}", expr);
+    if let Statement::VarDeclaration {
+        init: Some(expr), ..
+    } = a_stmt
+    {
+        assert!(
+            matches!(
+                expr,
+                Expression::Binary {
+                    op: crate::ast::BinaryOp::NullishCoalescing,
+                    ..
+                }
+            ),
+            "expected NullishCoalescing for default, got {:?}",
+            expr
+        );
     } else {
         panic!("expected VarDeclaration for 'a'");
     }
@@ -135,8 +174,16 @@ fn lower_object_destructure_shorthand() {
     let _raw = parse_script("let {x, y} = obj;").unwrap();
     let stmts = parse_statements("let {x, y} = obj;");
     let names = var_names(&stmts);
-    assert!(names.contains(&"x".to_string()), "expected 'x' in {:?}", names);
-    assert!(names.contains(&"y".to_string()), "expected 'y' in {:?}", names);
+    assert!(
+        names.contains(&"x".to_string()),
+        "expected 'x' in {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"y".to_string()),
+        "expected 'y' in {:?}",
+        names
+    );
 }
 
 #[test]
@@ -150,9 +197,21 @@ fn lower_object_destructure_renamed() {
 fn lower_object_destructure_default() {
     let stmts = parse_statements("let {x = 5} = obj;");
     let x_stmt = find_var(&stmts, "x").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), .. } = x_stmt {
-        assert!(matches!(expr, Expression::Binary { op: crate::ast::BinaryOp::NullishCoalescing, .. }),
-            "expected NullishCoalescing for default, got {:?}", expr);
+    if let Statement::VarDeclaration {
+        init: Some(expr), ..
+    } = x_stmt
+    {
+        assert!(
+            matches!(
+                expr,
+                Expression::Binary {
+                    op: crate::ast::BinaryOp::NullishCoalescing,
+                    ..
+                }
+            ),
+            "expected NullishCoalescing for default, got {:?}",
+            expr
+        );
     }
 }
 
@@ -184,7 +243,11 @@ fn lower_object_destructure_numeric_key() {
     let stmts = parse_statements("let {0: a} = arr;");
     let a_stmt = find_var(&stmts, "a").unwrap();
     if let Statement::VarDeclaration {
-        init: Some(Expression::Member { property: PropertyKey::String(k), .. }),
+        init:
+            Some(Expression::Member {
+                property: PropertyKey::String(k),
+                ..
+            }),
         ..
     } = a_stmt
     {
@@ -205,7 +268,13 @@ fn lower_const_array_destructure() {
     let stmts = parse_statements("const [a] = arr;");
     assert_eq!(var_names(&stmts), &["__arr_src_0", "a"]);
     let a_stmt = find_var(&stmts, "a").unwrap();
-    assert!(matches!(a_stmt, Statement::VarDeclaration { kind: VarKind::Const, .. }));
+    assert!(matches!(
+        a_stmt,
+        Statement::VarDeclaration {
+            kind: VarKind::Const,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -213,7 +282,13 @@ fn lower_var_array_destructure() {
     let stmts = parse_statements("var [a] = arr;");
     assert_eq!(var_names(&stmts), &["__arr_src_0", "a"]);
     let a_stmt = find_var(&stmts, "a").unwrap();
-    assert!(matches!(a_stmt, Statement::VarDeclaration { kind: VarKind::Var, .. }));
+    assert!(matches!(
+        a_stmt,
+        Statement::VarDeclaration {
+            kind: VarKind::Var,
+            ..
+        }
+    ));
 }
 
 // ─── Function parameters (destructuring) ────────────────────────────────
@@ -234,7 +309,10 @@ fn lower_param_object_destructure() {
     assert_eq!(stmts.len(), 1);
     if let Statement::FunctionDeclaration { params, .. } = &stmts[0] {
         let has_pattern = params.iter().any(|p| p.pattern.is_some());
-        assert!(has_pattern, "object destructuring param should have pattern set");
+        assert!(
+            has_pattern,
+            "object destructuring param should have pattern set"
+        );
     }
 }
 
@@ -244,7 +322,10 @@ fn lower_param_rest_array() {
     assert_eq!(stmts.len(), 1);
     if let Statement::FunctionDeclaration { params, .. } = &stmts[0] {
         let rest_param = params.iter().find(|p| p.rest);
-        assert!(rest_param.is_some(), "rest parameter should be marked rest=true");
+        assert!(
+            rest_param.is_some(),
+            "rest parameter should be marked rest=true"
+        );
     }
 }
 
@@ -256,7 +337,10 @@ fn lower_param_rest_destructuring() {
         let rest_param = params.iter().find(|p| p.rest);
         assert!(rest_param.is_some(), "rest param should exist");
         let rest = rest_param.unwrap();
-        assert!(rest.pattern.is_some(), "rest with array pattern should have pattern");
+        assert!(
+            rest.pattern.is_some(),
+            "rest with array pattern should have pattern"
+        );
     }
 }
 
@@ -293,7 +377,9 @@ fn lower_for_in_object_destructure() {
         _ => panic!("expected Expression(ForIn), got {:?}", stmts[0]),
     };
     match for_in {
-        Expression::ObjectPattern(props) => { assert_eq!(props.len(), 1); }
+        Expression::ObjectPattern(props) => {
+            assert_eq!(props.len(), 1);
+        }
         _ => panic!("expected ObjectPattern, got {:?}", for_in),
     }
 }
@@ -323,8 +409,15 @@ fn lower_for_of_array_destructure() {
 fn lower_object_destructure_string_key() {
     let stmts = parse_statements(r#"let {"x": a} = obj;"#);
     let a_stmt = find_var(&stmts, "a").unwrap();
-    if let Statement::VarDeclaration { init: Some(expr), .. } = a_stmt {
-        if let Expression::Member { property: PropertyKey::String(k), .. } = expr {
+    if let Statement::VarDeclaration {
+        init: Some(expr), ..
+    } = a_stmt
+    {
+        if let Expression::Member {
+            property: PropertyKey::String(k),
+            ..
+        } = expr
+        {
             assert_eq!(k, "x");
         } else {
             panic!("expected Member with string key 'x', got {:?}", expr);
@@ -337,7 +430,11 @@ fn lower_object_destructure_boolean_key() {
     let stmts = parse_statements("let {true: a} = obj;");
     let a_stmt = find_var(&stmts, "a").unwrap();
     if let Statement::VarDeclaration {
-        init: Some(Expression::Member { property: PropertyKey::String(k), .. }),
+        init:
+            Some(Expression::Member {
+                property: PropertyKey::String(k),
+                ..
+            }),
         ..
     } = a_stmt
     {
@@ -359,7 +456,9 @@ fn runtime_array_destructure_basic() {
 fn runtime_array_destructure_rest() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval("let [first, ...rest] = [10, 20, 30]; first + rest.length").unwrap();
+    let r = ctx
+        .eval("let [first, ...rest] = [10, 20, 30]; first + rest.length")
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(12.0));
 }
 
@@ -412,7 +511,9 @@ fn runtime_object_destructure_default() {
 fn runtime_object_destructure_rest() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval("let {x, ...rest} = {x: 1, y: 2, z: 3}; rest.y + rest.z").unwrap();
+    let r = ctx
+        .eval("let {x, ...rest} = {x: 1, y: 2, z: 3}; rest.y + rest.z")
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(5.0));
 }
 
@@ -428,13 +529,15 @@ fn runtime_nested_destructure() {
 fn runtime_destructure_in_for_of() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval(
-        r#"
+    let r = ctx
+        .eval(
+            r#"
         let sum = 0;
         for (let [x, y] of [[1,2],[3,4],[5,6]]) { sum += x + y; }
         sum
         "#,
-    ).unwrap();
+        )
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(21.0));
 }
 
@@ -442,7 +545,9 @@ fn runtime_destructure_in_for_of() {
 fn runtime_destructure_param() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval("function f([a, b]) { return a + b; } f([10, 20])").unwrap();
+    let r = ctx
+        .eval("function f([a, b]) { return a + b; } f([10, 20])")
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(30.0));
 }
 
@@ -450,7 +555,9 @@ fn runtime_destructure_param() {
 fn runtime_destructure_param_object() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval("function f({x, y}) { return x * y; } f({x: 6, y: 7})").unwrap();
+    let r = ctx
+        .eval("function f({x, y}) { return x * y; } f({x: 6, y: 7})")
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(42.0));
 }
 
@@ -458,6 +565,8 @@ fn runtime_destructure_param_object() {
 fn runtime_destructure_param_rest() {
     let ctx = &mut crate::Context::new().unwrap();
     crate::builtins::register_builtins(ctx);
-    let r = ctx.eval("function f(a, ...rest) { return rest.length; } f(1, 2, 3, 4)").unwrap();
+    let r = ctx
+        .eval("function f(a, ...rest) { return rest.length; } f(1, 2, 3, 4)")
+        .unwrap();
     assert_eq!(r, crate::value::Value::Number(3.0));
 }

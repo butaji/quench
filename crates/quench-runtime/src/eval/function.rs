@@ -1,9 +1,10 @@
 //! Function calls
 
 use crate::ast::{ArrowBody, BindingElement, Expression, Statement};
+use crate::builtins::symbol::new_symbol as create_symbol;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::eval::statement::eval_function_body;
+use crate::eval::statement::{eval_function_body, take_tail_call_signal};
 use crate::interpreter::{check_depth, predeclare_let_const, predeclare_var, release_depth};
 use crate::value::{
     JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value, ValueFunction,
@@ -48,12 +49,10 @@ pub(crate) fn call_value_impl(
                     Ok(val) => {
                         crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
                     }
-                    Err(err) => {
-                        crate::builtins::promise::promise_reject_impl_static(
-                            vec![Value::String(err.to_string())],
-                            proto,
-                        )
-                    }
+                    Err(err) => crate::builtins::promise::promise_reject_impl_static(
+                        vec![Value::String(err.to_string())],
+                        proto,
+                    ),
                 }
             } else if f.is_generator {
                 // Generator function: return a GeneratorObject (body not executed yet).
@@ -127,72 +126,123 @@ pub(crate) fn call_js_function_impl(
 /// Like `call_js_function_impl` but with a `force_strict` flag that overrides
 /// the function's own strictness. Used by `call_getter` (ES §10.4.3) where
 /// getter functions must execute in the strict mode of the call site.
+/// Uses a trampoline loop to implement proper tail-call optimization: when
+/// `eval_function_body` sets a tail-call signal, this function re-enters
+/// with the new function without growing the Rust call stack.
 pub(crate) fn call_js_function_impl_with_strict(
-    f: ValueFunction,
-    args: Vec<Value>,
-    this_val: Value,
-    force_strict: bool,
+    mut f: ValueFunction,
+    mut args: Vec<Value>,
+    mut this_val: Value,
+    mut force_strict: bool,
 ) -> Result<Value, JsError> {
-    let closure = Rc::clone(&f.closure);
-    let params = f.params.clone();
+    // in_tail_chain is set once we enter the loop (first call made it here).
+    // The acc_stack is only meaningful within a tail-call chain: it holds
+    // the "accumulated" completion value at each call frame. When a function
+    // returns from a non-tail position, its completion value is combined
+    // with whatever is already in the acc slot (per ES §14.2.1 semantics).
+    //
+    // Each loop iteration pushes one placeholder onto acc_stack. When the
+    // function returns, we pop back to the saved depth — this prevents
+    // inner non-tail calls from removing outer placeholders. For example:
+    //   f() { var x = g(); return x + 1; }
+    // g() pushes/pops its own placeholder; f() then pops its own.
+    loop {
+        let starting_depth = crate::eval::statement::acc_stack_len();
+        crate::eval::statement::acc_stack_push(create_symbol("TCO_PLACEHOLDER"));
 
-    // Strictness is captured where the function was DEFINED (f.strict), never
-    // inherited from the call site: a sloppy function called from strict code
-    // still gets the global object as `this` (ES spec 10.2.1.2).
-    // Arrow functions are different: their strictness comes from the lexical
-    // enclosing scope at definition time. We capture that via f.strict (set
-    // at arrow creation in Expression::ArrowFunction).
-    let function_is_strict = f.strict;
-    // Check if function body starts with "use strict"; directive
-    let body_is_strict = check_use_strict(&f.body);
-    let in_strict = function_is_strict || body_is_strict || force_strict;
+        let closure = Rc::clone(&f.closure);
+        let params = f.params.clone();
 
-    // Per ES spec 10.2.1.2: in sloppy mode, a primitive `this` is boxed
-    // (ToObject) so the function sees a wrapper object. In strict mode (and
-    // arrow functions), the value passes through unchanged.
-    let this_val = if in_strict {
-        this_val
-    } else {
-        box_sloppy_this(this_val)
-    };
+        let function_is_strict = f.strict;
+        let body_is_strict = check_use_strict(&f.body);
+        let in_strict = function_is_strict || body_is_strict || force_strict;
 
-    let call_env = Environment::with_parent(Rc::clone(&closure));
-    // Per ES §10.2.1, arrow functions capture `this` from their lexical
-    // (closure) scope. Setting this on the new scope would override that
-    // capture with the caller-supplied this. Skip for arrows.
-    if !f.is_arrow {
-        call_env.current_scope().borrow_mut().set_this(this_val);
+        this_val = if in_strict {
+            this_val
+        } else {
+            box_sloppy_this(this_val)
+        };
+
+        let call_env = Environment::with_parent(closure);
+        if !f.is_arrow {
+            call_env
+                .current_scope()
+                .borrow_mut()
+                .set_this(this_val.clone());
+            let target = crate::interpreter::get_new_target().unwrap_or(Value::Undefined);
+            call_env
+                .current_scope()
+                .borrow_mut()
+                .define("new.target".to_string(), target);
+        }
+        let call_env_rc = Rc::new(RefCell::new(call_env));
+
+        if !f.is_arrow {
+            let args_obj = create_arguments_object(&f, args.clone(), in_strict);
+            call_env_rc
+                .borrow_mut()
+                .define("arguments".to_string(), args_obj);
+        }
+
+        bind_params(&f, &params, &args, &call_env_rc)?;
+
+        call_env_rc.borrow_mut().push_scope();
+        predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
+        predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
+
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(in_strict);
+        let previous_eval_env = crate::interpreter::get_current_eval_env();
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
+        let result = if f.is_arrow {
+            call_arrow_body(&f, &call_env_rc)
+        } else {
+            eval_function_body(&f.body, &call_env_rc, false)
+        };
+        crate::interpreter::set_current_eval_env(previous_eval_env);
+        crate::interpreter::set_strict_mode(prev_strict);
+
+        let Some(tail) = take_tail_call_signal() else {
+            // No tail call: pop to starting_depth. After truncation, the slot
+            // this frame pushed is gone, and whatever the caller accumulated
+            // (result of inner non-tail calls) is now at the top of the stack.
+            crate::eval::statement::acc_stack_pop_to(starting_depth);
+            // Clear any stale ControlFlow::Return signal so the caller
+            // (eval_function_body) doesn't short-circuit on a non-tail result.
+            crate::interpreter::take_control_flow();
+
+            let result_val = result?;
+            // Push our result after the accumulated value (if any).
+            // If starting_depth == 0 (outermost call), the stack is empty
+            // and we just return. If starting_depth > 0, the caller
+            // will read our result as its accumulated value.
+            if starting_depth > 0 {
+                crate::eval::statement::acc_stack_push(result_val.clone());
+            }
+            return Ok(result_val);
+        };
+
+        // Tail call: store this frame's result in the acc stack slot,
+        // then set up for the next function and loop.
+        crate::eval::statement::acc_stack_update_last(result.unwrap_or(Value::Undefined));
+        let next_force_strict = tail.function.strict || check_use_strict(&tail.function.body);
+        f = tail.function;
+        this_val = Value::Undefined;
+        force_strict = next_force_strict;
+        args = tail.arguments;
     }
-    // Per ES §13.2.6 GetNewTarget: bind `new.target` in the function's
-    // environment for ordinary (non-arrow) functions so they can reference
-    // it directly. Arrow functions inherit `new.target` via lexical scope
-    // (the enclosing function's env binding), so we deliberately do NOT
-    // bind it in arrow call_envs — that would shadow the captured value.
-    if !f.is_arrow {
-        let target = crate::interpreter::get_new_target().unwrap_or(Value::Undefined);
-        call_env
-            .current_scope()
-            .borrow_mut()
-            .define("new.target".to_string(), target);
-    }
-    let call_env_rc = Rc::new(RefCell::new(call_env));
+}
 
-    // Create arguments object BEFORE parameter binding so default parameter
-    // expressions can reference `arguments` (per ES §9.2.12 step 21).
-    if !f.is_arrow {
-        let args_obj = create_arguments_object(&f, args.clone(), in_strict);
-        call_env_rc
-            .borrow_mut()
-            .define("arguments".to_string(), args_obj);
-    }
-
-    // Handle parameters, stopping at rest parameter
+/// Bind parameters from `args` into the call environment.
+fn bind_params(
+    f: &ValueFunction,
+    params: &[crate::ast::Param],
+    args: &[Value],
+    call_env_rc: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
     let mut found_rest = false;
-
     for (i, param) in params.iter().enumerate() {
         if found_rest {
-            // After rest parameter, remaining params are ignored (rest collects all remaining args)
-            // Just define them as undefined
             call_env_rc
                 .borrow_mut()
                 .define(param.name.clone(), Value::Undefined);
@@ -205,9 +255,9 @@ pub(crate) fn call_js_function_impl_with_strict(
             ))));
             found_rest = true;
             if let Some(pattern) = &param.pattern {
-                declare_pattern_bindings(pattern, &call_env_rc);
+                declare_pattern_bindings(pattern, call_env_rc);
                 let target = binding_pattern_expression(pattern.clone());
-                crate::eval::object::assign_to(&target, &rest_value, &call_env_rc)?;
+                crate::eval::object::assign_to(&target, &rest_value, call_env_rc)?;
             } else {
                 call_env_rc
                     .borrow_mut()
@@ -217,45 +267,24 @@ pub(crate) fn call_js_function_impl_with_strict(
             let arg = args.get(i).cloned();
             let value = match arg {
                 Some(Value::Undefined) if param.default.is_some() => {
-                    eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
+                    eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
                 }
                 Some(v) => v,
                 None if param.default.is_some() => {
-                    eval_expression(param.default.as_ref().unwrap(), &call_env_rc, f.is_arrow)?
+                    eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
                 }
                 None => Value::Undefined,
             };
             if let Some(pattern) = &param.pattern {
-                declare_pattern_bindings(pattern, &call_env_rc);
+                declare_pattern_bindings(pattern, call_env_rc);
                 let target = binding_pattern_expression(pattern.clone());
-                crate::eval::object::assign_to(&target, &value, &call_env_rc)?;
+                crate::eval::object::assign_to(&target, &value, call_env_rc)?;
             } else {
                 call_env_rc.borrow_mut().define(param.name.clone(), value);
             }
         }
     }
-
-    call_env_rc.borrow_mut().push_scope();
-    predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
-    predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
-
-    // Set strict mode for function body evaluation
-    let prev_strict = crate::interpreter::is_strict_mode();
-    crate::interpreter::set_strict_mode(in_strict);
-
-    let previous_eval_env = crate::interpreter::get_current_eval_env();
-    crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
-    let result = if f.is_arrow {
-        call_arrow_body(&f, &call_env_rc)
-    } else {
-        eval_function_body(&f.body, &call_env_rc, false)
-    };
-    crate::interpreter::set_current_eval_env(previous_eval_env);
-
-    // Restore previous strict mode
-    crate::interpreter::set_strict_mode(prev_strict);
-
-    result
+    Ok(())
 }
 
 fn binding_pattern_expression(pattern: BindingElement) -> Expression {

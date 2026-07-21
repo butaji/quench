@@ -140,7 +140,8 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
                 // "use strict" or 'use strict' (no escape sequences, no line
                 // continuations). OXC's value field resolves escapes, so we
                 // check the raw source text instead.
-                let is_use_strict = raw_opt.as_deref()
+                let is_use_strict = raw_opt
+                    .as_deref()
                     .map(|r| r == "\"use strict\"" || r == "'use strict'")
                     .unwrap_or(false);
                 if is_use_strict {

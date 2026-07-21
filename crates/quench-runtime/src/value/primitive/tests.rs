@@ -12,9 +12,7 @@ use crate::value::convert::{
 };
 use crate::value::kind::{ExoticKind, ObjectKind};
 use crate::value::object::Object;
-use crate::value::{
-    ClassValue, GeneratorObject, NativeConstructor, NativeFunction, Symbol, Value,
-};
+use crate::value::{ClassValue, GeneratorObject, NativeConstructor, NativeFunction, Symbol, Value};
 
 fn ctx() -> crate::Context {
     crate::Context::new().unwrap()
@@ -153,31 +151,27 @@ fn test_to_primitive_object_to_string_returns_primitive() {
 
 #[test]
 fn test_to_primitive_object_hint_number_prefers_value_of() {
-    let result =
-        eval_val("var o = { valueOf() { return 1 }, toString() { return 'a' } }; o");
+    let result = eval_val("var o = { valueOf() { return 1 }, toString() { return 'a' } }; o");
     let prim = to_primitive(&result, Some("number")).unwrap();
     assert_eq!(prim, Value::Number(1.0));
 }
 
 #[test]
 fn test_to_primitive_object_hint_string_prefers_to_string() {
-    let result =
-        eval_val("var o = { valueOf() { return 1 }, toString() { return 'a' } }; o");
+    let result = eval_val("var o = { valueOf() { return 1 }, toString() { return 'a' } }; o");
     let prim = to_primitive(&result, Some("string")).unwrap();
     assert_eq!(prim, Value::String("a".to_string()));
 }
 
 #[test]
 fn test_to_primitive_object_both_return_object_throws() {
-    let result =
-        eval_val("var o = { valueOf() { return {} }, toString() { return {} } }; o");
+    let result = eval_val("var o = { valueOf() { return {} }, toString() { return {} } }; o");
     assert!(to_primitive(&result, Some("number")).is_err());
 }
 
 #[test]
 fn test_to_primitive_object_value_of_returns_object_to_string_works() {
-    let result =
-        eval_val("var o = { valueOf() { return {} }, toString() { return 'ok' } }; o");
+    let result = eval_val("var o = { valueOf() { return {} }, toString() { return 'ok' } }; o");
     let prim = to_primitive(&result, Some("number")).unwrap();
     assert_eq!(prim, Value::String("ok".to_string()));
 }
@@ -186,32 +180,28 @@ fn test_to_primitive_object_value_of_returns_object_to_string_works() {
 
 #[test]
 fn test_to_primitive_object_symbol_to_primitive_number() {
-    let result =
-        eval_val("var o = { [Symbol.toPrimitive](hint) { return 123; } }; o");
+    let result = eval_val("var o = { [Symbol.toPrimitive](hint) { return 123; } }; o");
     let prim = to_primitive(&result, Some("number")).unwrap();
     assert_eq!(prim, Value::Number(123.0));
 }
 
 #[test]
 fn test_to_primitive_object_symbol_to_primitive_string() {
-    let result =
-        eval_val("var o = { [Symbol.toPrimitive](hint) { return 'symResult'; } }; o");
+    let result = eval_val("var o = { [Symbol.toPrimitive](hint) { return 'symResult'; } }; o");
     let prim = to_primitive(&result, Some("string")).unwrap();
     assert_eq!(prim, Value::String("symResult".to_string()));
 }
 
 #[test]
 fn test_to_primitive_object_symbol_to_primitive_default() {
-    let result =
-        eval_val("var o = { [Symbol.toPrimitive](hint) { return 'default'; } }; o");
+    let result = eval_val("var o = { [Symbol.toPrimitive](hint) { return 'default'; } }; o");
     let prim = to_primitive(&result, None).unwrap();
     assert_eq!(prim, Value::String("default".to_string()));
 }
 
 #[test]
 fn test_to_primitive_object_symbol_to_primitive_returns_object_throws() {
-    let result =
-        eval_val("var o = { [Symbol.toPrimitive](hint) { return {}; } }; o");
+    let result = eval_val("var o = { [Symbol.toPrimitive](hint) { return {}; } }; o");
     assert!(to_primitive(&result, Some("number")).is_err());
 }
 
@@ -233,8 +223,7 @@ fn test_to_primitive_function_string_hint() {
 
 #[test]
 fn test_to_primitive_function_with_custom_value_of() {
-    let result =
-        eval_val("function f() {}; f.valueOf = function() { return 42; }; f");
+    let result = eval_val("function f() {}; f.valueOf = function() { return 42; }; f");
     let prim = to_primitive(&result, Some("number")).unwrap();
     assert_eq!(prim, Value::Number(42.0));
 }
@@ -306,7 +295,12 @@ fn test_to_bool_objects() {
     assert!(to_bool(&nf()));
     assert!(to_bool(&nc()));
     let f = Value::Function(crate::value::ValueFunction::new(
-        None, vec![], vec![], make_env(), false, false,
+        None,
+        vec![],
+        vec![],
+        make_env(),
+        false,
+        false,
     ));
     assert!(to_bool(&f));
 }
@@ -314,10 +308,16 @@ fn test_to_bool_objects() {
 #[test]
 fn test_to_bool_class_gen_sym_bigint() {
     let cls_val = Value::Class(ClassValue {
-        id: 0, name: None, constructor_params: vec![],
-        constructor_body: vec![], methods: vec![],
-        static_methods: vec![], getters: vec![], setters: vec![],
-        instance_fields: vec![], static_fields: vec![],
+        id: 0,
+        name: None,
+        constructor_params: vec![],
+        constructor_body: vec![],
+        methods: vec![],
+        static_methods: vec![],
+        getters: vec![],
+        setters: vec![],
+        instance_fields: vec![],
+        static_fields: vec![],
         super_class: None,
         prototype_cell: Rc::new(RefCell::new(None)),
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
@@ -325,7 +325,10 @@ fn test_to_bool_class_gen_sym_bigint() {
     });
     assert!(to_bool(&cls_val));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
-        Rc::new(vec![]), vec![], make_env(), false,
+        Rc::new(vec![]),
+        vec![],
+        make_env(),
+        false,
     ))));
     assert!(to_bool(&gen_val));
     assert!(to_bool(&sym("s")));
@@ -383,7 +386,10 @@ fn test_to_js_string_primitives() {
 #[test]
 fn test_to_js_string_symbols() {
     assert_eq!(to_js_string(&sym("mySym")), "Symbol(mySym)");
-    let no_desc = Value::Symbol(Rc::new(Symbol { desc: None, global: false }));
+    let no_desc = Value::Symbol(Rc::new(Symbol {
+        desc: None,
+        global: false,
+    }));
     assert_eq!(to_js_string(&no_desc), "Symbol()");
 }
 
@@ -392,7 +398,12 @@ fn test_to_js_string_objects() {
     assert_eq!(to_js_string(&obj()), "[object Object]");
     assert_eq!(to_js_string(&nf()), "[Function]");
     let f = Value::Function(crate::value::ValueFunction::new(
-        None, vec![], vec![], make_env(), false, false,
+        None,
+        vec![],
+        vec![],
+        make_env(),
+        false,
+        false,
     ));
     assert_eq!(to_js_string(&f), "[Function]");
 }
@@ -439,15 +450,26 @@ fn test_to_object_string_boxed() {
 fn test_to_object_identity_preserved() {
     assert!(matches!(to_object(&obj()), Value::Object(_)));
     let f = Value::Function(crate::value::ValueFunction::new(
-        None, vec![], vec![], make_env(), false, false,
+        None,
+        vec![],
+        vec![],
+        make_env(),
+        false,
+        false,
     ));
     assert!(matches!(to_object(&f), Value::Function(_)));
     assert!(matches!(to_object(&nf()), Value::NativeFunction(_)));
     let cls_val = Value::Class(ClassValue {
-        id: 0, name: None, constructor_params: vec![],
-        constructor_body: vec![], methods: vec![],
-        static_methods: vec![], getters: vec![], setters: vec![],
-        instance_fields: vec![], static_fields: vec![],
+        id: 0,
+        name: None,
+        constructor_params: vec![],
+        constructor_body: vec![],
+        methods: vec![],
+        static_methods: vec![],
+        getters: vec![],
+        setters: vec![],
+        instance_fields: vec![],
+        static_fields: vec![],
         super_class: None,
         prototype_cell: Rc::new(RefCell::new(None)),
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
@@ -455,7 +477,10 @@ fn test_to_object_identity_preserved() {
     });
     assert!(matches!(to_object(&cls_val), Value::Class(_)));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
-        Rc::new(vec![]), vec![], make_env(), false,
+        Rc::new(vec![]),
+        vec![],
+        make_env(),
+        false,
     ))));
     assert!(matches!(to_object(&gen_val), Value::Generator(_)));
 }

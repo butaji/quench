@@ -57,14 +57,18 @@ fn identifier_new_target_undefined() {
 fn identifier_new_target_in_constructor() {
     let mut ctx = Context::new().unwrap();
     // check new.target via side effect in constructor
-    let r2 = ctx.eval(
-        "var target; \
+    let r2 = ctx
+        .eval(
+            "var target; \
          function F() { target = new.target; } \
          new F(); \
          target",
-    )
-    .unwrap();
-    assert!(matches!(r2, Value::Function(_)), "new.target in constructor must be the function");
+        )
+        .unwrap();
+    assert!(
+        matches!(r2, Value::Function(_)),
+        "new.target in constructor must be the function"
+    );
 }
 
 #[test]
@@ -180,7 +184,10 @@ fn array_access_elements() {
 #[test]
 fn array_with_holes() {
     let mut ctx = Context::new().unwrap();
-    assert_eq!(ctx.eval("var a = [1, , 3]; a.length").unwrap(), Value::Number(3.0));
+    assert_eq!(
+        ctx.eval("var a = [1, , 3]; a.length").unwrap(),
+        Value::Number(3.0)
+    );
     // Hole at index 1 — no own property
     assert_eq!(
         ctx.eval("var a = [1, , 3]; '1' in a").unwrap(),
@@ -224,10 +231,7 @@ fn array_nested() {
         ctx.eval("[[1, 2], [3, 4]][0][1]").unwrap(),
         Value::Number(2.0)
     );
-    assert_eq!(
-        ctx.eval("[[1]] [0] [0]").unwrap(),
-        Value::Number(1.0)
-    );
+    assert_eq!(ctx.eval("[[1]] [0] [0]").unwrap(), Value::Number(1.0));
 }
 
 #[test]
@@ -267,9 +271,7 @@ fn object_empty() {
 #[test]
 fn object_with_properties() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { x: 1, y: 'hello' }; o.x + o.y")
-        .unwrap();
+    let r = ctx.eval("var o = { x: 1, y: 'hello' }; o.x + o.y").unwrap();
     assert_eq!(r, Value::String("1hello".to_string()));
 }
 
@@ -277,7 +279,9 @@ fn object_with_properties() {
 fn object_boolean_and_null_values() {
     let mut ctx = Context::new().unwrap();
     let r = ctx
-        .eval("var o = { a: true, b: null, c: undefined }; o.a && o.b === null && o.c === undefined")
+        .eval(
+            "var o = { a: true, b: null, c: undefined }; o.a && o.b === null && o.c === undefined",
+        )
         .unwrap();
     assert_eq!(r, Value::Boolean(true));
 }
@@ -285,9 +289,7 @@ fn object_boolean_and_null_values() {
 #[test]
 fn object_getter() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { get x() { return 42; } }; o.x")
-        .unwrap();
+    let r = ctx.eval("var o = { get x() { return 42; } }; o.x").unwrap();
     assert_eq!(r, Value::Number(42.0));
 }
 
@@ -348,18 +350,14 @@ fn object_computed_key_string() {
 #[test]
 fn object_computed_key_expression() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { ['a' + 'b']: 42 }; o.ab")
-        .unwrap();
+    let r = ctx.eval("var o = { ['a' + 'b']: 42 }; o.ab").unwrap();
     assert_eq!(r, Value::Number(42.0));
 }
 
 #[test]
 fn object_computed_key_number() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { [1 + 2]: 'three' }; o[3]")
-        .unwrap();
+    let r = ctx.eval("var o = { [1 + 2]: 'three' }; o[3]").unwrap();
     assert_eq!(r, Value::String("three".to_string()));
 }
 
@@ -379,15 +377,27 @@ fn object_shorthand_property() {
 #[test]
 fn regex_basic_match() {
     let mut ctx = Context::new().unwrap();
-    assert_eq!(ctx.eval("/abc/.test('abcdef')").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("/abc/.test('xyz')").unwrap(), Value::Boolean(false));
+    assert_eq!(
+        ctx.eval("/abc/.test('abcdef')").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("/abc/.test('xyz')").unwrap(),
+        Value::Boolean(false)
+    );
 }
 
 #[test]
 fn regex_with_flags_case_insensitive() {
     let mut ctx = Context::new().unwrap();
-    assert_eq!(ctx.eval("/abc/i.test('ABC')").unwrap(), Value::Boolean(true));
-    assert_eq!(ctx.eval("/abc/.test('ABC')").unwrap(), Value::Boolean(false));
+    assert_eq!(
+        ctx.eval("/abc/i.test('ABC')").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        ctx.eval("/abc/.test('ABC')").unwrap(),
+        Value::Boolean(false)
+    );
 }
 
 #[test]
@@ -429,9 +439,7 @@ fn regex_last_index_default() {
 fn regex_exec_returns_result() {
     let mut ctx = Context::new().unwrap();
     // exec returns an array-like object; check the match at index 0
-    let r2 = ctx
-        .eval("var m = /\\d+/.exec('abc123def'); m[0]")
-        .unwrap();
+    let r2 = ctx.eval("var m = /\\d+/.exec('abc123def'); m[0]").unwrap();
     assert_eq!(r2, Value::String("123".to_string()));
 }
 
@@ -456,18 +464,14 @@ fn regex_syntax_error_invalid_pattern() {
 #[test]
 fn property_key_computed_string() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { ['hello']: 'world' }; o.hello")
-        .unwrap();
+    let r = ctx.eval("var o = { ['hello']: 'world' }; o.hello").unwrap();
     assert_eq!(r, Value::String("world".to_string()));
 }
 
 #[test]
 fn property_key_computed_number() {
     let mut ctx = Context::new().unwrap();
-    let r = ctx
-        .eval("var o = { [42]: 'answer' }; o['42']")
-        .unwrap();
+    let r = ctx.eval("var o = { [42]: 'answer' }; o['42']").unwrap();
     assert_eq!(r, Value::String("answer".to_string()));
 }
 

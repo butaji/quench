@@ -56,7 +56,8 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
             | Value::Function(_)
             | Value::NativeFunction(_)
             | Value::NativeConstructor(_)
-            | Value::Generator(_) | Value::Class(_)
+            | Value::Generator(_)
+            | Value::Class(_)
     );
     let right_is_obj = matches!(
         right,
@@ -64,7 +65,8 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
             | Value::Function(_)
             | Value::NativeFunction(_)
             | Value::NativeConstructor(_)
-            | Value::Generator(_) | Value::Class(_)
+            | Value::Generator(_)
+            | Value::Class(_)
     );
     let is_date = |v: &Value| matches!(v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Date);
     if left_is_obj || right_is_obj {

@@ -175,7 +175,8 @@ pub fn register_function(ctx: &mut Context) {
         "GeneratorFunction".to_string(),
         Value::NativeConstructor(Rc::new(gen_func_ctor)),
     );
-    let async_gen_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    let async_gen_func_ctor =
+        make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
     async_gen_func_ctor.set_name("AsyncGeneratorFunction");
     ctx.set_global(
         "AsyncGeneratorFunction".to_string(),

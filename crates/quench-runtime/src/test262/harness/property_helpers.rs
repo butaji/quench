@@ -10,11 +10,12 @@ use crate::{JsError, Value};
 
 /// Helper to create a Test262Error and set it as thrown value.
 fn throw_test262_error(msg: &str) -> JsError {
-    let (err_val, js_err) =
-        crate::value::error::create_js_error_with_type(msg, "Test262Error");
+    let (err_val, js_err) = crate::value::error::create_js_error_with_type(msg, "Test262Error");
     if let crate::value::Value::Object(o) = &err_val {
-        o.borrow_mut()
-            .set("name", crate::value::Value::String("Test262Error".to_string()));
+        o.borrow_mut().set(
+            "name",
+            crate::value::Value::String("Test262Error".to_string()),
+        );
     }
     crate::value::set_thrown_value(err_val);
     js_err
@@ -29,16 +30,20 @@ fn throw_test262_error(msg: &str) -> JsError {
 pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     // Per JS propertyHelper.js: require at least 3 arguments
     if args.len() < 3 {
-        return Err(throw_test262_error("verifyProperty should receive at least 3 arguments: obj, name, and descriptor"));
+        return Err(throw_test262_error(
+            "verifyProperty should receive at least 3 arguments: obj, name, and descriptor",
+        ));
     }
-    let obj = args
-        .first()
-        .cloned()
-        .ok_or_else(|| throw_test262_error("verifyProperty should receive at least 3 arguments: obj, name, and descriptor"))?;
-    let name = args
-        .get(1)
-        .cloned()
-        .ok_or_else(|| throw_test262_error("verifyProperty should receive at least 3 arguments: obj, name, and descriptor"))?;
+    let obj = args.first().cloned().ok_or_else(|| {
+        throw_test262_error(
+            "verifyProperty should receive at least 3 arguments: obj, name, and descriptor",
+        )
+    })?;
+    let name = args.get(1).cloned().ok_or_else(|| {
+        throw_test262_error(
+            "verifyProperty should receive at least 3 arguments: obj, name, and descriptor",
+        )
+    })?;
     let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
     let options = args.get(3).cloned().unwrap_or(Value::Undefined);
 
@@ -50,9 +55,7 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         Value::String(s) => s.clone(),
         _ => crate::test262::harness::assert_helpers::debug_string(&name),
     };
-    let mk_err = |msg: String| -> Result<Value, JsError> {
-        Err(throw_test262_error(&msg))
-    };
+    let mk_err = |msg: String| -> Result<Value, JsError> { Err(throw_test262_error(&msg)) };
 
     // Undefined desc: property should not exist
     if matches!(desc, Value::Undefined) {
@@ -67,18 +70,14 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
 
     // Null desc is invalid
     if matches!(desc, Value::Null) {
-        return mk_err(
-            "The desc argument should be an object or undefined, not null".to_string(),
-        );
+        return mk_err("The desc argument should be an object or undefined, not null".to_string());
     }
 
     // Check that the property is an own property
     let is_own = match &obj {
         Value::Object(obj_ref) => {
             let obj = obj_ref.borrow();
-            obj.has_own(&name_str)
-                || obj.has_getter(&name_str)
-                || obj.has_setter(&name_str)
+            obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
         }
         _ => false,
     };
@@ -125,7 +124,10 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     // Compare desc.get with obj.getOwnPropertyDescriptor(obj, name).get
-    let obj_desc_borrowed = obj_desc.as_object().ok_or_else(|| JsError("desc not object".to_string()))?.borrow();
+    let obj_desc_borrowed = obj_desc
+        .as_object()
+        .ok_or_else(|| JsError("desc not object".to_string()))?
+        .borrow();
     let obj_getter = obj_desc_borrowed.get("get");
     let obj_setter = obj_desc_borrowed.get("set");
     drop(obj_desc_borrowed);
@@ -181,7 +183,10 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         _ => return Ok(Value::Boolean(true)),
     };
     if let Some(expected_value) = desc_obj2.get("value") {
-        let actual_value = obj_as_ref.borrow().get(&name_str).unwrap_or(Value::Undefined);
+        let actual_value = obj_as_ref
+            .borrow()
+            .get(&name_str)
+            .unwrap_or(Value::Undefined);
         let expected_str = crate::test262::harness::assert_helpers::debug_string(&expected_value);
         let mut failures = Vec::new();
         if !same_value(&expected_value, &actual_value) {
@@ -193,10 +198,7 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
             let obj_value = obj_as_ref.borrow().get(&name_str);
             if let Some(ov) = obj_value {
                 if !same_value(&expected_value, &ov) {
-                    failures.push(format!(
-                        "{} value should be {}",
-                        name_label, expected_str
-                    ));
+                    failures.push(format!("{} value should be {}", name_label, expected_str));
                 }
             }
             return mk_err(failures.join("; "));
@@ -244,24 +246,44 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         if should_restore && actual_configurable {
             // Property was deleted by vp_is_configurable (matching JS isConfigurable).
             // Restore using the original descriptor saved BEFORE deletion.
-            let restore_desc = original_desc_value.as_object()
-                .map(|o| {
-                    let obj = o.borrow();
-                    (
-                        obj.properties.get("get").cloned(),
-                        obj.properties.get("set").cloned(),
-                        obj.properties.get("value").cloned(),
-                        obj.properties.get("writable").and_then(|v| {
-                            if let Value::Boolean(b) = v { Some(*b) } else { None }
-                        }).unwrap_or(false),
-                        obj.properties.get("enumerable").and_then(|v| {
-                            if let Value::Boolean(b) = v { Some(*b) } else { None }
-                        }).unwrap_or(true),
-                        obj.properties.get("configurable").and_then(|v| {
-                            if let Value::Boolean(b) = v { Some(*b) } else { None }
-                        }).unwrap_or(true),
-                    )
-                });
+            let restore_desc = original_desc_value.as_object().map(|o| {
+                let obj = o.borrow();
+                (
+                    obj.properties.get("get").cloned(),
+                    obj.properties.get("set").cloned(),
+                    obj.properties.get("value").cloned(),
+                    obj.properties
+                        .get("writable")
+                        .and_then(|v| {
+                            if let Value::Boolean(b) = v {
+                                Some(*b)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(false),
+                    obj.properties
+                        .get("enumerable")
+                        .and_then(|v| {
+                            if let Value::Boolean(b) = v {
+                                Some(*b)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(true),
+                    obj.properties
+                        .get("configurable")
+                        .and_then(|v| {
+                            if let Value::Boolean(b) = v {
+                                Some(*b)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(true),
+                )
+            });
 
             if let Some((g, s, opt_val, w, e, c)) = restore_desc {
                 let mut obj_mut = obj_as_ref.borrow_mut();

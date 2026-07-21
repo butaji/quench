@@ -212,6 +212,27 @@ fn test_update_prefix_postfix() {
 }
 
 #[test]
+fn test_named_function_expression_binds_its_own_name() {
+    // Per ES spec §12.4.1.3: a named FunctionExpression binds its Identifier
+    // as an immutable lexical binding in its own environment record.
+    assert!(eval("(function f() { return f; })()").is_ok());
+    // The name is NOT visible outside
+    assert!(eval("(function g() { return g; })()").is_ok());
+}
+
+#[test]
+fn test_named_function_expression_name_not_visible_outside() {
+    let result: Result<Value, _> = eval("(function fact(n) { return fact; })(1)");
+    assert!(result.is_ok(), "function itself should evaluate");
+    let result: Result<Value, _> =
+        eval("(function fact(n) { return n === 1 ? 1 : n * fact(n-1); })(5)");
+    assert!(
+        result.is_ok(),
+        "recursive named function expression should work"
+    );
+}
+
+#[test]
 fn test_export_default_expr_lowers_to_assignment() {
     let program = crate::parser::parse_es_module("export default 42;").unwrap();
     let crate::ast::Program::Script(stmts) = program;

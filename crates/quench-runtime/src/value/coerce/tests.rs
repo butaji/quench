@@ -309,7 +309,6 @@ fn test_to_uint32_very_negative_wraps() {
     assert_eq!(to_uint32(-1.1), 0xFFFFFFFF);
 }
 
-
 // ── to_bool ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -348,13 +347,26 @@ fn test_to_bool_object_function_symbol_bigint() {
     let obj = Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
     assert!(crate::value::to_bool(&obj));
     let func = Value::Function(crate::value::ValueFunction::new(
-        None, vec![], Vec::new(),
-        std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())), false, false,
+        None,
+        vec![],
+        Vec::new(),
+        std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())),
+        false,
+        false,
     ));
     assert!(crate::value::to_bool(&func));
-    assert!(crate::value::to_bool(&Value::Symbol(std::rc::Rc::new(crate::value::Symbol { desc: None, global: false }))));
-    assert!(!crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(num_bigint::BigInt::from(0i64)))));
-    assert!(crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(num_bigint::BigInt::from(1i64)))));
+    assert!(crate::value::to_bool(&Value::Symbol(std::rc::Rc::new(
+        crate::value::Symbol {
+            desc: None,
+            global: false
+        }
+    ))));
+    assert!(!crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(
+        num_bigint::BigInt::from(0i64)
+    ))));
+    assert!(crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(
+        num_bigint::BigInt::from(1i64)
+    ))));
 }
 
 // ── try_to_number ─────────────────────────────────────────────────────────
@@ -397,7 +409,8 @@ fn test_try_to_number_numeric_string() {
 #[test]
 fn test_try_to_number_invalid_string() {
     // to_number_complex returns Ok(NaN) for non-numeric strings
-    let result = crate::value::convert::try_to_number(&Value::String("not a number".to_string())).unwrap();
+    let result =
+        crate::value::convert::try_to_number(&Value::String("not a number".to_string())).unwrap();
     assert!(result.is_nan());
 }
 
@@ -406,7 +419,16 @@ fn test_try_to_number_invalid_string() {
 #[test]
 fn test_to_number_unchecked_primitive() {
     assert!(crate::value::convert::to_number_unchecked(&Value::Undefined).is_nan());
-    assert_eq!(crate::value::convert::to_number_unchecked(&Value::Null), 0.0);
-    assert_eq!(crate::value::convert::to_number_unchecked(&Value::Boolean(true)), 1.0);
-    assert_eq!(crate::value::convert::to_number_unchecked(&Value::Number(42.0)), 42.0);
+    assert_eq!(
+        crate::value::convert::to_number_unchecked(&Value::Null),
+        0.0
+    );
+    assert_eq!(
+        crate::value::convert::to_number_unchecked(&Value::Boolean(true)),
+        1.0
+    );
+    assert_eq!(
+        crate::value::convert::to_number_unchecked(&Value::Number(42.0)),
+        42.0
+    );
 }

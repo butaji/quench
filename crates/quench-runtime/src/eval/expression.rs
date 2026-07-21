@@ -85,16 +85,28 @@ pub fn eval_expression(
             is_generator,
         } => {
             let closure = capture_env_for_closure(env);
-            let mut func = ValueFunction::new(
-                name.clone(),
-                params.clone(),
-                body.clone(),
-                closure,
-                *is_async,
-                *is_generator,
-            );
-            func.strict = crate::interpreter::is_strict_mode();
-            Ok(Value::Function(func))
+            let func = Value::Function({
+                let mut f = ValueFunction::new(
+                    name.clone(),
+                    params.clone(),
+                    body.clone(),
+                    Rc::clone(&closure),
+                    *is_async,
+                    *is_generator,
+                );
+                f.strict = crate::interpreter::is_strict_mode();
+                f
+            });
+            // Per ES spec §12.4.1.3: a named FunctionExpression creates an
+            // immutable binding for its own name inside the function's environment.
+            // Access scopes directly to avoid double RefCell borrow.
+            if let Some(ref name) = name {
+                let func_clone = func.clone();
+                if let Some(scope) = closure.borrow().scopes.last() {
+                    scope.borrow_mut().define(name.clone(), func_clone);
+                }
+            }
+            Ok(func)
         }
         Expression::ArrowFunction { params, body } => {
             let closure = capture_env_for_closure(env);

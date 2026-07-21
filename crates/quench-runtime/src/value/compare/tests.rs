@@ -337,10 +337,7 @@ fn loose_eq_null_undefined() {
 
 #[test]
 fn loose_eq_number_string() {
-    assert!(loose_eq(
-        &Value::String("42".into()),
-        &Value::Number(42.0)
-    ));
+    assert!(loose_eq(&Value::String("42".into()), &Value::Number(42.0)));
     assert!(loose_eq(&Value::Number(42.0), &Value::String("42".into())));
 }
 

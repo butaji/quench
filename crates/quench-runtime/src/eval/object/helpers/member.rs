@@ -49,14 +49,12 @@ pub fn get_member_function(
             let proto = crate::eval::class::get_or_create_class_prototype(class, env)?;
             crate::eval::member::eval_object_member(&proto, prop_name, Some(env))
         }
-        Value::Generator(gen) => {
-            match prop_name {
-                "next" => Ok(crate::value::generator::generator_next_fn(gen.clone())),
-                "return" => Ok(crate::value::generator::generator_return_fn(gen.clone())),
-                "throw" => Ok(crate::value::generator::generator_throw_fn(gen.clone())),
-                _ => Ok(Value::Undefined),
-            }
-        }
+        Value::Generator(gen) => match prop_name {
+            "next" => Ok(crate::value::generator::generator_next_fn(gen.clone())),
+            "return" => Ok(crate::value::generator::generator_return_fn(gen.clone())),
+            "throw" => Ok(crate::value::generator::generator_throw_fn(gen.clone())),
+            _ => Ok(Value::Undefined),
+        },
         _ => Ok(Value::Undefined),
     }
 }
