@@ -5,9 +5,7 @@
 //!   `call_js_function_with_this`, `call_js_function_impl`,
 //!   `call_js_function_impl_with_strict`, `call_native_function`.
 
-use crate::value::{
-    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value,
-};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -475,7 +473,9 @@ fn arrow_fn_this_not_overridden_by_call() {
 fn call_value_direct_simple() {
     let mut ctx = Context::new().unwrap();
     // Construct a JS function via eval, then call it from Rust
-    let v = ctx.eval("function double(x) { return x * 2; } double").unwrap();
+    let v = ctx
+        .eval("function double(x) { return x * 2; } double")
+        .unwrap();
 
     let result = crate::eval::function::call_value(v, vec![Value::Number(7.0)]);
     assert_eq!(result.unwrap(), Value::Number(14.0));
@@ -505,26 +505,16 @@ fn call_value_with_this_direct_strict() {
         .eval("function f() { 'use strict'; return this; } f")
         .unwrap();
 
-    let result = crate::eval::function::call_value_with_this(
-        v,
-        vec![],
-        Value::Number(42.0),
-    );
+    let result = crate::eval::function::call_value_with_this(v, vec![], Value::Number(42.0));
     assert_eq!(result.unwrap(), Value::Number(42.0));
 }
 
 #[test]
 fn call_value_with_this_direct_sloppy_boxes() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f() { return typeof this; } f")
-        .unwrap();
+    let v = ctx.eval("function f() { return typeof this; } f").unwrap();
 
-    let result = crate::eval::function::call_value_with_this(
-        v,
-        vec![],
-        Value::Number(1.0),
-    );
+    let result = crate::eval::function::call_value_with_this(v, vec![], Value::Number(1.0));
     // Sloppy mode boxes primitive this → typeof becomes "object"
     assert_eq!(result.unwrap(), Value::String("object".to_string()));
 }
@@ -534,35 +524,21 @@ fn call_value_with_this_direct_sloppy_boxes() {
 #[test]
 fn call_value_impl_force_strict_keeps_primitive_this() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f() { return typeof this; } f")
-        .unwrap();
+    let v = ctx.eval("function f() { return typeof this; } f").unwrap();
 
     // force_strict=true makes even a sloppy function treat primitive
     // `this` as-is (no boxing).
-    let result = crate::eval::function::call_value_impl(
-        v,
-        vec![],
-        Value::Number(1.0),
-        true,
-    );
+    let result = crate::eval::function::call_value_impl(v, vec![], Value::Number(1.0), true);
     assert_eq!(result.unwrap(), Value::String("number".to_string()));
 }
 
 #[test]
 fn call_value_impl_no_force_strict_boxes() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f() { return typeof this; } f")
-        .unwrap();
+    let v = ctx.eval("function f() { return typeof this; } f").unwrap();
 
     // force_strict=false — default sloppy behavior boxes the primitive.
-    let result = crate::eval::function::call_value_impl(
-        v,
-        vec![],
-        Value::Number(1.0),
-        false,
-    );
+    let result = crate::eval::function::call_value_impl(v, vec![], Value::Number(1.0), false);
     assert_eq!(result.unwrap(), Value::String("object".to_string()));
 }
 
@@ -590,11 +566,9 @@ fn call_js_function_with_this_direct() {
 
 #[test]
 fn call_native_function_direct() {
-    let nf = Rc::new(NativeFunction::new(|args: Vec<Value>| {
-        match args.first() {
-            Some(Value::Number(n)) => Ok(Value::Number(n * 2.0)),
-            _ => Err(JsError("expected a number".to_string())),
-        }
+    let nf = Rc::new(NativeFunction::new(|args: Vec<Value>| match args.first() {
+        Some(Value::Number(n)) => Ok(Value::Number(n * 2.0)),
+        _ => Err(JsError("expected a number".to_string())),
     }));
     let func = Value::NativeFunction(nf);
 
@@ -663,7 +637,11 @@ fn call_native_constructor_with_args() {
 
     let result = crate::eval::function::call_value(
         func,
-        vec![Value::Number(10.0), Value::Number(20.0), Value::Number(30.0)],
+        vec![
+            Value::Number(10.0),
+            Value::Number(20.0),
+            Value::Number(30.0),
+        ],
     );
     assert_eq!(result.unwrap(), Value::Number(60.0));
 }
@@ -676,11 +654,8 @@ fn call_native_function_direct_fn() {
         Ok(Value::Number(args.len() as f64))
     }));
 
-    let result = crate::eval::function::call_native_function(
-        nf,
-        vec![Value::Undefined],
-        Value::Null,
-    );
+    let result =
+        crate::eval::function::call_native_function(nf, vec![Value::Undefined], Value::Null);
     assert_eq!(result.unwrap(), Value::Number(1.0));
 }
 
@@ -725,11 +700,8 @@ fn class_call_direct_creates_instance() {
         .unwrap();
 
     // Calling class without `new` and with undefined this → instantiate_class_from_ast
-    let result = crate::eval::function::call_value_with_this(
-        v,
-        vec![Value::Number(7.0)],
-        Value::Undefined,
-    );
+    let result =
+        crate::eval::function::call_value_with_this(v, vec![Value::Number(7.0)], Value::Undefined);
     let instance = result.unwrap();
     match &instance {
         Value::Object(obj) => {
@@ -744,22 +716,243 @@ fn class_call_direct_creates_instance() {
 
 #[test]
 fn call_value_impl_undefined_errs() {
-    let result = crate::eval::function::call_value_impl(
-        Value::Undefined,
-        vec![],
-        Value::Undefined,
-        false,
-    );
+    let result =
+        crate::eval::function::call_value_impl(Value::Undefined, vec![], Value::Undefined, false);
     assert!(result.is_err());
 }
 
 #[test]
 fn call_value_impl_null_errs() {
-    let result = crate::eval::function::call_value_impl(
-        Value::Null,
-        vec![],
-        Value::Undefined,
-        false,
-    );
+    let result =
+        crate::eval::function::call_value_impl(Value::Null, vec![], Value::Undefined, false);
     assert!(result.is_err());
+}
+
+// ─── Tail Call Optimization ───────────────────────────────────────────────
+
+/// TCO: simple tail-recursive function in strict mode.
+#[test]
+fn tco_simple_tail_call() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 42;
+              return f(n - 1);
+            }
+            f(1000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+/// TCO: simple tail-recursive function with large depth.
+#[test]
+fn tco_simple_tail_call_deep() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 42;
+              return f(n - 1);
+            }
+            f(10000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+/// TCO: verify trampoline is working with small depth first.
+#[test]
+fn tco_small_depth() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 'done';
+              return f(n - 1);
+            }
+            f(5)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("done".into()));
+}
+
+/// TCO: medium depth test.
+#[test]
+fn tco_medium_depth() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 42;
+              return f(n - 1);
+            }
+            f(5000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+/// TCO: mutual tail recursion (two functions calling each other).
+#[test]
+fn tco_mutual_tail_recursion() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function even(n) {
+              if (n === 0) return true;
+              return odd(n - 1);
+            }
+            function odd(n) {
+              if (n === 0) return false;
+              return even(n - 1);
+            }
+            even(100000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
+}
+
+/// TCO: tail call inside a block statement (per ES spec §14.2.1).
+#[test]
+fn tco_tail_call_in_block() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 'done';
+              { return f(n - 1); }
+            }
+            f(100000)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("done".to_string()));
+}
+
+/// TCO: named function expression calling itself in tail position.
+#[test]
+fn tco_named_function_expression() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            (function fact(n) {
+              if (n <= 1) return 1;
+              return n * fact(n - 1);
+            })(10)"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(3628800.0));
+}
+
+/// TCO: non-tail call does NOT optimize (value must be preserved).
+/// `return x;` after `f(n-1)` is NOT in tail position.
+#[test]
+fn non_tail_call_value_preserved() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f(n) {
+              if (n === 0) return 99;
+              var x = f(n - 1);
+              return x + 1;
+            }
+            f(5)"#,
+        )
+        .unwrap();
+    // 5 non-tail calls + 1 base = 5 additions of 1 to 99 = 104
+    assert_eq!(v, Value::Number(104.0));
+}
+
+/// TCO: depth=1: single tail-call, returns correctly.
+#[test]
+fn tco_depth_1() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f() { return g();
+            }
+            function g() { return 42; }
+            f()"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+/// TCO: depth=2: two tail-calls, returns correctly.
+#[test]
+fn tco_depth_2() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f() { return g();
+            }
+            function g() { return h();
+            }
+            function h() { return 42; }
+            f()"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+/// TCO: depth=2 with accumulator: f returns g returns 42, accumulator stays correct.
+#[test]
+fn tco_depth_2_accumulator() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f() { return g(1);
+            }
+            function g(a) { return h(a + 1);
+            }
+            function h(b) { return b * 10; }
+            f()"#,
+        )
+        .unwrap();
+    assert_eq!(v, Value::Number(20.0));
+}
+
+/// TCO: depth=2 non-tail: f → g (tail), g returns value, f adds to it.
+#[test]
+fn tco_depth_2_nontail() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f() { var x = g(); return x + 1; }
+            function g() { return 10; }
+            f()"#,
+        )
+        .unwrap();
+    // g returns 10, f adds 1 = 11
+    assert_eq!(v, Value::Number(11.0));
+}
+
+/// TCO: depth=3 non-tail: f → g (tail) → h (tail), h returns, g adds, f adds.
+#[test]
+fn tco_depth_3_nontail_chain() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            r#""use strict";
+            function f() { var x = g(); return x + 1; }
+            function g() { var y = h(); return y + 10; }
+            function h() { return 100; }
+            f()"#,
+        )
+        .unwrap();
+    // h returns 100, g adds 10 = 110, f adds 1 = 111
+    assert_eq!(v, Value::Number(111.0));
 }

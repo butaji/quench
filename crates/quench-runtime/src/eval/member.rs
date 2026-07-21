@@ -43,7 +43,7 @@ pub fn eval_member_access(
                 _ => {
                     // Look up on Generator.prototype
                     let proto = std::rc::Rc::new(std::cell::RefCell::new(
-                        crate::value::Object::new(crate::value::ObjectKind::Ordinary)
+                        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
                     ));
                     eval_object_member(&proto, prop_name, Some(env))
                 }

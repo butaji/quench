@@ -58,7 +58,10 @@ impl GeneratorObject {
     /// Advance the generator by one step.
     pub fn next(&mut self, value: Value) -> Result<IteratorResult, JsError> {
         if self.state == GeneratorState::Completed {
-            return Ok(IteratorResult { value: Value::Undefined, done: true });
+            return Ok(IteratorResult {
+                value: Value::Undefined,
+                done: true,
+            });
         }
         self.state = GeneratorState::Running;
         self.next_value = value;
@@ -67,11 +70,21 @@ impl GeneratorObject {
         crate::interpreter::set_generator_resume_value(self.next_value.clone());
 
         // Create a fresh call environment
-        let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&self.closure))));
+        let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
+            &self.closure,
+        ))));
 
         // Set up `this` binding
-        let global_this = self.closure.borrow().get("globalThis").unwrap_or(Value::Undefined);
-        call_env.borrow_mut().current_scope().borrow_mut().set_this(global_this);
+        let global_this = self
+            .closure
+            .borrow()
+            .get("globalThis")
+            .unwrap_or(Value::Undefined);
+        call_env
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .set_this(global_this);
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
@@ -119,7 +132,10 @@ impl GeneratorObject {
 
         self.state = GeneratorState::Completed;
         crate::interpreter::set_strict_mode(prev_strict);
-        Ok(IteratorResult { value: last_val, done: true })
+        Ok(IteratorResult {
+            value: last_val,
+            done: true,
+        })
     }
 }
 
@@ -173,7 +189,11 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             let mut g = gen.borrow_mut();
             g.state = GeneratorState::Completed;
-            Ok(IteratorResult { value: arg, done: true }.to_object())
+            Ok(IteratorResult {
+                value: arg,
+                done: true,
+            }
+            .to_object())
         },
     )))
 }
@@ -212,7 +232,9 @@ mod tests {
     #[test]
     fn test_generator_new_defaults() {
         let env = Rc::new(RefCell::new(Environment::new()));
-        let body = Rc::new(vec![Statement::Expression(Box::new(Expression::Number(1.0)))]);
+        let body = Rc::new(vec![Statement::Expression(Box::new(Expression::Number(
+            1.0,
+        )))]);
         let gen = GeneratorObject::new(body, vec![], env, true);
         assert_eq!(gen.state, GeneratorState::Suspended);
         assert_eq!(gen.yield_index, 0);
@@ -249,7 +271,10 @@ mod tests {
 
     #[test]
     fn test_iterator_result_undone() {
-        let ir = IteratorResult { value: Value::Number(42.0), done: false };
+        let ir = IteratorResult {
+            value: Value::Number(42.0),
+            done: false,
+        };
         let obj_val = ir.to_object();
         let obj = match obj_val {
             Value::Object(ref o) => o,
@@ -261,7 +286,10 @@ mod tests {
 
     #[test]
     fn test_iterator_result_done() {
-        let ir = IteratorResult { value: Value::String("fin".into()), done: true };
+        let ir = IteratorResult {
+            value: Value::String("fin".into()),
+            done: true,
+        };
         let obj_val = ir.to_object();
         let obj = match obj_val {
             Value::Object(ref o) => o,
@@ -275,7 +303,10 @@ mod tests {
     fn test_generator_next_fn_returns_native_fn() {
         let env = Rc::new(RefCell::new(Environment::new()));
         let gen = Rc::new(RefCell::new(GeneratorObject::new(
-            Rc::new(vec![]), vec![], env, false,
+            Rc::new(vec![]),
+            vec![],
+            env,
+            false,
         )));
         assert!(matches!(generator_next_fn(gen), Value::NativeFunction(_)));
     }
@@ -284,7 +315,10 @@ mod tests {
     fn test_generator_return_fn_returns_native_fn() {
         let env = Rc::new(RefCell::new(Environment::new()));
         let gen = Rc::new(RefCell::new(GeneratorObject::new(
-            Rc::new(vec![]), vec![], env, false,
+            Rc::new(vec![]),
+            vec![],
+            env,
+            false,
         )));
         assert!(matches!(generator_return_fn(gen), Value::NativeFunction(_)));
     }
@@ -293,7 +327,10 @@ mod tests {
     fn test_generator_throw_fn_returns_native_fn() {
         let env = Rc::new(RefCell::new(Environment::new()));
         let gen = Rc::new(RefCell::new(GeneratorObject::new(
-            Rc::new(vec![]), vec![], env, false,
+            Rc::new(vec![]),
+            vec![],
+            env,
+            false,
         )));
         assert!(matches!(generator_throw_fn(gen), Value::NativeFunction(_)));
     }
@@ -306,7 +343,9 @@ mod tests {
             1,
         );
         assert_eq!(
-            count_yields_in_expr(&Expression::YieldDelegate(Box::new(Expression::Identifier("x".into())))),
+            count_yields_in_expr(&Expression::YieldDelegate(Box::new(
+                Expression::Identifier("x".into())
+            ))),
             1,
         );
         assert_eq!(count_yields_in_expr(&Expression::Number(42.0)), 0);
@@ -362,36 +401,36 @@ mod tests {
     #[test]
     fn test_generator_via_eval_call_returns_generator_object() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); typeof gen"
-        ).unwrap();
+        let result = ctx
+            .eval("function* g() { yield 1; } let gen = g(); typeof gen")
+            .unwrap();
         assert_eq!(result, Value::String("object".into()));
     }
 
     #[test]
     fn test_generator_via_eval_next_method_exists() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); typeof gen.next"
-        ).unwrap();
+        let result = ctx
+            .eval("function* g() { yield 1; } let gen = g(); typeof gen.next")
+            .unwrap();
         assert_eq!(result, Value::String("function".into()));
     }
 
     #[test]
     fn test_generator_via_eval_next_returns_object() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); typeof gen.next()"
-        ).unwrap();
+        let result = ctx
+            .eval("function* g() { yield 1; } let gen = g(); typeof gen.next()")
+            .unwrap();
         assert_eq!(result, Value::String("object".into()));
     }
 
     #[test]
     fn test_generator_via_eval_next_value() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); gen.next().value"
-        ).unwrap();
+        let result = ctx
+            .eval("function* g() { yield 1; } let gen = g(); gen.next().value")
+            .unwrap();
         assert_eq!(result, Value::Number(1.0));
     }
 
@@ -399,29 +438,31 @@ mod tests {
     fn test_generator_via_eval_next_done() {
         let mut ctx = crate::Context::new().unwrap();
         // A generator with one yield: first next() returns {value: 1, done: false}
-        let done = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); gen.next().done"
-        ).unwrap();
+        let done = ctx
+            .eval("function* g() { yield 1; } let gen = g(); gen.next().done")
+            .unwrap();
         assert_eq!(done, Value::Boolean(false));
 
         // Second next() should return {value: undefined, done: true}
-        let done2 = ctx.eval(
-            "function* g() { yield 1; } let gen = g(); gen.next(); gen.next().done"
-        ).unwrap();
+        let done2 = ctx
+            .eval("function* g() { yield 1; } let gen = g(); gen.next(); gen.next().done")
+            .unwrap();
         assert_eq!(done2, Value::Boolean(true));
     }
 
     #[test]
     fn test_generator_via_eval_multiple_yields() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; yield 2; yield 3; } \
+        let result = ctx
+            .eval(
+                "function* g() { yield 1; yield 2; yield 3; } \
              let gen = g(); \
              let a = gen.next().value; \
              let b = gen.next().value; \
              let c = gen.next().value; \
-             [a, b, c]"
-        ).unwrap();
+             [a, b, c]",
+            )
+            .unwrap();
         // Check array result
         match result {
             Value::Object(ref obj) => {
@@ -437,23 +478,27 @@ mod tests {
     #[test]
     fn test_generator_return_method() {
         let mut ctx = crate::Context::new().unwrap();
-        let done = ctx.eval(
-            "function* g() { yield 1; yield 2; } \
+        let done = ctx
+            .eval(
+                "function* g() { yield 1; yield 2; } \
              let gen = g(); \
              gen.next(); \
-             gen.return(99).value"
-        ).unwrap();
+             gen.return(99).value",
+            )
+            .unwrap();
         assert_eq!(done, Value::Number(99.0));
     }
 
     #[test]
     fn test_generator_throw_method() {
         let mut ctx = crate::Context::new().unwrap();
-        let result = ctx.eval(
-            "function* g() { yield 1; } \
+        let result = ctx
+            .eval(
+                "function* g() { yield 1; } \
              let gen = g(); \
-             try { gen.throw(new Error('test')); 'no_error' } catch(e) { 'error' }"
-        ).unwrap();
+             try { gen.throw(new Error('test')); 'no_error' } catch(e) { 'error' }",
+            )
+            .unwrap();
         assert_eq!(result, Value::String("error".into()));
     }
 }

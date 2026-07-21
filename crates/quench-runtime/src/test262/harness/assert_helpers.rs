@@ -58,7 +58,8 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
         Value::NativeFunction(_)
         | Value::Function(_)
         | Value::Object(_)
-        | Value::Generator(_) | Value::Class(_)
+        | Value::Generator(_)
+        | Value::Class(_)
         | Value::NativeConstructor(_) => {
             crate::eval::call_value_with_this(fn_value.clone(), vec![], Value::Undefined)
         }

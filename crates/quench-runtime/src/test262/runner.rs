@@ -35,7 +35,37 @@ pub const STAGES: &[&str] = &[
     "test/language/source-text",
     "test/language/types",
     "test/language/directive-prologue",
-    "test/language/statements",
+    // statements — split into subdirectories (mirrors tasks/index.json)
+    "test/language/statements/async-function",
+    "test/language/statements/block",
+    "test/language/statements/break",
+    "test/language/statements/class",
+    "test/language/statements/const",
+    "test/language/statements/continue",
+    "test/language/statements/debugger",
+    "test/language/statements/do-while",
+    "test/language/statements/empty",
+    "test/language/statements/expression",
+    "test/language/statements/for",
+    "test/language/statements/for-in",
+    "test/language/statements/for-of",
+    "test/language/statements/function",
+    "test/language/statements/generators",
+    "test/language/statements/if",
+    "test/language/statements/labeled",
+    "test/language/statements/let",
+    "test/language/statements/return",
+    "test/language/statements/switch",
+    "test/language/statements/throw",
+    "test/language/statements/try",
+    "test/language/statements/variable",
+    "test/language/statements/while",
+    "test/language/statements/with",
+    "test/language/statements/async-generator",
+    "test/language/statements/await-using",
+    "test/language/statements/for-await-of",
+    "test/language/statements/using",
+    // language scoping / modules
     "test/language/statementList",
     "test/language/block-scope",
     "test/language/expressions",
@@ -237,13 +267,16 @@ pub fn run_single_test(
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
 
     let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
+    let test_path = test_path.to_string_lossy().to_string();
     let run_sloppy = |script: &str, _host: &mut dyn Test262Host| -> TestOutcome {
         // Use a fresh QuenchHost in a separate thread so a stuck thread
         // does not block the stage — the thread is abandoned after timeout.
         let meta = meta.clone();
         let script = script.to_owned();
+        let tp = test_path.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            eprintln!("  [thread] evaluating: {}", tp);
             let mut inner = QuenchHost::new();
             let result = if is_module {
                 inner.run_module_script(&script)

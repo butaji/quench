@@ -7,11 +7,96 @@ use crate::interpreter::{
     collect_var_names_recursive, predeclare_let_const, set_control_flow, take_control_flow,
     ControlFlow,
 };
+use crate::value::function::ValueFunction;
 use crate::value::{
     set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Returns true if expr is a Call expression — the only expression type
+/// that can appear in a proper tail position per ES §14.2.1.
+pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
+    matches!(expr, Expression::Call { .. })
+}
+
+/// Tail-call signal produced by `eval_function_body` and consumed by the
+/// trampoline in `call_js_function_impl_with_strict`.
+/// Stores the already-resolved `ValueFunction` + evaluated `Vec<Value>` args.
+/// The accumulator chain is managed via the separate thread-local ACC_STACK.
+#[derive(Debug, Clone)]
+pub struct TailCallSignal {
+    /// The resolved function to call (already extracted from Value::Function).
+    pub function: ValueFunction,
+    /// The evaluated arguments.
+    pub arguments: Vec<Value>,
+}
+
+impl TailCallSignal {
+    pub fn new(function: ValueFunction, arguments: Vec<Value>) -> Self {
+        Self {
+            function,
+            arguments,
+        }
+    }
+}
+
+// Thread-local tail-call signal produced by `eval_function_body` and
+// consumed by `call_js_function_impl_with_strict`'s trampoline.
+thread_local! {
+    static TAIL_CALL_SIGNAL: std::cell::RefCell<Option<TailCallSignal>> =
+        const { std::cell::RefCell::new(None) };
+    // Separate accumulator stack: survives across tail-call chains.
+    // Each tail call pushes acc onto the stack; when the trampoline
+    // gets a result back, it pops and combines with the returned value.
+    static ACC_STACK: std::cell::RefCell<Vec<Value>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Set the tail-call signal for the trampoline to pick up.
+pub(crate) fn set_tail_call_signal(signal: TailCallSignal) {
+    TAIL_CALL_SIGNAL.with(|cell| *cell.borrow_mut() = Some(signal));
+}
+
+/// Take and clear the tail-call signal (consumed by the trampoline).
+pub(crate) fn take_tail_call_signal() -> Option<TailCallSignal> {
+    TAIL_CALL_SIGNAL.with(|cell| cell.borrow_mut().take())
+}
+
+/// Push acc onto the thread-local accumulator stack (called before each tail call).
+pub(crate) fn acc_stack_push(acc: Value) {
+    ACC_STACK.with(|cell| cell.borrow_mut().push(acc));
+}
+
+/// Update the last (topmost) value on the acc stack. Used by the trampoline
+/// to store the result from a returning function before looping.
+pub(crate) fn acc_stack_update_last(val: Value) {
+    ACC_STACK.with(|cell| {
+        let mut stack = cell.borrow_mut();
+        if let Some(last) = stack.last_mut() {
+            *last = val;
+        }
+    });
+}
+
+/// Return the current length of the accumulator stack.
+pub(crate) fn acc_stack_len() -> usize {
+    ACC_STACK.with(|cell| cell.borrow().len())
+}
+
+/// Pop all entries down to a target length. Used by the trampoline to
+/// restore the stack to a saved depth after a non-tail call returns.
+pub(crate) fn acc_stack_pop_to(target_len: usize) {
+    ACC_STACK.with(|cell| {
+        let mut stack = cell.borrow_mut();
+        stack.truncate(target_len);
+    });
+}
+
+/// Return a clone of the topmost value on the stack, or None if empty.
+pub(crate) fn acc_stack_top() -> Option<Value> {
+    ACC_STACK.with(|cell| cell.borrow().last().cloned())
+}
 
 /// Evaluate a list of statements
 pub fn eval_statements(
@@ -21,13 +106,29 @@ pub fn eval_statements(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let mut last_val = Value::Undefined;
-    for stmt in stmts {
+    let last_idx = stmts.len().saturating_sub(1);
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last_stmt = i == last_idx;
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations)
         // should not replace the previous completion value. Only update last_val
         // when the statement produces a non-empty value (like an expression).
-        if !matches!(stmt, Statement::VarDeclaration { .. } | Statement::FunctionDeclaration { .. } | Statement::ClassDeclaration { .. } | Statement::SequenceDecls(_)) {
+        if !matches!(
+            stmt,
+            Statement::VarDeclaration { .. }
+                | Statement::FunctionDeclaration { .. }
+                | Statement::ClassDeclaration { .. }
+                | Statement::SequenceDecls(_)
+        ) {
             last_val = val;
+        }
+        // For the last statement, DON'T check ControlFlow::Return here.
+        // The caller (eval_function_body) handles the final statement specially
+        // so that `return g()` (non-tail call) evaluates the expression `g()`
+        // before propagating the return. This prevents inner non-tail call
+        // results from short-circuiting the rest of the function body.
+        if is_last_stmt {
+            continue;
         }
         match take_control_flow() {
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
@@ -50,25 +151,177 @@ pub fn eval_statements(
     Ok(last_val)
 }
 
-/// Evaluate a function body: completion value is discarded — only an
-/// explicit `return` produces a value, per ES function semantics.
+/// Evaluate a function body: return the completion value of the last
+/// statement. Per ES spec, a function body returns the completion value of
+/// its final statement when no explicit `return` is present.
+///
+/// When the last statement is `return callExpr` (at any nesting depth inside
+/// a block), evaluates callee+args, resolves the target function, and sets a
+/// thread-local signal for the trampoline in `call_js_function_impl_with_strict`.
 pub fn eval_function_body(
     stmts: &[Statement],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    for stmt in stmts {
-        eval_statement(stmt, env, false, in_arrow_function)?;
+    let last_idx = stmts.len().saturating_sub(1);
+    let mut last_val = Value::Undefined;
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last_stmt = i == last_idx;
+
+        // Check for tail-call return at top level.
+        if let Statement::Return(ref expr) = stmt {
+            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
+                // Set tail-call signal, then break to let the trampoline extract
+                // the accumulator from the acc_stack.
+                handle_tail_call(expr, env, in_arrow_function)?;
+                break;
+            }
+            // Non-tail return.
+            let val = match expr {
+                Some(e) => eval_expression(e, env, in_arrow_function)?,
+                None => Value::Undefined,
+            };
+            set_control_flow(ControlFlow::Return(val.clone()));
+            return Ok(val);
+        }
+
+        // Check for tail-call return inside a block at the last position.
+        // Per ES §14.2.1, the block's body is in tail position.
+        if is_last_stmt {
+            if let Statement::Block(inner_stmts) = stmt {
+                if let Some(()) = handle_tail_call_in_block(inner_stmts, env, in_arrow_function)? {
+                    // Tail call was set; break to let trampoline run.
+                    break;
+                }
+            }
+        }
+
+        let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
+        // Per ES §8.3.2, empty completions (var/let/const/function declarations)
+        // should not replace the previous completion value.
+        if !matches!(
+            stmt,
+            Statement::VarDeclaration { .. }
+                | Statement::FunctionDeclaration { .. }
+                | Statement::ClassDeclaration { .. }
+                | Statement::SequenceDecls(_)
+        ) {
+            last_val = stmt_val;
+        }
+        // For the last statement, DON'T check ControlFlow::Return here.
+        // Let the final return statement be reached and evaluated properly.
+        // This prevents inner non-tail call results from short-circuiting
+        // the rest of the function body (e.g., `var x = g(); return x + 1`).
+        if is_last_stmt {
+            continue;
+        }
         match take_control_flow() {
             Some(ControlFlow::Return(val)) => return Ok(val),
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue | ControlFlow::Yield(_) | ControlFlow::YieldDelegate(_))) => {
+            Some(
+                cf @ (ControlFlow::Break
+                | ControlFlow::Continue
+                | ControlFlow::Yield(_)
+                | ControlFlow::YieldDelegate(_)),
+            ) => {
                 set_control_flow(cf);
                 return Ok(Value::Undefined);
             }
             None => {}
         }
     }
-    Ok(Value::Undefined)
+    // If we broke out of the loop, a tail-call signal was set.
+    // Return the last completion value; the trampoline will extract acc from
+    // the signal and combine with the completion if needed.
+    Ok(last_val)
+}
+
+/// Handle a tail-call return expression: resolve callee and args, then
+/// set the thread-local signal for the trampoline to pick up.
+fn handle_tail_call(
+    expr: &Option<Box<Expression>>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<(), JsError> {
+    if let Some(e) = expr.as_ref() {
+        if let Expression::Call { callee, arguments } = e.as_ref() {
+            let callee_val = eval_expression(callee, env, in_arrow_function)?;
+            let args: Vec<Value> = arguments
+                .iter()
+                .map(|arg| eval_expression(arg, env, in_arrow_function))
+                .collect::<Result<Vec<_>, _>>()?;
+            let function = resolve_callee_to_function(callee_val)?;
+            set_tail_call_signal(TailCallSignal::new(function, args));
+        }
+    }
+    Ok(())
+}
+
+/// Recursively find a tail-call return inside a block at the last position.
+/// Returns `Ok(Some(()))` when a tail call was set (caller should break).
+/// Returns `Ok(None)` when no tail-call return was found (caller evaluates normally).
+fn handle_tail_call_in_block(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Option<()>, JsError> {
+    if stmts.is_empty() {
+        return Ok(None);
+    }
+    let last_stmt = &stmts[stmts.len() - 1];
+
+    // Last statement is a Return → check for tail call.
+    if let Statement::Return(ref expr) = last_stmt {
+        if expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
+            handle_tail_call(expr, env, in_arrow_function)?;
+            return Ok(Some(()));
+        }
+        // Non-tail return inside block: evaluate it and propagate via control flow.
+        let val = match expr.as_ref() {
+            Some(e) => eval_expression(e, env, in_arrow_function)?,
+            None => Value::Undefined,
+        };
+        set_control_flow(ControlFlow::Return(val));
+        return Ok(Some(()));
+    }
+
+    // Last statement is a nested Block → recurse.
+    if let Statement::Block(inner_stmts) = last_stmt {
+        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function);
+    }
+
+    // No tail-call found; caller will evaluate the block normally.
+    Ok(None)
+}
+
+/// Resolve a Value to a ValueFunction, used for tail-call resolution.
+fn resolve_callee_to_function(callee_val: Value) -> Result<ValueFunction, JsError> {
+    match callee_val {
+        Value::Function(f) => Ok(f),
+        Value::Symbol(_) => Err(JsError("Symbol is not a function".into())),
+        _ => Err(JsError(format!(
+            "{} is not a function",
+            value_type_name(&callee_val)
+        ))),
+    }
+}
+
+/// Return a human-readable type name for a Value.
+fn value_type_name(v: &Value) -> &str {
+    match v {
+        Value::Undefined => "undefined",
+        Value::Null => "null",
+        Value::Boolean(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::BigInt(_) => "bigint",
+        Value::String(_) => "string",
+        Value::Symbol(_) => "symbol",
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_)
+        | Value::Generator(_) => "object",
+    }
 }
 
 /// Evaluate a single statement

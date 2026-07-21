@@ -1,5 +1,9 @@
 # AGENTS.md
 
+Do TDD. We need Rust core covered with unit tests.
+
+Dont do debug code. Dont do debug prints. Do unit tests.
+
 Never guess or do printing, write unit tests. Dont just replicate test262 tests as unit tests, never.
 
 Make proper coverage of Rust Runtime Core with unit tests, of all layers and all functions. Changing of this core is always with TDD.
