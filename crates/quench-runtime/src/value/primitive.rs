@@ -136,7 +136,9 @@ fn to_primitive_object(
 
     // ES 7.1.1.1 OrdinaryToPrimitive: both methods were called and returned
     // non-primitive (object) values, OR neither method exists → throw TypeError.
-    if (first_method_exists && second_method_exists) || (!first_method_exists && !second_method_exists) {
+    if (first_method_exists && second_method_exists)
+        || (!first_method_exists && !second_method_exists)
+    {
         let (err, _) = crate::value::create_js_error_with_type(
             "Cannot convert object to primitive value",
             "TypeError",

@@ -38,10 +38,35 @@ pub fn eval_member_access(
         }
         Value::Class(class) => eval_class_member(class, prop_name, env),
         Value::Generator(gen) => {
+            let is_async = gen.borrow().is_async;
             match prop_name {
-                "next" => Ok(crate::value::generator::generator_next_fn(gen.clone())),
-                "return" => Ok(crate::value::generator::generator_return_fn(gen.clone())),
-                "throw" => Ok(crate::value::generator::generator_throw_fn(gen.clone())),
+                "next" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_next_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_next_fn(gen.clone()))
+                    }
+                }
+                "return" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_return_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_return_fn(gen.clone()))
+                    }
+                }
+                "throw" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_throw_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_throw_fn(gen.clone()))
+                    }
+                }
                 _ => {
                     // Look up on Generator.prototype
                     let proto = std::rc::Rc::new(std::cell::RefCell::new(
@@ -70,6 +95,11 @@ pub fn eval_class_member(
             let proto = get_class_prototype_cached(class, env)?;
             Ok(Value::Object(proto))
         }
+        "length" => {
+            // Per ES spec, the `length` property of a class constructor
+            // is the number of formal parameters of the constructor.
+            Ok(Value::Number(class.constructor_params.len() as f64))
+        }
         "name" => {
             // "name" is configurable; if deleted, return undefined
             if class.deleted_properties.borrow().contains("name") {
@@ -93,15 +123,15 @@ pub fn eval_class_member(
                 return Ok(val);
             }
             // Check static methods
-            for (name, params, body) in &class.static_methods {
+            for (name, params, body, is_async, is_generator) in &class.static_methods {
                 if prop_key_matches(name, prop_name) {
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
                         params.clone(),
                         body.clone(),
                         Rc::clone(env),
-                        false,
-                        false,
+                        *is_async,
+                        *is_generator,
                     );
                     // Class bodies are always strict mode (ES spec 15.7).
                     func.strict = true;
@@ -118,18 +148,14 @@ pub fn eval_class_member(
                     // Create a synthetic object with the getter and invoke it.
                     // `this` inside the getter is the class constructor itself.
                     let mut this_obj = Object::new(ObjectKind::Ordinary);
-                    this_obj.set("constructor", Value::Class(class.clone()));
+                    this_obj.set("constructor", Value::Class(Box::new(class.clone())));
                     let this_rc = Rc::new(RefCell::new(this_obj));
                     let mut getter_obj = Object::new(ObjectKind::Ordinary);
-                    getter_obj.set_getter(
-                        &key_str,
-                        Rc::new(body.clone()),
-                        Rc::clone(&eval_env),
-                    );
+                    getter_obj.set_getter(&key_str, Rc::new(body.clone()), Rc::clone(&eval_env));
                     let getter_obj_rc = Rc::new(RefCell::new(getter_obj));
                     return call_getter(
                         &this_rc,
-                        &getter_obj_rc.borrow().get_getter(&key_str).unwrap(),
+                        getter_obj_rc.borrow().get_getter(&key_str).unwrap(),
                         &eval_env,
                     );
                 }

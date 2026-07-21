@@ -28,15 +28,15 @@ pub fn get_member_function(
             if let Some(val) = class.get_static_field(prop_name) {
                 return Ok(val);
             }
-            for (name, params, body) in &class.static_methods {
+            for (name, params, body, is_async, is_generator) in &class.static_methods {
                 if name_matches_prop(name, prop_name) {
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
                         params.clone(),
                         body.clone(),
                         Rc::clone(env),
-                        false,
-                        false,
+                        *is_async,
+                        *is_generator,
                     );
                     func.strict = true;
                     return Ok(Value::Function(func));
@@ -49,12 +49,39 @@ pub fn get_member_function(
             let proto = crate::eval::class::get_or_create_class_prototype(class, env)?;
             crate::eval::member::eval_object_member(&proto, prop_name, Some(env))
         }
-        Value::Generator(gen) => match prop_name {
-            "next" => Ok(crate::value::generator::generator_next_fn(gen.clone())),
-            "return" => Ok(crate::value::generator::generator_return_fn(gen.clone())),
-            "throw" => Ok(crate::value::generator::generator_throw_fn(gen.clone())),
-            _ => Ok(Value::Undefined),
-        },
+        Value::Generator(gen) => {
+            let is_async = gen.borrow().is_async;
+            match prop_name {
+                "next" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_next_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_next_fn(gen.clone()))
+                    }
+                }
+                "return" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_return_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_return_fn(gen.clone()))
+                    }
+                }
+                "throw" => {
+                    if is_async {
+                        Ok(crate::value::generator::async_generator_throw_fn(
+                            gen.clone(),
+                        ))
+                    } else {
+                        Ok(crate::value::generator::generator_throw_fn(gen.clone()))
+                    }
+                }
+                _ => Ok(Value::Undefined),
+            }
+        }
         _ => Ok(Value::Undefined),
     }
 }

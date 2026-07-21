@@ -90,7 +90,7 @@ fn eval_super_call(
     // super() side-effects have already happened.
     let result = match super_val {
         Value::Class(super_class) => {
-            crate::eval::class::call_super_constructor(super_class, args, this_val, env)
+            crate::eval::class::call_super_constructor(*super_class, args, this_val, env)
         }
         Value::Object(o) => {
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
@@ -264,7 +264,7 @@ pub fn eval_new(
 
     // Handle class instantiation
     if let Value::Class(class) = &constructor_val {
-        let r = instantiate_class_from_ast_with_env(class.clone(), args, env);
+        let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), args, env);
         crate::interpreter::set_new_target(prev_new_target);
         return r;
     }

@@ -226,15 +226,70 @@ pub fn eval_expression(
                 }
                 return Ok(right_val);
             }
+            // No binding scope: identifier not found in env chain.
+            // Extract name so we can drop borrow before calling assign_to.
+            if let Expression::Identifier(name) = left.as_ref() {
+                let name = name.clone();
+                drop(env.borrow());
+                let right_val = eval_expression(right, env, in_arrow_function)?;
+                if crate::interpreter::is_strict_mode() {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("{} is not defined", name),
+                        "ReferenceError",
+                    );
+                    return Err(error);
+                }
+                env.borrow_mut().set(&name, right_val.clone());
+                return Ok(right_val);
+            }
             crate::eval::object::assign_to(left, &right_val, env)?;
             Ok(right_val)
         }
         Expression::CompoundAssignment { op, left, right } => {
+            // Evaluate left first (needed for binary op value).
             let left_val = eval_expression(left, env, in_arrow_function)?;
+            // Extract identifier info before dropping borrow.
+            let ident_name = if let Expression::Identifier(name) = left.as_ref() {
+                Some(name.clone())
+            } else {
+                None
+            };
+            let scope = ident_name
+                .as_ref()
+                .and_then(|n| env.borrow().binding_scope(n));
+            drop(env.borrow());
+            // Evaluate right side after borrow is dropped.
             let right_val = eval_expression(right, env, in_arrow_function)?;
             let result = eval_binary_op(op.to_binary(), &left_val, &right_val)?;
-            crate::eval::object::assign_to(left, &result, env)?;
-            Ok(result)
+            // Identifier with known scope: update binding directly (avoids nested borrow).
+            if let (Some(name), Some(scope)) = (ident_name, scope) {
+                let kind = scope.borrow().get_kind(&name);
+                if kind == Some(crate::ast::VarKind::Var) {
+                    // For var: try set_object_property first (for global var → global object).
+                    if scope
+                        .borrow_mut()
+                        .set_object_property(&name, result.clone(), false)
+                        == Some(true)
+                    {
+                        return Ok(result);
+                    }
+                    // Var not on global object: initialize declared binding.
+                    scope
+                        .borrow_mut()
+                        .initialize_declared(&name, result.clone());
+                    return Ok(result);
+                }
+                // let/const: set() includes TDZ check.
+                scope
+                    .borrow_mut()
+                    .set(name, result.clone(), crate::interpreter::is_strict_mode());
+                return Ok(result);
+            }
+            // Member expression or other: re-evaluate left (borrow now dropped).
+            let left_val2 = eval_expression(left, env, in_arrow_function)?;
+            let result2 = eval_binary_op(op.to_binary(), &left_val2, &right_val)?;
+            crate::eval::object::assign_to(left, &result2, env)?;
+            Ok(result2)
         }
         Expression::LogicalCompoundAssignment { op, left, right } => {
             let left_val = eval_expression(left, env, in_arrow_function)?;

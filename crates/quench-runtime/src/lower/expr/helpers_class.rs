@@ -53,6 +53,8 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
 fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerError> {
     let name = lower_prop_name_key_oxc(&method.key)?;
     let is_static = method.r#static;
+    let is_async = method.value.r#async;
+    let is_generator = method.value.generator;
     let ps: Vec<crate::ast::Param> = lower_formal_params(&method.value.params);
     let body = method
         .value
@@ -77,12 +79,16 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
                     name,
                     params: ps,
                     body,
+                    is_async,
+                    is_generator,
                 })
             } else {
                 Ok(ClassMember::Method {
                     name,
                     params: ps,
                     body,
+                    is_async,
+                    is_generator,
                 })
             }
         }

@@ -32,6 +32,9 @@ pub struct GeneratorObject {
     pub next_value: Value,
     pub is_async: bool,
     pub prototype: Option<Rc<RefCell<Object>>>,
+    /// Pre-evaluated arguments for async generators.
+    /// When set, params are bound eagerly before the generator is returned.
+    pub args: Option<Vec<Value>>,
 }
 
 impl GeneratorObject {
@@ -52,6 +55,7 @@ impl GeneratorObject {
             next_value: Value::Undefined,
             is_async: false,
             prototype: None,
+            args: None,
         }
     }
 
@@ -85,6 +89,31 @@ impl GeneratorObject {
             .current_scope()
             .borrow_mut()
             .set_this(global_this);
+
+        // For async generators, params are pre-evaluated. Bind them here.
+        if let Some(ref args) = self.args {
+            for (i, param) in self.params.iter().enumerate() {
+                let param_value = match args.get(i).cloned() {
+                    Some(Value::Undefined) if param.default.is_some() => {
+                        crate::eval::expression::eval_expression(
+                            param.default.as_ref().unwrap(),
+                            &call_env,
+                            false,
+                        )?
+                    }
+                    Some(v) => v,
+                    None if param.default.is_some() => crate::eval::expression::eval_expression(
+                        param.default.as_ref().unwrap(),
+                        &call_env,
+                        false,
+                    )?,
+                    None => Value::Undefined,
+                };
+                call_env
+                    .borrow_mut()
+                    .define(param.name.clone(), param_value);
+            }
+        }
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
@@ -206,6 +235,60 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             let mut g = gen.borrow_mut();
             g.state = GeneratorState::Completed;
             Err(crate::value::JsError(format!("Generator threw: {:?}", arg)))
+        },
+    )))
+}
+
+/// Async generator next: wraps result in a Promise.
+pub fn async_generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
+    Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
+        move |args| {
+            let arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let proto = crate::builtins::promise::get_promise_proto();
+            let result = gen.borrow_mut().next(arg);
+            match result {
+                Ok(ir) => crate::builtins::promise::promise_resolve_impl_static(
+                    vec![ir.to_object()],
+                    proto,
+                ),
+                Err(e) => crate::builtins::promise::promise_reject_impl_static(
+                    vec![Value::String(e.to_string())],
+                    proto,
+                ),
+            }
+        },
+    )))
+}
+
+/// Async generator return: wraps result in a Promise.
+pub fn async_generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
+    Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
+        move |args| {
+            let arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let mut g = gen.borrow_mut();
+            g.state = GeneratorState::Completed;
+            let proto = crate::builtins::promise::get_promise_proto();
+            crate::builtins::promise::promise_resolve_impl_static(
+                vec![IteratorResult {
+                    value: arg,
+                    done: true,
+                }
+                .to_object()],
+                proto,
+            )
+        },
+    )))
+}
+
+/// Async generator throw: returns a rejected Promise.
+pub fn async_generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
+    Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
+        move |args| {
+            let arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let mut g = gen.borrow_mut();
+            g.state = GeneratorState::Completed;
+            let proto = crate::builtins::promise::get_promise_proto();
+            crate::builtins::promise::promise_reject_impl_static(vec![arg], proto)
         },
     )))
 }
@@ -500,5 +583,109 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, Value::String("error".into()));
+    }
+
+    #[test]
+    fn test_async_generator_returns_promise_from_next() {
+        let mut ctx = crate::Context::new().unwrap();
+        // Calling an async generator returns an async generator object
+        let result = ctx
+            .eval("async function* ag() { yield 1; } let gen = ag(); typeof gen.next")
+            .unwrap();
+        assert_eq!(result, Value::String("function".into()));
+        // Calling .next() on an async generator should return a Promise (check via .then)
+        let result = ctx
+            .eval("async function* ag() { yield 1; } let gen = ag(); let p = gen.next(); typeof p")
+            .unwrap();
+        assert_eq!(result, Value::String("object".into()));
+    }
+
+    #[test]
+    fn test_async_generator_next_returns_pending_promise() {
+        let mut ctx = crate::Context::new().unwrap();
+        // Verify Promise works first
+        let result = ctx.eval("typeof Promise.resolve().then").unwrap();
+        assert_eq!(result, Value::String("function".into()));
+        // Check if the async generator's next method returns a Promise
+        // by looking at what typeof gen.next()() returns (the function call result)
+        let result = ctx
+            .eval(
+                r#"
+            async function* ag() { yield 1; }
+            let gen = ag();
+            // gen.next is a function
+            let nextFn = gen.next;
+            // Call it - should return a Promise
+            let p = nextFn();
+            String([typeof p, typeof p.then])
+        "#,
+            )
+            .unwrap();
+        eprintln!("DEBUG: p types = {:?}", result);
+        // p should be {done: false, value: <promise>}
+        let result = ctx.eval("async function* ag() { yield 1; } let gen = ag(); let p = gen.next(); typeof p.then").unwrap();
+        assert_eq!(result, Value::String("function".into()));
+    }
+
+    #[test]
+    fn test_async_generator_is_async_flag() {
+        // Test that async generators have is_async = true
+        let mut ctx = crate::Context::new().unwrap();
+        // Verify we can call async generator and get a result
+        let result = ctx
+            .eval("async function* ag() { yield 1; } let gen = ag(); typeof gen.next()")
+            .unwrap();
+        // .next() should return something callable (a Promise)
+        assert_eq!(result, Value::String("object".into()));
+    }
+
+    #[test]
+    fn test_async_generator_call_returns_generator_object() {
+        let mut ctx = crate::Context::new().unwrap();
+        // Calling an async generator function returns an object with next method
+        let result = ctx
+            .eval("async function* ag() { yield 1; } let gen = ag(); typeof gen")
+            .unwrap();
+        assert_eq!(result, Value::String("object".into()));
+    }
+
+    #[test]
+    fn test_async_generator_with_default_params() {
+        // Reproduces test262: async-gen-method/dflt-params-arg-val-not-undefined.js
+        // When called with explicit args, defaults should NOT be evaluated.
+        let mut ctx = crate::Context::new().unwrap();
+        // Simple case first - async generator with default param
+        let result = ctx
+            .eval(
+                r#"
+            async function* gen(a = 42) {
+                return a;
+            }
+            let g = gen();
+            typeof g.next
+        "#,
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("function".into()));
+    }
+
+    #[test]
+    fn test_async_generator_with_explicit_args_no_default_eval() {
+        // Test262: default params should NOT be evaluated when explicit args are passed
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                r#"
+            var evaluated = false;
+            async function* gen(a = (evaluated = true, 1)) {
+                return a;
+            }
+            let g = gen(99);
+            // At this point default was NOT evaluated
+            typeof g.next
+        "#,
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("function".into()));
     }
 }

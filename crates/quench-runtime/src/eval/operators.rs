@@ -16,6 +16,7 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
         BinaryOp::Mod => Ok(Value::Number(to_number(left) % to_number(right))),
         BinaryOp::Eq => Ok(Value::Boolean(loose_eq(left, right))),
         BinaryOp::Neq => Ok(Value::Boolean(!loose_eq(left, right))),
+        BinaryOp::LooseEq => Ok(Value::Boolean(loose_eq(left, right))),
         BinaryOp::In => eval_in_op(left, right),
         BinaryOp::Instanceof => eval_instanceof(left, right),
         BinaryOp::StrictEq => Ok(Value::Boolean(strict_eq(left, right))),
