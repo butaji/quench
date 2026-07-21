@@ -89,20 +89,79 @@ fn object_to_js_string(o: &crate::value::object::Object) -> String {
     }
 }
 
-fn number_to_string(n: f64) -> String {
+/// Convert a number to its canonical JS string representation.
+/// This matches ES spec `Number::toString` (shortest representation).
+pub fn number_to_string(n: f64) -> String {
     if n.is_nan() {
-        "NaN".to_string()
-    } else if n == f64::INFINITY {
-        "Infinity".to_string()
-    } else if n == f64::NEG_INFINITY {
-        "-Infinity".to_string()
-    } else if n == 0.0 {
-        // Per spec, both +0 and -0 stringify to "0".
-        "0".to_string()
-    } else if n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{:.0}", n)
+        return "NaN".to_string();
+    }
+    if !n.is_finite() {
+        return if n == f64::INFINITY {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        };
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    let abs = n.abs();
+    // Use exponential notation for very small or very large numbers.
+    if abs < 1e-6 || abs >= 1e21 {
+        return canonical_exponential(n);
+    }
+    // For normal numbers, find the shortest representation.
+    for prec in 1..=21 {
+        let formatted = format!("{:.prec$}", n);
+        if let Ok(parsed) = formatted.parse::<f64>() {
+            if parsed == n && !has_redundant_decimal(&formatted) {
+                return strip_trailing_zeros(&formatted);
+            }
+        }
+    }
+    n.to_string()
+}
+
+/// Format a number using exponential notation with the shortest significant digits.
+fn canonical_exponential(n: f64) -> String {
+    for prec in 1..=20 {
+        let exp_str = format!("{:.prec$e}", n);
+        // Parse back to verify it round-trips
+        if let Ok(parsed) = exp_str.parse::<f64>() {
+            if parsed == n {
+                return strip_exponential_trailing_zeros(&exp_str);
+            }
+        }
+    }
+    format!("{:e}", n)
+}
+
+fn has_redundant_decimal(s: &str) -> bool {
+    s.contains('.') && s.ends_with('0')
+}
+
+fn strip_trailing_zeros(s: &str) -> String {
+    if let Some(pos) = s.rfind('.') {
+        let without_trailing = s[..pos + 1].to_string()
+            + &s[pos + 1..].trim_end_matches('0');
+        if without_trailing.ends_with('.') {
+            without_trailing.trim_end_matches('.').to_string()
+        } else {
+            without_trailing
+        }
     } else {
-        n.to_string()
+        s.to_string()
+    }
+}
+
+fn strip_exponential_trailing_zeros(s: &str) -> String {
+    if let Some(e_pos) = s.find('e') {
+        let (mantissa, exp) = s.split_at(e_pos);
+        let clean_mantissa = strip_trailing_zeros(mantissa);
+        let clean_exp = exp.replace(['+'], "");
+        format!("{}{}", clean_mantissa, clean_exp)
+    } else {
+        strip_trailing_zeros(s)
     }
 }
 

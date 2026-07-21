@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::env::Environment;
+use crate::JsError;
+use crate::value::SetterStorage;
+
 use num_bigint::BigInt;
 
 use crate::ast::{Class, ClassMember, Param, PropertyKey};
@@ -76,8 +80,12 @@ pub struct ClassValue {
     pub static_methods: Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     /// Instance getters (name -> body)
     pub getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
+    /// Static getters (name -> body)
+    pub static_getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     /// Instance setters (name -> (param, body))
     pub setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    /// Static setters (name -> (param, body))
+    pub static_setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
     /// Instance fields (name -> value expression)
     pub instance_fields: Vec<(PropertyKey, crate::ast::Expression)>,
     /// Static fields (name -> value expression)
@@ -101,6 +109,9 @@ pub struct ClassValue {
     /// Deleted property names (configurable properties like "name" that were deleted)
     pub(crate) deleted_properties:
         std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>,
+    /// Class definition environment - used to evaluate computed property keys
+    /// for static accessors with the correct lexical scope.
+    pub(crate) class_def_env_cell: std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Environment>>>>>,
 }
 
 impl ClassValue {
@@ -112,7 +123,9 @@ impl ClassValue {
         let mut methods = Vec::new();
         let mut static_methods = Vec::new();
         let mut getters = Vec::new();
+        let mut static_getters = Vec::new();
         let mut setters = Vec::new();
+        let mut static_setters = Vec::new();
         let mut instance_fields = Vec::new();
         let mut static_fields = Vec::new();
 
@@ -123,7 +136,9 @@ impl ClassValue {
             &mut methods,
             &mut static_methods,
             &mut getters,
+            &mut static_getters,
             &mut setters,
+            &mut static_setters,
             &mut instance_fields,
             &mut static_fields,
         );
@@ -136,7 +151,9 @@ impl ClassValue {
             methods,
             static_methods,
             getters,
+            static_getters,
             setters,
+            static_setters,
             instance_fields,
             static_fields,
             super_class: class.super_class.clone(),
@@ -146,7 +163,19 @@ impl ClassValue {
             deleted_properties: std::rc::Rc::new(std::cell::RefCell::new(
                 std::collections::HashSet::new(),
             )),
+            class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
+    }
+
+    /// Set the class definition environment (used for evaluating computed property keys in static accessors)
+    pub fn set_class_def_env(&self, env: Rc<RefCell<Environment>>) {
+        let mut cell = self.class_def_env_cell.borrow_mut();
+        *cell = Some(env);
+    }
+
+    /// Get the class definition environment
+    pub fn get_class_def_env(&self) -> Option<Rc<RefCell<Environment>>> {
+        self.class_def_env_cell.borrow().clone()
     }
 
     /// Set the cached prototype for this class (shared across all clones)
@@ -175,6 +204,59 @@ impl ClassValue {
         self.static_properties_cell.borrow().get(name).cloned()
     }
 
+    /// Check if this class has a static setter for the given property name.
+    pub fn has_static_setter(&self, name: &str) -> bool {
+        let eval_env = self.class_def_env_cell.borrow();
+        let env = match eval_env.as_ref() {
+            Some(e) => e,
+            None => return false,
+        };
+        for (key, _param, _body) in &self.static_setters {
+            let key_str = crate::eval::class::helpers::prop_key_to_string(key, env, false);
+            if key_str.is_ok_and(|k| k == name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set a static property on this class, invoking a setter if one exists.
+    pub fn set_static_property(
+        &self,
+        name: &str,
+        value: Value,
+        env: &Rc<RefCell<Environment>>,
+    ) -> Result<(), JsError> {
+        // Check if there's a static setter
+        let eval_env = self.class_def_env_cell.borrow();
+        let env = eval_env.as_ref().map(Rc::clone).unwrap_or_else(|| Rc::clone(env));
+
+        for (key, param, body) in &self.static_setters {
+            let key_str = crate::eval::class::helpers::prop_key_to_string(key, &env, false)?;
+            if key_str == name {
+                // Create `this` object with constructor reference
+                let mut this_obj = Object::new(crate::value::ObjectKind::Ordinary);
+                this_obj.set("constructor", Value::Class(self.clone()));
+                let this_rc = Rc::new(RefCell::new(this_obj));
+
+                // Create setter storage and call it
+                let setter_storage = SetterStorage {
+                    func: None,
+                    closure: Rc::clone(&env),
+                    param: param.clone(),
+                    body: body.clone().into(),
+                    strict: false,
+                };
+                crate::eval::object::call_setter(&this_rc, &setter_storage, value, &env)?;
+                return Ok(());
+            }
+        }
+
+        // No setter found, set the static field directly
+        self.set_static_field(name, value);
+        Ok(())
+    }
+
     /// Set the inferred class name. Used so static field initializers can
     /// observe the eventual class name through `this.name` before the
     /// surrounding assignment has completed.
@@ -192,7 +274,9 @@ fn fill_members_from_ast(
     methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     static_methods: &mut Vec<(PropertyKey, Vec<Param>, Vec<crate::ast::Statement>)>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
+    static_getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    static_setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
     instance_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
 ) {
@@ -211,8 +295,14 @@ fn fill_members_from_ast(
             ClassMember::Getter { name, body } => {
                 getters.push((name.clone(), body.clone()));
             }
+            ClassMember::StaticGetter { name, body } => {
+                static_getters.push((name.clone(), body.clone()));
+            }
             ClassMember::Setter { name, param, body } => {
                 setters.push((name.clone(), param.clone(), body.clone()));
+            }
+            ClassMember::StaticSetter { name, param, body } => {
+                static_setters.push((name.clone(), param.clone(), body.clone()));
             }
             ClassMember::Field { name, value } => {
                 instance_fields.push((name.clone(), value.clone()));
@@ -501,5 +591,71 @@ mod tests {
             proto,
         )))
         .is_callable());
+    }
+
+    #[test]
+    fn test_class_has_static_setter() {
+        use crate::ast::{Class, ClassMember, PropertyKey};
+        // Build a class with a static setter
+        let setter_member = ClassMember::StaticSetter {
+            name: PropertyKey::String("foo".to_string()),
+            param: "v".to_string(),
+            body: vec![],
+        };
+        let class = Class {
+            name: Some("C".to_string()),
+            super_class: None,
+            body: vec![setter_member],
+        };
+        let class_val = ClassValue::from_ast(&class);
+        let env = make_env();
+        class_val.set_class_def_env(Rc::clone(&env));
+
+        // has_static_setter returns true for existing setter
+        assert!(class_val.has_static_setter("foo"));
+        // has_static_setter returns false for non-existing setter
+        assert!(!class_val.has_static_setter("bar"));
+    }
+
+    #[test]
+    fn test_class_set_static_property_with_setter() {
+        use crate::ast::{Class, ClassMember, PropertyKey, Statement};
+        // Build a class with a static setter that records the value
+        let setter_member = ClassMember::StaticSetter {
+            name: PropertyKey::String("foo".to_string()),
+            param: "v".to_string(),
+            body: vec![Statement::Empty],
+        };
+        let class = Class {
+            name: Some("C".to_string()),
+            super_class: None,
+            body: vec![setter_member],
+        };
+        let class_val = ClassValue::from_ast(&class);
+        let env = make_env();
+        class_val.set_class_def_env(Rc::clone(&env));
+
+        // set_static_property invokes the setter (doesn't throw)
+        let result = class_val.set_static_property("foo", Value::Number(42.0), &env);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_class_set_static_property_without_setter() {
+        use crate::ast::Class;
+        // Build a class without a static setter
+        let class = Class {
+            name: Some("C".to_string()),
+            super_class: None,
+            body: vec![],
+        };
+        let class_val = ClassValue::from_ast(&class);
+        let env = make_env();
+        class_val.set_class_def_env(Rc::clone(&env));
+
+        // set_static_property sets the field directly when no setter exists
+        let result = class_val.set_static_property("foo", Value::Number(42.0), &env);
+        assert!(result.is_ok());
+        assert_eq!(class_val.get_static_field("foo"), Some(Value::Number(42.0)));
     }
 }

@@ -17,6 +17,7 @@ pub mod object;
 pub mod primitive;
 mod val;
 
+pub use coerce::number_to_string;
 pub use convert::{
     loose_eq, same_value, strict_eq, to_bool, to_js_string, to_number, to_number_unchecked,
     to_object, to_primitive, to_uint32, try_to_number, PrimitiveHint,

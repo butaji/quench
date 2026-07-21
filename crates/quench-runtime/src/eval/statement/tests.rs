@@ -393,6 +393,20 @@ mod class_declaration {
             Value::Number(99.0)
         );
     }
+
+    #[test]
+    fn class_computed_getter_name_throws_on_abrupt() {
+        // Computed property name in accessor should evaluate the expression.
+        // If it throws, the class declaration should throw.
+        let r = eval("var t = function() { throw new Error(); }; class C { get [t()]() {} }");
+        assert!(r.is_err(), "computed getter name throwing should propagate to class decl, got {:?}", r);
+    }
+
+    #[test]
+    fn class_computed_setter_name_throws_on_abrupt() {
+        let r = eval("var t = function() { throw new Error(); }; class C { set [t()](_) {} }");
+        assert!(r.is_err(), "computed setter name throwing should propagate to class decl, got {:?}", r);
+    }
 }
 
 // ─── Var declaration without initializer (eval_var_decl) ──────────────────

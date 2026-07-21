@@ -48,7 +48,8 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     let options = args.get(3).cloned().unwrap_or(Value::Undefined);
 
     // Use to_property_key for Symbol keys so "1" matches Symbol(1).description = "1"
-    let name_str = crate::builtins::object_static::to_property_key(&name);
+    let name_str = crate::builtins::object_static::to_property_key(&name)
+        .unwrap_or_else(|_| String::new());
     // JS verifyProperty uses `options.label || String(name)` for the label.
     // String(name) returns the string as-is (no quotes), matching test expectations.
     let name_label = match &name {

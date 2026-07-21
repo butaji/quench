@@ -418,10 +418,11 @@ pub fn prop_key_to_string(
     match key {
         crate::ast::PropertyKey::Ident(s) => Ok(s.clone()),
         crate::ast::PropertyKey::String(s) => Ok(s.clone()),
-        crate::ast::PropertyKey::Number(n) => Ok(n.to_string()),
+        crate::ast::PropertyKey::Number(n) => Ok(crate::value::number_to_string(*n)),
         crate::ast::PropertyKey::Computed(expr) => {
             let val = eval_expression(expr, env, in_arrow)?;
-            Ok(crate::value::to_js_string(&val))
+            let prim = crate::value::to_primitive(&val, Some("string"))?;
+            Ok(crate::value::to_js_string(&prim))
         }
     }
 }
