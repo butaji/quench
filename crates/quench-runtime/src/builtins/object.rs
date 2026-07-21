@@ -167,10 +167,16 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
         "valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            if let Value::Object(_) = &this_val {
-                return Ok(this_val);
+            // Return this for any object-like value (Object, Function, Class, etc.)
+            match &this_val {
+                Value::Object(_)
+                | Value::Function(_)
+                | Value::NativeFunction(_)
+                | Value::NativeConstructor(_)
+                | Value::Generator(_)
+                | Value::Class(_) => Ok(this_val),
+                _ => Ok(crate::value::to_object(&this_val)),
             }
-            Ok(crate::value::to_object(&this_val))
         }))),
     );
 

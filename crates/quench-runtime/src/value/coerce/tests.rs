@@ -231,6 +231,51 @@ fn test_to_js_string_class() {
 }
 
 #[test]
+fn test_to_js_string_value_function() {
+    // AST-based Value::Function should use source_text, not fall through to "undefined"
+    let func = Value::Function(crate::value::ValueFunction::new(
+        Some("foo".to_string()),
+        vec![],
+        Vec::new(),
+        std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())),
+        false,
+        false,
+    ));
+    let result = to_js_string(&func);
+    assert!(
+        result.contains("foo"),
+        "to_js_string for Value::Function should contain 'foo', got: {}",
+        result
+    );
+    assert!(
+        !result.contains("undefined"),
+        "to_js_string for Value::Function should NOT contain 'undefined', got: {}",
+        result
+    );
+}
+
+#[test]
+fn test_to_js_string_value_function_with_body() {
+    // AST-based Value::Function with body should show the body in source_text
+    use crate::ast::{Expression, Statement};
+    let body = vec![Statement::Return(Some(Box::new(Expression::Number(42.0))))];
+    let func = Value::Function(crate::value::ValueFunction::new(
+        Some("bar".to_string()),
+        vec![],
+        body,
+        std::rc::Rc::new(std::cell::RefCell::new(crate::env::Environment::new())),
+        false,
+        false,
+    ));
+    let result = to_js_string(&func);
+    assert!(
+        result.contains("bar"),
+        "to_js_string for Value::Function with body should contain 'bar', got: {}",
+        result
+    );
+}
+
+#[test]
 fn test_to_js_string_symbol_with_desc() {
     let sym = Value::Symbol(Rc::new(Symbol {
         desc: Some("myDesc".into()),

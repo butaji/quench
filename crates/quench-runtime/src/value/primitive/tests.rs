@@ -206,16 +206,19 @@ fn test_to_primitive_object_symbol_to_primitive_returns_object_throws() {
 
 #[test]
 fn test_to_primitive_function_default_hint() {
+    // Default hint is "number", so valueOf is tried first (returns function itself),
+    // then toString is called (returns source text).
     let result = eval_val("function f() {}; f");
     let prim = to_primitive(&result, None).unwrap();
-    assert_eq!(prim, Value::String("[Function]".to_string()));
+    assert_eq!(prim, Value::String("function f() {}".to_string()));
 }
 
 #[test]
 fn test_to_primitive_function_string_hint() {
+    // String hint: toString is tried first, returns source text.
     let result = eval_val("function f() {}; f");
     let prim = to_primitive(&result, Some("string")).unwrap();
-    assert_eq!(prim, Value::String("[Function]".to_string()));
+    assert_eq!(prim, Value::String("function f() {}".to_string()));
 }
 
 #[test]
@@ -406,7 +409,8 @@ fn test_to_js_string_objects() {
         false,
         false,
     ));
-    assert_eq!(to_js_string(&f), "[Function]");
+    // Per spec, to_js_string for Function calls source_text()
+    assert_eq!(to_js_string(&f), "function () {}");
 }
 
 // ── to_object additional edge cases ─────────────────────────────────────────
