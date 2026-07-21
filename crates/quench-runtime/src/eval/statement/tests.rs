@@ -1387,3 +1387,96 @@ mod array_spread {
         }
     }
 }
+
+mod do_while_statement {
+    use super::*;
+
+    #[test]
+    fn do_while_returns_body_completion_value() {
+        // do-while body completes with a value when condition is false
+        assert_eq!(eval("do { 1; } while (false)").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn do_while_returns_last_body_value() {
+        // When condition becomes false, return the body completion value
+        assert_eq!(eval("let x = 0; do { x++; } while (x < 3); x").unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn do_while_returns_undefined_when_body_no_value() {
+        // Body with no completion value returns undefined
+        let result = eval("do ; while (false)").unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn do_while_returns_expression_value() {
+        assert_eq!(eval("do { 42; } while (false)").unwrap(), Value::Number(42.0));
+    }
+
+    #[test]
+    fn do_while_break_exits_loop() {
+        assert_eq!(
+            eval("let i = 0; do { i++; if (i > 2) break; } while (true); i").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn do_while_break_returns_undefined() {
+        // break does not provide a value; loop returns undefined
+        let result = eval("let i = 0; do { i++; if (i > 2) break; } while (true)").unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn do_while_return_interrupts() {
+        assert_eq!(
+            eval("function f() { do { return 99; } while (true); } f()").unwrap(),
+            Value::Number(99.0)
+        );
+    }
+
+    #[test]
+    fn do_while_continue_restarts() {
+        // continue in do-while jumps back to condition check, skipping j++.
+        // i=1,2: continue skips j++. i=3,4: j++ runs. i=5: exit.
+        // j ends at 3 (j=1 at i=3, j=2 at i=4, j=3 at i=5).
+        assert_eq!(
+            eval("let i = 0, j = 0; do { i++; if (i < 3) continue; j++; } while (i < 5); j").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn do_while_with_nested_labeled_break() {
+        // break inside a nested labeled do-while should exit only that do-while,
+        // not the outer one. Variables declared after break inside the inner
+        // do-while should still be accessible (var hoisting).
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var result = ''").unwrap();
+        assert_eq!(
+            ctx.eval(r#"
+                var result = "";
+                do_out: do {
+                    result += "A";
+                    do_in: do {
+                        result += "B";
+                        break do_in;
+                        result += "FAIL";
+                    } while (0);
+                    result += "C";
+                } while (2==1);
+                result;
+            "#).unwrap(),
+            Value::String("ABC".to_string())
+        );
+    }
+
+    #[test]
+    fn do_while_body_completion_from_expression() {
+        // The test S12.6.1_A3: do __in__do=1; while(false) should return 1
+        assert_eq!(eval("var x = 0; do x = 1; while (false); x").unwrap(), Value::Number(1.0));
+    }
+}

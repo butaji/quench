@@ -147,13 +147,19 @@ pub fn eval_delete(
             if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const)) {
                 return Ok(Value::Boolean(false));
             }
+            // Implicit global (no kind) — delete from scope chain and globalThis
+            // Try deleting from globalThis if the binding exists there
             let global_this = env.borrow().get("globalThis");
             if let Some(Value::Object(go)) = global_this {
                 if go.borrow().has(name) {
                     go.borrow_mut().delete(name);
-                    return Ok(Value::Boolean(true));
                 }
             }
+            // Per ES §13.5.1.11: delete Identifier in sloppy mode returns true
+            // when the binding is not a strict-mode-declared binding
+            // (var/let/const were already filtered above).
+            // If the binding doesn't exist anywhere, it's still true (spec-compliant).
+            let _ = env.borrow_mut().delete_binding(name);
             Ok(Value::Boolean(true))
         }
         _ => Ok(Value::Boolean(false)),

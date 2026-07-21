@@ -247,9 +247,31 @@ fn test_environment_set_existing() {
 }
 
 #[test]
-fn test_environment_set_nonexistent_returns_false() {
+fn test_environment_set_creates_implicit_global_in_global_scope() {
     let mut env = Environment::new();
-    assert!(!env.set("x", Value::Number(1.0)));
+    env.define("global".to_string(), Value::Undefined); // mark as global scope
+
+    // Assign to undeclared identifier in sloppy mode → creates implicit global
+    assert!(env.set("implicit_global", Value::Number(42.0)));
+    assert_eq!(env.get("implicit_global"), Some(Value::Number(42.0)));
+
+    // Binding lives in the global (first) scope
+    let global_scope = env.scopes.first().unwrap().borrow();
+    assert!(global_scope.has("implicit_global"));
+}
+
+#[test]
+fn test_environment_set_implicit_global_not_in_child_scope() {
+    let mut env = Environment::new();
+    env.define("global".to_string(), Value::Undefined);
+    env.push_scope();
+
+    // Implicit global created in child scope → lives in global scope
+    assert!(env.set("implicit_global", Value::Number(1.0)));
+    assert_eq!(env.get("implicit_global"), Some(Value::Number(1.0)));
+
+    let global_scope = env.scopes.first().unwrap().borrow();
+    assert!(global_scope.has("implicit_global"));
 }
 
 #[test]
@@ -623,4 +645,83 @@ fn test_current_scope_returns_innermost() {
     // "first" lives in outer scope
     let first_scope = env.binding_scope("first").unwrap();
     assert!(!Rc::ptr_eq(&current, &first_scope));
+}
+
+// ── Scope::delete ────────────────────────────────────────────────────────
+
+#[test]
+fn test_scope_delete_existing_binding() {
+    let mut scope = Scope::new();
+    scope.define("x".to_string(), Value::Number(42.0));
+    assert!(scope.has("x"));
+    assert!(scope.delete("x"));
+    assert!(!scope.has("x"));
+}
+
+#[test]
+fn test_scope_delete_nonexistent_binding() {
+    let mut scope = Scope::new();
+    assert!(!scope.delete("nonexistent"));
+}
+
+#[test]
+fn test_scope_delete_removes_binding() {
+    let mut scope = Scope::new();
+    scope.define("y".to_string(), Value::Number(1.0));
+    assert!(scope.has("y"));
+    assert!(scope.delete("y"));
+    assert!(!scope.has("y"));
+}
+
+// ── Environment::delete_binding ─────────────────────────────────────────
+
+#[test]
+fn test_env_delete_binding_implicit_global() {
+    let mut env = Environment::new();
+    // Implicit global: inserted directly into bindings without a kind
+    env.scopes.first().unwrap().borrow_mut().bindings_mut().insert(
+        "implicit".to_string(),
+        Rc::new(Value::Number(99.0)),
+    );
+    assert!(env.has("implicit"));
+    assert_eq!(env.get_kind("implicit"), None);
+    assert!(env.delete_binding("implicit"));
+    assert!(!env.has("implicit"));
+}
+
+#[test]
+fn test_env_delete_binding_declared_var() {
+    let mut env = Environment::new();
+    env.declare_var("declared_var".to_string(), VarKind::Var);
+    env.initialize_declared("declared_var", Value::Number(1.0));
+    assert!(env.has("declared_var"));
+    assert_eq!(env.get_kind("declared_var"), Some(VarKind::Var));
+    assert!(!env.delete_binding("declared_var"));
+    assert!(env.has("declared_var"));
+}
+
+#[test]
+fn test_env_delete_binding_declared_let() {
+    let mut env = Environment::new();
+    env.declare_var("declared_let".to_string(), VarKind::Let);
+    env.initialize_declared("declared_let", Value::Number(2.0));
+    assert_eq!(env.get_kind("declared_let"), Some(VarKind::Let));
+    assert!(!env.delete_binding("declared_let"));
+    assert!(env.has("declared_let"));
+}
+
+#[test]
+fn test_env_delete_binding_declared_const() {
+    let mut env = Environment::new();
+    env.declare_var("declared_const".to_string(), VarKind::Const);
+    env.initialize_declared("declared_const", Value::Number(3.0));
+    assert_eq!(env.get_kind("declared_const"), Some(VarKind::Const));
+    assert!(!env.delete_binding("declared_const"));
+    assert!(env.has("declared_const"));
+}
+
+#[test]
+fn test_env_delete_binding_nonexistent() {
+    let mut env = Environment::new();
+    assert!(!env.delete_binding("does_not_exist"));
 }

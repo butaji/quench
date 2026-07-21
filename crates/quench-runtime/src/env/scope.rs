@@ -209,6 +209,11 @@ impl Scope {
         self.bindings.contains_key(name) || self.declarations.contains_key(name)
     }
 
+    /// Remove a binding from this scope. Returns true if the binding existed.
+    pub fn delete(&mut self, name: &str) -> bool {
+        self.bindings.remove(name).is_some()
+    }
+
     pub fn get_this(&self) -> Option<Value> {
         self.this_value.clone()
     }
