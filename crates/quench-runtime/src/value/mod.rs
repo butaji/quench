@@ -11,6 +11,7 @@ pub mod compare;
 pub mod convert;
 pub mod error;
 pub mod function;
+pub mod generator;
 pub mod kind;
 pub mod object;
 pub mod primitive;
@@ -31,6 +32,7 @@ pub use object::{
     PropertyFlags, Setter, SetterBody, SetterStorage, ThisMode, TypedArrayName,
 };
 pub use val::{ClassValue, Symbol, Value};
+pub use generator::GeneratorObject;
 
 // =============================================================================
 // Tests

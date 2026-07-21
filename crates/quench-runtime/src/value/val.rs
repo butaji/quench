@@ -49,6 +49,8 @@ pub enum Value {
     Class(ClassValue),
     /// BigInt arbitrary-precision integer
     BigInt(Rc<BigInt>),
+    /// Generator object — returned by generator functions (function*)
+    Generator(Rc<RefCell<crate::value::generator::GeneratorObject>>),
 }
 
 /// Global counter for unique class identity (used for === comparison)

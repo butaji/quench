@@ -54,6 +54,26 @@ pub fn eval_expression(
                 .ok_or_else(|| JsError(format!("Invalid BigInt literal: {}", raw)))?;
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
+        Expression::Yield(expr) => {
+            let value = if let Some(e) = expr {
+                crate::eval::expression::eval_expression(e, env, in_arrow_function)?
+            } else {
+                Value::Undefined
+            };
+            crate::interpreter::set_generator_yield(value.clone());
+            let resume_val = crate::interpreter::take_generator_resume_value();
+            Ok(resume_val)
+        }
+        Expression::YieldDelegate(expr) => {
+            let iterable = crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
+            let items = crate::eval::iteration::get_iterator(&iterable)?;
+            let mut last_result = Value::Undefined;
+            for next_val in items {
+                crate::interpreter::set_generator_yield(next_val);
+                last_result = crate::interpreter::take_generator_resume_value();
+            }
+            Ok(last_result)
+        }
         Expression::Identifier(name) => eval_identifier(name, env, in_arrow_function),
         Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
         Expression::Array(elements) => eval_array_literal(elements, env, in_arrow_function),

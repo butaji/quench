@@ -25,6 +25,8 @@ pub(crate) enum ControlFlow {
     Break,
     Continue,
     Return(Value),
+    Yield(Value),
+    YieldDelegate(Value),
 }
 
 thread_local! {
@@ -63,6 +65,45 @@ pub fn set_max_call_depth(depth: usize) {
 
 thread_local! {
     static CURRENT_EVAL_ENV: RefCell<Option<Rc<RefCell<Environment>>>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    /// Value passed to generator.next(val) — becomes the yield expression's result
+    static GENERATOR_RESUME_VALUE: RefCell<Value> = const { RefCell::new(Value::Undefined) };
+}
+
+thread_local! {
+    /// Value yielded by a yield expression (for the generator to return)
+    static GENERATOR_YIELD_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_generator_resume_value(val: Value) {
+    GENERATOR_RESUME_VALUE.with(|cell| *cell.borrow_mut() = val);
+}
+
+pub(crate) fn take_generator_resume_value() -> Value {
+    GENERATOR_RESUME_VALUE.with(|cell| cell.borrow_mut().take())
+}
+
+pub(crate) fn set_generator_yield(val: Value) {
+    GENERATOR_YIELD_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
+}
+
+pub(crate) fn take_generator_yield() -> Option<Value> {
+    GENERATOR_YIELD_VALUE.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    /// Value returned by a generator return statement
+    static GENERATOR_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_generator_return(val: Value) {
+    GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
+}
+
+pub(crate) fn take_generator_return() -> Option<Value> {
+    GENERATOR_RETURN_VALUE.with(|cell| cell.borrow_mut().take())
 }
 
 pub(crate) fn set_current_eval_env(env: Option<Rc<RefCell<Environment>>>) {
