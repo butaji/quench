@@ -232,6 +232,138 @@ fn test_named_function_expression_name_not_visible_outside() {
     );
 }
 
+// ─── Assignment expression returns RHS ──────────────────────────────────────
+
+/// Per ES spec §12.15, an AssignmentExpression evaluates the assignment
+/// target, then the RHS, stores the result, and returns the RHS value.
+#[test]
+fn test_assignment_expression_returns_rhs_simple() {
+    // Basic variable assignment
+    assert_eq!(eval("let x; x = 5").unwrap(), Value::Number(5.0));
+    assert_eq!(eval("let x; (x = 5)").unwrap(), Value::Number(5.0));
+    // In expression context
+    assert_eq!(eval("let x; (x = 5) + 1").unwrap(), Value::Number(6.0));
+    // Nested
+    assert_eq!(eval("let a, b; a = b = 7").unwrap(), Value::Number(7.0));
+}
+
+#[test]
+fn test_assignment_expression_returns_rhs_object() {
+    // Member expression assignment returns RHS
+    assert_eq!(eval("let o = {}; (o.x = 5)").unwrap(), Value::Number(5.0));
+    assert_eq!(eval("let o = {}; (o['x'] = 5)").unwrap(), Value::Number(5.0));
+    // Chained
+    assert_eq!(eval("let o = {}; let r = (o.x = 5); r").unwrap(), Value::Number(5.0));
+}
+
+#[test]
+fn test_assignment_expression_returns_rhs_in_assert() {
+    // This is the exact pattern from the failing test262 test
+    // assert.sameValue(obj[fn()] = 1, 1) - just verify it returns RHS
+    // Can't use assert without harness, so just check return value
+    assert_eq!(
+        eval("let o = {}; function f() {}; (o[f()] = 1)").unwrap(),
+        Value::Number(1.0),
+        "computed member assignment must return RHS"
+    );
+}
+
+#[test]
+fn test_assignment_to_computed_class_member_returns_rhs() {
+    // Direct class instance computed setter
+    let result = eval(
+        "function f() { return 'x'; } class C { set [f()](v) { } } let c = new C(); c[f()] = 1; c.x",
+    );
+    assert!(result.is_ok(), "computed setter assignment should not panic: {:?}", result);
+    // The RHS (1) is returned by the assignment expression
+    assert_eq!(
+        eval("function f() { return 'x'; } class C { set [f()](v) { } } let c = new C(); (c[f()] = 1)").unwrap(),
+        Value::Number(1.0),
+        "assignment to computed setter must return RHS value"
+    );
+}
+
+#[test]
+fn test_assignment_to_computed_static_class_member_returns_rhs() {
+    // Static computed setter - this is the failing case
+    let result = eval(
+        "function f() {} class C { static set [f()](v) { } } C[f()] = 1;",
+    );
+    assert!(result.is_ok(), "static computed setter assignment should not panic: {:?}", result);
+
+    // The RHS (1) is returned by the assignment expression
+    let r = eval(
+        "function f() {} class C { static set [f()](v) { } } (C[f()] = 1)",
+    );
+    assert!(
+        r.is_ok(),
+        "evaluating assignment to static computed setter should not error: {:?}",
+        r
+    );
+    assert_eq!(
+        r.unwrap(),
+        Value::Number(1.0),
+        "assignment to static computed setter must return RHS value"
+    );
+}
+
+#[test]
+fn test_assignment_to_computed_static_class_member_with_harness() {
+    // Same as above but with harness (like the failing test262 host test)
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let prev = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(false);
+    crate::test262::harness::try_inject_harness(&mut ctx).expect("harness");
+    crate::interpreter::set_strict_mode(prev);
+
+    let r = ctx.eval(
+        r#"
+function f() {}
+class C {
+    get [f()]() { return 1; }
+    set [f()](v) { }
+    static get [f()]() { return 1; }
+    static set [f()](v) { }
+}
+var c = new C();
+assert.sameValue(C[f()] = 1, 1);
+assert.sameValue(c[f()] = 1, 1);
+"#,
+    );
+    assert!(r.is_ok(), "computed setter with harness should pass: {:?}", r);
+}
+
+#[test]
+fn test_assignment_expression_returns_rhs_object_literal() {
+    // Object literal with setter
+    assert_eq!(
+        eval("let r; ({ set x(v) { } }).x = 5").unwrap(),
+        Value::Number(5.0),
+        "assignment to object literal setter returns RHS"
+    );
+    // Assignment to object literal setter returns RHS (without assert)
+    assert_eq!(
+        eval("let o = { set x(v) { } }; (o.x = 5)").unwrap(),
+        Value::Number(5.0),
+        "assignment to object literal setter returns RHS"
+    );
+}
+
+#[test]
+fn test_assignment_to_global_function_property_returns_rhs() {
+    // Assignment to a property on a function object (like C[f] = 1 where C is a class)
+    assert_eq!(
+        eval("function f() {} f.x = 5; f.x").unwrap(),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        eval("function f() {} (f.x = 5)").unwrap(),
+        Value::Number(5.0),
+        "assignment to function property returns RHS"
+    );
+}
+
 #[test]
 fn test_export_default_expr_lowers_to_assignment() {
     let program = crate::parser::parse_es_module("export default 42;").unwrap();
