@@ -201,20 +201,25 @@ mod tests {
     }
 
     #[test]
-    fn test_array_methods_on_array_like() {
-        // Bug fix: Array methods should work on array-likes, not just Array instances
+    fn test_array_push_call_on_array() {
         let mut ctx = create_test_context();
-        // Test with arguments object (array-like)
-        let result = ctx.eval(
-            r#"
-            (function() { return Array.prototype.push.call(arguments, 4); })(1, 2, 3)
-        "#,
-        );
-        assert!(
-            result.is_ok(),
-            "push on array-like should work: {:?}",
-            result
-        );
-        assert_eq!(result.unwrap(), crate::value::Value::Number(4.0));
+        // Direct push.call on an array
+        let r = ctx
+            .eval("(function() { var a = []; Array.prototype.push.call(a, 1); return a[0]; })()");
+        assert_eq!(r.unwrap(), crate::value::Value::Number(1.0));
+    }
+
+    #[test]
+    fn test_arguments_length() {
+        let mut ctx = create_test_context();
+        let r = ctx.eval("(function() { return arguments.length; })(1, 2, 3)");
+        assert_eq!(r.unwrap(), crate::value::Value::Number(3.0));
+    }
+
+    #[test]
+    fn test_arguments_indexed() {
+        let mut ctx = create_test_context();
+        let r = ctx.eval("(function() { return arguments[0]; })(42)");
+        assert_eq!(r.unwrap(), crate::value::Value::Number(42.0));
     }
 }

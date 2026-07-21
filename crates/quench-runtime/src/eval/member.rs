@@ -225,3 +225,6 @@ fn box_primitive(
     }
     Ok(Rc::new(RefCell::new(boxed)))
 }
+
+#[cfg(test)]
+mod tests;

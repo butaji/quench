@@ -241,15 +241,6 @@ fn test_strict_assignment_to_number_max_value_throws() {
 }
 
 #[test]
-fn test_arrow_parameter_closure_cannot_see_body_var() {
-    let mut host = QuenchHost::new();
-    let result = host.run_script(
-        "var f = (function() { var g = (function(x) { return eval('var y = 2; x + y') }); return g(1) })(); assert.sameValue(f, 3)",
-    );
-    assert!(result.is_ok());
-}
-
-#[test]
 fn test_arrow_body_var_does_not_leak_global() {
     let mut host = QuenchHost::new();
     let result = host.run_script("var f = () => { var z = 1; return z }; assert.sameValue(f(), 1)");

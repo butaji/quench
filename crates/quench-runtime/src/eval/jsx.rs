@@ -133,3 +133,6 @@ fn build_jsx_children_args(children: &[JsxChild]) -> Vec<Expression> {
 
     args
 }
+
+#[cfg(test)]
+mod tests;
