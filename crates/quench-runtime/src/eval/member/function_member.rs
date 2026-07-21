@@ -63,8 +63,8 @@ fn eval_function_call_method(f: &ValueFunction) -> Result<Value, JsError> {
             let this_val = args.first().cloned().unwrap_or(Value::Undefined);
             crate::interpreter::set_this_value(this_val.clone());
             let remaining_args: Vec<Value> = args.into_iter().skip(1).collect();
-            let result = crate::eval::function::call_js_function_impl(
-                func_clone.clone(),
+            let result = crate::eval::call_value_with_this(
+                Value::Function(func_clone.clone()),
                 remaining_args,
                 this_val,
             );
@@ -92,8 +92,8 @@ fn eval_function_apply_method(f: &ValueFunction) -> Result<Value, JsError> {
             } else {
                 Vec::new()
             };
-            let result = crate::eval::function::call_js_function_impl(
-                func_clone.clone(),
+            let result = crate::eval::call_value_with_this(
+                Value::Function(func_clone.clone()),
                 spread_args,
                 this_val,
             );
@@ -120,8 +120,8 @@ fn eval_function_bind_method(f: &ValueFunction) -> Result<Value, JsError> {
                     crate::interpreter::set_this_value(bound_this.clone());
                     let all_args: Vec<Value> =
                         bound_args.iter().cloned().chain(call_args).collect();
-                    let result = crate::eval::function::call_js_function_impl(
-                        target_func.clone(),
+                    let result = crate::eval::call_value_with_this(
+                        Value::Function(target_func.clone()),
                         all_args,
                         bound_this.clone(),
                     );
