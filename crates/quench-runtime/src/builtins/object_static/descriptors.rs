@@ -1,7 +1,7 @@
 //! Property descriptor helpers for Object.getOwnPropertyDescriptor,
 //! Object.defineProperty, and related operations.
 
-use crate::value::{to_bool, to_js_string, JsError, PropertyFlags, Value, ValueFunction};
+use crate::value::{to_bool, to_js_string, to_primitive, JsError, PropertyFlags, Value, ValueFunction};
 use crate::{Object, ObjectKind};
 
 use std::cell::RefCell;
@@ -9,17 +9,18 @@ use std::rc::Rc;
 
 /// Convert a value to a property key. Symbols keep their raw payload so
 /// symbol-keyed properties match computed member access (obj[sym]).
-pub fn to_property_key(v: &Value) -> String {
-    match v {
-        Value::Symbol(s) => s.desc.clone().map(|d| d.to_string()).unwrap_or_default(),
-        _ => to_js_string(v),
+pub fn to_property_key(v: &Value) -> Result<String, JsError> {
+    let prim = to_primitive(v, Some("string"))?;
+    match prim {
+        Value::Symbol(s) => Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
+        _ => Ok(to_js_string(&prim)),
     }
 }
 
 /// Object.defineProperty(obj, prop, descriptor) - defines a property
 pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let prop = args.get(1).map(to_property_key).unwrap_or_default();
+    let prop = args.get(1).map(to_property_key).unwrap_or(Ok("".to_string()))?;
     let desc = args
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
@@ -134,7 +135,7 @@ pub fn object_get_own_property_descriptor(args: Vec<Value>) -> Result<Value, JsE
     let obj = args
         .first()
         .ok_or_else(|| JsError::from("Object.getOwnPropertyDescriptor requires argument"))?;
-    let prop = args.get(1).map(to_property_key).unwrap_or_default();
+    let prop = args.get(1).map(to_property_key).unwrap_or(Ok("".to_string()))?;
 
     if let Value::Object(o) = obj {
         return get_object_property_descriptor(o, &prop);

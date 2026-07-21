@@ -355,4 +355,44 @@ mod tests {
             Err(e) => panic!("Parse failed: {:?}", e),
         }
     }
+
+    #[test]
+    fn test_oxc_parses_class_getter_with_computed_key() {
+        // What does OXC produce for `class C { get [expr]() {} }`?
+        // Does it produce MethodDefinition with kind=Get, or AccessorProperty?
+        use oxc::allocator::Allocator;
+        use oxc::parser::Parser;
+        use oxc::span::SourceType;
+
+        let source = r#"class C { get [thrower()]() {} }"#;
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, source, source_type).parse();
+        assert!(ret.errors.is_empty(), "Parse errors: {:?}", ret.errors);
+
+        let cls = &ret.program.body[0];
+        println!("Statement type: {:?}", cls);
+        // ClassDeclaration has a `class_expr` field
+        let cls_body = match cls {
+            oxc::ast::ast::Statement::ClassDeclaration(cd) => cd.body.body.as_slice(),
+            _ => panic!("Expected ClassDeclaration"),
+        };
+        println!("Number of class elements: {}", cls_body.len());
+        for (i, elem) in cls_body.iter().enumerate() {
+            println!("Element {}: {:?}", i, elem);
+            match elem {
+                oxc::ast::ast::ClassElement::MethodDefinition(m) => {
+                    println!("  -> MethodDefinition kind={:?}", m.kind);
+                    println!("  -> key: {:?}", m.key);
+                    println!("  -> value params: {}", m.value.params.items.len());
+                }
+                oxc::ast::ast::ClassElement::AccessorProperty(a) => {
+                    println!("  -> AccessorProperty type={:?}", a.r#type);
+                    println!("  -> key: {:?}", a.key);
+                    println!("  -> value: {:?}", a.value);
+                }
+                _ => {}
+            }
+        }
+    }
 }

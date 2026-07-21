@@ -296,10 +296,20 @@ fn lower_method_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
         .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
     match method.kind {
-        ast::MethodDefinitionKind::Get => Some(ClassMember::Getter { name, body }),
+        ast::MethodDefinitionKind::Get => {
+            if is_static {
+                Some(ClassMember::StaticGetter { name, body })
+            } else {
+                Some(ClassMember::Getter { name, body })
+            }
+        }
         ast::MethodDefinitionKind::Set => {
             let param = ps.first().map(|p| p.name.clone()).unwrap_or_default();
-            Some(ClassMember::Setter { name, param, body })
+            if is_static {
+                Some(ClassMember::StaticSetter { name, param, body })
+            } else {
+                Some(ClassMember::Setter { name, param, body })
+            }
         }
         _ => {
             if is_static {
@@ -343,9 +353,11 @@ pub fn lower_prop_name_stmt(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(format!("{}n", b.raw))),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
-        ast::PropertyKey::TemplateLiteral(_) => None,
-        // In OXC, computed property names are Expression variants in PropertyKey
-        // These require runtime evaluation and can't be handled as static keys
-        _ => None,
+        // TemplateLiterals with expressions and computed keys: lower as runtime-evaluated
+        _ => {
+            let expr = key.to_expression();
+            let lowered = lower_expr(expr).ok()?;
+            Some(PropertyKey::Computed(Box::new(lowered)))
+        }
     }
 }

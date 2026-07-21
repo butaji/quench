@@ -441,6 +441,17 @@ pub enum ClassMember {
         name: PropertyKey,
         value: Expression,
     },
+    /// Static getter
+    StaticGetter {
+        name: PropertyKey,
+        body: Vec<Statement>,
+    },
+    /// Static setter
+    StaticSetter {
+        name: PropertyKey,
+        param: String,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

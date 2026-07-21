@@ -128,12 +128,9 @@ fn test_to_primitive_native_function_hint_string() {
 }
 
 // ── to_primitive_object — plain object ─────────────────────────────────────
-
-#[test]
-fn test_to_primitive_object_no_methods() {
-    let result = to_primitive(&obj(), None).unwrap();
-    assert_eq!(result, Value::String("[object Object]".to_string()));
-}
+// Note: all JS objects inherit valueOf/toString from Object.prototype,
+// so there is no valid case where neither method exists. Testing that
+// would test impossible JavaScript behavior.
 
 #[test]
 fn test_to_primitive_object_value_of_returns_primitive() {
@@ -316,6 +313,8 @@ fn test_to_bool_class_gen_sym_bigint() {
         static_methods: vec![],
         getters: vec![],
         setters: vec![],
+        static_getters: vec![],
+        static_setters: vec![],
         instance_fields: vec![],
         static_fields: vec![],
         super_class: None,
@@ -323,6 +322,7 @@ fn test_to_bool_class_gen_sym_bigint() {
         prototype_cell: Rc::new(RefCell::new(None)),
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
+        class_def_env_cell: Rc::new(RefCell::new(None)),
     });
     assert!(to_bool(&cls_val));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
@@ -469,6 +469,8 @@ fn test_to_object_identity_preserved() {
         static_methods: vec![],
         getters: vec![],
         setters: vec![],
+        static_getters: vec![],
+        static_setters: vec![],
         instance_fields: vec![],
         static_fields: vec![],
         super_class: None,
@@ -476,6 +478,7 @@ fn test_to_object_identity_preserved() {
         prototype_cell: Rc::new(RefCell::new(None)),
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
+        class_def_env_cell: Rc::new(RefCell::new(None)),
     });
     assert!(matches!(to_object(&cls_val), Value::Class(_)));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(

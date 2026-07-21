@@ -53,6 +53,9 @@ pub fn eval_class_expr(
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
 
+    // Store the class definition environment for evaluating computed property keys in static accessors
+    new_value.set_class_def_env(Rc::clone(&class_scope));
+
     // Set the class constructor's own [[Prototype]] (the superclass constructor).
     // This is what Object.getPrototypeOf(C) should return.
     if let Some(ref super_class_expr) = new_value.super_class {
@@ -87,6 +90,18 @@ pub fn eval_class_expr(
             )));
         }
         new_value.set_static_field(&key_str, field_value);
+    }
+
+    // Evaluate static accessor computed property keys during class definition.
+    // This ensures that any abrupt completions (e.g., thrower() in the test)
+    // cause the class definition to throw, as required by the ES spec.
+    // Per ES §15.7.14 (ClassDefinitionEvaluation), PropertyDefinitionEvaluation
+    // is performed for each ClassElement, including static accessors.
+    for (name, _body) in &new_value.static_getters {
+        let _key_str = prop_key_to_string(name, &class_scope, false)?;
+    }
+    for (name, _param, _body) in &new_value.static_setters {
+        let _key_str = prop_key_to_string(name, &class_scope, false)?;
     }
 
     Ok(Value::Class(new_value))
