@@ -92,7 +92,7 @@ pub fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
             | Value::Function(_)
             | Value::NativeFunction(_)
             | Value::NativeConstructor(_)
-            | Value::Class(_) => {
+            | Value::Generator(_) | Value::Class(_) => {
                 return Ok(args[0].clone());
             }
         }

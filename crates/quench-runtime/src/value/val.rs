@@ -289,7 +289,7 @@ fn debug_value(v: &Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
-        | Value::Class(_) => {
+        | Value::Generator(_) | Value::Class(_) => {
             write!(f, "Function(...)")
         }
         Value::BigInt(bi) => write!(f, "{}n", bi),
