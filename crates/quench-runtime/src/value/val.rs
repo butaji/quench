@@ -9,12 +9,12 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::env::Environment;
-use crate::value::SetterStorage;
 use crate::JsError;
 
 use num_bigint::BigInt;
 
 use crate::ast::{Class, ClassMember, Param, PropertyKey};
+use crate::eval;
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
 
@@ -247,20 +247,19 @@ impl ClassValue {
         for (key, param, body) in &self.static_setters {
             let key_str = crate::eval::class::helpers::prop_key_to_string(key, &env, false)?;
             if key_str == name {
-                // Create `this` object with constructor reference
-                let mut this_obj = Object::new(crate::value::ObjectKind::Ordinary);
-                this_obj.set("constructor", Value::Class(Box::new(self.clone())));
-                let this_rc = Rc::new(RefCell::new(this_obj));
-
-                // Create setter storage and call it
-                let setter_storage = SetterStorage {
-                    func: None,
-                    closure: Rc::clone(&env),
-                    param: param.clone(),
-                    body: body.clone().into(),
-                    strict: false,
-                };
-                crate::eval::object::call_setter(&this_rc, &setter_storage, value, &env)?;
+                // Bind `this` to the class itself so `this._v = v` in the setter body
+                // writes to the class's own static properties, not a throwaway object.
+                let this_val = Value::Class(Box::new(self.clone()));
+                let mut call_env = Environment::with_parent(Rc::clone(&env));
+                call_env.current_scope().borrow_mut().set_this(this_val);
+                call_env.define(param.clone(), value);
+                let call_env = Rc::new(RefCell::new(call_env));
+                if !body.is_empty() {
+                    let prev_strict = crate::interpreter::is_strict_mode();
+                    crate::interpreter::set_strict_mode(false);
+                    eval::statement::eval_function_body(body, &call_env, false)?;
+                    crate::interpreter::set_strict_mode(prev_strict);
+                }
                 return Ok(());
             }
         }
