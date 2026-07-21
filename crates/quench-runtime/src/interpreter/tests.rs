@@ -148,7 +148,10 @@ fn test_control_flow_break() {
 #[test]
 fn test_control_flow_continue() {
     interpreter::set_control_flow(ControlFlow::Continue);
-    assert_eq!(interpreter::take_control_flow(), Some(ControlFlow::Continue));
+    assert_eq!(
+        interpreter::take_control_flow(),
+        Some(ControlFlow::Continue)
+    );
     assert_eq!(interpreter::take_control_flow(), None);
 }
 
@@ -222,7 +225,10 @@ fn test_control_flow_overwrite() {
     interpreter::set_control_flow(ControlFlow::Break);
     // Overwrite with Continue before consuming
     interpreter::set_control_flow(ControlFlow::Continue);
-    assert_eq!(interpreter::take_control_flow(), Some(ControlFlow::Continue));
+    assert_eq!(
+        interpreter::take_control_flow(),
+        Some(ControlFlow::Continue)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +257,7 @@ fn test_depth_release_underflow() {
     // Releasing when depth is 0 must not panic
     interpreter::release_depth();
     interpreter::release_depth(); // should saturate at 0
-    // After underflow, check_depth should still work
+                                  // After underflow, check_depth should still work
     assert!(interpreter::check_depth().is_ok());
     interpreter::release_depth();
 }
@@ -305,10 +311,7 @@ fn test_depth_check_exceeds_max() {
     assert!(interpreter::check_depth().is_ok()); // 2 -> 3
     let result = interpreter::check_depth(); // 3 -> should fail (3 >= 3)
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().0,
-        "Maximum call stack size exceeded"
-    );
+    assert_eq!(result.unwrap_err().0, "Maximum call stack size exceeded");
     // Restore default
     crate::interpreter::set_max_call_depth(10000);
     // Clean up accumulated depth
@@ -424,7 +427,10 @@ fn test_generator_yield_roundtrip() {
 fn test_generator_yield_overwrite() {
     interpreter::set_generator_yield(Value::Number(1.0));
     interpreter::set_generator_yield(Value::Number(2.0));
-    assert_eq!(interpreter::take_generator_yield(), Some(Value::Number(2.0)));
+    assert_eq!(
+        interpreter::take_generator_yield(),
+        Some(Value::Number(2.0))
+    );
 }
 
 #[test]
@@ -559,7 +565,7 @@ fn test_depth_guard_nested() {
             interpreter::release_depth(); // depth = 2
         } // _g2 drops -> depth = 1
     } // _g1 drops -> depth = 0
-    // Now depth should be 0
+      // Now depth should be 0
     assert!(interpreter::check_depth().is_ok()); // depth = 1
     interpreter::release_depth(); // depth = 0
 }

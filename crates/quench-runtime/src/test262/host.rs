@@ -143,7 +143,11 @@ try {
 if (!threw) throw new Error('sameValue(d.get, d.set) should throw');
 "#,
         );
-        assert!(result.is_ok(), "sameValue function identity test failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "sameValue function identity test failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -167,7 +171,11 @@ assert.sameValue(typeof d.set, 'function', 'setter is a function');
 assert.sameValue(d.get(), 42, 'getter returns 42');
 "#,
         );
-        assert!(result.is_ok(), "Symbol accessor sameValue test failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Symbol accessor sameValue test failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -204,6 +212,10 @@ Object.defineProperty(obj, prop, desc);
 verifyProperty(obj, prop, desc);
 "#,
         );
-        assert!(result.is_ok(), "verifyProperty accessor Symbol failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "verifyProperty accessor Symbol failed: {:?}",
+            result
+        );
     }
 }

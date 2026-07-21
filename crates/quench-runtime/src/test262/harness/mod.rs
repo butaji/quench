@@ -138,7 +138,11 @@ fn strip_js_function(source: &str, name: &str) -> String {
     let mut brace_depth: i32 = 0;
     for line in source.lines() {
         if !in_function {
-            if line.trim().starts_with(&target) || line.trim().starts_with(&format!("async function {}(", name)) {
+            if line.trim().starts_with(&target)
+                || line
+                    .trim()
+                    .starts_with(&format!("async function {}(", name))
+            {
                 in_function = true;
                 let opens: i32 = line.chars().filter(|&c| c == '{').count() as i32;
                 let closes: i32 = line.chars().filter(|&c| c == '}').count() as i32;
@@ -789,7 +793,8 @@ mod tests {
         }
 
         // Step 1: eval propertyHelper.js
-        ctx.eval(&prop_helper_js).expect("propertyHelper.js should load");
+        ctx.eval(&prop_helper_js)
+            .expect("propertyHelper.js should load");
 
         // Step 2: Now run the test code
         let test_code = r#"
@@ -812,11 +817,7 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false, got ' + has
         if let Err(e) = &result {
             eprintln!("STEP-BY-STEP ERROR: {:?}", e);
         }
-        assert!(
-            result.is_ok(),
-            "Step-by-step test failed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Step-by-step test failed: {:?}", result);
     }
 
     /// Test assert.sameValue behavior with Symbol-keyed accessor in FULL harness context.
@@ -836,7 +837,8 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false, got ' + has
 
         // Eval both
         ctx.eval(&assert_js).expect("assert.js should load");
-        ctx.eval(&prop_helper_js).expect("propertyHelper.js should load");
+        ctx.eval(&prop_helper_js)
+            .expect("propertyHelper.js should load");
 
         // Now run the test
         let result = ctx.eval(
@@ -860,11 +862,7 @@ assert.sameValue(
         if let Err(e) = &result {
             eprintln!("DISK ASSERT.JS ERROR: {:?}", e);
         }
-        assert!(
-            result.is_ok(),
-            "Disk assert.js path failed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Disk assert.js path failed: {:?}", result);
     }
 
     /// Test: what does assert._toString return for a Value::Function in the
@@ -898,11 +896,7 @@ typeof getterFn === 'function' && typeof assert._toString(getterFn) === 'string'
         if let Err(e) = &result {
             eprintln!("_toString diagnostic error: {:?}", e);
         }
-        assert!(
-            result.is_ok(),
-            "_toString diagnostic failed: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "_toString diagnostic failed: {:?}", result);
     }
 
     /// Key diagnostic: test the SAME code that fails, but using
@@ -990,8 +984,16 @@ JSON.stringify({step:'C', hasOwn_after_restore:hasOwn3, vpError2:vpError2, gette
         assert!(step_a.is_ok(), "STEP A should succeed (hasOwnProperty)");
         // The correct spec behavior: verifyProperty does NOT delete the property
         // (unlike the buggy JS isConfigurable which deletes permanently)
-        assert!(step_b.is_ok(), "STEP B: verifyProperty should succeed without restore: {:?}", step_b);
-        assert!(step_c.is_ok(), "STEP C: verifyProperty should succeed with restore: {:?}", step_c);
+        assert!(
+            step_b.is_ok(),
+            "STEP B: verifyProperty should succeed without restore: {:?}",
+            step_b
+        );
+        assert!(
+            step_c.is_ok(),
+            "STEP C: verifyProperty should succeed with restore: {:?}",
+            step_c
+        );
     }
 
     /// Most important diagnostic: does the JS propertyHelper.js verifyProperty
@@ -1012,7 +1014,8 @@ JSON.stringify({step:'C', hasOwn_after_restore:hasOwn3, vpError2:vpError2, gette
         if let Some(assert_js) = harness.load("assert.js") {
             ctx.eval(&assert_js).expect("assert.js should load");
         }
-        ctx.eval(&prop_helper_js).expect("propertyHelper.js should load");
+        ctx.eval(&prop_helper_js)
+            .expect("propertyHelper.js should load");
 
         // Run the JS verifyProperty with Symbol key
         let result = ctx.eval(
@@ -1060,7 +1063,8 @@ if (hasOwn !== false) throw new Error('FAIL: hasOwn should be false after JS ver
         let harness = HarnessLoader::new(&test262_root.to_string_lossy());
 
         let prop_helper_js = harness.load("propertyHelper.js").unwrap();
-        ctx.eval(&prop_helper_js).expect("propertyHelper.js should load");
+        ctx.eval(&prop_helper_js)
+            .expect("propertyHelper.js should load");
 
         let result = ctx.eval(
             r#"
