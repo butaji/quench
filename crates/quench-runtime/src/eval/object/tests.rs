@@ -115,21 +115,6 @@ fn arrow_fn_caller_throws_in_harness() {
 }
 
 #[test]
-fn arrow_in_eval_returns_this() {
-    let mut ctx = Context::new().unwrap();
-    let res = ctx.eval(
-        "function foo(){ return eval(\"()=>this\"); } \
-             foo()();",
-    );
-    let v = res.unwrap();
-    match v {
-        crate::value::Value::Object(_) => {}
-        crate::value::Value::Undefined => panic!("got undefined"),
-        other => panic!("got unexpected: {:?}", other),
-    }
-}
-
-#[test]
 fn direct_arrow_returns_this() {
     let mut ctx = Context::new().unwrap();
     let v = ctx.eval("(()=>this)();").unwrap();

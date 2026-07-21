@@ -76,3 +76,6 @@ pub fn create_async_function_executor(
 
     Value::NativeFunction(Rc::new(body_fn))
 }
+
+#[cfg(test)]
+mod tests;

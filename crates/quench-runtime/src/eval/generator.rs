@@ -84,3 +84,6 @@ pub(crate) fn yield_value(value: Value) -> Result<Value, crate::interpreter::Con
 pub(crate) fn yield_delegate(iter: Value) -> Result<Value, crate::interpreter::ControlFlow> {
     Err(crate::interpreter::ControlFlow::YieldDelegate(iter))
 }
+
+#[cfg(test)]
+mod tests;
