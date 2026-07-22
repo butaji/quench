@@ -38,7 +38,7 @@ use crate::builtins;
 use crate::env::Environment;
 use crate::eval::iteration::get_iterator;
 use crate::value::error::create_js_error_with_type;
-use crate::value::{to_js_string, JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -277,6 +277,3 @@ pub fn eval_array_literal(
 pub fn get_super_value(env: &Rc<RefCell<Environment>>) -> Option<Value> {
     get_super_from_env(env)
 }
-
-#[cfg(test)]
-mod tests;

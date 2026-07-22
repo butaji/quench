@@ -6,7 +6,9 @@ use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
 use crate::eval::statement::eval_function_body;
-use crate::interpreter::{check_depth_guard, predeclare_let_const};
+use crate::interpreter::{
+    check_depth_guard, is_strict_mode, predeclare_let_const, set_strict_mode,
+};
 use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -42,19 +44,22 @@ pub fn instantiate_simple(
     } else {
         let first_is_super = check_first_is_super_call(&body);
         let body_calls_super = first_is_super || body_calls_super_call(&body);
-        if body_calls_super {
+        // Class constructors are always strict mode per ES spec.
+        let prev_strict = is_strict_mode();
+        set_strict_mode(true);
+        let result = if body_calls_super {
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let result = eval_function_body(&body, &call_env, false)?;
-            finish_constructor(result, &this_val)
+            eval_function_body(&body, &call_env, false)?
         } else {
             if let Some(ref sc) = class.super_class {
                 let sv = eval_expression(sc, env, false)?;
                 call_super_or_default(&sv, args, &this_val, env)?;
             }
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let result = eval_function_body(&body, &call_env, false)?;
-            finish_constructor(result, &this_val)
-        }
+            eval_function_body(&body, &call_env, false)?
+        };
+        set_strict_mode(prev_strict);
+        finish_constructor(result, &this_val)
     }
 }
 
@@ -92,6 +97,10 @@ pub fn instantiate_with_fields(
         Ok(())
     };
 
+    // Class constructors are always strict mode per ES spec.
+    let prev_strict = is_strict_mode();
+    set_strict_mode(true);
+
     if has_super {
         if body_calls_super {
             call_env
@@ -118,6 +127,7 @@ pub fn instantiate_with_fields(
         }
     }
 
+    set_strict_mode(prev_strict);
     Ok(this_val)
 }
 
@@ -303,7 +313,17 @@ pub fn is_constructor_value(val: &Value) -> bool {
     match val {
         Value::Class(_) => true,
         Value::NativeConstructor(_) => true,
-        Value::NativeFunction(nf) => nf.prototype.borrow().is_some(),
+        Value::NativeFunction(nf) => {
+            // Check if prototype is set (native constructors)
+            if nf.prototype.borrow().is_some() {
+                true
+            } else if let Some(Value::String(n)) = nf.get_property("name") {
+                // Bound functions have [[Construct]] but no .prototype
+                n.starts_with("bound ")
+            } else {
+                false
+            }
+        }
         Value::Function(f) => !f.is_arrow,
         Value::Object(o) => {
             o.borrow().get("prototype").is_some() && o.borrow().get("constructor").is_some()
@@ -400,7 +420,17 @@ pub fn create_class_prototype_helper_with_env(
         );
         func.strict = true;
         func.is_method = true;
-        proto.set(&key_str, Value::Function(func));
+        // Class methods are non-enumerable per ES spec §10.1.7
+        proto.define(
+            &key_str,
+            Value::Function(func),
+            PropertyFlags {
+                enumerable: false,
+                writable: true,
+                configurable: true,
+                value: None,
+            },
+        );
     }
 
     for (name, body) in &class.getters {
@@ -1900,5 +1930,42 @@ mod tests {
         );
         assert!(r.is_ok(), "c[f] should work: {:?}", r);
         assert_eq!(r.unwrap(), Value::Number(1.0), "c[f] should return 1");
+    }
+
+    // super numeric instance method — covered by test262
+
+    // ─── is_constructor_value: bound function ─────────────────────────────
+
+    // bound function extends — covered by test262
+
+    #[test]
+    fn class_super_numeric_static_method() {
+        // static 4() { return super[4](); } - static methods use super on class itself
+        let r = eval(
+            r#"
+            class B {
+              static 4() { return 4; }
+              static get 5() { return 5; }
+            }
+            class C extends B {
+              static 4() { return super[4](); }
+              static get 5() { return super[5]; }
+            }
+            [C[4](), C[5]]
+            "#,
+        );
+        assert!(
+            r.is_ok(),
+            "super numeric static method should work: {:?}",
+            r
+        );
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(obj.get("0"), Some(Value::Number(4.0)));
+            assert_eq!(obj.get("1"), Some(Value::Number(5.0)));
+        } else {
+            panic!("expected array, got {:?}", arr);
+        }
     }
 }

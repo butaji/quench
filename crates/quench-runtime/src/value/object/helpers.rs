@@ -39,7 +39,7 @@ pub fn as_key(s: &str) -> Key {
         return Key::Idx((s.as_bytes()[0] - b'0') as u32);
     }
     if let Ok(n) = s.parse::<u32>() {
-        if n <= 4294967294 {
+        if n <= 4294967294 && s == n.to_string() {
             return Key::Idx(n);
         }
     }
@@ -354,5 +354,86 @@ impl PromiseObjectData {
 impl Default for PromiseObjectData {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── Key / as_key / is_array_index ─────────────────────────────────────────
+
+    #[test]
+    fn property_key_from_number() {
+        let key = as_key("42");
+        assert_eq!(key, Key::Idx(42));
+    }
+
+    #[test]
+    fn property_key_from_string() {
+        let key = as_key("foo");
+        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "foo"));
+    }
+
+    #[test]
+    fn property_key_from_single_digit() {
+        let key = as_key("7");
+        assert_eq!(key, Key::Idx(7));
+    }
+
+    #[test]
+    fn property_key_from_non_canonical_numeric() {
+        let key = as_key("007");
+        // Non-canonical form (with leading zeros) should be stored as string
+        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "007"));
+    }
+
+    #[test]
+    fn property_key_from_large_index() {
+        // 4294967295 (2^32 - 1) is not a valid array index per spec, stored as string
+        let key = as_key("4294967295");
+        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "4294967295"));
+    }
+
+    #[test]
+    fn property_key_from_too_large_index() {
+        // 4294967296 is beyond valid index, stored as string
+        let key = as_key("4294967296");
+        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "4294967296"));
+    }
+
+    #[test]
+    fn property_key_special_chars() {
+        let key = as_key("foo-bar");
+        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "foo-bar"));
+    }
+
+    #[test]
+    fn is_array_index_valid() {
+        assert!(is_array_index("0"));
+        assert!(is_array_index("42"));
+    }
+
+    #[test]
+    fn is_array_index_invalid() {
+        assert!(!is_array_index(""));
+        assert!(!is_array_index("01"));
+        assert!(!is_array_index("-1"));
+        assert!(!is_array_index("abc"));
+        assert!(!is_array_index("4294967296"));
+    }
+
+    #[test]
+    fn key_eq() {
+        assert_eq!(as_key("42"), Key::Idx(42));
+        assert_eq!(as_key("foo"), Key::Str("foo".into()));
+        assert_ne!(as_key("42"), as_key("43"));
+    }
+
+    #[test]
+    fn key_clone() {
+        let key = as_key("test");
+        let cloned = key.clone();
+        assert_eq!(key, cloned);
     }
 }

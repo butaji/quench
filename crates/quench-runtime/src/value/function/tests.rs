@@ -171,7 +171,7 @@ fn value_function_set_property_inserts() {
     let env = Rc::new(RefCell::new(Environment::new()));
     let func = ValueFunction::new(None, vec![], vec![], Rc::clone(&env), false, false);
 
-    func.set_property("custom", Value::Number(99.0));
+    let _ = func.set_property("custom", Value::Number(99.0));
     assert_eq!(func.get_property("custom"), Some(Value::Number(99.0)));
 }
 
@@ -180,8 +180,8 @@ fn value_function_set_property_overwrites() {
     let env = Rc::new(RefCell::new(Environment::new()));
     let func = ValueFunction::new(None, vec![], vec![], Rc::clone(&env), false, false);
 
-    func.set_property("x", Value::Number(1.0));
-    func.set_property("x", Value::Number(2.0));
+    let _ = func.set_property("x", Value::Number(1.0));
+    let _ = func.set_property("x", Value::Number(2.0));
     assert_eq!(func.get_property("x"), Some(Value::Number(2.0)));
 }
 
@@ -309,7 +309,7 @@ fn value_function_clone_shares_properties_map() {
     );
     let f2 = f1.clone();
 
-    f1.set_property("x", Value::Number(1.0));
+    let _ = f1.set_property("x", Value::Number(1.0));
     assert_eq!(f2.get_property("x"), Some(Value::Number(1.0)));
 }
 

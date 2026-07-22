@@ -376,7 +376,7 @@ pub fn assign_to_identifier(
         Value::Function(ref f) if f.name.is_none() => {
             let mut cloned = f.clone();
             cloned.name = Some(name.to_string());
-            cloned.set_property("name", Value::String(name.to_string()));
+            let _ = cloned.set_property("name", Value::String(name.to_string()));
             Value::Function(cloned)
         }
         Value::Class(ref c) => {

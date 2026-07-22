@@ -3,7 +3,13 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::eval::statement::eval_function_body;
+use crate::eval::function::bind_params;
+use crate::eval::statement::{
+    acc_stack_len, acc_stack_pop_to, acc_stack_push, acc_stack_top, acc_stack_update_last,
+    eval_function_body, take_tail_call_signal,
+};
+use crate::interpreter::{predeclare_let_const, predeclare_var};
+use crate::value::function::ValueFunction;
 use crate::value::{GetterStorage, JsError, Object, SetterStorage, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -117,13 +123,68 @@ pub fn call_getter(
     call_env.current_scope().borrow_mut().set_this(this_val);
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
-        Ok(Value::Undefined)
-    } else {
-        let prev_strict = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(getter_storage.strict);
-        let result = eval_function_body(&body, &call_env, false);
+        return Ok(Value::Undefined);
+    }
+    let prev_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(getter_storage.strict);
+
+    // Trampoline: process tail calls that eval_function_body may set.
+    let mut tail_func: Option<ValueFunction> = None;
+    let mut tail_args: Vec<Value> = Vec::new();
+    let mut current_env: Rc<RefCell<Environment>> = call_env;
+    'trampoline: loop {
+        let starting_depth = acc_stack_len();
+        acc_stack_push(Value::Undefined);
+
+        let (result, next_func, next_args) = if let Some(ref f) = tail_func {
+            // Tail call: build a fresh env from the new function's closure.
+            crate::interpreter::set_strict_mode(f.strict);
+            let mut new_env = Environment::with_parent(Rc::clone(&f.closure));
+            new_env.push_scope();
+            predeclare_var(&f.body, &mut new_env);
+            predeclare_let_const(&f.body, &mut new_env);
+            if !f.is_arrow {
+                new_env
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(Value::Undefined);
+            }
+            let new_env_rc: Rc<RefCell<Environment>> = Rc::new(RefCell::new(new_env));
+            bind_params(f, &f.params, &tail_args, &new_env_rc, false)?;
+            current_env = new_env_rc;
+            let r = eval_function_body(&f.body, &current_env, false);
+            let tail = take_tail_call_signal();
+            (
+                r,
+                tail.as_ref().map(|t| t.function.clone()),
+                tail.map(|t| t.arguments),
+            )
+        } else {
+            let r = eval_function_body(&body, &current_env, false);
+            let tail = take_tail_call_signal();
+            (
+                r,
+                tail.as_ref().map(|t| t.function.clone()),
+                tail.map(|t| t.arguments),
+            )
+        };
+
+        if let (Some(f), Some(a)) = (next_func, next_args) {
+            // Tail call: store result, capture new function/args, loop.
+            acc_stack_update_last(result.unwrap_or(Value::Undefined));
+            tail_func = Some(f);
+            tail_args = a;
+            continue 'trampoline;
+        }
+
         crate::interpreter::set_strict_mode(prev_strict);
-        result
+        // Capture the accumulated result (from tail call chain) before popping.
+        // The accumulator holds the result of each function in the chain.
+        let acc_result =
+            acc_stack_top().unwrap_or_else(|| result.clone().unwrap_or(Value::Undefined));
+        acc_stack_pop_to(starting_depth);
+        let _ = crate::interpreter::take_control_flow();
+        return Ok(acc_result);
     }
 }
 

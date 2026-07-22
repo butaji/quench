@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(result, Value::String("function".into()));
         // Check if the async generator's next method returns a Promise
         // by looking at what typeof gen.next()() returns (the function call result)
-        let result = ctx
+        let _result = ctx
             .eval(
                 r#"
             async function* ag() { yield 1; }
