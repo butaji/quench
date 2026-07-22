@@ -384,7 +384,13 @@ pub fn create_class_prototype_helper_with_env(
 ) -> Result<Rc<RefCell<Object>>, JsError> {
     let parent_proto: Option<Rc<RefCell<Object>>> = if let Some(ref super_class) = class.super_class
     {
-        let super_class_val = eval_expression(super_class, env, false)?;
+        // Use cached super_class value from env (set during eval_class_decl)
+        // to avoid re-evaluating the expression (side-effects test).
+        let super_class_val = if let Some(cached) = env.borrow().get_super_class() {
+            cached
+        } else {
+            eval_expression(super_class, env, false)?
+        };
         if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
             return Err(JsError(
                 "TypeError: superclass must be a constructor".to_string(),
@@ -422,10 +428,6 @@ pub fn create_class_prototype_helper_with_env(
 
     let closure = Rc::clone(env);
     closure.borrow_mut().push_scope();
-    if let Some(ref super_class_expr) = class.super_class {
-        let super_class_val = eval_expression(super_class_expr, env, false)?;
-        closure.borrow_mut().set_super_class(super_class_val);
-    }
     let member_closure = capture_env_for_closure(&closure);
 
     for (name, params, body, is_async, is_generator) in &class.methods {
