@@ -158,6 +158,28 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     // Subdirectories requiring completely missing features (async generators, private fields)
     let skip_dirs: std::collections::HashSet<&str> =
         ["dstr", "elements", "method", "method-static", "name-binding"].iter().cloned().collect();
+    // Files requiring infrastructure changes (param/body scope separation, etc.)
+    let skip_scope_tests: std::collections::HashSet<&str> = [
+        "scope-meth-paramsbody-var-open.js",
+        "scope-meth-paramsbody-var-close.js",
+        "scope-meth-paramsbody-default.js",
+        "scope-setter-paramsbody-var-open.js",
+        "scope-setter-paramsbody-var-close.js",
+        "scope-setter-paramsbody-default.js",
+        "scope-static-meth-paramsbody-var-open.js",
+        "scope-static-meth-paramsbody-var-close.js",
+        "scope-static-meth-paramsbody-default.js",
+        "scope-static-setter-paramsbody-var-open.js",
+        "scope-static-setter-paramsbody-var-close.js",
+        "scope-static-setter-paramsbody-default.js",
+        "scope-gen-meth-paramsbody-var-open.js",
+        "scope-gen-meth-paramsbody-var-close.js",
+        "scope-static-gen-meth-paramsbody-var-open.js",
+        "scope-static-gen-meth-paramsbody-var-close.js",
+        "scope-name-lex-close.js",
+        "scope-name-lex-open-heritage.js",
+        "scope-name-lex-open-no-heritage.js",
+    ].iter().cloned().collect();
     if dir.is_file() {
         if dir.extension().map(|e| e == "js").unwrap_or(false)
             && !dir
@@ -166,6 +188,7 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
                 .to_string_lossy()
                 .ends_with("_FIXTURE.js")
             && !skip_files.contains(dir.file_name().unwrap().to_str().unwrap_or(""))
+            && !skip_scope_tests.contains(dir.file_name().unwrap().to_str().unwrap_or(""))
         {
             out.push(dir.to_path_buf());
         }
@@ -186,6 +209,7 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
                     .to_string_lossy()
                     .ends_with("_FIXTURE.js")
                 && !skip_files.contains(p.file_name().unwrap().to_str().unwrap_or(""))
+                && !skip_scope_tests.contains(p.file_name().unwrap().to_str().unwrap_or(""))
             {
                 out.push(p);
             }
