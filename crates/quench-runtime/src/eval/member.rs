@@ -264,7 +264,15 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
                 None
             }
         }
-        Value::Class(_) => None,
+        Value::Class(class) => {
+            let cell = class.prototype_cell.borrow();
+            if let Some(ref proto) = *cell {
+                Some(Rc::clone(proto))
+            } else {
+                None
+            }
+        }
+        Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
         _ => None,
     }
 }
