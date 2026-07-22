@@ -359,7 +359,7 @@
       "id": 57,
       "path": "test/built-ins/global",
       "tests": 29,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 58,
@@ -491,7 +491,7 @@
       "id": 79,
       "path": "test/built-ins/BigInt",
       "tests": 77,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 80,
@@ -587,13 +587,13 @@
       "id": 95,
       "path": "test/built-ins/GeneratorFunction",
       "tests": 23,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 96,
       "path": "test/built-ins/GeneratorPrototype",
       "tests": 61,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 97,
@@ -641,7 +641,7 @@
       "id": 104,
       "path": "test/built-ins/Uint8Array",
       "tests": 70,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 105,
