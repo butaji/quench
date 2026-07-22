@@ -100,9 +100,14 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
     let constructor = NativeConstructor::new(
         move |args| {
             let message = args.first().cloned();
-            let error_obj =
-                Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
-            let error_rc = Rc::new(RefCell::new(error_obj));
+            // Use the passed `this` (from super()) or create a new object
+            let error_rc = match crate::interpreter::get_native_this() {
+                Some(Value::Object(obj)) => obj,
+                _ => {
+                    let obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
+                    Rc::new(RefCell::new(obj))
+                }
+            };
             // Per ES spec: only set message as own property when argument is provided
             // and not undefined. Descriptor uses enumerable: false.
             if let Some(msg) = message {

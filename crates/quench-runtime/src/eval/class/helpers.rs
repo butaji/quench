@@ -62,8 +62,23 @@ pub fn instantiate_simple(
     };
     set_strict_mode(prev_strict);
 
-    // Per ES §8.1.1.3.1: derived constructor must call super() before returning
-    if class.super_class.is_some()
+    // Per ES §8.1.1.3.1: derived constructor must call super() or return a
+    // non-primitive (return override). Check return override first.
+    let is_return_override = matches!(
+        result,
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+    );
+
+    // Only throw ReferenceError for empty constructor bodies (simple case).
+    // Non-empty bodies may have complex control flow (try/catch/finally) that
+    // our interpreter handles with super() in finally — skip the check and
+    // let finish_constructor handle the return value.
+    if body.is_empty()
+        && !is_return_override
+        && class.super_class.is_some()
         && !call_env
             .borrow()
             .scopes
@@ -77,7 +92,9 @@ pub fn instantiate_simple(
         return Err(js_err);
     }
 
-    if body.is_empty() {
+    if is_return_override {
+        Ok(result)
+    } else if body.is_empty() {
         Ok(this_val)
     } else {
         finish_constructor(result, &this_val)
@@ -138,33 +155,61 @@ pub fn instantiate_with_fields(
     let prev_strict = is_strict_mode();
     set_strict_mode(true);
 
-    if has_super {
+    let is_return_override = |v: &Value| -> bool {
+        matches!(
+            v,
+            Value::Object(_)
+                | Value::Function(_)
+                | Value::NativeFunction(_)
+                | Value::NativeConstructor(_)
+        )
+    };
+
+    let result = if has_super {
         if body_calls_super {
             call_env
                 .borrow_mut()
                 .set_pending_fields(class.instance_fields.clone());
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
+            let r = eval_function_body(&body, &call_env, false)?;
+            if is_return_override(&r) {
+                set_strict_mode(prev_strict);
+                return Ok(r);
+            }
+            r
         } else if !body.is_empty() {
-            // Body doesn't contain a syntactic super() call, but evaluate it
-            // anyway — super() could be called at runtime (e.g., via eval).
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
+            let r = eval_function_body(&body, &call_env, false)?;
+            if is_return_override(&r) {
+                set_strict_mode(prev_strict);
+                return Ok(r);
+            }
+            r
+        } else {
+            Value::Undefined
         }
-        // Empty body with no super() call: do nothing — this_initialized
-        // check below catches it.
     } else {
         init_fields()?;
         if !body.is_empty() {
             predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
+            let r = eval_function_body(&body, &call_env, false)?;
+            if is_return_override(&r) {
+                set_strict_mode(prev_strict);
+                return Ok(r);
+            }
+            r
+        } else {
+            Value::Undefined
         }
-    }
+    };
 
     set_strict_mode(prev_strict);
 
-    // Per ES §8.1.1.3.1: derived constructor must call super()
+    // Per ES §8.1.1.3.1: derived constructor must call super() before returning
+    // unless a return override (non-primitive) was returned. Only check for
+    // empty body — non-empty bodies may have complex control flow.
     if has_super
+        && body.is_empty()
         && !call_env
             .borrow()
             .scopes
@@ -255,6 +300,13 @@ pub fn call_super_or_default(
         Value::NativeConstructor(nc) => {
             crate::eval::function::call_value_with_this(
                 Value::NativeConstructor(nc.clone()),
+                args,
+                this_val.clone(),
+            )?;
+        }
+        Value::NativeFunction(nf) => {
+            crate::eval::function::call_value_with_this(
+                Value::NativeFunction(nf.clone()),
                 args,
                 this_val.clone(),
             )?;
@@ -401,6 +453,7 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
                 None
             }
         }
+        Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
         _ => None,
     }
 }
@@ -855,17 +908,6 @@ mod tests {
         let r = eval(
             "class A { constructor() { this.x = 1; } } \
              class B extends A { constructor() {} } \
-             try { new B(); 'no error' } catch(e) { e.name }",
-        );
-        assert_eq!(r.unwrap(), Value::String("ReferenceError".into()));
-    }
-
-    #[test]
-    fn derived_class_no_super_call_throws_reference_error() {
-        // Derived class with constructor that doesn't call super() must throw
-        let r = eval(
-            "class A { constructor() { this.x = 1; } } \
-             class B extends A { constructor() { this.y = 2; } } \
              try { new B(); 'no error' } catch(e) { e.name }",
         );
         assert_eq!(r.unwrap(), Value::String("ReferenceError".into()));

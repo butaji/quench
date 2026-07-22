@@ -360,6 +360,7 @@ fn get_prototype_from_class_val(
             }
         }
         Value::Class(class) => get_class_prototype_for_instanceof(class).ok(),
+        Value::NativeConstructor(nc) => Some(std::rc::Rc::clone(&nc.prototype)),
         _ => None,
     }
 }

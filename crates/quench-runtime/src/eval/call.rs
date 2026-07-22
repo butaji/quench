@@ -102,6 +102,9 @@ fn eval_super_call(
         Value::NativeConstructor(nc) => {
             call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
         }
+        Value::NativeFunction(nf) => {
+            call_value_with_this(Value::NativeFunction(nf), args, this_val)
+        }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
             return Err(js_err);
