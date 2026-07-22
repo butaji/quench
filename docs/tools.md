@@ -113,6 +113,16 @@ TEST262_STAGE=N bash tools/run-each.sh
 - `ALL_STAGES=1` — run all stages sequentially
 - `TEST262_DIGEST=1` — collect all failures, don't stop at first
 - `TEST262_QUICK=1` — minimal output, just counts
+- `TEST262_JSON=1` — machine-readable JSON output of failure groups (for external tooling)
+
+### Baseline Comparison
+
+```bash
+# Save a baseline
+TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test ... > baseline.json
+
+# Compare later — TODO: tooling for diffing two JSON outputs
+```
 
 RUST_BACKTRACE=1 can be combined with any mode for stack traces on panics.
 
