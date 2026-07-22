@@ -35,30 +35,51 @@ pub fn instantiate_simple(
     let call_env = build_constructor_env(class, &args, &this_val, env)?;
     let call_env = Rc::new(RefCell::new(call_env));
 
-    if body.is_empty() {
+    let has_explicit_ctor = class
+        .ordered_members
+        .iter()
+        .any(|m| matches!(m, crate::ast::ClassMember::Constructor { .. }));
+
+    // Per ES §15.2.2: derived class without explicit constructor gets a
+    // default constructor that calls super(...args).
+    if !has_explicit_ctor {
         if let Some(ref sc) = class.super_class {
             let sv = eval_expression(sc, env, false)?;
             call_super_or_default(&sv, args, &this_val, env)?;
         }
+        return Ok(this_val);
+    }
+
+    // Class constructors are always strict mode per ES spec.
+    let prev_strict = is_strict_mode();
+    set_strict_mode(true);
+
+    let result = if !body.is_empty() {
+        predeclare_let_const(&body, &mut call_env.borrow_mut());
+        eval_function_body(&body, &call_env, false)?
+    } else {
+        Value::Undefined
+    };
+    set_strict_mode(prev_strict);
+
+    // Per ES §8.1.1.3.1: derived constructor must call super() before returning
+    if class.super_class.is_some()
+        && !call_env
+            .borrow()
+            .scopes
+            .iter()
+            .any(|s| s.borrow().is_this_initialized())
+    {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+            "ReferenceError",
+        );
+        return Err(js_err);
+    }
+
+    if body.is_empty() {
         Ok(this_val)
     } else {
-        let first_is_super = check_first_is_super_call(&body);
-        let body_calls_super = first_is_super || body_calls_super_call(&body);
-        // Class constructors are always strict mode per ES spec.
-        let prev_strict = is_strict_mode();
-        set_strict_mode(true);
-        let result = if body_calls_super {
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?
-        } else {
-            if let Some(ref sc) = class.super_class {
-                let sv = eval_expression(sc, env, false)?;
-                call_super_or_default(&sv, args, &this_val, env)?;
-            }
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?
-        };
-        set_strict_mode(prev_strict);
         finish_constructor(result, &this_val)
     }
 }
@@ -97,6 +118,22 @@ pub fn instantiate_with_fields(
         Ok(())
     };
 
+    let has_explicit_ctor = class
+        .ordered_members
+        .iter()
+        .any(|m| matches!(m, crate::ast::ClassMember::Constructor { .. }));
+
+    // Per ES §15.2.2: derived class without explicit constructor gets a
+    // default constructor that calls super(...args).
+    if !has_explicit_ctor {
+        if has_super {
+            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+            call_super_or_default(&sv, args, &this_val, env)?;
+        }
+        init_fields()?;
+        return Ok(this_val);
+    }
+
     // Class constructors are always strict mode per ES spec.
     let prev_strict = is_strict_mode();
     set_strict_mode(true);
@@ -108,17 +145,14 @@ pub fn instantiate_with_fields(
                 .set_pending_fields(class.instance_fields.clone());
             predeclare_let_const(&body, &mut call_env.borrow_mut());
             eval_function_body(&body, &call_env, false)?;
-        } else if body.is_empty() {
-            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
-            call_super_or_default(&sv, args, &this_val, env)?;
-            init_fields()?;
-        } else {
-            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
-            call_super_or_default(&sv, args.clone(), &this_val, env)?;
-            init_fields()?;
+        } else if !body.is_empty() {
+            // Body doesn't contain a syntactic super() call, but evaluate it
+            // anyway — super() could be called at runtime (e.g., via eval).
             predeclare_let_const(&body, &mut call_env.borrow_mut());
             eval_function_body(&body, &call_env, false)?;
         }
+        // Empty body with no super() call: do nothing — this_initialized
+        // check below catches it.
     } else {
         init_fields()?;
         if !body.is_empty() {
@@ -128,6 +162,22 @@ pub fn instantiate_with_fields(
     }
 
     set_strict_mode(prev_strict);
+
+    // Per ES §8.1.1.3.1: derived constructor must call super()
+    if has_super
+        && !call_env
+            .borrow()
+            .scopes
+            .iter()
+            .any(|s| s.borrow().is_this_initialized())
+    {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+            "ReferenceError",
+        );
+        return Err(js_err);
+    }
+
     Ok(this_val)
 }
 
@@ -799,6 +849,40 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+    #[test]
+    fn derived_class_empty_constructor_throws_reference_error() {
+        // Derived class with empty constructor must throw ReferenceError
+        let r = eval(
+            "class A { constructor() { this.x = 1; } } \
+             class B extends A { constructor() {} } \
+             try { new B(); 'no error' } catch(e) { e.name }",
+        );
+        assert_eq!(r.unwrap(), Value::String("ReferenceError".into()));
+    }
+
+    #[test]
+    fn derived_class_no_super_call_throws_reference_error() {
+        // Derived class with constructor that doesn't call super() must throw
+        let r = eval(
+            "class A { constructor() { this.x = 1; } } \
+             class B extends A { constructor() { this.y = 2; } } \
+             try { new B(); 'no error' } catch(e) { e.name }",
+        );
+        assert_eq!(r.unwrap(), Value::String("ReferenceError".into()));
+    }
+
+    #[test]
+    fn derived_class_with_super_call_works() {
+        // Derived class with super() must still work
+        let r = eval(
+            "class A { constructor(x) { this.x = x; } } \
+             class B extends A { constructor(x) { super(x); } } \
+             new B(42).x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
     // ─── instantiate_simple: method on prototype ───────────────────────────
 
     #[test]
@@ -999,8 +1083,9 @@ mod tests {
     #[test]
     fn super_reference_in_closure() {
         // super reference captured in closure called from constructor
+        // Must call super() first per spec before accessing `this`.
         let r = eval(
-            "class Base { getX() { return 42; } } class Derived extends Base { constructor() { var self = this; this.result = self.getX(); } } new Derived().result",
+            "class Base { getX() { return 42; } } class Derived extends Base { constructor() { super(); var self = this; this.result = self.getX(); } } new Derived().result",
         )
         .unwrap();
         assert_eq!(r, Value::Number(42.0));

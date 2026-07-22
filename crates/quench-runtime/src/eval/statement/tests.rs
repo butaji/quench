@@ -85,6 +85,62 @@ mod break_continue {
     }
 
     #[test]
+    fn labeled_continue_to_outer_loop() {
+        // Bug fix: continue LABEL should break out of inner loop, not continue it infinitely
+        assert_eq!(
+            eval(
+                "let i = 0; OUTER: while (i < 3) {
+                   i++;
+                   INNER: while (true) { continue OUTER; }
+                 } i"
+            )
+            .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn labeled_continue_with_for_loop() {
+        // continue LABEL targeting outer for loop should work
+        assert_eq!(
+            eval(
+                "let result = 0; OUTER: for (let i = 0; i < 3; i++) {
+                   INNER: for (let j = 0; j < 3; j++) {
+                     if (j === 1) continue OUTER;
+                     result++;
+                   }
+                 } result"
+            )
+            .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn labeled_continue_in_do_while() {
+        // continue LABEL targeting outer do-while should work
+        assert_eq!(
+            eval(
+                "let i = 0; OUTER: do {
+                   i++;
+                   INNER: while (true) { continue OUTER; }
+                 } while (i < 3); i"
+            )
+            .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn unlabeled_continue_still_works() {
+        // Regular (unlabeled) continue must still work
+        assert_eq!(
+            eval("let i = 0, j = 0; while (i < 3) { i++; if (i === 2) continue; j++; } j").unwrap(),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
     fn break_label_in_eval_works_when_label_is_inner() {
         // break LABEL where LABEL is defined WITHIN the eval should work.
         assert_eq!(
@@ -1517,4 +1573,44 @@ fn test_block_const_scope() {
     let mut ctx = crate::Context::new().unwrap();
     let r = ctx.eval("function fn() { const u = 3; { const v = 6; return u + v; } } fn()");
     eprintln!("block const scope: {:?}", r);
+}
+
+mod class_name_in_const {
+    use super::*;
+
+    #[test]
+    fn const_class_gets_binding_name() {
+        // Bug fix: const cls = class {}; should set cls.name = "cls"
+        assert_eq!(
+            eval("const cls = class {}; cls.name").unwrap(),
+            Value::String("cls".to_string())
+        );
+    }
+
+    #[test]
+    fn let_class_gets_binding_name() {
+        // Same for let declarations
+        assert_eq!(
+            eval("let cls = class {}; cls.name").unwrap(),
+            Value::String("cls".to_string())
+        );
+    }
+
+    #[test]
+    fn var_class_gets_binding_name() {
+        // Same for var declarations
+        assert_eq!(
+            eval("var cls = class {}; cls.name").unwrap(),
+            Value::String("cls".to_string())
+        );
+    }
+
+    #[test]
+    fn named_class_not_overridden() {
+        // Named class expressions should keep their own name
+        assert_eq!(
+            eval("var cls = class MyClass {}; cls.name").unwrap(),
+            Value::String("MyClass".to_string())
+        );
+    }
 }

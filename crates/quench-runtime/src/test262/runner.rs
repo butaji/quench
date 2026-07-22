@@ -153,11 +153,32 @@ pub const STAGES: &[&str] = &[
 fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     // Skip individual tests that cause stack overflow (pre-existing bugs)
-    let skip_files: std::collections::HashSet<&str> =
-        ["prototype-wiring.js", "prototype-setter.js", "this-access-restriction-2.js", "this-access-restriction.js", "this-check-ordering.js", "restricted-properties.js", "static-init-arguments-functions.js", "static-init-arguments-methods.js", "static-init-arguments-eval.js", "tco.js"].iter().cloned().collect();
+    let skip_files: std::collections::HashSet<&str> = [
+        "prototype-wiring.js",
+        "prototype-setter.js",
+        "this-access-restriction-2.js",
+        "this-access-restriction.js",
+        "this-check-ordering.js",
+        "restricted-properties.js",
+        "static-init-arguments-functions.js",
+        "static-init-arguments-methods.js",
+        "static-init-arguments-eval.js",
+        "tco.js",
+    ]
+    .iter()
+    .cloned()
+    .collect();
     // Subdirectories requiring completely missing features (async generators, private fields)
-    let skip_dirs: std::collections::HashSet<&str> =
-        ["dstr", "elements", "method", "method-static", "name-binding"].iter().cloned().collect();
+    let skip_dirs: std::collections::HashSet<&str> = [
+        "dstr",
+        "elements",
+        "method",
+        "method-static",
+        "name-binding",
+    ]
+    .iter()
+    .cloned()
+    .collect();
     // Files requiring infrastructure changes (param/body scope separation, etc.)
     let skip_scope_tests: std::collections::HashSet<&str> = [
         "scope-meth-paramsbody-var-open.js",
@@ -179,7 +200,10 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
         "scope-name-lex-close.js",
         "scope-name-lex-open-heritage.js",
         "scope-name-lex-open-no-heritage.js",
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
     if dir.is_file() {
         if dir.extension().map(|e| e == "js").unwrap_or(false)
             && !dir
@@ -360,6 +384,16 @@ pub struct Test262Runner {
     pub harness: HarnessLoader,
 }
 
+/// Options for digest mode (TEST262_DIGEST=1).
+#[derive(Default)]
+pub(crate) struct DigestOptions {
+    pub json_out: bool,
+    pub show_script: bool,
+    pub dump_failures: Option<String>,
+    pub rerun_failures: Option<String>,
+    pub first_n: Option<usize>,
+}
+
 impl Test262Runner {
     pub fn new(test262_dir: PathBuf) -> Self {
         Self {
@@ -377,7 +411,7 @@ impl Test262Runner {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let quick = std::env::var("TEST262_QUICK")
+        let _quick = std::env::var("TEST262_QUICK")
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -390,11 +424,28 @@ impl Test262Runner {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
 
+        let show_script = std::env::var("TEST262_SHOW_SCRIPT")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let dump_failures = std::env::var("TEST262_DUMP_FAILURES").ok();
+        let rerun_failures = std::env::var("TEST262_RERUN_FAILURES").ok();
+        let first_n = std::env::var("TEST262_FIRST_N")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
+
         let mut total = RunSummary::default();
         let mut stage = start;
         while let Some(stage_dir) = STAGES.get(stage).copied() {
             let s = if digest {
-                self.run_stage_digest(host, stage, stage_dir, json_out)
+                let opts = DigestOptions {
+                    json_out,
+                    show_script,
+                    dump_failures: dump_failures.clone(),
+                    rerun_failures: rerun_failures.clone(),
+                    first_n,
+                };
+                self.run_stage_digest(host, stage, stage_dir, &opts)
             } else {
                 self.run_stage(host, stage, stage_dir)
             };
@@ -485,28 +536,59 @@ impl Test262Runner {
         summary.passed = passed;
         summary
     }
-
-    /// Run all tests in a stage, collecting ALL failures (not stopping at first).
-    /// Tests are panic-isolated via catch_unwind. Outputs a digest grouped by error message.
-    fn run_stage_digest(
-        &self,
-        _host: &mut dyn Test262Host,
-        stage: usize,
-        stage_dir: &str,
-        json_out: bool,
-    ) -> RunSummary {
+/// Run all tests in a stage, collecting ALL failures (not stopping at first).
+/// Tests are panic-isolated via catch_unwind. Outputs a digest grouped by error message.
+fn run_stage_digest(
+    &self,
+    _host: &mut dyn Test262Host,
+    stage: usize,
+    stage_dir: &str,
+    opts: &DigestOptions,
+) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
             println!("[MISSING] {}", full_path.display());
             return RunSummary::default();
         }
 
-        let mut tests = collect_tests(&full_path);
+        let mut tests = if let Some(ref fails_path) = opts.rerun_failures {
+            // Load test paths from a failure file
+            let content = match std::fs::read_to_string(fails_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("  ERROR loading rerun file {}: {}", fails_path, e);
+                    return RunSummary::default();
+                }
+            };
+            let mut failed: Vec<std::path::PathBuf> = content
+                .lines()
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(|l| {
+                    let mut p = std::path::PathBuf::from(l.trim());
+                    if p.is_relative() {
+                        p = self.test262_dir.join(&p);
+                    }
+                    p
+                })
+                .filter(|p| p.exists())
+                .collect();
+            failed.sort();
+            println!("  Rerunning {} tests from {}", failed.len(), fails_path);
+            failed
+        } else {
+            collect_tests(&full_path)
+        };
         tests.sort();
+        if let Some(n) = opts.first_n {
+            tests.truncate(n);
+        }
         let count = tests.len();
         let timeout = std::time::Duration::from_secs(TEST_TIMEOUT_SECS);
 
-        println!("\n=== DIGEST Stage {}: {} ({} tests) ===", stage, stage_dir, count);
+        println!(
+            "\n=== DIGEST Stage {}: {} ({} tests) ===",
+            stage, stage_dir, count
+        );
 
         let mut failures: Vec<(String, String)> = Vec::new(); // (path, reason)
         let mut passed = 0usize;
@@ -519,15 +601,27 @@ impl Test262Runner {
             // Read test source + metadata
             let source = match std::fs::read_to_string(path) {
                 Ok(s) => s,
-                Err(_) => { failures.push((path.display().to_string(), "read error".into())); continue; }
+                Err(_) => {
+                    failures.push((path.display().to_string(), "read error".into()));
+                    continue;
+                }
             };
             let meta = match Test262Metadata::parse(&source) {
                 Some(m) => m,
-                None => { failures.push((path.display().to_string(), "bad frontmatter".into())); continue; }
+                None => {
+                    failures.push((path.display().to_string(), "bad frontmatter".into()));
+                    continue;
+                }
             };
-            if crate::test262::skip::should_skip(&meta).is_some() { passed += 1; continue; }
+            if crate::test262::skip::should_skip(&meta).is_some() {
+                passed += 1;
+                continue;
+            }
             if let Some(tp) = path.to_str() {
-                if crate::test262::skip::should_skip_path(tp).is_some() { passed += 1; continue; }
+                if crate::test262::skip::should_skip_path(tp).is_some() {
+                    passed += 1;
+                    continue;
+                }
             }
 
             let is_raw = meta.flags.contains(&"raw".to_string());
@@ -546,7 +640,10 @@ impl Test262Runner {
                             s
                         }
                     }
-                    Err(e) => { failures.push((path.display().to_string(), e)); continue; }
+                    Err(e) => {
+                        failures.push((path.display().to_string(), e));
+                        continue;
+                    }
                 }
             };
 
@@ -562,8 +659,11 @@ impl Test262Runner {
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
                     let mut inner = crate::test262::host::QuenchHost::new();
-                    let r = if is_module { inner.run_module_script(&script2) }
-                             else { inner.run_script(&script2) };
+                    let r = if is_module {
+                        inner.run_module_script(&script2)
+                    } else {
+                        inner.run_script(&script2)
+                    };
                     let _ = tx.send(check_outcome(&meta2, r));
                 });
                 match rx.recv_timeout(timeout) {
@@ -579,12 +679,23 @@ impl Test262Runner {
 
             let outcome = match result {
                 Ok(o) => o,
-                Err(_) => TestOutcome::Fail { reason: "panic in harness".into() },
+                Err(_) => TestOutcome::Fail {
+                    reason: "panic in harness".into(),
+                },
             };
 
             match outcome {
-                TestOutcome::Pass => { passed += 1; }
+                TestOutcome::Pass => {
+                    passed += 1;
+                }
                 TestOutcome::Fail { reason } => {
+                    if opts.show_script {
+                        eprintln!("──── Generated script ({}): ────", path.display());
+                        for (ln, l) in script.lines().enumerate() {
+                            eprintln!("{:4}: {}", ln + 1, l);
+                        }
+                        eprintln!("──── End script ────");
+                    }
                     failures.push((test_path.clone(), reason));
                 }
             }
@@ -597,14 +708,17 @@ impl Test262Runner {
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
                         let mut inner = crate::test262::host::QuenchHost::new();
-                        let r = if is_module { inner.run_module_script(&strict_script) }
-                                 else { inner.run_script(&strict_script) };
+                        let r = if is_module {
+                            inner.run_module_script(&strict_script)
+                        } else {
+                            inner.run_script(&strict_script)
+                        };
                         let _ = tx.send(check_outcome(&meta3, r));
                     });
                     match rx.recv_timeout(timeout) {
                         Ok(o) => o,
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
-                        reason: format!("strict: timed out after {}s", TEST_TIMEOUT_SECS),
+                            reason: format!("strict: timed out after {}s", TEST_TIMEOUT_SECS),
                         },
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
                             reason: "strict: panicked".into(),
@@ -643,7 +757,20 @@ impl Test262Runner {
             println!();
         }
 
-        if json_out {
+        // Dump failure list to file if requested
+        if let Some(ref dump_path) = opts.dump_failures {
+            let mut fail_content = String::new();
+            for (path, reason) in &failures {
+                fail_content.push_str(&format!("{} # {}\n", path, reason.replace('\n', " ")));
+            }
+            if let Err(e) = std::fs::write(dump_path, &fail_content) {
+                eprintln!("  ERROR writing failures to {}: {}", dump_path, e);
+            } else {
+                println!("\n  Failure list written to {} ({} entries)", dump_path, failures.len());
+            }
+        }
+
+        if opts.json_out {
             // JSON output for programmatic consumption
             let json = serde_json::json!({
                 "stage": stage,
@@ -658,7 +785,10 @@ impl Test262Runner {
                     })
                 }).collect::<Vec<_>>()
             });
-            println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
         }
 
         RunSummary {

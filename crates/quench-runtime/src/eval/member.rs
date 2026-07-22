@@ -40,18 +40,21 @@ pub fn eval_member_access(
             if prop_name == "caller" || prop_name == "arguments" {
                 // But first check if there's a static member with that name
                 let has_static = class.get_static_field(prop_name).is_some()
-                    || class.static_methods.iter().any(|(n, _, _, _, _)| {
-                        prop_key_matches(n, prop_name)
-                    })
+                    || class
+                        .static_methods
+                        .iter()
+                        .any(|(n, _, _, _, _)| prop_key_matches(n, prop_name))
                     || class.static_getters.iter().any(|(n, _)| {
-                        class.get_class_def_env()
+                        class
+                            .get_class_def_env()
                             .and_then(|env| {
                                 crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
                             })
                             .map_or(false, |s| s == prop_name)
                     })
                     || class.static_setters.iter().any(|(n, _, _)| {
-                        class.get_class_def_env()
+                        class
+                            .get_class_def_env()
                             .and_then(|env| {
                                 crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
                             })
