@@ -193,6 +193,7 @@ pub fn eval_object_literal(
                     &key_str,
                     Rc::new(body.clone()),
                     crate::eval::expression::capture_env_for_closure(env),
+                    false,
                 );
             }
             PropertyValue::Setter { param, body } => {
@@ -201,6 +202,7 @@ pub fn eval_object_literal(
                     param.clone(),
                     Rc::new(body.clone()),
                     crate::eval::expression::capture_env_for_closure(env),
+                    false,
                 );
             }
         }
@@ -220,10 +222,11 @@ pub fn eval_property_key(
         PropertyKey::Number(n) => Ok(n.to_string()),
         PropertyKey::Computed(e) => {
             let val = crate::eval::expression::eval_expression(e, env, in_arrow_function)?;
-            match &val {
-                Value::Symbol(s) => Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
-                _ => Ok(to_js_string(&val)),
-            }
+            let result = match &val {
+                Value::Symbol(s) => s.desc.clone().map(|d| d.to_string()).unwrap_or_default(),
+                _ => crate::value::to_js_string(&val),
+            };
+            Ok(result)
         }
     }
 }

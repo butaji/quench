@@ -76,6 +76,10 @@ pub struct ValueFunction {
     /// Strictness captured where the function was DEFINED (per spec),
     /// never inherited from the call site.
     pub strict: bool,
+    /// Whether this function was created from a MethodDefinition (class method,
+    /// getter, or setter). Such functions have restricted `caller` and
+    /// `arguments` properties per ES spec §16.1.
+    pub is_method: bool,
     /// Cached prototype object
     proto_cell: ProtoCellRef,
     /// Additional properties (e.g., sameValue, notSameValue on assert)
@@ -97,6 +101,7 @@ impl Clone for ValueFunction {
             is_async: self.is_async,
             is_generator: self.is_generator,
             strict: self.strict,
+            is_method: self.is_method,
             proto_cell: self.proto_cell.clone(),
             properties: std::rc::Rc::clone(&self.properties),
         }
@@ -148,6 +153,7 @@ impl ValueFunction {
             is_async,
             is_generator,
             strict: false,
+            is_method: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
@@ -173,6 +179,7 @@ impl ValueFunction {
             is_async: false,
             is_generator: false,
             strict: false,
+            is_method: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
@@ -239,10 +246,20 @@ impl ValueFunction {
     }
 
     /// Set a property on this function (e.g., prototype).
-    pub fn set_property(&self, key: &str, value: Value) {
+    /// Per ES spec §16.1, class methods (is_method=true) have restricted
+    /// `caller` and `arguments` properties.
+    pub fn set_property(&self, key: &str, value: Value) -> Result<(), crate::value::JsError> {
+        if self.is_method && (key == "caller" || key == "arguments") {
+            let (_, err) = crate::value::create_js_error_with_type(
+                "'caller' and 'arguments' are restricted properties and cannot be set on this function",
+                "TypeError",
+            );
+            return Err(err);
+        }
         self.with_mut(|props| {
             props.insert(key.to_string(), value);
         });
+        Ok(())
     }
 
     /// Remove a property. Returns true if it was present.

@@ -279,7 +279,7 @@ impl Object {
                 self.set_getter_func(key, get_val.clone());
             } else if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure)
             {
-                self.set_getter(key, Rc::clone(body), Rc::clone(closure));
+                self.set_getter(key, Rc::clone(body), Rc::clone(closure), false);
             }
             if let Some(ref set_val) = desc.set {
                 self.set_setter_func(key, set_val.clone());
@@ -290,6 +290,7 @@ impl Object {
                     desc.set_param.clone().unwrap_or_default(),
                     Rc::clone(body),
                     Rc::clone(closure),
+                    false,
                 );
             }
             self.properties.shift_remove(key);
@@ -313,8 +314,9 @@ impl Object {
         key: &str,
         body: Rc<Vec<crate::ast::Statement>>,
         closure: Rc<RefCell<Environment>>,
+        is_method: bool,
     ) {
-        set_getter(self, key, body, closure);
+        set_getter(self, key, body, closure, is_method);
     }
 
     pub fn set_getter_func(&mut self, key: &str, func: Value) {
@@ -327,8 +329,9 @@ impl Object {
         param: String,
         body: Rc<Vec<crate::ast::Statement>>,
         closure: Rc<RefCell<Environment>>,
+        is_method: bool,
     ) {
-        set_setter(self, key, param, body, closure);
+        set_setter(self, key, param, body, closure, is_method);
     }
 
     pub fn set_setter_func(&mut self, key: &str, func: Value) {

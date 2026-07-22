@@ -16,7 +16,6 @@ pub use string_member::eval_string_member;
 
 use crate::env::Environment;
 use crate::eval::class::helpers::prop_key_to_string;
-use crate::eval::object::call_getter;
 use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -145,19 +144,23 @@ pub fn eval_class_member(
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
                 let key_str = prop_key_to_string(name, &eval_env, false)?;
                 if key_str == prop_name {
-                    // Create a synthetic object with the getter and invoke it.
-                    // `this` inside the getter is the class constructor itself.
-                    let mut this_obj = Object::new(ObjectKind::Ordinary);
-                    this_obj.set("constructor", Value::Class(Box::new(class.clone())));
-                    let this_rc = Rc::new(RefCell::new(this_obj));
-                    let mut getter_obj = Object::new(ObjectKind::Ordinary);
-                    getter_obj.set_getter(&key_str, Rc::new(body.clone()), Rc::clone(&eval_env));
-                    let getter_obj_rc = Rc::new(RefCell::new(getter_obj));
-                    return call_getter(
-                        &this_rc,
-                        getter_obj_rc.borrow().get_getter(&key_str).unwrap(),
-                        &eval_env,
-                    );
+                    // Per ES spec, static method `this` is the class constructor itself.
+                    // Directly evaluate the getter body with `this` bound to the Class.
+                    let class_val = Value::Class(Box::new(class.clone()));
+                    let mut call_env = crate::env::Environment::with_parent(Rc::clone(&eval_env));
+                    // Push a new scope so we don't modify eval_env's scope when setting `this`.
+                    // This matches the normal function call path in call_js_function_impl_with_strict.
+                    call_env.push_scope();
+                    call_env.current_scope().borrow_mut().set_this(class_val);
+                    let call_env = Rc::new(RefCell::new(call_env));
+                    let prev_strict = crate::interpreter::is_strict_mode();
+                    crate::interpreter::set_strict_mode(true); // class bodies are always strict
+                    let result = crate::eval::statement::eval_function_body(body, &call_env, false);
+                    crate::interpreter::set_strict_mode(prev_strict);
+                    // Clear stale ControlFlow::Return left by eval_function_body (it sets the
+                    // thread-local even on normal returns, which would leak into subsequent calls).
+                    let _ = crate::interpreter::take_control_flow();
+                    return result;
                 }
             }
             // Check static setters

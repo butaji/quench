@@ -401,7 +401,7 @@ fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: boo
         let throw_body = vec![Statement::Throw(Box::new(Expression::String(
             "TypeError: 'caller' and 'callee' are not allowed in strict mode".to_string(),
         )))];
-        obj.set_getter("callee", Rc::new(throw_body), f.closure.clone());
+        obj.set_getter("callee", Rc::new(throw_body), f.closure.clone(), false);
     } else {
         // In non-strict mode, callee is the function itself
         obj.set("callee", Value::Function(f.clone()));

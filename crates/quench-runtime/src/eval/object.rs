@@ -110,7 +110,10 @@ pub fn call_getter(
     }
     let closure = Rc::clone(&getter_storage.closure);
     let body = getter_storage.body.clone();
-    let call_env = Environment::with_parent(closure);
+    let mut call_env = Environment::with_parent(closure);
+    // Push a new scope so we don't modify the closure's scope when setting `this`.
+    // This matches the normal function call path in call_js_function_impl_with_strict.
+    call_env.push_scope();
     call_env.current_scope().borrow_mut().set_this(this_val);
     let call_env = Rc::new(RefCell::new(call_env));
     if body.is_empty() {
@@ -152,7 +155,7 @@ pub fn assign_to_member(
             };
             if let Some(Value::Function(func)) = func_opt {
                 let func = func;
-                func.set_property(&prop_name, value.clone());
+                func.set_property(&prop_name, value.clone())?;
                 parent_o
                     .borrow_mut()
                     .properties
@@ -166,7 +169,7 @@ pub fn assign_to_member(
             let prop_opt = nf.get_property(&parent_prop_name);
             if let Some(Value::Function(func)) = prop_opt {
                 let func = func;
-                func.set_property(&prop_name, value.clone());
+                func.set_property(&prop_name, value.clone())?;
                 let _ = nf.set_property(&parent_prop_name, Value::Function(func));
                 return Ok(());
             }
@@ -376,6 +379,15 @@ fn assign_to_function(
         crate::value::set_thrown_value(err);
         return Err(js_err);
     }
+    // ES spec §16.1: class methods have restricted 'caller' and 'arguments'.
+    if f.is_method && (prop_name == "caller" || prop_name == "arguments") {
+        let (err, js_err) = crate::value::create_js_error_with_type(
+            "'caller' and 'arguments' are restricted properties and cannot be set on this function",
+            "TypeError",
+        );
+        crate::value::set_thrown_value(err);
+        return Err(js_err);
+    }
     if f.get_property(prop_name).is_some() && (prop_name == "length" || prop_name == "name") {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -386,7 +398,7 @@ fn assign_to_function(
         }
         return Ok(());
     }
-    f.set_property(prop_name, value);
+    f.set_property(prop_name, value)?;
     Ok(())
 }
 

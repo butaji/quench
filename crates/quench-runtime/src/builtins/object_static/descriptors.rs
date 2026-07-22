@@ -1,6 +1,9 @@
 //! Property descriptor helpers for Object.getOwnPropertyDescriptor,
 //! Object.defineProperty, and related operations.
 
+use crate::ast::Param;
+use crate::env::Environment;
+use crate::eval::class::helpers::prop_key_to_string;
 use crate::value::{
     to_bool, to_js_string, to_primitive, JsError, PropertyFlags, Value, ValueFunction,
 };
@@ -385,26 +388,59 @@ pub fn get_class_property_descriptor(
         "prototype" => Ok(Value::Undefined), // handled by eval_class_member
         _ => {
             // Check static accessors (instance accessors live on C.prototype)
-            let has_getter = c
+            let eval_env = c
+                .get_class_def_env()
+                .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+
+            // Check static getters - need to evaluate key to match computed props
+            let static_getter_body = c
                 .static_getters
                 .iter()
-                .any(|(k, _)| matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop));
-            let has_setter = c
+                .find(|(k, _)| {
+                    prop_key_to_string(k, &eval_env, false)
+                        .map(|k_str| k_str == prop)
+                        .unwrap_or(false)
+                })
+                .map(|(_, body)| body.clone());
+
+            let static_setter_info = c
                 .static_setters
                 .iter()
-                .any(|(k, _, _)| matches!(k, crate::ast::PropertyKey::Ident(s) if s == prop));
-            if has_getter || has_setter {
+                .find(|(k, _, _)| {
+                    prop_key_to_string(k, &eval_env, false)
+                        .map(|k_str| k_str == prop)
+                        .unwrap_or(false)
+                })
+                .map(|(_, param, body)| (param.clone(), body.clone()));
+
+            if static_getter_body.is_some() || static_setter_info.is_some() {
                 let mut desc = Object::new(ObjectKind::Ordinary);
-                if has_getter {
-                    desc.properties.insert("get".to_string(), Value::Undefined);
+
+                if let Some(body) = static_getter_body {
+                    let mut func =
+                        ValueFunction::new(None, vec![], body, Rc::clone(&eval_env), false, false);
+                    func.strict = true;
+                    func.is_method = true;
+                    desc.set("get", Value::Function(func));
                 }
-                if has_setter {
-                    desc.properties.insert("set".to_string(), Value::Undefined);
+
+                if let Some((param, body)) = static_setter_info {
+                    let mut func = ValueFunction::new(
+                        None,
+                        vec![Param::new(&param)],
+                        body,
+                        Rc::clone(&eval_env),
+                        false,
+                        false,
+                    );
+                    func.strict = true;
+                    func.is_method = true;
+                    desc.set("set", Value::Function(func));
                 }
-                desc.properties
-                    .insert("enumerable".to_string(), Value::Boolean(true));
-                desc.properties
-                    .insert("configurable".to_string(), Value::Boolean(true));
+
+                // Per ES spec §10.1.6.3, class accessors are non-enumerable and configurable.
+                desc.set("enumerable", Value::Boolean(false));
+                desc.set("configurable", Value::Boolean(true));
                 return Ok(Value::Object(Rc::new(RefCell::new(desc))));
             }
             Ok(Value::Undefined)

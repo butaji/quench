@@ -621,7 +621,6 @@ mod tests {
         "#,
             )
             .unwrap();
-        eprintln!("DEBUG: p types = {:?}", result);
         // p should be {done: false, value: <promise>}
         let result = ctx.eval("async function* ag() { yield 1; } let gen = ag(); let p = gen.next(); typeof p.then").unwrap();
         assert_eq!(result, Value::String("function".into()));
