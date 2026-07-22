@@ -2,8 +2,8 @@
 
 ## Current Status
 - **Stage**: 16 (test/language/statements/class - in_progress)
-- **Total stages**: 121
-- **Remaining**: ~105 stages
+- **Total stages**: 122
+- **Remaining**: ~106 stages
 - **Target**: 100% test262 conformance
 
 ## Speed-up Strategies
@@ -32,11 +32,15 @@
 **Expected Gain**: ~3x fewer LOC for builtins, easier to fix spec bugs.
 **Implementation**: See `tasks/refactor-plan.md` R0.
 
-### 5. Comprehensive Unit Test Coverage (MEDIUM IMPACT)
+### 5. Disciplined Unit Tests (MEDIUM IMPACT)
 **Problem**: Debugging without tests is slow guesswork.
-**Solution**: TDD for all Rust core functions before fixing test262 failures.
-**Expected Gain**: Faster debugging, regression prevention.
-**Implementation**: Add `#[test]` for every function in `src/eval/` and `src/value/`.
+**Solution**: Keep the AGENTS.md three-category policy — reproducers,
+core invariants test262 can't observe, refactor pins. Never replicate
+test262 assertions; no per-function coverage drives.
+**Expected Gain**: Faster debugging, regression prevention — without
+test-code bloat fighting the minimum-LOC goal.
+**Implementation**: Failing `#[test]` per fix, per the AGENTS.md
+workflow. test262 stage runs remain the spec-behavior test suite.
 
 ### 6. Better Test Harness Parallelism (LOW-MEDIUM IMPACT)
 **Problem**: Current harness may not fully utilize available cores.
@@ -72,11 +76,11 @@
 
 ## Prioritized Implementation Order
 
-1. **Unit Test Coverage** (Strategy 5) - Do this FIRST, it's the foundation
-2. **Batch Fix by Category** (Strategy 2) - Quick wins, visible progress
-3. **Parallel Stage Testing** (Strategy 1) - Significant speedup for the test loop
-4. **Self-Hosted Builtins** (Strategy 4) - Long-term maintainability
-5. **OXC Async Transform** (Strategy 3) - Handles async/await without custom impl
+1. **Batch Fix by Category** (Strategy 2) - Quick wins, visible progress
+2. **Parallel Stage Testing** (Strategy 1) - Significant speedup for the test loop
+3. **Self-Hosted Builtins** (Strategy 4) - Long-term maintainability
+4. **OXC Async Transform** (Strategy 3) - Handles async/await without custom impl
+5. **Disciplined Unit Tests** (Strategy 5) - Continuous practice per AGENTS.md, not a separate work item
 
 ---
 
@@ -84,7 +88,7 @@
 
 | Strategy | Status | Priority |
 |----------|--------|----------|
-| Unit Test Coverage | Pending | P0 |
+| Disciplined Unit Tests | Ongoing (AGENTS.md policy) | P1 |
 | Batch Fix by Category | Pending | P1 |
 | Parallel Stage Testing | Pending | P1 |
 | Self-Hosted Builtins | Pending | P2 |
