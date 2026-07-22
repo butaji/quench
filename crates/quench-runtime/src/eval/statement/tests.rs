@@ -1511,3 +1511,10 @@ mod labeled_statement {
         assert_eq!(eval("eval('{}{x: 42};')").unwrap(), Value::Number(42.0));
     }
 }
+
+#[test]
+fn test_block_const_scope() {
+    let mut ctx = crate::Context::new().unwrap();
+    let r = ctx.eval("function fn() { const u = 3; { const v = 6; return u + v; } } fn()");
+    eprintln!("block const scope: {:?}", r);
+}
