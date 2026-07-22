@@ -381,6 +381,10 @@ impl Test262Runner {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let json_out = std::env::var("TEST262_JSON")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let start = std::env::var("TEST262_STAGE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
@@ -390,7 +394,7 @@ impl Test262Runner {
         let mut stage = start;
         while let Some(stage_dir) = STAGES.get(stage).copied() {
             let s = if digest {
-                self.run_stage_digest(host, stage, stage_dir)
+                self.run_stage_digest(host, stage, stage_dir, json_out)
             } else {
                 self.run_stage(host, stage, stage_dir)
             };
@@ -489,6 +493,7 @@ impl Test262Runner {
         _host: &mut dyn Test262Host,
         stage: usize,
         stage_dir: &str,
+        json_out: bool,
     ) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
@@ -636,6 +641,24 @@ impl Test262Runner {
                 println!("    ... and {} more", paths.len() - 5);
             }
             println!();
+        }
+
+        if json_out {
+            // JSON output for programmatic consumption
+            let json = serde_json::json!({
+                "stage": stage,
+                "passed": passed,
+                "total": count,
+                "failed": failures.len(),
+                "groups": by_reason.iter().map(|(reason, paths)| {
+                    serde_json::json!({
+                        "reason": reason,
+                        "count": paths.len(),
+                        "samples": paths.iter().take(5).collect::<Vec<_>>()
+                    })
+                }).collect::<Vec<_>>()
+            });
+            println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
         }
 
         RunSummary {
