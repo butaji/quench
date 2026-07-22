@@ -321,10 +321,14 @@ pub fn eval_new(
         other => other.clone(),
     };
 
-    // NativeFunction without an explicit prototype is not a constructor
+    // NativeFunction without an explicit prototype is not a constructor,
+    // UNLESS it's a bound function (bound functions delegate [[Construct]] to the target).
     if let Value::NativeFunction(ref nf) = actual_constructor {
         let has_prototype = nf.prototype.borrow().is_some();
-        if !has_prototype {
+        let is_bound = nf.get_property("name").is_some_and(|v| {
+            matches!(&v, Value::String(n) if n.starts_with("bound "))
+        });
+        if !has_prototype && !is_bound {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
             return Err(js_err);

@@ -152,9 +152,12 @@ pub const STAGES: &[&str] = &[
 
 fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    // Skip tests that cause stack overflow (pre-existing bugs) or are too complex
+    // Skip entire subdirectories with complex infrastructure blockers
+    let skip_dirs: std::collections::HashSet<&str> =
+        [].iter().cloned().collect();
+    // Skip individual tests that cause stack overflow (pre-existing bugs)
     let skip_files: std::collections::HashSet<&str> =
-        ["prototype-wiring.js", "prototype-setter.js", "this-access-restriction-2.js", "this-check-ordering.js", "this-access-restriction.js"].iter().cloned().collect();
+        ["prototype-wiring.js", "prototype-setter.js"].iter().cloned().collect();
     if dir.is_file() {
         if dir.extension().map(|e| e == "js").unwrap_or(false)
             && !dir
@@ -172,7 +175,10 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                out.extend(collect_tests(&p));
+                let dir_name = p.file_name().unwrap().to_str().unwrap_or("");
+                if !skip_dirs.contains(dir_name) {
+                    out.extend(collect_tests(&p));
+                }
             } else if p.extension().map(|e| e == "js").unwrap_or(false)
                 && !p
                     .file_name()

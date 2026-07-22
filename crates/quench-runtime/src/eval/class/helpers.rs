@@ -1009,9 +1009,11 @@ mod tests {
     // ─── is_constructor_value ───────────────────────────────────────────────
 
     #[test]
-    fn bound_function_not_constructor() {
+    fn bound_function_is_constructable() {
+        // Bound functions from non-arrow functions have [[Construct]]
+        // and delegate to the target function.
         let r = eval("var fn = function() {}.bind(null); new fn()");
-        assert!(r.is_err());
+        assert!(r.is_ok(), "bound function should be constructable: {:?}", r);
     }
 
     #[test]
