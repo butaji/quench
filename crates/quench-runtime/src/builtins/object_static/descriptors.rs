@@ -396,8 +396,7 @@ pub fn get_class_property_descriptor(
                 .map(|o| Value::Object(Rc::clone(o)))
                 .unwrap_or(Value::Undefined);
             let mut desc = Object::new(ObjectKind::Ordinary);
-            desc.properties
-                .insert("value".to_string(), proto_val);
+            desc.properties.insert("value".to_string(), proto_val);
             desc.properties
                 .insert("writable".to_string(), Value::Boolean(false));
             desc.properties

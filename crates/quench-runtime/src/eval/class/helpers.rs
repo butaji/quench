@@ -382,38 +382,37 @@ pub fn create_class_prototype_helper_with_env(
     class: &ClassValue,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Rc<RefCell<Object>>, JsError> {
-    let parent_proto: Option<Rc<RefCell<Object>>> =
-        if let Some(ref super_class) = class.super_class {
-            let super_class_val = eval_expression(super_class, env, false)?;
-            if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
+    let parent_proto: Option<Rc<RefCell<Object>>> = if let Some(ref super_class) = class.super_class
+    {
+        let super_class_val = eval_expression(super_class, env, false)?;
+        if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
+            return Err(JsError(
+                "TypeError: superclass must be a constructor".to_string(),
+            ));
+        }
+
+        // For NativeFunction (e.g. bound functions), use proper member access
+        // to get the .prototype property (handles Object.defineProperty accessors).
+        // Per ES spec §15.2.4 step 5f: if Get(ctor, "prototype") is not Object/Null, throw TypeError
+        if let Value::NativeFunction(nf) = &super_class_val {
+            let proto_val = crate::eval::member::eval_native_function_member(nf, "prototype")?;
+            if matches!(&proto_val, Value::Null) {
+                None
+            } else if let Value::Object(o) = &proto_val {
+                Some(Rc::clone(o))
+            } else {
                 return Err(JsError(
-                    "TypeError: superclass must be a constructor".to_string(),
+                    "TypeError: superclass constructor prototype is not an object or null"
+                        .to_string(),
                 ));
             }
-
-            // For NativeFunction (e.g. bound functions), use proper member access
-            // to get the .prototype property (handles Object.defineProperty accessors).
-            // Per ES spec §15.2.4 step 5f: if Get(ctor, "prototype") is not Object/Null, throw TypeError
-            if let Value::NativeFunction(nf) = &super_class_val {
-                let proto_val =
-                    crate::eval::member::eval_native_function_member(nf, "prototype")?;
-                if matches!(&proto_val, Value::Null) {
-                    None
-                } else if let Value::Object(o) = &proto_val {
-                    Some(Rc::clone(o))
-                } else {
-                    return Err(JsError(
-                        "TypeError: superclass constructor prototype is not an object or null"
-                            .to_string(),
-                    ));
-                }
-            } else {
-                // For other types (Object, Class, Function), use the existing helper
-                get_prototype_from_class_val(&super_class_val)
-            }
         } else {
-            builtins::get_object_prototype()
-        };
+            // For other types (Object, Class, Function), use the existing helper
+            get_prototype_from_class_val(&super_class_val)
+        }
+    } else {
+        builtins::get_object_prototype()
+    };
 
     let mut proto = if let Some(parent) = parent_proto {
         Object::with_prototype(ObjectKind::Ordinary, parent)
