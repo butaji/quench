@@ -258,6 +258,9 @@ impl ClassValue {
                     let prev_strict = crate::interpreter::is_strict_mode();
                     crate::interpreter::set_strict_mode(false);
                     eval::statement::eval_function_body(body, &call_env, false)?;
+                    // A setter's completion is discarded per ES §9.1.9 — consume a
+                    // pending ControlFlow::Return so it can't leak into the next call.
+                    let _ = crate::interpreter::take_control_flow();
                     crate::interpreter::set_strict_mode(prev_strict);
                 }
                 return Ok(());
