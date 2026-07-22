@@ -12,6 +12,12 @@ pub fn eval_native_function_member(
     if let Some(val) = nf.get_property(prop_name) {
         return Ok(val);
     }
+    // Check accessor properties (defined via Object.defineProperty)
+    if let Some(acc) = nf.get_accessor(prop_name) {
+        if let Some(getter) = acc.getter {
+            return crate::eval::call_value(getter, vec![]);
+        }
+    }
     match prop_name {
         "name" => Ok(Value::String({
             let n = nf.name.clone();
