@@ -15,7 +15,14 @@ fn lower_class_member(member: &ast::ClassElement) -> Result<ClassMember, LowerEr
             }
         }
         ast::ClassElement::PropertyDefinition(prop) => lower_class_prop(prop),
-        ast::ClassElement::StaticBlock(_) => Err(LowerError::new("Static blocks not supported")),
+        ast::ClassElement::StaticBlock(block) => {
+            let body: Vec<crate::ast::Statement> = block
+                .body
+                .iter()
+                .filter_map(|s| super::super::stmt::lower_stmt(s))
+                .collect();
+            Ok(ClassMember::StaticBlock { body })
+        }
         ast::ClassElement::AccessorProperty(_) => {
             Err(LowerError::new("Accessor properties not supported"))
         }

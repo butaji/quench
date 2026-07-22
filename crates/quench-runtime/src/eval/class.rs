@@ -86,25 +86,51 @@ pub fn eval_class_expr(
     }
 
     let class_value = Value::Class(Box::new(new_value.clone()));
-    // Extract static fields and evaluate outside the borrow of new_value.
+
+    // Evaluate static members in source order using ordered_members.
+    // Per ES spec, elements are evaluated sequentially — if one throws,
+    // subsequent elements are skipped.
     let extracted_static_fields = std::mem::take(&mut new_value.static_fields);
-    for (name, value_expr) in extracted_static_fields {
-        let child_env: Rc<RefCell<Environment>> =
-            Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
-        child_env
-            .borrow_mut()
-            .current_scope()
-            .borrow_mut()
-            .set_this(class_value.clone());
-        let field_value = eval_expression(&value_expr, &child_env, false)?;
-        let key_str = prop_key_to_string(&name, &child_env, true)?;
-        if key_str == "prototype" || key_str == "constructor" {
-            return Err(JsError(format!(
-                "TypeError: static class field may not be named '{}'",
-                key_str
-            )));
+    let mut field_idx = 0usize;
+    for member in &new_value.ordered_members {
+        match member {
+            crate::ast::ClassMember::StaticField { .. } => {
+                if let Some((name, value_expr)) = extracted_static_fields.get(field_idx) {
+                    let child_env: Rc<RefCell<Environment>> =
+                        Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+                    child_env
+                        .borrow_mut()
+                        .current_scope()
+                        .borrow_mut()
+                        .set_this(class_value.clone());
+                    let field_value = eval_expression(value_expr, &child_env, false)?;
+                    let key_str = prop_key_to_string(name, &child_env, true)?;
+                    if key_str == "prototype" || key_str == "constructor" {
+                        return Err(JsError(format!(
+                            "TypeError: static class field may not be named '{}'",
+                            key_str
+                        )));
+                    }
+                    new_value.set_static_field(&key_str, field_value);
+                    field_idx += 1;
+                }
+            }
+            crate::ast::ClassMember::StaticBlock { body } => {
+                let block_env = Rc::new(RefCell::new(
+                    Environment::with_parent(Rc::clone(&class_scope)),
+                ));
+                block_env
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(class_value.clone());
+                let prev_strict = crate::interpreter::is_strict_mode();
+                crate::interpreter::set_strict_mode(true);
+                let _ = crate::eval::statement::eval_function_body(body, &block_env, false)?;
+                crate::interpreter::set_strict_mode(prev_strict);
+            }
+            _ => {}
         }
-        new_value.set_static_field(&key_str, field_value);
     }
 
     // Evaluate static accessor computed property keys during class definition.

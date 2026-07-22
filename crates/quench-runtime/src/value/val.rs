@@ -99,6 +99,10 @@ pub struct ClassValue {
     pub instance_fields: Vec<(PropertyKey, crate::ast::Expression)>,
     /// Static fields (name -> value expression)
     pub static_fields: Vec<(PropertyKey, crate::ast::Expression)>,
+    /// Static initialization blocks (ES2022): static { body }
+    pub static_blocks: Vec<Vec<crate::ast::Statement>>,
+    /// Original ordered class members for sequential evaluation
+    pub ordered_members: Vec<crate::ast::ClassMember>,
     /// Superclass expression (None for no extends)
     pub(crate) super_class: Option<Box<crate::ast::Expression>>,
     /// The class constructor's own `[[Prototype]]` (the superclass constructor).
@@ -138,6 +142,7 @@ impl ClassValue {
         let mut static_setters = Vec::new();
         let mut instance_fields = Vec::new();
         let mut static_fields = Vec::new();
+        let mut static_blocks = Vec::new();
 
         fill_members_from_ast(
             &class.body,
@@ -151,6 +156,7 @@ impl ClassValue {
             &mut static_setters,
             &mut instance_fields,
             &mut static_fields,
+            &mut static_blocks,
         );
 
         ClassValue {
@@ -166,6 +172,8 @@ impl ClassValue {
             static_setters,
             instance_fields,
             static_fields,
+            static_blocks,
+            ordered_members: class.body.clone(),
             super_class: class.super_class.clone(),
             super_class_own_proto_cell: std::rc::Rc::new(std::cell::RefCell::new(None::<Value>)),
             prototype_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -294,6 +302,7 @@ fn fill_members_from_ast(
     static_setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
     instance_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
+    static_blocks: &mut Vec<Vec<crate::ast::Statement>>,
 ) {
     for member in members {
         match member {
@@ -348,6 +357,9 @@ fn fill_members_from_ast(
             }
             ClassMember::StaticField { name, value } => {
                 static_fields.push((name.clone(), value.clone()));
+            }
+            ClassMember::StaticBlock { body } => {
+                static_blocks.push(body.clone());
             }
         }
     }
