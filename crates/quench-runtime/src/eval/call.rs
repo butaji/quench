@@ -110,19 +110,23 @@ fn eval_super_call(
 
     // After super() ran, check the lexical this-binding status. Per ES
     // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
-    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
-    while let Some(e) = current {
-        if e.borrow()
-            .scopes
-            .iter()
-            .any(|s| s.borrow().is_this_initialized())
-        {
+    // Only check the current env's scopes — parents may have `this_initialized`
+    // set from the calling function (e.g., IIFE wrapping new C()).
+    if env
+        .borrow()
+        .scopes
+        .iter()
+        .any(|s| s.borrow().is_this_initialized())
+    {
+            let (thrown_val, _) = crate::value::error::create_js_error_with_type(
+                "super() called after `this` was already initialized",
+                "ReferenceError",
+            );
+            crate::value::error::set_thrown_value(thrown_val);
             return Err(JsError(
                 "ReferenceError: super() called after `this` was already initialized".to_string(),
             ));
         }
-        current = e.borrow().get_parent();
-    }
 
     // Mark `this` as initialized on the current scope now that super()
     // succeeded, per ES §13.2.6.1 SuperCall step 7.
