@@ -1,12 +1,26 @@
 # AGENTS.md
 
-Do TDD. We need Rust core covered with unit tests. Dont duplicated test262 coverage, but cover with unit tests core stability, things not covered with test262.
+Do TDD. Dont do debug code. Dont do debug prints. Never guess — write a
+failing unit test first, every time.
 
-Dont do debug code. Dont do debug prints. Do unit tests.
+Unit tests exist to get us to 100% test262 faster, not to duplicate it.
+test262 (50k+ cases, run per stage) is the conformance gate for all
+JS-observable spec behavior — **never replicate a test262 assertion as
+a unit test**. A unit test is admitted in exactly three categories:
 
-Never guess or do printing, write unit tests. Dont just replicate test262 tests as unit tests, never.
+1. **Reproducers** — every bug, failing test262 case, or behavior
+   change enters via one failing `#[test]` asserting the exact
+   behavior, written before any production change and left in after.
+2. **Core invariants test262 cannot observe** — panic-freedom of
+   builtins, realm/`Context::reset` hygiene, `%ops%` semantics,
+   storage/key identity, soundness holes (e.g. `FROZEN_OBJECTS`).
+3. **Refactor pins** — behavior locked with a test before a delete,
+   move, or storage/prototype migration (R0–R16).
 
-Make proper coverage of Rust Runtime Core with unit tests, of all layers and all functions. Changing of this core is always with TDD.
+No coverage-for-coverage's-sake: if test262 already checks the
+behavior byte-for-byte, the stage run is the test. Test code is LOC
+too — every test must earn its maintenance cost against the
+minimum-LOC goal.
 
 Quench — JavaScript runtime targeting **100% test262 conformance**,
 staged to 100% per stage, with the **minimum possible LOC** as a
@@ -92,7 +106,9 @@ Cycle (in order):
 
 test262 output signals *what* to test; the reproduction lives as a
 unit test next to the code. The conformance run in `tests/test262.rs`
-is never edited.
+is never edited. Every test written here must fit one of the three
+admitted categories at the top of this file — reproducer,
+core-invariant, or refactor pin.
 
 ## Minimum-LOC rules
 
