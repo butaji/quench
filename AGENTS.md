@@ -40,6 +40,11 @@ cargo test -p quench-runtime
 cargo fmt -p quench-runtime
 cargo clippy -p quench-runtime --all-targets
 
+# Diagnostic tools (see docs/tools.md)
+cargo run --bin run-test -- <test.js>        # single-test runner with metadata
+TEST262_DIGEST=1 TEST262_STAGE=N cargo test   # collect ALL failures, grouped by error
+bash tools/run-each.sh                        # process-isolated (survives crashes)
+
 # Run current stage (see tasks/index.json `current_stage`)
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 # Specific stage
