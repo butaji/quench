@@ -110,6 +110,20 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
                 has_static_getter || has_static_setter || has_static_field
             }
         }
+        Value::Function(f) => {
+            if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
+                f.get_property(&key_str).is_some()
+            } else {
+                false
+            }
+        }
+        Value::NativeFunction(nf) => {
+            if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
+                nf.get_property(&key_str).is_some()
+            } else {
+                false
+            }
+        }
         _ => false,
     };
     if !is_own {
