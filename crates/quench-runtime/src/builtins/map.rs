@@ -129,19 +129,18 @@ pub fn register_map_and_set(ctx: &mut Context) {
     let map_proto_for_ctor = Rc::clone(&map_proto);
     let map_constructor = native_fn(move |args| {
         // Use native_this when called via super() (class extends Map)
-        let (map_obj, map) = if let Some(Value::Object(existing)) =
-            crate::interpreter::get_native_this()
-        {
-            existing.borrow_mut().kind = ObjectKind::Map;
-            let rc = Rc::clone(&existing);
-            let rc2 = Rc::clone(&existing);
-            (rc, rc2)
-        } else {
-            let obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
-            let rc = Rc::new(RefCell::new(obj));
-            let rc2 = Rc::clone(&rc);
-            (rc, rc2)
-        };
+        let (map_obj, map) =
+            if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
+                existing.borrow_mut().kind = ObjectKind::Map;
+                let rc = Rc::clone(&existing);
+                let rc2 = Rc::clone(&existing);
+                (rc, rc2)
+            } else {
+                let obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
+                let rc = Rc::new(RefCell::new(obj));
+                let rc2 = Rc::clone(&rc);
+                (rc, rc2)
+            };
         {
             let mut m = map.borrow_mut();
             let entries = Object::new_array(0);

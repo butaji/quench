@@ -302,14 +302,26 @@ fn make_function_constructor(
                         is_generator,
                     }) = stmts.into_iter().next()
                     {
-                        Ok(Value::Function(ValueFunction::new(
+                        let func = Value::Function(ValueFunction::new(
                             Some(name),
                             params,
                             body,
                             Rc::clone(&global_env),
                             is_async,
                             is_generator,
-                        )))
+                        ));
+                        // When called via super() from a derived class (detected by
+                        // native_this being an existing object), store the function
+                        // on the existing object's internal slots instead of creating
+                        // a new Value::Function. This preserves the derived class's
+                        // prototype chain on the object.
+                        if let Some(Value::Object(existing)) = crate::interpreter::get_native_this()
+                        {
+                            existing.borrow_mut().slots.insert("[[Call]]", func);
+                            Ok(Value::Object(existing))
+                        } else {
+                            Ok(func)
+                        }
                     } else {
                         Err(JsError::new(
                             "SyntaxError: Function constructor produced no function",
@@ -333,6 +345,71 @@ fn make_function_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_class_extends_function_is_callable() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class MyFn extends Function { constructor() { super('return 1'); } }
+                 var fn = new MyFn();
+                 fn();",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn test_class_extends_function_instanceof() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class MyFn extends Function { constructor() { super('return 1'); } }
+                 var fn = new MyFn();
+                 fn instanceof MyFn;",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_class_extends_function_instanceof_function() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class MyFn extends Function { constructor() { super('return 1'); } }
+                 var fn = new MyFn();
+                 fn instanceof Function;",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_class_extends_function_no_explicit_ctor() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class MyFn extends Function {}
+                 var fn = new MyFn('return 42');
+                 fn();",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn test_class_extends_function_is_callable_with_args() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class Adder extends Function { constructor() { super('a', 'b', 'return a + b'); } }
+                 var add = new Adder();
+                 add(3, 4);",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(7.0));
+    }
 
     #[test]
     fn test_function_constructor_compiles_real_function() {

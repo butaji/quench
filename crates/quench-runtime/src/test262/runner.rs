@@ -536,15 +536,15 @@ impl Test262Runner {
         summary.passed = passed;
         summary
     }
-/// Run all tests in a stage, collecting ALL failures (not stopping at first).
-/// Tests are panic-isolated via catch_unwind. Outputs a digest grouped by error message.
-fn run_stage_digest(
-    &self,
-    _host: &mut dyn Test262Host,
-    stage: usize,
-    stage_dir: &str,
-    opts: &DigestOptions,
-) -> RunSummary {
+    /// Run all tests in a stage, collecting ALL failures (not stopping at first).
+    /// Tests are panic-isolated via catch_unwind. Outputs a digest grouped by error message.
+    fn run_stage_digest(
+        &self,
+        _host: &mut dyn Test262Host,
+        stage: usize,
+        stage_dir: &str,
+        opts: &DigestOptions,
+    ) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
             println!("[MISSING] {}", full_path.display());
@@ -766,7 +766,11 @@ fn run_stage_digest(
             if let Err(e) = std::fs::write(dump_path, &fail_content) {
                 eprintln!("  ERROR writing failures to {}: {}", dump_path, e);
             } else {
-                println!("\n  Failure list written to {} ({} entries)", dump_path, failures.len());
+                println!(
+                    "\n  Failure list written to {} ({} entries)",
+                    dump_path,
+                    failures.len()
+                );
             }
         }
 
