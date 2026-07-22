@@ -147,10 +147,10 @@ fn test_control_flow_break() {
 
 #[test]
 fn test_control_flow_continue() {
-    interpreter::set_control_flow(ControlFlow::Continue);
+    interpreter::set_control_flow(ControlFlow::Continue(None));
     assert_eq!(
         interpreter::take_control_flow(),
-        Some(ControlFlow::Continue)
+        Some(ControlFlow::Continue(None))
     );
     assert_eq!(interpreter::take_control_flow(), None);
 }
@@ -224,10 +224,10 @@ fn test_is_control_flow_set_false() {
 fn test_control_flow_overwrite() {
     interpreter::set_control_flow(ControlFlow::Break);
     // Overwrite with Continue before consuming
-    interpreter::set_control_flow(ControlFlow::Continue);
+    interpreter::set_control_flow(ControlFlow::Continue(None));
     assert_eq!(
         interpreter::take_control_flow(),
-        Some(ControlFlow::Continue)
+        Some(ControlFlow::Continue(None))
     );
 }
 
