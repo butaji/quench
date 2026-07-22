@@ -13,18 +13,14 @@ pub fn set_getter(
     key: &str,
     body: std::rc::Rc<Vec<Statement>>,
     closure: std::rc::Rc<std::cell::RefCell<Environment>>,
+    is_method: bool,
 ) {
     let strict = crate::interpreter::is_strict_mode();
     // Create and cache the ValueFunction immediately so that
     // getOwnPropertyDescriptor returns the same function object.
-    let func = crate::value::Value::Function(ValueFunction::new(
-        None,
-        vec![],
-        (*body).clone(),
-        closure.clone(),
-        false,
-        false,
-    ));
+    let mut func = ValueFunction::new(None, vec![], (*body).clone(), closure.clone(), false, false);
+    func.is_method = is_method;
+    let func = crate::value::Value::Function(func);
     obj.getters.insert(
         key.to_string(),
         crate::value::object::helpers::GetterStorage {
@@ -34,6 +30,14 @@ pub fn set_getter(
             strict,
         },
     );
+    // Set correct flags: non-enumerable (class getters are not enumerable),
+    // configurable (can be deleted/reconfigured).
+    let flags = crate::value::object::helpers::PropertyFlags {
+        enumerable: false,
+        configurable: true,
+        ..Default::default()
+    };
+    obj.descriptors.insert(key.to_string(), flags);
 }
 
 /// Install a getter from a function value (Object.defineProperty path)
@@ -56,18 +60,21 @@ pub fn set_setter(
     param: String,
     body: std::rc::Rc<Vec<Statement>>,
     closure: std::rc::Rc<std::cell::RefCell<Environment>>,
+    is_method: bool,
 ) {
     let strict = crate::interpreter::is_strict_mode();
     // Create and cache the ValueFunction immediately so that
     // getOwnPropertyDescriptor returns the same function object.
-    let func = crate::value::Value::Function(ValueFunction::new(
+    let mut func = ValueFunction::new(
         None,
         vec![Param::new(&param)],
         (*body).clone(),
         closure.clone(),
         false,
         false,
-    ));
+    );
+    func.is_method = is_method;
+    let func = crate::value::Value::Function(func);
     obj.setters.insert(
         key.to_string(),
         crate::value::object::helpers::SetterStorage {
@@ -78,6 +85,14 @@ pub fn set_setter(
             strict,
         },
     );
+    // Set correct flags: non-enumerable (class setters are not enumerable),
+    // configurable (can be deleted/reconfigured).
+    let flags = crate::value::object::helpers::PropertyFlags {
+        enumerable: false,
+        configurable: true,
+        ..Default::default()
+    };
+    obj.descriptors.insert(key.to_string(), flags);
 }
 
 /// Install a setter from a function value (Object.defineProperty path)

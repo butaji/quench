@@ -434,7 +434,7 @@ mod member_access_tests {
              C.val;",
         )
         .unwrap();
-        assert_eq!(r, Value::String("object".to_string()));
+        assert_eq!(r, Value::String("function".to_string()));
     }
 
     #[test]

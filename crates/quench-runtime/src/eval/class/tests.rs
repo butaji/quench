@@ -7,6 +7,74 @@
 #[allow(unused_imports)]
 use crate::{Context, Value};
 
+// ─── Static accessor tests ─────────────────────────────────────────────────
+
+#[test]
+fn static_accessor_getter_reads_from_class() {
+    let mut ctx = Context::new().unwrap();
+    // Static getter reads `this._x`, where `this` is the class itself
+    let v = ctx.eval(
+        r#"
+        class C {
+            static get x() { return this._x; }
+        }
+        C._x = 42;
+        C.x
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Number(42.0));
+}
+
+#[test]
+fn static_accessor_getter_returns_this() {
+    let mut ctx = Context::new().unwrap();
+    // Verify static getter `this` is the class
+    let v = ctx.eval(
+        r#"
+        class C {
+            static get x() { return typeof this; }
+        }
+        C.x
+        "#,
+    );
+    assert_eq!(
+        v.unwrap(),
+        crate::value::Value::String("function".to_string())
+    );
+}
+
+#[test]
+fn static_accessor_setter_writes_to_class() {
+    let mut ctx = Context::new().unwrap();
+    // Static setter writes to `this._x`, where `this` is the class itself
+    let v = ctx.eval(
+        r#"
+        class C {
+            static set x(v) { this._x = v; }
+        }
+        C.x = 99;
+        C._x
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Number(99.0));
+}
+
+#[test]
+fn static_accessor_descriptor_enumerable_false() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C {
+            static get x() { return 1; }
+            static set x(v) {}
+        }
+        var desc = Object.getOwnPropertyDescriptor(C, 'x');
+        desc.enumerable
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(false));
+}
+
 // ─── eval_class_expr: class expressions ───────────────────────────────────
 
 #[test]
@@ -511,4 +579,93 @@ fn class_static_and_instance_fields_together() {
     } else {
         panic!("expected Object, got {:?}", v);
     }
+}
+
+// ─── Class method restricted properties (caller/arguments) ───────────────────
+
+#[test]
+fn class_method_caller_get_throws() {
+    // ES spec §16.1: class methods throw TypeError when accessing .caller
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { method() {} }
+        var threw = false;
+        try { C.prototype.method.caller; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn class_method_caller_set_throws() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { method() {} }
+        var threw = false;
+        try { C.prototype.method.caller = {}; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn class_method_arguments_get_throws() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { method() {} }
+        var threw = false;
+        try { C.prototype.method.arguments; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn class_method_arguments_set_throws() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { method() {} }
+        var threw = false;
+        try { C.prototype.method.arguments = {}; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn class_method_getter_caller_throws() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { get accessor() {} }
+        var desc = Object.getOwnPropertyDescriptor(C.prototype, 'accessor');
+        var threw = false;
+        try { desc.get.caller; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
+}
+
+#[test]
+fn class_method_setter_arguments_throws() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval(
+        r#"
+        class C { set accessor(x) {} }
+        var desc = Object.getOwnPropertyDescriptor(C.prototype, 'accessor');
+        var threw = false;
+        try { desc.set.arguments; } catch(e) { threw = e instanceof TypeError; }
+        threw
+        "#,
+    );
+    assert_eq!(v.unwrap(), crate::value::Value::Boolean(true));
 }

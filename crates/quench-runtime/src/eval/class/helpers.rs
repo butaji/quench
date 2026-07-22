@@ -7,7 +7,7 @@ use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
 use crate::eval::statement::eval_function_body;
 use crate::interpreter::{check_depth_guard, predeclare_let_const};
-use crate::value::{ClassValue, JsError, Object, ObjectKind, Value, ValueFunction};
+use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -399,12 +399,18 @@ pub fn create_class_prototype_helper_with_env(
             *is_generator,
         );
         func.strict = true;
+        func.is_method = true;
         proto.set(&key_str, Value::Function(func));
     }
 
     for (name, body) in &class.getters {
         let key = prop_key_to_string(name, &closure, false)?;
-        proto.set_getter(&key, Rc::new(body.clone()), Rc::clone(&member_closure));
+        proto.set_getter(
+            &key,
+            Rc::new(body.clone()),
+            Rc::clone(&member_closure),
+            true,
+        );
     }
 
     for (name, param, body) in &class.setters {
@@ -414,8 +420,22 @@ pub fn create_class_prototype_helper_with_env(
             param.clone(),
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
+            true,
         );
     }
+
+    // Set `constructor` on the prototype so `C.prototype.constructor === C`
+    // Must be non-enumerable per ES spec §10.1.7
+    proto.define(
+        "constructor",
+        Value::Class(Box::new(class.clone())),
+        PropertyFlags {
+            enumerable: false,
+            writable: true,
+            configurable: true,
+            value: None,
+        },
+    );
 
     Ok(Rc::new(RefCell::new(proto)))
 }
@@ -1296,6 +1316,417 @@ mod tests {
                 obj.get("1"),
                 Some(Value::Number(1.0)),
                 "instance getter should return 1"
+            );
+        } else {
+            panic!("expected array result, got: {:?}", arr);
+        }
+    }
+
+    // ─── Regression: instance getter after static getter with empty-body key ───
+
+    #[test]
+    fn class_instance_getter_only() {
+        // Instance getter only, no static
+        let r = eval(
+            r#"
+            function f() {}
+            class C { get [f()]() { return 1; } }
+            var c = new C();
+            c[f()]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "instance-only getter should return 1"
+        );
+    }
+
+    #[test]
+    fn class_static_getter_only() {
+        // Static getter only
+        let r = eval(
+            r#"
+            function f() {}
+            class C { static get [f()]() { return 1; } }
+            C[f()]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "static-only getter should return 1"
+        );
+    }
+
+    #[test]
+    fn class_instance_after_static_getter_same_key() {
+        // Instance getter AFTER static getter, same key
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            C[f()];  // call static first
+            c[f()]   // then instance
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "instance after static should return 1"
+        );
+    }
+
+    #[test]
+    fn class_instance_after_static_getter_different_bodies() {
+        // Instance and static have different return values
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 2; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            C[f()];
+            c[f()]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(2.0),
+            "instance getter body should win"
+        );
+    }
+
+    #[test]
+    fn class_instance_after_static_getter_empty_body() {
+        // Key function has empty body (returns undefined)
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            C[f()];
+            c[f()]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "instance getter should return 1"
+        );
+    }
+
+    #[test]
+    fn class_instance_after_static_getter_explicit_undefined() {
+        // Key function explicitly returns undefined
+        let r = eval(
+            r#"
+            function f() { return undefined; }
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            C[f()];
+            c[f()]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "explicit undefined key should work"
+        );
+    }
+
+    #[test]
+    fn class_instance_getter_two_calls() {
+        // Instance getter called twice (no static)
+        let r = eval(
+            r#"
+            function f() {}
+            class C { get [f()]() { return 1; } }
+            var c = new C();
+            var a = c[f()];
+            var b = c[f()];
+            [a, b]
+            "#,
+        );
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(obj.get("0"), Some(Value::Number(1.0)));
+            assert_eq!(obj.get("1"), Some(Value::Number(1.0)));
+        }
+    }
+
+    #[test]
+    fn class_static_then_instance_then_static() {
+        // Multiple alternating calls
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            [C[f()], c[f()], C[f()]]
+            "#,
+        );
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(obj.get("0"), Some(Value::Number(1.0)));
+            assert_eq!(obj.get("1"), Some(Value::Number(1.0)));
+            assert_eq!(obj.get("2"), Some(Value::Number(1.0)));
+        }
+    }
+
+    #[test]
+    fn class_instance_getter_non_computed_key() {
+        // Non-computed: using identifier `f` instead of `f()`
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f]() { return 1; }
+                static get [f]() { return 1; }
+            }
+            var c = new C();
+            C[f];
+            c[f]
+            "#,
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::Number(1.0),
+            "non-computed key should work"
+        );
+    }
+
+    #[test]
+    fn class_instance_getter_non_undefined_key() {
+        // Key function returns a non-undefined string
+        let r = eval(
+            r#"
+            function f() { return "x"; }
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            C[f()];
+            c[f()]
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(1.0), "string key should work");
+    }
+
+    #[test]
+    fn class_static_then_instance_empty_fn_key() {
+        // Step 1: instance getter alone works?
+        let r1 = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+            }
+            var c = new C();
+            c[f()]
+            "#,
+        );
+        assert!(r1.is_ok(), "instance getter alone should work: {:?}", r1);
+        assert_eq!(
+            r1.unwrap(),
+            Value::Number(1.0),
+            "instance getter alone should return 1"
+        );
+
+        // Step 2: static getter alone works?
+        let r2 = eval(
+            r#"
+            function f() {}
+            class C {
+                static get [f()]() { return 1; }
+            }
+            C[f()]
+            "#,
+        );
+        assert!(r2.is_ok(), "static getter alone should work: {:?}", r2);
+        assert_eq!(
+            r2.unwrap(),
+            Value::Number(1.0),
+            "static getter alone should return 1"
+        );
+
+        // Step 3: instance then static (should work)
+        let r3 = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            [c[f()], C[f()]]
+            "#,
+        );
+        assert!(r3.is_ok(), "instance then static should work: {:?}", r3);
+        let arr3 = r3.unwrap();
+        if let Value::Object(o) = arr3 {
+            let obj = o.borrow();
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "instance getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "static getter should return 1"
+            );
+        } else {
+            panic!("expected array result, got: {:?}", arr3);
+        }
+
+        // Step 4: static first, then instance (FAILS)
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            [C[f()], c[f()]]
+            "#,
+        );
+        assert!(r.is_ok(), "Class getter access should work: {:?}", r);
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "static getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "instance getter should return 1"
+            );
+        } else {
+            panic!("expected array result, got: {:?}", arr);
+        }
+    }
+
+    #[test]
+    fn class_static_then_instance_non_computed_key() {
+        // Same as above but with non-computed key: does it fail?
+        let r = eval(
+            r#"
+            class C {
+                get foo() { return 1; }
+                static get foo() { return 1; }
+            }
+            var c = new C();
+            [C.foo, c.foo]
+            "#,
+        );
+        assert!(r.is_ok(), "non-computed key should work: {:?}", r);
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "static getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "instance getter should return 1"
+            );
+        } else {
+            panic!("expected array result, got: {:?}", arr);
+        }
+    }
+
+    #[test]
+    fn class_static_getter_then_instance_computed_different_keys() {
+        // Static with computed key, instance with DIFFERENT key
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get foo() { return 2; }
+            }
+            var c = new C();
+            [C.foo, c[f()]]
+            "#,
+        );
+        assert!(r.is_ok(), "different keys should work: {:?}", r);
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(2.0)),
+                "static foo should be 2"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "instance f() should be 1"
+            );
+        } else {
+            panic!("expected array result, got: {:?}", arr);
+        }
+    }
+
+    // ── Diagnostic tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn class_instance_then_static_same_computed_key() {
+        // Instance FIRST, then static, same computed key [f()]
+        let r = eval(
+            r#"
+            function f() {}
+            class C {
+                get [f()]() { return 1; }
+                static get [f()]() { return 1; }
+            }
+            var c = new C();
+            [c[f()], C[f()]]
+            "#,
+        );
+        assert!(
+            r.is_ok(),
+            "instance then static same key should work: {:?}",
+            r
+        );
+        let arr = r.unwrap();
+        if let Value::Object(o) = arr {
+            let obj = o.borrow();
+            assert_eq!(
+                obj.get("0"),
+                Some(Value::Number(1.0)),
+                "instance getter should return 1"
+            );
+            assert_eq!(
+                obj.get("1"),
+                Some(Value::Number(1.0)),
+                "static getter should return 1"
             );
         } else {
             panic!("expected array result, got: {:?}", arr);
