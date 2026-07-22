@@ -464,6 +464,101 @@ mod tests {
     }
 
     #[test]
+    fn test_boolean_new_boxed() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("new Boolean(true).valueOf()").unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_boolean_super_check() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        // Check that extends Boolean works (no explicit constructor — default ctor)
+        let r1 = ctx
+            .eval(r#"class B extends Boolean {}; new B() instanceof Boolean"#)
+            .unwrap();
+        assert_eq!(r1, Value::Boolean(true));
+        // Check that super(true) works with explicit constructor
+        let r2 = ctx.eval(
+            r#"class B extends Boolean { constructor() { super(true); } }; new B() instanceof Boolean"#,
+        ).unwrap();
+        assert_eq!(r2, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_boolean_subclassing_default_ctor() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                r#"
+            class MyBoolean extends Boolean {}
+            let b = new MyBoolean();
+            b instanceof MyBoolean;
+        "#,
+            )
+            .unwrap();
+        assert!(
+            matches!(result, Value::Boolean(true)),
+            "expected true for no-ctor extends Boolean, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_boolean_subclassing_via_extends() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                r#"
+            class MyBoolean extends Boolean {
+                constructor() {
+                    super(true);
+                }
+                getValue() { return this.valueOf(); }
+            }
+            let b = new MyBoolean();
+            [
+                b instanceof MyBoolean,
+                b instanceof Boolean,
+                b.getValue(),
+                Object.getPrototypeOf(b) === MyBoolean.prototype,
+            ];
+        "#,
+            )
+            .unwrap();
+        match result {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert!(
+                    matches!(arr.get("0"), Some(Value::Boolean(true))),
+                    "expected true for instanceof MyBoolean, got {:?}",
+                    arr.get("0")
+                );
+                assert!(
+                    matches!(arr.get("1"), Some(Value::Boolean(true))),
+                    "expected true for instanceof Boolean, got {:?}",
+                    arr.get("1")
+                );
+                assert!(
+                    matches!(arr.get("2"), Some(Value::Boolean(true))),
+                    "expected true for getValue(), got {:?}",
+                    arr.get("2")
+                );
+                assert!(
+                    matches!(arr.get("3"), Some(Value::Boolean(true))),
+                    "expected true for Object.getPrototypeOf(b) === MyBoolean.prototype, got {:?}",
+                    arr.get("3")
+                );
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_parse_float_decimal_then_exponent() {
         assert_eq!(eval_num("parseFloat('.01e+2')"), 1.0);
         assert_eq!(eval_num("parseFloat('.5e1')"), 5.0);

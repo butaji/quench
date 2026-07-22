@@ -130,6 +130,53 @@ fn test_regexp_u_flag_basic_matches() {
 }
 
 #[test]
+fn test_regexp_subclass_prototype_chain() {
+    // `class extends RegExp` must preserve the derived class's prototype on `this`
+    let mut ctx = setup();
+    let result = ctx.eval(
+        r#"
+        class MyRegExp extends RegExp {
+            customMethod() { return "custom"; }
+        }
+        var re = new MyRegExp("abc", "g");
+        re instanceof MyRegExp && re.customMethod() === "custom" && re.source === "abc"
+        "#,
+    );
+    assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
+}
+
+#[test]
+fn test_regexp_subclass_exec() {
+    // Subclass instance must work with .exec()
+    let mut ctx = setup();
+    let result = ctx.eval(
+        r#"
+        class MyRegExp extends RegExp {
+            constructor(p, f) { super(p, f); }
+        }
+        var re = new MyRegExp("(a)(b)", "");
+        var m = re.exec("ab");
+        m !== null && m[0] === "ab"
+        "#,
+    );
+    assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
+}
+
+#[test]
+fn test_regexp_subclass_default_constructor() {
+    // Default constructor (no explicit constructor) must work
+    let mut ctx = setup();
+    let result = ctx.eval(
+        r#"
+        class MyRegExp extends RegExp {}
+        var re = new MyRegExp("hello");
+        re instanceof MyRegExp && re.test("hello world")
+        "#,
+    );
+    assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
+}
+
+#[test]
 fn test_string_search_and_match_both_call_exec() {
     let mut ctx = setup();
     assert!(ctx.eval(r#"/abc/.exec("abcdef")"#).is_ok());

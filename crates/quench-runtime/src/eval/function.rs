@@ -91,7 +91,16 @@ pub(crate) fn call_value_impl(
         }
         Value::NativeFunction(nf) => call_native_function(nf, args, this_val),
         Value::NativeConstructor(nc) => call_native_constructor(nc, args, this_val),
-        Value::Object(o) => call_object_as_constructor(o, args, this_val),
+        Value::Object(o) => {
+            // Check if this object has an internal [[Call]] slot (set by the
+            // Function constructor when called via super() from a class that
+            // extends Function). If so, call the stored function directly.
+            let call_slot = o.borrow().slots.get("[[Call]]").cloned();
+            if let Some(f) = call_slot {
+                return call_value_impl(f, args, this_val, force_strict);
+            }
+            call_object_as_constructor(o, args, this_val)
+        }
         Value::Class(class) => {
             if this_val != Value::Undefined {
                 crate::eval::class::call_super_constructor(
