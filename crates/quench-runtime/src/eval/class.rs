@@ -53,10 +53,14 @@ pub fn eval_class_expr(
 
     // Set super_class on class_scope so static method closures capture it.
     // Must happen BEFORE get_or_create_class_prototype (which evaluates the class body).
-    if let Some(ref super_class_expr) = new_value.super_class {
-        let super_class_val = eval_expression(super_class_expr, &class_scope, false)?;
-        class_scope.borrow_mut().set_super_class(super_class_val);
-    }
+    // Evaluate the superclass expression ONCE and cache for reuse.
+    let cached_super_class_val = if let Some(ref super_class_expr) = new_value.super_class {
+        let val = eval_expression(super_class_expr, &class_scope, false)?;
+        class_scope.borrow_mut().set_super_class(val.clone());
+        Some(val)
+    } else {
+        None
+    };
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
 
@@ -68,10 +72,9 @@ pub fn eval_class_expr(
 
     // Set the class constructor's own [[Prototype]] (the superclass constructor).
     // This is what Object.getPrototypeOf(C) should return.
-    if let Some(ref super_class_expr) = new_value.super_class {
-        let super_class_val = eval_expression(super_class_expr, &class_scope, false)?;
+    if let Some(ref super_class_val) = cached_super_class_val {
         let super_class_proto =
-            crate::eval::class::helpers::get_super_class_own_proto(&super_class_val);
+            crate::eval::class::helpers::get_super_class_own_proto(super_class_val);
         new_value.set_super_class_own_proto(super_class_proto);
     } else {
         // No extends: C's own [[Prototype]] is %FunctionPrototype%
