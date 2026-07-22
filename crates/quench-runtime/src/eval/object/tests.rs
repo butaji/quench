@@ -824,3 +824,31 @@ if (obj2[prop] !== 42) throw new Error('Test2: getter should return 42');
         result
     );
 }
+
+// Reproducer: an accessor body invoked through a direct `eval_function_body`
+// call (static setter in `set_static_property`, `call_getter`/`call_setter`)
+// leaves `ControlFlow::Return` pending, corrupting the next call of a
+// function without a `return` statement (test262
+// cpn-class-decl-accessors-computed-property-name-from-function-declaration).
+#[test]
+fn static_setter_return_does_not_leak_into_next_call() {
+    let mut ctx = Context::new().unwrap();
+    let r = ctx
+        .eval(
+            "function f() {}\
+             class C { static get [f()]() { return 1; } static set [f()](v) { return 1; } }\
+             C[f()] = 1;\
+             [f(), C[String(f())]]",
+        )
+        .unwrap();
+    let Value::Object(o) = r else {
+        panic!("expected array");
+    };
+    let elems = o.borrow().elements.clone();
+    assert_eq!(elems[0], Value::Undefined, "f() must stay undefined");
+    assert_eq!(
+        elems[1],
+        Value::Number(1.0),
+        "C[String(f())] must still reach the getter"
+    );
+}
