@@ -455,7 +455,7 @@ impl Test262Runner {
                 total.first_failure = s.first_failure;
                 break;
             }
-            if !all && !digest {
+            if !all {
                 break;
             }
             stage += 1;
