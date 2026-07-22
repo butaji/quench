@@ -97,8 +97,8 @@ Too minimal — lacks the Unicode properties that JS `RegExp` requires.
 ## BigInt support — `num-bigint`
 
 - **Crate:** `num-bigint = "0.4"`.
-- **Why:** Powers `Value::BigInt` and the `BigInt` builtin (stage 50)
-  plus the `BigInt` literal at parse/lower time. Re-implements the ES
+- **Why:** Powers `Value::BigInt` and the `BigInt` builtin plus the
+  `BigInt` literal at parse/lower time. Re-implements the ES
   arbitrary-precision integer semantics verbatim, including ToString and
   arithmetic, so we do not carry a hand-rolled bignum.
 - **Used by:** `src/value/val.rs`, `src/builtins/bigint.rs`.
