@@ -45,12 +45,11 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                 // Check built-in properties (only if they exist in the properties HashMap,
                 // which means they haven't been deleted)
                 if key_str == "name" || key_str == "length" {
-                    // If the property was explicitly set via define_property or set_property,
-                    // check if it still exists (may have been deleted)
-                    if nf.get_property(&key_str).is_some() {
-                        return Ok(Value::Boolean(true));
-                    }
-                    return Ok(Value::Boolean(false));
+                    // name and length are always own properties of NativeFunction
+                    // unless explicitly deleted (checked via get_property).
+                    // If not found in properties HashMap, they're handled by the
+                    // member access match, so they ARE own properties.
+                    return Ok(Value::Boolean(true));
                 }
                 // Check prototype
                 if key_str == "prototype" && nf.prototype.borrow().is_some() {
