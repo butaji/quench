@@ -113,16 +113,17 @@ pub fn eval_statements(
         let is_last_stmt = i == last_idx;
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
-        // empty statements) should not replace the previous completion value.
+        // empty statements, empty blocks) should not replace the previous completion value.
         // Only update last_val when the statement produces a non-empty value.
-        if !matches!(
+        let is_empty_completion = matches!(
             stmt,
             Statement::VarDeclaration { .. }
                 | Statement::FunctionDeclaration { .. }
                 | Statement::ClassDeclaration { .. }
                 | Statement::SequenceDecls(_)
                 | Statement::Empty
-        ) {
+        ) || matches!(stmt, Statement::Block(s) if s.is_empty());
+        if !is_empty_completion {
             last_val = val;
         }
         // For the last statement, DON'T check ControlFlow::Return here.
@@ -201,9 +202,9 @@ pub fn eval_function_body(
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
         // Per ES §8.3.2, empty completions (var/let/const/function declarations,
-        // empty statements, break/continue) should not replace the previous
+        // empty statements, break/continue, empty blocks) should not replace the previous
         // completion value.
-        if !matches!(
+        let is_empty = matches!(
             stmt,
             Statement::VarDeclaration { .. }
                 | Statement::FunctionDeclaration { .. }
@@ -212,7 +213,8 @@ pub fn eval_function_body(
                 | Statement::Break(_)
                 | Statement::Continue(_)
                 | Statement::Empty
-        ) {
+        ) || matches!(stmt, Statement::Block(s) if s.is_empty());
+        if !is_empty {
             last_val = stmt_val;
         }
         // For the last statement, DON'T check ControlFlow::Return here.
