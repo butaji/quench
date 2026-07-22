@@ -83,26 +83,32 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
             obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
         }
         Value::Class(class_ref) => {
-            let eval_env = class_ref
-                .get_class_def_env()
-                .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
-            // Static accessors exist on the class
-            let has_static_getter = class_ref.static_getters.iter().any(|(k, _)| {
-                prop_key_to_string(k, &eval_env, false)
-                    .map(|k_str| k_str == name_str)
-                    .unwrap_or(false)
-            });
-            let has_static_setter = class_ref.static_setters.iter().any(|(k, _, _)| {
-                prop_key_to_string(k, &eval_env, false)
-                    .map(|k_str| k_str == name_str)
-                    .unwrap_or(false)
-            });
-            // Static fields: stored in static_properties_cell
-            let has_static_field = class_ref
-                .static_properties_cell
-                .borrow()
-                .contains_key(&name_str);
-            has_static_getter || has_static_setter || has_static_field
+            // Built-in class properties (name, prototype) are always own
+            // unless explicitly deleted.
+            if name_str == "name" || name_str == "prototype" {
+                !class_ref.deleted_properties.borrow().contains(&name_str)
+            } else {
+                let eval_env = class_ref
+                    .get_class_def_env()
+                    .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+                // Static accessors exist on the class
+                let has_static_getter = class_ref.static_getters.iter().any(|(k, _)| {
+                    prop_key_to_string(k, &eval_env, false)
+                        .map(|k_str| k_str == name_str)
+                        .unwrap_or(false)
+                });
+                let has_static_setter = class_ref.static_setters.iter().any(|(k, _, _)| {
+                    prop_key_to_string(k, &eval_env, false)
+                        .map(|k_str| k_str == name_str)
+                        .unwrap_or(false)
+                });
+                // Static fields: stored in static_properties_cell
+                let has_static_field = class_ref
+                    .static_properties_cell
+                    .borrow()
+                    .contains_key(&name_str);
+                has_static_getter || has_static_setter || has_static_field
+            }
         }
         _ => false,
     };
