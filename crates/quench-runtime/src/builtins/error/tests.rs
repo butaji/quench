@@ -195,3 +195,18 @@ fn test_type_error_prototype_constructor_is_type_error() {
         .unwrap();
     assert!(to_bool(&result));
 }
+
+#[test]
+fn core_error_message_own_property_spec() {
+    let mut ctx = crate::Context::new().unwrap();
+    // When called with msg, message IS own property
+    let r = ctx
+        .eval("var e = new Error('test'); Object.prototype.hasOwnProperty.call(e, 'message')")
+        .unwrap();
+    assert_eq!(r, crate::value::Value::Boolean(true));
+    // When called without args, message is NOT own property
+    let r2 = ctx
+        .eval("var e2 = new Error(); Object.prototype.hasOwnProperty.call(e2, 'message')")
+        .unwrap();
+    assert_eq!(r2, crate::value::Value::Boolean(false));
+}

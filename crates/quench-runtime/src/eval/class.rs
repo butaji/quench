@@ -48,7 +48,8 @@ pub fn eval_class_expr(
             .initialize_declared(name, class_val);
         // Also initialize in env (parent scope) so static blocks can access
         // the class name before eval_class_decl calls env.define().
-        env.borrow_mut().define(name.to_string(), Value::Class(Box::new(new_value.clone())));
+        env.borrow_mut()
+            .define(name.to_string(), Value::Class(Box::new(new_value.clone())));
         scope_env
     } else {
         Rc::clone(env)
@@ -130,9 +131,7 @@ pub fn eval_class_expr(
                 }
             }
             crate::ast::ClassMember::StaticBlock { body } => {
-                let block_env = Rc::new(RefCell::new(
-                    Environment::with_parent(Rc::clone(env)),
-                ));
+                let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
                 block_env
                     .borrow_mut()
                     .current_scope()

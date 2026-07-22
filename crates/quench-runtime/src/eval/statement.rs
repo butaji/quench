@@ -147,7 +147,7 @@ pub fn eval_statements(
                 return Ok(val);
             }
             // Propagate break/continue so enclosing loops can observe them.
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue(_))) => {
                 set_control_flow(cf);
                 return Ok(last_val);
             }
@@ -230,7 +230,7 @@ pub fn eval_function_body(
             Some(ControlFlow::Return(val)) => return Ok(val),
             Some(
                 cf @ (ControlFlow::Break
-                | ControlFlow::Continue
+                | ControlFlow::Continue(_)
                 | ControlFlow::Yield(_)
                 | ControlFlow::YieldDelegate(_)),
             ) => {
@@ -374,7 +374,9 @@ pub fn eval_statement(
                 Ok(Value::Undefined)
             }
         }
-        Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
+        Statement::While { condition, body } => {
+            eval_while(condition, body, &[], env, in_arrow_function)
+        }
         Statement::DoWhile {
             body,
             condition,
@@ -385,7 +387,7 @@ pub fn eval_statement(
             condition,
             update,
             body,
-        } => eval_for(init, condition, update, body, env, in_arrow_function),
+        } => eval_for(init, condition, update, body, &[], env, in_arrow_function),
         Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
         Statement::SequenceDecls(stmts) => {
             // Evaluate var declarations in sequence without creating a new scope
@@ -409,8 +411,9 @@ pub fn eval_statement(
             push_label_scope();
             add_label(label);
             // Transfer this label (and any others already in scope) to a
-            // DoWhile body so break/continue can find it. This is needed because
-            // DoWhile is evaluated outside the Labeled statement's scope.
+            // DoWhile / While / For body so break/continue can find it. This
+            // is needed because these loops are evaluated outside the Labeled
+            // statement's scope.
             if let Statement::DoWhile {
                 body: inner_body,
                 condition,
@@ -421,6 +424,36 @@ pub fn eval_statement(
                 all_labels.extend(labels.iter().cloned());
                 let result =
                     eval_do_while(inner_body, condition, all_labels, env, in_arrow_function);
+                pop_label_scope();
+                return result;
+            }
+            if let Statement::While {
+                condition,
+                body: inner_body,
+            } = body.as_ref()
+            {
+                let labels = vec![label.clone()];
+                let result = eval_while(condition, inner_body, &labels, env, in_arrow_function);
+                pop_label_scope();
+                return result;
+            }
+            if let Statement::For {
+                init,
+                condition,
+                update,
+                body: inner_body,
+            } = body.as_ref()
+            {
+                let labels = vec![label.clone()];
+                let result = eval_for(
+                    init,
+                    condition,
+                    update,
+                    inner_body,
+                    &labels,
+                    env,
+                    in_arrow_function,
+                );
                 pop_label_scope();
                 return result;
             }
@@ -453,7 +486,7 @@ pub fn eval_statement(
                     return Err(js_err);
                 }
             }
-            set_control_flow(ControlFlow::Continue);
+            set_control_flow(ControlFlow::Continue(label.clone()));
             Ok(Value::Undefined)
         }
         Statement::Try {
@@ -588,6 +621,13 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
+    // Per ES §14.6.13 step 18a: when a VariableDeclaration's initializer
+    // evaluates to an anonymous class expression, set the class name.
+    if let Value::Class(ref mut c) = value {
+        if c.name.is_none() {
+            c.set_name(name);
+        }
+    }
     env.borrow_mut().initialize_declared(name, value.clone());
     // For top-level var declarations, also set on globalThis
     if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
@@ -635,9 +675,15 @@ fn eval_class_decl(
     Ok(Value::Undefined)
 }
 
+/// Check if `label` matches one of the loop's own labels.
+fn matches_loop_label(label: &str, own_labels: &[String]) -> bool {
+    own_labels.iter().any(|l| l == label)
+}
+
 fn eval_while(
     condition: &Expression,
     body: &Statement,
+    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -655,7 +701,12 @@ fn eval_while(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
     }
@@ -674,7 +725,7 @@ fn eval_do_while(
     for lbl in &labels {
         add_label(lbl);
     }
-    let result = eval_do_while_impl(body, condition, env, in_arrow_function);
+    let result = eval_do_while_impl(body, condition, &labels, env, in_arrow_function);
     pop_label_scope();
     result
 }
@@ -682,6 +733,7 @@ fn eval_do_while(
 fn eval_do_while_impl(
     body: &Statement,
     condition: &Expression,
+    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -698,7 +750,12 @@ fn eval_do_while_impl(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
         // Check condition; if false, return the body completion value
@@ -714,6 +771,7 @@ fn eval_for(
     condition: &Option<Box<Expression>>,
     update: &Option<Box<Expression>>,
     body: &Statement,
+    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -753,7 +811,12 @@ fn eval_for(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
         if let Some(update) = update {
@@ -819,8 +882,8 @@ fn eval_try(
                                 ControlFlow::Break => {
                                     set_control_flow(ControlFlow::Break);
                                 }
-                                ControlFlow::Continue => {
-                                    set_control_flow(ControlFlow::Continue);
+                                ControlFlow::Continue(label) => {
+                                    set_control_flow(ControlFlow::Continue(label));
                                 }
                                 _ => {}
                             }
@@ -864,8 +927,8 @@ fn eval_try(
                                     ControlFlow::Break => {
                                         set_control_flow(ControlFlow::Break);
                                     }
-                                    ControlFlow::Continue => {
-                                        set_control_flow(ControlFlow::Continue);
+                                    ControlFlow::Continue(label) => {
+                                        set_control_flow(ControlFlow::Continue(label));
                                     }
                                     _ => {}
                                 }
@@ -1020,7 +1083,11 @@ fn eval_for_in_stmt(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
     }
