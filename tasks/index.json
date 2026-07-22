@@ -131,7 +131,7 @@
       "id": 19,
       "path": "test/language/statements/debugger",
       "tests": 2,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 20,
@@ -143,13 +143,13 @@
       "id": 21,
       "path": "test/language/statements/empty",
       "tests": 2,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 22,
       "path": "test/language/statements/expression",
       "tests": 3,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 23,
@@ -179,7 +179,7 @@
       "id": 27,
       "path": "test/language/statements/generators",
       "tests": 266,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 28,
@@ -203,7 +203,7 @@
       "id": 31,
       "path": "test/language/statements/return",
       "tests": 16,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 32,
@@ -215,7 +215,7 @@
       "id": 33,
       "path": "test/language/statements/throw",
       "tests": 14,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 34,

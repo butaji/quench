@@ -413,6 +413,14 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     .join("; ");
                 format!("static set {}({}) {{{}}}", name_str, param, body_str)
             }
+            crate::ast::ClassMember::StaticBlock { body } => {
+                let body_str = body
+                    .iter()
+                    .map(stmt_to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("static {{ {} }}", body_str)
+            }
         }
     }
 
