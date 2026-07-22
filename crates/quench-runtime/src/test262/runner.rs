@@ -373,6 +373,10 @@ impl Test262Runner {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let digest = std::env::var("TEST262_DIGEST")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let start = std::env::var("TEST262_STAGE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
@@ -381,14 +385,18 @@ impl Test262Runner {
         let mut total = RunSummary::default();
         let mut stage = start;
         while let Some(stage_dir) = STAGES.get(stage).copied() {
-            let s = self.run_stage(host, stage, stage_dir);
+            let s = if digest {
+                self.run_stage_digest(host, stage, stage_dir)
+            } else {
+                self.run_stage(host, stage, stage_dir)
+            };
             total.passed += s.passed;
             total.failed += s.failed;
-            if s.failed > 0 {
+            if s.failed > 0 && !digest {
                 total.first_failure = s.first_failure;
                 break;
             }
-            if !all {
+            if !all && !digest {
                 break;
             }
             stage += 1;
@@ -468,5 +476,160 @@ impl Test262Runner {
         }
         summary.passed = passed;
         summary
+    }
+
+    /// Run all tests in a stage, collecting ALL failures (not stopping at first).
+    /// Tests are panic-isolated via catch_unwind. Outputs a digest grouped by error message.
+    fn run_stage_digest(
+        &self,
+        _host: &mut dyn Test262Host,
+        stage: usize,
+        stage_dir: &str,
+    ) -> RunSummary {
+        let full_path = self.test262_dir.join(stage_dir);
+        if !full_path.exists() {
+            println!("[MISSING] {}", full_path.display());
+            return RunSummary::default();
+        }
+
+        let mut tests = collect_tests(&full_path);
+        tests.sort();
+        let count = tests.len();
+        let timeout = std::time::Duration::from_secs(TEST_TIMEOUT_SECS);
+
+        println!("\n=== DIGEST Stage {}: {} ({} tests) ===", stage, stage_dir, count);
+
+        let mut failures: Vec<(String, String)> = Vec::new(); // (path, reason)
+        let mut passed = 0usize;
+
+        for (i, path) in tests.iter().enumerate() {
+            if (i + 1) % 50 == 0 || i == 0 {
+                println!("  [{}/{}] ...", i + 1, count);
+            }
+
+            // Read test source + metadata
+            let source = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(_) => { failures.push((path.display().to_string(), "read error".into())); continue; }
+            };
+            let meta = match Test262Metadata::parse(&source) {
+                Some(m) => m,
+                None => { failures.push((path.display().to_string(), "bad frontmatter".into())); continue; }
+            };
+            if crate::test262::skip::should_skip(&meta).is_some() { passed += 1; continue; }
+            if let Some(tp) = path.to_str() {
+                if crate::test262::skip::should_skip_path(tp).is_some() { passed += 1; continue; }
+            }
+
+            let is_raw = meta.flags.contains(&"raw".to_string());
+            let is_module = meta.flags.contains(&"module".to_string());
+
+            let script = if is_raw {
+                source.clone()
+            } else {
+                match self.harness.build_script(&source, &meta.includes) {
+                    Ok(s) => s,
+                    Err(e) => { failures.push((path.display().to_string(), e)); continue; }
+                }
+            };
+
+            let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
+            let only_strict = meta.flags.contains(&"onlyStrict".to_string());
+
+            let test_path = path.to_string_lossy().to_string();
+            let meta2 = meta.clone();
+            let script2 = script.clone();
+
+            // Run test with panic isolation and timeout via thread
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let mut inner = crate::test262::host::QuenchHost::new();
+                    let r = if is_module { inner.run_module_script(&script2) }
+                             else { inner.run_script(&script2) };
+                    let _ = tx.send(check_outcome(&meta2, r));
+                });
+                match rx.recv_timeout(timeout) {
+                    Ok(outcome) => outcome,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
+                        reason: format!("timed out after {}s", TEST_TIMEOUT_SECS),
+                    },
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
+                        reason: "panicked/crash".into(),
+                    },
+                }
+            }));
+
+            let outcome = match result {
+                Ok(o) => o,
+                Err(_) => TestOutcome::Fail { reason: "panic in harness".into() },
+            };
+
+            match outcome {
+                TestOutcome::Pass => { passed += 1; }
+                TestOutcome::Fail { reason } => {
+                    failures.push((test_path.clone(), reason));
+                }
+            }
+
+            // Also run strict mode variant
+            if !only_strict && !no_strict {
+                let strict_script = format!("\"use strict\";\n{}", script);
+                let meta3 = meta.clone();
+                let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let mut inner = crate::test262::host::QuenchHost::new();
+                        let r = if is_module { inner.run_module_script(&strict_script) }
+                                 else { inner.run_script(&strict_script) };
+                        let _ = tx.send(check_outcome(&meta3, r));
+                    });
+                    match rx.recv_timeout(timeout) {
+                        Ok(o) => o,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
+                        reason: format!("strict: timed out after {}s", TEST_TIMEOUT_SECS),
+                        },
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
+                            reason: "strict: panicked".into(),
+                        },
+                    }
+                }));
+                if let Ok(TestOutcome::Fail { reason }) = result2 {
+                    failures.push((format!("{} (strict)", test_path), reason));
+                }
+            }
+        }
+
+        // Group failures by error message
+        let mut by_reason: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (path, reason) in &failures {
+            // Normalize: remove test-specific details (line numbers, values)
+            let key = reason.split(" - ").next().unwrap_or(reason).to_string();
+            by_reason.entry(key).or_default().push(path.clone());
+        }
+
+        println!("\n=== DIGEST RESULTS — Stage {} ===", stage);
+        println!("Passed: {}/{}", passed, count);
+        println!("Failed: {}", failures.len());
+        println!();
+        for (reason, paths) in &by_reason {
+            println!("────────────────────────────────────────────");
+            println!("  {}  ({} tests)", reason, paths.len());
+            println!("────────────────────────────────────────────");
+            for p in paths.iter().take(5) {
+                println!("    {}", p);
+            }
+            if paths.len() > 5 {
+                println!("    ... and {} more", paths.len() - 5);
+            }
+            println!();
+        }
+
+        RunSummary {
+            passed,
+            failed: failures.len(),
+            first_failure: failures.first().cloned(),
+        }
     }
 }
