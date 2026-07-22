@@ -269,7 +269,7 @@
       "id": 42,
       "path": "test/language/statementList",
       "tests": 80,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 43,

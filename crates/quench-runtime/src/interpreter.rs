@@ -356,16 +356,17 @@ pub fn eval_program(
             for stmt in statements {
                 let val = crate::eval::eval_statement(stmt, env, false, false)?;
                 // Empty completions (var/let/const/function/class declarations,
-                // empty statements) should not replace the previous
+                // empty statements, empty blocks) should not replace the previous
                 // completion value (ES §8.3.2).
-                if !matches!(
+                let is_empty_completion = matches!(
                     stmt,
                     crate::ast::Statement::VarDeclaration { .. }
                         | crate::ast::Statement::FunctionDeclaration { .. }
                         | crate::ast::Statement::ClassDeclaration { .. }
                         | crate::ast::Statement::SequenceDecls(_)
                         | crate::ast::Statement::Empty
-                ) {
+                ) || matches!(stmt, crate::ast::Statement::Block(s) if s.is_empty());
+                if !is_empty_completion {
                     last_value = val;
                 }
             }
