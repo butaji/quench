@@ -89,19 +89,18 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
     let set_proto_for_ctor = Rc::clone(&set_proto);
     let set_constructor = native_fn(move |args| {
         // Use native_this when called via super() (class extends Set)
-        let (set_obj, set) = if let Some(Value::Object(existing)) =
-            crate::interpreter::get_native_this()
-        {
-            existing.borrow_mut().kind = ObjectKind::Set;
-            let rc = Rc::clone(&existing);
-            let rc2 = Rc::clone(&existing);
-            (rc, rc2)
-        } else {
-            let obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
-            let rc = Rc::new(RefCell::new(obj));
-            let rc2 = Rc::clone(&rc);
-            (rc, rc2)
-        };
+        let (set_obj, set) =
+            if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
+                existing.borrow_mut().kind = ObjectKind::Set;
+                let rc = Rc::clone(&existing);
+                let rc2 = Rc::clone(&existing);
+                (rc, rc2)
+            } else {
+                let obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
+                let rc = Rc::new(RefCell::new(obj));
+                let rc2 = Rc::clone(&rc);
+                (rc, rc2)
+            };
         {
             let mut s = set.borrow_mut();
             let values = Object::new_array(0);

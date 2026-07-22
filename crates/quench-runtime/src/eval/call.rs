@@ -95,6 +95,10 @@ fn eval_super_call(
         Value::Object(o) => {
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
                 call_value_with_this(Value::Function(constructor.clone()), args, this_val)
+            } else if let Some(Value::NativeFunction(nf)) = o.borrow().get("constructor") {
+                call_value_with_this(Value::NativeFunction(nf.clone()), args, this_val)
+            } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
+                call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
             } else {
                 Ok(Value::Undefined)
             }

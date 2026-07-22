@@ -178,9 +178,17 @@ pub fn eval_function_body(
         if let Statement::Return(ref expr) = stmt {
             if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
                 // Set tail-call signal, then break to let the trampoline extract
-                // the accumulator from the acc_stack.
+                // the accumulator from the acc_stack. If no signal was set
+                // (e.g. callee is a NativeFunction, not a JS ValueFunction),
+                // fall through to normal return evaluation.
                 handle_tail_call(expr, env, in_arrow_function)?;
-                break;
+                // Check if a tail-call signal was actually set. NativeFunction and
+                // NativeConstructor callees skip TCO, so no signal is set — fall
+                // through to normal return evaluation instead.
+                if let Some(signal) = take_tail_call_signal() {
+                    set_tail_call_signal(signal);
+                    break;
+                }
             }
             // Non-tail return.
             let val = match expr {
@@ -266,8 +274,13 @@ fn handle_tail_call(
                 .iter()
                 .map(|arg| eval_expression(arg, env, in_arrow_function))
                 .collect::<Result<Vec<_>, _>>()?;
-            let function = resolve_callee_to_function(callee_val)?;
-            set_tail_call_signal(TailCallSignal::new(function, args));
+            // Tail-call optimization only applies to ValueFunction (JS functions).
+            // NativeFunction / NativeConstructor / Class values are callable but
+            // cannot be stored in a TailCallSignal; skip the optimization and let
+            // normal evaluation handle the call.
+            if let Ok(function) = resolve_callee_to_function(callee_val) {
+                set_tail_call_signal(TailCallSignal::new(function, args));
+            }
         }
     }
     Ok(())
@@ -290,7 +303,13 @@ fn handle_tail_call_in_block(
     if let Statement::Return(ref expr) = last_stmt {
         if expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
             handle_tail_call(expr, env, in_arrow_function)?;
-            return Ok(Some(()));
+            // Only signal success if a tail-call signal was actually set
+            // (NativeFunction / NativeConstructor skip TCO).
+            let sig = take_tail_call_signal();
+            if let Some(signal) = sig {
+                set_tail_call_signal(signal);
+                return Ok(Some(()));
+            }
         }
         // Non-tail return inside block: evaluate it and propagate via control flow.
         let val = match expr.as_ref() {

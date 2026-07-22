@@ -104,7 +104,8 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
             let error_rc = match crate::interpreter::get_native_this() {
                 Some(Value::Object(obj)) => obj,
                 _ => {
-                    let obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
+                    let obj =
+                        Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
                     Rc::new(RefCell::new(obj))
                 }
             };

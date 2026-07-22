@@ -136,7 +136,16 @@ pub fn register_symbol(ctx: &mut Context) {
             crate::value::to_js_string(&args[0])
         };
         // Store only the description; to_js_string will format as "Symbol(desc)"
-        Ok(new_symbol(&desc))
+        //
+        // Use native_this when called via super() (class extends Symbol),
+        // storing the symbol as a boxed value so the derived instance
+        // inherits from the correct prototype chain.
+        if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
+            crate::builtins::object::set_boxed_value(&mut existing.borrow_mut(), new_symbol(&desc));
+            Ok(Value::Object(existing))
+        } else {
+            Ok(new_symbol(&desc))
+        }
     });
     let symbol_fn = Rc::new(symbol_constructor);
 
