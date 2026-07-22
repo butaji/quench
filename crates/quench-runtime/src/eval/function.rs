@@ -101,7 +101,11 @@ pub(crate) fn call_value_impl(
                     &Rc::new(RefCell::new(Environment::new())),
                 )
             } else {
-                crate::eval::class::instantiate_class_from_ast(*class, args)
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Class constructor cannot be invoked without 'new'",
+                    "TypeError",
+                );
+                Err(js_err)
             }
         }
         _ => {

@@ -112,15 +112,16 @@ pub fn eval_statements(
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
-        // Per ES spec §8.3.2, empty completions (var/let/const/function declarations)
-        // should not replace the previous completion value. Only update last_val
-        // when the statement produces a non-empty value (like an expression).
+        // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
+        // empty statements) should not replace the previous completion value.
+        // Only update last_val when the statement produces a non-empty value.
         if !matches!(
             stmt,
             Statement::VarDeclaration { .. }
                 | Statement::FunctionDeclaration { .. }
                 | Statement::ClassDeclaration { .. }
                 | Statement::SequenceDecls(_)
+                | Statement::Empty
         ) {
             last_val = val;
         }
@@ -199,14 +200,18 @@ pub fn eval_function_body(
         }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
-        // Per ES §8.3.2, empty completions (var/let/const/function declarations)
-        // should not replace the previous completion value.
+        // Per ES §8.3.2, empty completions (var/let/const/function declarations,
+        // empty statements, break/continue) should not replace the previous
+        // completion value.
         if !matches!(
             stmt,
             Statement::VarDeclaration { .. }
                 | Statement::FunctionDeclaration { .. }
                 | Statement::ClassDeclaration { .. }
                 | Statement::SequenceDecls(_)
+                | Statement::Break(_)
+                | Statement::Continue(_)
+                | Statement::Empty
         ) {
             last_val = stmt_val;
         }

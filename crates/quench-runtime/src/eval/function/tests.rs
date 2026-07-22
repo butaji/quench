@@ -693,22 +693,21 @@ fn async_call_returns_promise_value_direct() {
 // ─── Class via Rust-level direct call (with this=Undefined) ──────────────
 
 #[test]
-fn class_call_direct_creates_instance() {
+fn class_call_without_new_throws_type_error() {
     let mut ctx = Context::new().unwrap();
     let v = ctx
         .eval("class C { constructor(x) { this.x = x; } } C")
         .unwrap();
 
-    // Calling class without `new` and with undefined this → instantiate_class_from_ast
+    // ES spec §14.2.2: class constructors have no [[Call]] internal method.
+    // Calling a class without `new` must throw TypeError.
     let result =
         crate::eval::function::call_value_with_this(v, vec![Value::Number(7.0)], Value::Undefined);
-    let instance = result.unwrap();
-    match &instance {
-        Value::Object(obj) => {
-            let x = obj.borrow().get("x");
-            assert_eq!(x, Some(Value::Number(7.0)));
+    match result {
+        Err(JsError(msg)) => {
+            assert!(msg.contains("TypeError"), "Expected TypeError, got: {msg}");
         }
-        other => panic!("expected Object, got {other:?}"),
+        Ok(val) => panic!("Expected TypeError when calling class without new, got: {val:?}"),
     }
 }
 
