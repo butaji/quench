@@ -4,6 +4,8 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::env::Environment;
+use crate::eval::class::helpers::prop_key_to_string;
 use crate::value::object::helpers::PropertyFlags;
 use crate::value::same_value;
 use crate::{JsError, Value};
@@ -80,6 +82,28 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
             let obj = obj_ref.borrow();
             obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
         }
+        Value::Class(class_ref) => {
+            let eval_env = class_ref
+                .get_class_def_env()
+                .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+            // Static accessors exist on the class
+            let has_static_getter = class_ref.static_getters.iter().any(|(k, _)| {
+                prop_key_to_string(k, &eval_env, false)
+                    .map(|k_str| k_str == name_str)
+                    .unwrap_or(false)
+            });
+            let has_static_setter = class_ref.static_setters.iter().any(|(k, _, _)| {
+                prop_key_to_string(k, &eval_env, false)
+                    .map(|k_str| k_str == name_str)
+                    .unwrap_or(false)
+            });
+            // Static fields: stored in static_properties_cell
+            let has_static_field = class_ref
+                .static_properties_cell
+                .borrow()
+                .contains_key(&name_str);
+            has_static_getter || has_static_setter || has_static_field
+        }
         _ => false,
     };
     if !is_own {
@@ -133,44 +157,63 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     let obj_setter = obj_desc_borrowed.get("set");
     drop(obj_desc_borrowed);
 
+    // Only validate accessor properties when desc explicitly specifies them.
+    // Per JS verifyProperty: if desc has no "get"/"set", skip the accessor check.
+    // This handles partial descriptors like { enumerable: false, configurable: true }.
+    let desc_has_get = if let Value::Object(o) = &desc {
+        o.borrow().properties.contains_key("get") || o.borrow().has_getter("get")
+    } else {
+        false
+    };
+    let desc_has_set = if let Value::Object(o) = &desc {
+        o.borrow().properties.contains_key("set") || o.borrow().has_setter("set")
+    } else {
+        false
+    };
+
     // Extract getter/setter from the test's desc (may be accessor shorthand or data)
     let desc_getter_fn = get_function_from_value(&desc, "get");
     let desc_setter_fn = get_function_from_value(&desc, "set");
 
-    // Compare getters via sameValue
-    match (&desc_getter_fn, &obj_getter) {
-        (Some(dfn), Some(ofn)) => {
-            if !same_value(dfn, ofn) {
-                let dfn_str = crate::test262::harness::assert_helpers::debug_string(dfn);
-                let ofn_str = crate::test262::harness::assert_helpers::debug_string(ofn);
-                return mk_err(format!(
-                    "sameValue failed: {} !== {} - getter function mismatch for {}",
-                    dfn_str, ofn_str, name_label
-                ));
+    // Compare getters via sameValue — only when desc explicitly has "get"
+    if desc_has_get {
+        match (&desc_getter_fn, &obj_getter) {
+            (Some(dfn), Some(ofn)) => {
+                if !same_value(dfn, ofn) {
+                    let dfn_str = crate::test262::harness::assert_helpers::debug_string(dfn);
+                    let ofn_str = crate::test262::harness::assert_helpers::debug_string(ofn);
+                    return mk_err(format!(
+                        "sameValue failed: {} !== {} - getter function mismatch for {}",
+                        dfn_str, ofn_str, name_label
+                    ));
+                }
             }
+            (Some(_), None) | (None, Some(_)) => {
+                return mk_err(format!("getter presence mismatch for {}", name_label));
+            }
+            (None, None) => {}
         }
-        (Some(_), None) | (None, Some(_)) => {
-            return mk_err(format!("getter presence mismatch for {}", name_label));
-        }
-        (None, None) => {}
     }
 
     // Compare setters via sameValue
-    match (&desc_setter_fn, &obj_setter) {
-        (Some(dfn), Some(ofn)) => {
-            if !same_value(dfn, ofn) {
-                let dfn_str = crate::test262::harness::assert_helpers::debug_string(dfn);
-                let ofn_str = crate::test262::harness::assert_helpers::debug_string(ofn);
-                return mk_err(format!(
-                    "sameValue failed: {} !== {} - setter function mismatch for {}",
-                    dfn_str, ofn_str, name_label
-                ));
+    // Compare setters via sameValue — only when desc explicitly has "set"
+    if desc_has_set {
+        match (&desc_setter_fn, &obj_setter) {
+            (Some(dfn), Some(ofn)) => {
+                if !same_value(dfn, ofn) {
+                    let dfn_str = crate::test262::harness::assert_helpers::debug_string(dfn);
+                    let ofn_str = crate::test262::harness::assert_helpers::debug_string(ofn);
+                    return mk_err(format!(
+                        "sameValue failed: {} !== {} - setter function mismatch for {}",
+                        dfn_str, ofn_str, name_label
+                    ));
+                }
             }
+            (Some(_), None) | (None, Some(_)) => {
+                return mk_err(format!("setter presence mismatch for {}", name_label));
+            }
+            (None, None) => {}
         }
-        (Some(_), None) | (None, Some(_)) => {
-            return mk_err(format!("setter presence mismatch for {}", name_label));
-        }
-        (None, None) => {}
     }
 
     // SAVE the original descriptor from getOwnPropertyDescriptor BEFORE any

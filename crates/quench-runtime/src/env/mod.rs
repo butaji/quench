@@ -34,6 +34,9 @@ pub struct Environment {
     /// Pending field initializers for derived class constructors.
     /// Evaluated after super() returns, per ES spec.
     pending_fields: Option<Vec<(PropertyKey, Expression)>>,
+    /// Static class body marker — set when evaluating static class members.
+    /// Persists across pushed scopes within the same class body.
+    is_static_class_body_flag: bool,
 }
 
 impl std::fmt::Debug for Environment {
@@ -61,6 +64,7 @@ impl Environment {
             parent: None,
             super_class: None,
             pending_fields: None,
+            is_static_class_body_flag: false,
         }
     }
 
@@ -70,6 +74,7 @@ impl Environment {
             parent: Some(parent),
             super_class: None,
             pending_fields: None,
+            is_static_class_body_flag: false,
         }
     }
 
@@ -106,6 +111,7 @@ impl Environment {
         captured.scopes = self.live_scopes_snapshot();
         captured.parent = self.parent.clone();
         captured.super_class = self.super_class.clone();
+        captured.is_static_class_body_flag = self.is_static_class_body_flag;
         captured
     }
 
@@ -185,7 +191,7 @@ impl Environment {
                         {
                             return false;
                         }
-                        f.set_property(prop, value.clone());
+                        let _ = f.set_property(prop, value.clone());
                         return true;
                     }
                     Value::NativeFunction(ref nf) => {
@@ -359,6 +365,14 @@ impl Environment {
         )
     }
 
+    pub fn is_static_class_body(&self) -> bool {
+        self.is_static_class_body_flag
+    }
+
+    pub fn set_static_class_body(&mut self) {
+        self.is_static_class_body_flag = true;
+    }
+
     fn current_scope_ref(&self) -> Option<std::cell::Ref<'_, Scope>> {
         self.scopes.last().map(|s| s.borrow())
     }
@@ -387,6 +401,7 @@ impl Clone for Environment {
             parent: self.parent.clone(),
             super_class: self.super_class.clone(),
             pending_fields: None,
+            is_static_class_body_flag: self.is_static_class_body_flag,
         }
     }
 }
@@ -486,5 +501,104 @@ mod tests {
         assert!(rc1.is_some());
         assert!(rc2.is_some());
         assert!(Rc::ptr_eq(rc1.as_ref().unwrap(), rc2.as_ref().unwrap()));
+    }
+
+    // ─── super_class ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn env_super_class_none_initially() {
+        let env = Environment::new();
+        assert!(env.get_super_class().is_none());
+    }
+
+    #[test]
+    fn env_super_class_set_get() {
+        let mut env = Environment::new();
+        let obj = Rc::new(RefCell::new(crate::value::Object::new(
+            crate::value::kind::ObjectKind::Ordinary,
+        )));
+        let obj_val = Value::Object(Rc::clone(&obj));
+        env.set_super_class(obj_val.clone());
+        let result = env.get_super_class();
+        assert!(result.is_some());
+        let Value::Object(result_rc) = result.unwrap() else {
+            panic!("expected Object")
+        };
+        assert!(Rc::ptr_eq(&result_rc, &obj));
+    }
+
+    // ─── parent chain ────────────────────────────────────────────────────────
+
+    #[test]
+    fn env_parent_chain() {
+        let parent = Rc::new(RefCell::new(Environment::new()));
+        parent
+            .borrow_mut()
+            .define("outer".to_string(), Value::Number(1.0));
+
+        let mut child = Environment::with_parent(Rc::clone(&parent));
+        child.define("inner".to_string(), Value::Number(2.0));
+
+        // Child can see its own bindings
+        assert_eq!(child.get("inner"), Some(Value::Number(2.0)));
+        // Child can traverse to parent
+        assert_eq!(child.get("outer"), Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn env_with_parent_creates_correct_parent_link() {
+        let parent = Rc::new(RefCell::new(Environment::new()));
+        let child = Environment::with_parent(Rc::clone(&parent));
+        assert!(child.get_parent().is_some());
+        // The parent reference should point to the same object
+        let child_parent = child.get_parent().unwrap();
+        assert!(Rc::ptr_eq(&child_parent, &parent));
+    }
+
+    // ─── scope push/pop ─────────────────────────────────────────────────────
+
+    #[test]
+    fn env_push_pop_scope() {
+        let mut env = Environment::new();
+        env.define("a".to_string(), Value::Number(1.0));
+        assert_eq!(env.live_scopes_snapshot().len(), 1);
+
+        env.push_scope();
+        env.define("b".to_string(), Value::Number(2.0));
+        assert_eq!(env.live_scopes_snapshot().len(), 2);
+        assert_eq!(env.get("b"), Some(Value::Number(2.0)));
+
+        env.pop_scope();
+        assert_eq!(env.live_scopes_snapshot().len(), 1); // scope was removed by pop
+        assert!(env.get("b").is_none()); // lookup skips popped scope
+        assert_eq!(env.get("a"), Some(Value::Number(1.0))); // still visible
+    }
+
+    // ─── this binding ───────────────────────────────────────────────────────
+
+    #[test]
+    fn env_this_binding() {
+        let env = Environment::new();
+        let scope = env.current_scope();
+        assert!(scope.borrow().get_this().is_none());
+
+        scope.borrow_mut().set_this(Value::Number(42.0));
+        assert_eq!(scope.borrow().get_this(), Some(Value::Number(42.0)));
+    }
+
+    // ─── static class body marker ────────────────────────────────────────────
+
+    #[test]
+    fn env_static_marker() {
+        let mut env = Environment::new();
+        assert!(!env.is_static_class_body());
+
+        env.set_static_class_body();
+        assert!(env.is_static_class_body());
+
+        // Pushing a new scope should not affect the marker on current scope
+        env.push_scope();
+        // Marker still set on the outer scope (static context)
+        assert!(env.is_static_class_body());
     }
 }

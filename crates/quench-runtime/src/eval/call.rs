@@ -191,6 +191,27 @@ fn eval_super_member(
     })?;
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
+    // In static class bodies, super refers to the superclass constructor itself,
+    // not its prototype. Dispatch through eval_member_access so static methods
+    // and fields on the superclass are resolved correctly.
+    // Check the env chain: the static marker lives on class_def_env, which may
+    // be an ancestor of the current env (e.g. call_env -> class_def_env).
+    let is_static = {
+        let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
+        let mut found = false;
+        while let Some(e) = current {
+            if e.borrow().is_static_class_body() {
+                found = true;
+                break;
+            }
+            current = e.borrow().get_parent();
+        }
+        found
+    };
+    if is_static {
+        return crate::eval::member::eval_member_access(&super_val, &prop_name, env);
+    }
+
     // Get the prototype of the superclass
     let proto = match &super_val {
         Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
@@ -216,8 +237,7 @@ fn eval_super_member(
         if let Some(getter_storage) = obj.get_getter(&prop_name) {
             let getter_clone = getter_storage.clone();
             drop(obj);
-            let env = Rc::new(RefCell::new(Environment::new()));
-            return crate::eval::object::call_getter(&obj_rc, &getter_clone, &env);
+            return crate::eval::object::call_getter(&obj_rc, &getter_clone, env);
         }
         // Check regular property
         if let Some(val) = obj.properties.get(&prop_name) {

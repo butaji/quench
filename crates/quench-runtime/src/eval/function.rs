@@ -256,7 +256,7 @@ pub(crate) fn call_js_function_impl_with_strict(
 /// When `use_tdz` is true, each param is first declared in TDZ (Temporal Dead Zone)
 /// before evaluating its default expression. This ensures that self-referencing
 /// defaults like `f(x = x)` throw a ReferenceError rather than silently succeeding.
-fn bind_params(
+pub(crate) fn bind_params(
     f: &ValueFunction,
     params: &[crate::ast::Param],
     args: &[Value],

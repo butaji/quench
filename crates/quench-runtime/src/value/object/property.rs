@@ -77,7 +77,7 @@ impl Object {
         if let Some(existing) = self.properties.get_mut(key) {
             match existing {
                 Value::Function(ref f) => {
-                    f.set_property(prop, value);
+                    let _ = f.set_property(prop, value);
                     return true;
                 }
                 Value::NativeFunction(ref nf) => {

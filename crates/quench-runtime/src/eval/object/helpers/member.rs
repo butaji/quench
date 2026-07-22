@@ -30,11 +30,13 @@ pub fn get_member_function(
             }
             for (name, params, body, is_async, is_generator) in &class.static_methods {
                 if name_matches_prop(name, prop_name) {
+                    // Use class definition env so static methods have access to super_class.
+                    let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
                         params.clone(),
                         body.clone(),
-                        Rc::clone(env),
+                        closure_env,
                         *is_async,
                         *is_generator,
                     );

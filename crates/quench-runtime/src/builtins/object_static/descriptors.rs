@@ -1,7 +1,7 @@
 //! Property descriptor helpers for Object.getOwnPropertyDescriptor,
 //! Object.defineProperty, and related operations.
 
-use crate::ast::Param;
+use crate::ast::{Param, PropertyKey};
 use crate::env::Environment;
 use crate::eval::class::helpers::prop_key_to_string;
 use crate::value::{
@@ -126,6 +126,9 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         } else if let Value::NativeConstructor(nc) = &obj {
             // Object.defineProperty on a native constructor (e.g., Promise)
             nc.define_accessor(&prop, getter, setter);
+        } else if let Value::NativeFunction(nf) = &obj {
+            // Object.defineProperty on a native function (e.g., bound function)
+            nf.define_accessor(&prop, getter, setter);
         }
         return Ok(obj);
     }
@@ -443,6 +446,50 @@ pub fn get_class_property_descriptor(
                 desc.set("configurable", Value::Boolean(true));
                 return Ok(Value::Object(Rc::new(RefCell::new(desc))));
             }
+
+            // Check static methods
+            for (name, params, body, is_async, is_generator) in &c.static_methods {
+                let matches = match name {
+                    PropertyKey::Ident(s) => s == prop,
+                    PropertyKey::String(s) => s == prop,
+                    PropertyKey::Number(n) => n.to_string() == prop,
+                    PropertyKey::Computed(_) => false,
+                };
+                if matches {
+                    let mut func = ValueFunction::new(
+                        Some(prop.to_string()),
+                        params.clone(),
+                        body.clone(),
+                        Rc::clone(&eval_env),
+                        *is_async,
+                        *is_generator,
+                    );
+                    func.strict = true;
+                    func.is_method = true;
+                    let mut desc = Object::new(ObjectKind::Ordinary);
+                    desc.set("value", Value::Function(func));
+                    desc.set("writable", Value::Boolean(true));
+                    desc.set("enumerable", Value::Boolean(false));
+                    desc.set("configurable", Value::Boolean(true));
+                    return Ok(Value::Object(Rc::new(RefCell::new(desc))));
+                }
+            }
+
+            // Check static fields
+            if let Some(expr) = c.static_fields.iter().find(|(k, _)| {
+                prop_key_to_string(k, &eval_env, false)
+                    .map(|k_str| k_str == prop)
+                    .unwrap_or(false)
+            }) {
+                let val = crate::eval::expression::eval_expression(&expr.1, &eval_env, false)?;
+                let mut desc = Object::new(ObjectKind::Ordinary);
+                desc.set("value", val);
+                desc.set("writable", Value::Boolean(true));
+                desc.set("enumerable", Value::Boolean(false));
+                desc.set("configurable", Value::Boolean(true));
+                return Ok(Value::Object(Rc::new(RefCell::new(desc))));
+            }
+
             Ok(Value::Undefined)
         }
     }

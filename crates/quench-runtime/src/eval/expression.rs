@@ -112,7 +112,7 @@ pub fn eval_expression(
             let closure = capture_env_for_closure(env);
             let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), closure);
             func.strict = crate::interpreter::is_strict_mode();
-            func.set_property("name", Value::String(String::new()));
+            let _ = func.set_property("name", Value::String(String::new()));
             Ok(Value::Function(func))
         }
         Expression::Binary { op, left, right } => {

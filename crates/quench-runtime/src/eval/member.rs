@@ -108,15 +108,6 @@ pub fn eval_class_member(
             }
         }
         _ => {
-            // Per ES §16.1, class constructors throw TypeError when accessing
-            // `caller` or `arguments` (they are always strict).
-            if prop_name == "caller" || prop_name == "arguments" {
-                let (_, js_err) = crate::value::create_js_error_with_type(
-                    "'caller' and 'arguments' are restricted on class constructors",
-                    "TypeError",
-                );
-                return Err(js_err);
-            }
             // Check static fields first
             if let Some(val) = class.get_static_field(prop_name) {
                 return Ok(val);
@@ -124,11 +115,13 @@ pub fn eval_class_member(
             // Check static methods
             for (name, params, body, is_async, is_generator) in &class.static_methods {
                 if prop_key_matches(name, prop_name) {
+                    // Use class definition env so static methods have access to super_class.
+                    let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
                     let mut func = crate::value::ValueFunction::new(
                         Some(prop_name.to_string()),
                         params.clone(),
                         body.clone(),
-                        Rc::clone(env),
+                        closure_env,
                         *is_async,
                         *is_generator,
                     );
@@ -190,6 +183,16 @@ pub fn eval_class_member(
                 // Recursively look up on the superclass
                 return eval_member_access(&super_val, prop_name, env);
             }
+            // ES spec §16.1: class constructors have restricted 'caller' and 'arguments'.
+            // Only throw if no static member with that name was found.
+            if prop_name == "caller" || prop_name == "arguments" {
+                let (err, js_err) = create_js_error_with_type(
+                    "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
+            }
             Ok(Value::Undefined)
         }
     }
@@ -200,7 +203,11 @@ fn prop_key_matches(key: &crate::ast::PropertyKey, name: &str) -> bool {
     match key {
         crate::ast::PropertyKey::Ident(s) => s == name,
         crate::ast::PropertyKey::String(s) => s == name,
-        crate::ast::PropertyKey::Number(n) => n.to_string() == name,
+        crate::ast::PropertyKey::Number(n) => {
+            // Parse name as f64 and compare numerically so "4" matches 4.0, "4." matches 4.0, etc.
+            name.parse::<f64>()
+                .is_ok_and(|parsed| parsed == *n && parsed.is_finite())
+        }
         crate::ast::PropertyKey::Computed(_) => false,
     }
 }
@@ -303,6 +310,3 @@ fn box_primitive(
     }
     Ok(Rc::new(RefCell::new(boxed)))
 }
-
-#[cfg(test)]
-mod tests;

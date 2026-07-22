@@ -576,7 +576,7 @@ fn eval_var_decl(
     if let Value::Function(ref mut f) = value {
         if f.name.is_none() {
             f.name = Some(name.to_string());
-            f.set_property("name", Value::String(name.to_string()));
+            let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
     env.borrow_mut().initialize_declared(name, value.clone());

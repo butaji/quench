@@ -5,6 +5,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::value::error::JsError;
+use crate::value::function::ConstructorAccessor;
 use crate::value::object::Object;
 use crate::value::PropertyFlags;
 use crate::value::Value;
@@ -31,6 +32,9 @@ pub struct NativeFunction {
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, PropertyFlags>>>,
     /// Function name (for direct eval detection: only "eval" is direct eval)
     pub name: String,
+    /// Accessor properties (getters/setters) stored as HashMap for quick lookup
+    accessors:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
 }
 
 impl NativeFunction {
@@ -48,6 +52,7 @@ impl NativeFunction {
                 std::collections::HashMap::new(),
             )),
             name: String::new(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -65,6 +70,7 @@ impl NativeFunction {
                 std::collections::HashMap::new(),
             )),
             name: name.to_string(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -82,6 +88,7 @@ impl NativeFunction {
                 std::collections::HashMap::new(),
             )),
             name: name.to_string(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -99,6 +106,7 @@ impl NativeFunction {
                 std::collections::HashMap::new(),
             )),
             name: String::new(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -126,6 +134,7 @@ impl NativeFunction {
                 std::collections::HashMap::new(),
             )),
             name: String::new(),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
@@ -205,6 +214,18 @@ impl NativeFunction {
         self.property_flags.borrow_mut().remove(key);
         removed
     }
+
+    /// Define an accessor property (getter/setter) on this native function.
+    pub fn define_accessor(&self, name: &str, getter: Option<Value>, setter: Option<Value>) {
+        self.accessors
+            .borrow_mut()
+            .insert(name.to_string(), ConstructorAccessor { getter, setter });
+    }
+
+    /// Get an accessor property descriptor.
+    pub fn get_accessor(&self, name: &str) -> Option<ConstructorAccessor> {
+        self.accessors.borrow().get(name).cloned()
+    }
 }
 
 impl fmt::Debug for NativeFunction {
@@ -228,6 +249,7 @@ impl Clone for NativeFunction {
             properties: std::rc::Rc::clone(&self.properties),
             property_flags: std::rc::Rc::clone(&self.property_flags),
             name: self.name.clone(),
+            accessors: std::rc::Rc::clone(&self.accessors),
         }
     }
 }

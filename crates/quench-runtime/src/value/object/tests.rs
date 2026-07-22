@@ -504,3 +504,60 @@ fn test_property_flags_defaults() {
     let acc = PropertyFlags::default_accessor();
     assert!(!acc.writable && acc.enumerable && acc.configurable);
 }
+
+// ─── Requested test patterns ─────────────────────────────────────────────────
+
+#[test]
+fn object_get_missing() {
+    let obj = Object::new(ObjectKind::Ordinary);
+    assert_eq!(obj.get("nonexistent"), None);
+}
+
+#[test]
+fn object_get_existing() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("key", Value::Number(42.0));
+    assert_eq!(obj.get("key"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn object_set_creates() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("newKey", Value::String("created".to_string()));
+    assert_eq!(
+        obj.get("newKey"),
+        Some(Value::String("created".to_string()))
+    );
+}
+
+#[test]
+fn object_set_updates() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("x", Value::Number(1.0));
+    obj.set("x", Value::Number(2.0));
+    assert_eq!(obj.get("x"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn object_define_accessor() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    let getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Number(99.0)))));
+    let flags = PropertyFlags {
+        value: None,
+        writable: false,
+        enumerable: true,
+        configurable: true,
+    };
+    obj.define_accessor("computed", Some(getter), None, flags);
+    assert!(obj.has_getter("computed"));
+    assert!(!obj.has_setter("computed"));
+}
+
+#[test]
+fn object_numeric_keys() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("0", Value::Number(10.0));
+    obj.set("1", Value::Number(20.0));
+    assert_eq!(obj.get("0"), Some(Value::Number(10.0)));
+    assert_eq!(obj.get("1"), Some(Value::Number(20.0)));
+}

@@ -113,6 +113,14 @@ fn lower_static_member_expr(
 fn lower_computed_member_expr(
     member: &ast::ComputedMemberExpression,
 ) -> Result<Expression, LowerError> {
+    if matches!(member.object, ast::Expression::Super(_)) {
+        let property = PropertyKey::Computed(Box::new(lower_expr_inner(&member.expression)?));
+        return Ok(Expression::Member {
+            object: Box::new(Expression::Identifier("super".to_string())),
+            property,
+            computed: true,
+        });
+    }
     let obj = lower_expr_inner(&member.object)?;
     let property = PropertyKey::Computed(Box::new(lower_expr_inner(&member.expression)?));
     Ok(Expression::Member {

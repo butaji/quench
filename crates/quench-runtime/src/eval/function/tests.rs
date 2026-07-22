@@ -956,3 +956,96 @@ fn tco_depth_3_nontail_chain() {
     // h returns 100, g adds 10 = 110, f adds 1 = 111
     assert_eq!(v, Value::Number(111.0));
 }
+
+// ─── bind_params: direct Rust-level unit tests ─────────────────────────────
+
+use crate::ast::Param;
+use crate::env::Environment;
+use crate::value::function::ValueFunction;
+
+#[test]
+fn bind_params_positional() {
+    let closure = Rc::new(RefCell::new(Environment::new()));
+    let func = ValueFunction::new(
+        Some("test".to_string()),
+        vec![Param::new("a"), Param::new("b")],
+        vec![],
+        Rc::clone(&closure),
+        false,
+        false,
+    );
+    let call_env = Rc::new(RefCell::new(Environment::new()));
+    let params = vec![Param::new("a"), Param::new("b")];
+    let args = vec![Value::Number(1.0), Value::Number(2.0)];
+
+    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+
+    assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
+    assert_eq!(call_env.borrow().get("b"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn bind_params_extra_args() {
+    let closure = Rc::new(RefCell::new(Environment::new()));
+    let func = ValueFunction::new(
+        Some("test".to_string()),
+        vec![Param::new("a")],
+        vec![],
+        Rc::clone(&closure),
+        false,
+        false,
+    );
+    let call_env = Rc::new(RefCell::new(Environment::new()));
+    let params = vec![Param::new("a")];
+    let args = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
+
+    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+
+    assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
+    // Extra args are ignored — no additional bindings created
+    assert!(call_env.borrow().get("b").is_none());
+}
+
+#[test]
+fn bind_params_missing_args() {
+    let closure = Rc::new(RefCell::new(Environment::new()));
+    let func = ValueFunction::new(
+        Some("test".to_string()),
+        vec![Param::new("a"), Param::new("b")],
+        vec![],
+        Rc::clone(&closure),
+        false,
+        false,
+    );
+    let call_env = Rc::new(RefCell::new(Environment::new()));
+    let params = vec![Param::new("a"), Param::new("b")];
+    let args = vec![Value::Number(1.0)]; // Only one arg, 'b' is missing
+
+    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+
+    assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
+    assert_eq!(call_env.borrow().get("b"), Some(Value::Undefined));
+}
+
+#[test]
+fn bind_params_arrow_no_this() {
+    let closure = Rc::new(RefCell::new(Environment::new()));
+    let mut func = ValueFunction::new(
+        Some("arrow".to_string()),
+        vec![Param::new("x")],
+        vec![],
+        Rc::clone(&closure),
+        false,
+        false,
+    );
+    func.is_arrow = true; // Mark as arrow function
+    let call_env = Rc::new(RefCell::new(Environment::new()));
+
+    let params = vec![Param::new("x")];
+    let args = vec![Value::Number(42.0)];
+
+    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+
+    // Arrow function parameters are still bound correctly
+    assert_eq!(call_env.borrow().get("x"), Some(Value::Number(42.0)));
+}

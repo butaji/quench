@@ -34,6 +34,9 @@ pub struct Scope {
     /// the scope that holds the constructor's `this`.
     this_initialized: bool,
     object_binding: Option<Rc<RefCell<crate::value::Object>>>,
+    /// Marker for static class body scope: when set, `super` in this scope
+    /// refers to the superclass constructor (not its prototype).
+    is_static_class_body: bool,
 }
 
 impl std::fmt::Debug for Scope {
@@ -62,6 +65,7 @@ impl Clone for Scope {
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
+            is_static_class_body: self.is_static_class_body,
         }
     }
 }
@@ -75,6 +79,7 @@ impl Scope {
             this_value: None,
             this_initialized: false,
             object_binding: None,
+            is_static_class_body: false,
         }
     }
 
@@ -92,6 +97,14 @@ impl Scope {
 
     pub fn set_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
         self.object_binding = Some(object);
+    }
+
+    pub fn is_static_class_body(&self) -> bool {
+        self.is_static_class_body
+    }
+
+    pub fn set_static_class_body(&mut self) {
+        self.is_static_class_body = true;
     }
 
     pub fn set_object_property(&mut self, name: &str, value: Value, _strict: bool) -> Option<bool> {
