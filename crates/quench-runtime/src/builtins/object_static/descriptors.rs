@@ -388,7 +388,24 @@ pub fn get_class_property_descriptor(
         "name" => {
             make_property_descriptor_string(&c.name.clone().unwrap_or_default(), false, false, true)
         }
-        "prototype" => Ok(Value::Undefined), // handled by eval_class_member
+        "prototype" => {
+            let proto_val = c
+                .prototype_cell
+                .borrow()
+                .as_ref()
+                .map(|o| Value::Object(Rc::clone(o)))
+                .unwrap_or(Value::Undefined);
+            let mut desc = Object::new(ObjectKind::Ordinary);
+            desc.properties
+                .insert("value".to_string(), proto_val);
+            desc.properties
+                .insert("writable".to_string(), Value::Boolean(false));
+            desc.properties
+                .insert("enumerable".to_string(), Value::Boolean(false));
+            desc.properties
+                .insert("configurable".to_string(), Value::Boolean(false));
+            Ok(Value::Object(Rc::new(RefCell::new(desc))))
+        }
         _ => {
             // Check static accessors (instance accessors live on C.prototype)
             let eval_env = c
