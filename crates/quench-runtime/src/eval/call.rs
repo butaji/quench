@@ -131,6 +131,20 @@ fn eval_super_call(
         .borrow_mut()
         .mark_this_initialized();
 
+    // Per ES §13.2.6.1: if the super constructor returns an Object,
+    // it replaces the `this` value for the derived constructor.
+    if let Ok(ref super_result) = result {
+        match super_result {
+            Value::Object(obj) if this_obj.as_ref().map_or(true, |o| !Rc::ptr_eq(o, obj)) => {
+                env.borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(super_result.clone());
+            }
+            _ => {}
+        }
+    }
+
     // After super() succeeds, run pending field initializers (for derived
     // classes with instance fields) before returning to the constructor body.
     // Per ES §13.2.6.1 SuperCall, fields are initialized right after super()
