@@ -118,6 +118,17 @@ pub fn eval_class_expr(
                     field_idx += 1;
                 }
             }
+            crate::ast::ClassMember::StaticMethod { name, .. }
+            | crate::ast::ClassMember::StaticGetter { name, .. }
+            | crate::ast::ClassMember::StaticSetter { name, .. } => {
+                let key_str = prop_key_to_string(name, &class_scope, true)?;
+                if key_str == "prototype" || key_str == "constructor" {
+                    return Err(JsError(format!(
+                        "TypeError: static class method may not be named '{}'",
+                        key_str
+                    )));
+                }
+            }
             crate::ast::ClassMember::StaticBlock { body } => {
                 let block_env = Rc::new(RefCell::new(
                     Environment::with_parent(Rc::clone(env)),
