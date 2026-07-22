@@ -33,7 +33,20 @@ pub fn eval_native_function_member(
         "apply" => eval_native_apply_method(nf),
         "bind" => eval_native_bind_method(nf),
         "toPrimitive" | "hasInstance" | "isConcatSpreadable" => eval_well_known_symbol(prop_name),
-        _ => Ok(Value::Undefined),
+        _ => {
+            // Fall through to Function.prototype for inherited properties
+            // (hasOwnProperty, toString, valueOf, etc.)
+            if let Some(fp) = crate::builtins::get_function_prototype() {
+                let fp_borrowed = fp.borrow();
+                if fp_borrowed.has_getter(prop_name) || fp_borrowed.has_setter(prop_name) {
+                    return crate::eval::member::eval_object_member(&fp, prop_name, None);
+                }
+                if let Some(val) = fp_borrowed.get(prop_name) {
+                    return Ok(val);
+                }
+            }
+            Ok(Value::Undefined)
+        }
     }
 }
 
