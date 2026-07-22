@@ -15,7 +15,7 @@ crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 - `docs/architecture.md` — the Rust↔JS split, `%ops%` contract, bootstrap order.
 - `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R14).
-- `tasks/index.json` — 93 test262 stages; each runs to 100% before advancing.
+- `tasks/index.json` — 122 test262 stages; each runs to 100% before advancing.
 
 ## Commands
 
@@ -33,7 +33,7 @@ TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --
 ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-93 stages. No checkpoints. No skips. `test262/runner.rs::STAGES` mirrors
+122 stages. No checkpoints. No skips. `src/test262/runner.rs::STAGES` mirrors
 `tasks/index.json`. `test/intl402` (ECMA-402) and `test/staging` are
 out of scope.
 

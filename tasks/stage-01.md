@@ -1,6 +1,6 @@
 # Stage 01 — test/language/literals
 
-**Status:** in_progress · **Path:** `test/language/literals` (534 tests) · stage 00 done.
+**Status:** done · **Path:** `test/language/literals` (534 tests) · stage 00 done.
 
 ```bash
 TEST262_STAGE=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture

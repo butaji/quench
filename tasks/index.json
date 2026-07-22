@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 16,
-  "goal": "100% of test262, staged, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins (see docs/architecture.md and tasks/refactor-plan.md).",
+  "goal": "100% of test262, staged, with the minimum possible implementation LOC — small Rust core plus self-hosted JS builtins (see docs/architecture.md and tasks/refactor-plan.md).",
   "scope": {
     "includes": [
       "test/"
@@ -295,326 +295,331 @@
     },
     {
       "id": 56,
-      "path": "test/built-ins/global",
+      "path": "test/language/asi",
       "status": "pending"
     },
     {
       "id": 57,
-      "path": "test/built-ins/Infinity",
+      "path": "test/built-ins/global",
       "status": "pending"
     },
     {
       "id": 58,
-      "path": "test/built-ins/NaN",
+      "path": "test/built-ins/Infinity",
       "status": "pending"
     },
     {
       "id": 59,
-      "path": "test/built-ins/undefined",
+      "path": "test/built-ins/NaN",
       "status": "pending"
     },
     {
       "id": 60,
-      "path": "test/built-ins/parseInt",
+      "path": "test/built-ins/undefined",
       "status": "pending"
     },
     {
       "id": 61,
-      "path": "test/built-ins/parseFloat",
+      "path": "test/built-ins/parseInt",
       "status": "pending"
     },
     {
       "id": 62,
-      "path": "test/built-ins/isNaN",
+      "path": "test/built-ins/parseFloat",
       "status": "pending"
     },
     {
       "id": 63,
-      "path": "test/built-ins/isFinite",
+      "path": "test/built-ins/isNaN",
       "status": "pending"
     },
     {
       "id": 64,
-      "path": "test/built-ins/decodeURI",
+      "path": "test/built-ins/isFinite",
       "status": "pending"
     },
     {
       "id": 65,
-      "path": "test/built-ins/decodeURIComponent",
+      "path": "test/built-ins/decodeURI",
       "status": "pending"
     },
     {
       "id": 66,
-      "path": "test/built-ins/encodeURI",
+      "path": "test/built-ins/decodeURIComponent",
       "status": "pending"
     },
     {
       "id": 67,
-      "path": "test/built-ins/encodeURIComponent",
+      "path": "test/built-ins/encodeURI",
       "status": "pending"
     },
     {
       "id": 68,
-      "path": "test/built-ins/eval",
+      "path": "test/built-ins/encodeURIComponent",
       "status": "pending"
     },
     {
       "id": 69,
-      "path": "test/built-ins/ThrowTypeError",
+      "path": "test/built-ins/eval",
       "status": "pending"
     },
     {
       "id": 70,
-      "path": "test/built-ins/Object",
+      "path": "test/built-ins/ThrowTypeError",
       "status": "pending"
     },
     {
       "id": 71,
-      "path": "test/built-ins/Function",
+      "path": "test/built-ins/Object",
       "status": "pending"
     },
     {
       "id": 72,
-      "path": "test/built-ins/Boolean",
+      "path": "test/built-ins/Function",
       "status": "pending"
     },
     {
       "id": 73,
-      "path": "test/built-ins/Error",
+      "path": "test/built-ins/Boolean",
       "status": "pending"
     },
     {
       "id": 74,
-      "path": "test/built-ins/NativeErrors",
+      "path": "test/built-ins/Error",
       "status": "pending"
     },
     {
       "id": 75,
-      "path": "test/built-ins/AggregateError",
+      "path": "test/built-ins/NativeErrors",
       "status": "pending"
     },
     {
       "id": 76,
-      "path": "test/built-ins/SuppressedError",
+      "path": "test/built-ins/AggregateError",
       "status": "pending"
     },
     {
       "id": 77,
-      "path": "test/built-ins/Number",
+      "path": "test/built-ins/SuppressedError",
       "status": "pending"
     },
     {
       "id": 78,
-      "path": "test/built-ins/BigInt",
+      "path": "test/built-ins/Number",
       "status": "pending"
     },
     {
       "id": 79,
-      "path": "test/built-ins/Math",
+      "path": "test/built-ins/BigInt",
       "status": "pending"
     },
     {
       "id": 80,
-      "path": "test/built-ins/Date",
+      "path": "test/built-ins/Math",
       "status": "pending"
     },
     {
       "id": 81,
-      "path": "test/built-ins/String",
+      "path": "test/built-ins/Date",
       "status": "pending"
     },
     {
       "id": 82,
-      "path": "test/built-ins/Symbol",
+      "path": "test/built-ins/String",
       "status": "pending"
     },
     {
       "id": 83,
-      "path": "test/built-ins/RegExp",
+      "path": "test/built-ins/Symbol",
       "status": "pending"
     },
     {
       "id": 84,
-      "path": "test/built-ins/Array",
+      "path": "test/built-ins/RegExp",
       "status": "pending"
     },
     {
       "id": 85,
-      "path": "test/built-ins/JSON",
+      "path": "test/built-ins/Array",
       "status": "pending"
     },
     {
       "id": 86,
-      "path": "test/built-ins/Iterator",
+      "path": "test/built-ins/JSON",
       "status": "pending"
     },
     {
       "id": 87,
-      "path": "test/built-ins/ArrayIteratorPrototype",
+      "path": "test/built-ins/Iterator",
       "status": "pending"
     },
     {
       "id": 88,
-      "path": "test/built-ins/StringIteratorPrototype",
+      "path": "test/built-ins/ArrayIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 89,
-      "path": "test/built-ins/RegExpStringIteratorPrototype",
+      "path": "test/built-ins/StringIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 90,
-      "path": "test/built-ins/MapIteratorPrototype",
+      "path": "test/built-ins/RegExpStringIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 91,
-      "path": "test/built-ins/SetIteratorPrototype",
+      "path": "test/built-ins/MapIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 92,
-      "path": "test/built-ins/AsyncIteratorPrototype",
+      "path": "test/built-ins/SetIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 93,
-      "path": "test/built-ins/AsyncFromSyncIteratorPrototype",
+      "path": "test/built-ins/AsyncIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 94,
-      "path": "test/built-ins/GeneratorFunction",
+      "path": "test/built-ins/AsyncFromSyncIteratorPrototype",
       "status": "pending"
     },
     {
       "id": 95,
-      "path": "test/built-ins/GeneratorPrototype",
+      "path": "test/built-ins/GeneratorFunction",
       "status": "pending"
     },
     {
       "id": 96,
-      "path": "test/built-ins/AsyncGeneratorFunction",
+      "path": "test/built-ins/GeneratorPrototype",
       "status": "pending"
     },
     {
       "id": 97,
-      "path": "test/built-ins/AsyncGeneratorPrototype",
+      "path": "test/built-ins/AsyncGeneratorFunction",
       "status": "pending"
     },
     {
       "id": 98,
-      "path": "test/built-ins/AsyncFunction",
+      "path": "test/built-ins/AsyncGeneratorPrototype",
       "status": "pending"
     },
     {
       "id": 99,
-      "path": "test/built-ins/ArrayBuffer",
+      "path": "test/built-ins/AsyncFunction",
       "status": "pending"
     },
     {
       "id": 100,
-      "path": "test/built-ins/SharedArrayBuffer",
+      "path": "test/built-ins/ArrayBuffer",
       "status": "pending"
     },
     {
       "id": 101,
-      "path": "test/built-ins/TypedArray",
+      "path": "test/built-ins/SharedArrayBuffer",
       "status": "pending"
     },
     {
       "id": 102,
-      "path": "test/built-ins/TypedArrayConstructors",
+      "path": "test/built-ins/TypedArray",
       "status": "pending"
     },
     {
       "id": 103,
-      "path": "test/built-ins/Uint8Array",
+      "path": "test/built-ins/TypedArrayConstructors",
       "status": "pending"
     },
     {
       "id": 104,
-      "path": "test/built-ins/DataView",
+      "path": "test/built-ins/Uint8Array",
       "status": "pending"
     },
     {
       "id": 105,
-      "path": "test/built-ins/Atomics",
+      "path": "test/built-ins/DataView",
       "status": "pending"
     },
     {
       "id": 106,
-      "path": "test/built-ins/Map",
+      "path": "test/built-ins/Atomics",
       "status": "pending"
     },
     {
       "id": 107,
-      "path": "test/built-ins/Set",
+      "path": "test/built-ins/Map",
       "status": "pending"
     },
     {
       "id": 108,
-      "path": "test/built-ins/WeakMap",
+      "path": "test/built-ins/Set",
       "status": "pending"
     },
     {
       "id": 109,
-      "path": "test/built-ins/WeakSet",
+      "path": "test/built-ins/WeakMap",
       "status": "pending"
     },
     {
       "id": 110,
-      "path": "test/built-ins/WeakRef",
+      "path": "test/built-ins/WeakSet",
       "status": "pending"
     },
     {
       "id": 111,
-      "path": "test/built-ins/FinalizationRegistry",
+      "path": "test/built-ins/WeakRef",
       "status": "pending"
     },
     {
       "id": 112,
-      "path": "test/built-ins/Promise",
+      "path": "test/built-ins/FinalizationRegistry",
       "status": "pending"
     },
     {
       "id": 113,
-      "path": "test/built-ins/Reflect",
+      "path": "test/built-ins/Promise",
       "status": "pending"
     },
     {
       "id": 114,
-      "path": "test/built-ins/Proxy",
+      "path": "test/built-ins/Reflect",
       "status": "pending"
     },
     {
       "id": 115,
-      "path": "test/built-ins/DisposableStack",
+      "path": "test/built-ins/Proxy",
       "status": "pending"
     },
     {
       "id": 116,
-      "path": "test/built-ins/AsyncDisposableStack",
+      "path": "test/built-ins/DisposableStack",
       "status": "pending"
     },
     {
       "id": 117,
-      "path": "test/built-ins/ShadowRealm",
+      "path": "test/built-ins/AsyncDisposableStack",
       "status": "pending"
     },
     {
       "id": 118,
-      "path": "test/built-ins/AbstractModuleSource",
+      "path": "test/built-ins/ShadowRealm",
       "status": "pending"
     },
     {
       "id": 119,
-      "path": "test/built-ins/Temporal",
+      "path": "test/built-ins/AbstractModuleSource",
       "status": "pending"
     },
     {
       "id": 120,
+      "path": "test/built-ins/Temporal",
+      "status": "pending"
+    },
+    {
+      "id": 121,
       "path": "test/annexB",
       "status": "pending"
     }

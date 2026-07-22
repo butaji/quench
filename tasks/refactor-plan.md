@@ -7,9 +7,11 @@ the linter gate (`-D warnings`; files ≤ 500 lines, functions ≤ 40
 lines, complexity ≤ 10, ≤ 3 bool params, no `#[allow]` and no
 deferrals).
 
-Audit baseline: ~32,339 Rust LOC, ~1,400–1,700 removable. Target after
-migration: **~8–12k Rust** + **~3–5k JS**, roughly half today's total,
-strict spec correspondence.
+Audit baseline (2026-07-22): ~42k production Rust LOC (tests excluded),
+0 JS builtins — R0/R1 not started. Target after migration: **~8–12k
+Rust** + **~3–5k JS**. File:line references in this plan and in
+`tasks/review-2026-07-19*.md` are snapshots from 2026-07-19; re-locate
+by symbol name before editing.
 
 ## R0 — Self-host builtins in JS  *(highest, unblocks R4/R7/R8/R9/R13)*
 
@@ -113,7 +115,7 @@ leak into dead realms. `%ThrowTypeError%` doesn't exist (test262
       (ideally zero — they live on `Realm`).
 - [ ] `%ThrowTypeError%` constructed once per `Realm` with stable identity.
 
-Unblocks stage 41.
+Unblocks the `ThrowTypeError` stage (`tasks/index.json`).
 
 ## R7 — One `to_object`  *(absorbed by R1)*
 
@@ -173,17 +175,36 @@ dispatch for tests. Diverges from `eval::function::call_value`.
 
 ~55 LOC saved.
 
-## R12 — Split `eval/object.rs`  *(HIGH, linter gate)*
+## R12 — Split `eval/object.rs`  *(DONE)*
 
-`.clippy.toml` caps files at 500 lines; `eval/object.rs` is 1847. R0
-shrinks the surface calling these; remaining Rust is target resolution
-+ accessor internal calls. Splitting is not optional — the file
-violates the linter gate today.
+`eval/object.rs` is 466 lines (2026-07-22); the split landed as
+`eval/object/` submodules. Remaining over-500 offenders are tracked in
+R15.
 
-- [ ] `eval/assign.rs`, `eval/destructuring.rs`, `eval/accessor.rs`.
-- [ ] Boxing → `eval/ops.rs::to_object` (R1).
-- [ ] Every resulting file < 500 lines, every function < 40 lines,
-      complexity ≤ 10.
+## R15 — Linter-gate sweep: files > 500 lines, `#[allow(...)]`  *(HIGH)*
+
+The gate is policy; the repo still violates it. Catalogue (2026-07-19,
+re-verify with `wc -l` / `rg '#\[allow\('`): T4 in
+`tasks/review-2026-07-19.md`.
+
+- [ ] Split or shrink every production file > 500 lines
+      (`eval/statement.rs`, `eval/class/helpers.rs`, `interpreter/`,
+      `value/function/value_function.rs`, `builtins/json.rs`, …). Most
+      shrink under R0/R5; split what remains.
+- [ ] Remove every `#[allow(...)]` in `src/` — delete the dead code or
+      refactor until the lint passes unsuppressed.
+- [ ] Acceptance: `rg '#\[allow\(' crates/quench-runtime/src` zero hits;
+      no production file > 500 lines; clippy clean.
+
+## R16 — Drop `FROZEN_OBJECTS` thread_local  *(MED, soundness)*
+
+`builtins/object_static.rs` stores `Rc::as_ptr` in a thread_local
+`Vec<usize>` on `Object.freeze`; never cleared on `reset`, so a reused
+address reports frozen. Details + repro test: T14 in
+`tasks/review-2026-07-19.md`.
+
+- [ ] Use the existing `Object.extensible` field instead; delete
+      `FROZEN_OBJECTS` + `is_frozen_object`.
 
 ## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5)*
 
@@ -206,7 +227,8 @@ R0 → R2 R4 R7 R8 R9 R13
 R6 parallel to R0; unblocks stage 41
 R3 part of R0 (Date.js)
 R5 after R0 (storage is internal-only then)
-R10 R11 R12 R14 anytime after their blockers
+R10 R11 R14 R16 anytime after their blockers
+R15 continuous gate; final sweep after R0/R5
 ```
 
 Every item lands with `cargo test -p quench-runtime` +

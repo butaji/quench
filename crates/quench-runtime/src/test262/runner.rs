@@ -80,6 +80,7 @@ pub const STAGES: &[&str] = &[
     "test/language/module-code",
     "test/language/import",
     "test/language/export",
+    "test/language/asi",
     // built-ins — globals → constructors → iterators → collections → advanced
     "test/built-ins/global",
     "test/built-ins/Infinity",
