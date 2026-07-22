@@ -523,12 +523,20 @@ impl Test262Runner {
 
             let is_raw = meta.flags.contains(&"raw".to_string());
             let is_module = meta.flags.contains(&"module".to_string());
+            let is_async = meta.flags.contains(&"async".to_string());
 
             let script = if is_raw {
                 source.clone()
             } else {
                 match self.harness.build_script(&source, &meta.includes) {
-                    Ok(s) => s,
+                    Ok(s) => {
+                        if is_async {
+                            let prelude = "var $DONE = function(error) { if (error !== undefined && error !== null) throw error; };\n";
+                            format!("{}{}", prelude, s)
+                        } else {
+                            s
+                        }
+                    }
                     Err(e) => { failures.push((path.display().to_string(), e)); continue; }
                 }
             };
