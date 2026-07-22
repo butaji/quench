@@ -138,6 +138,12 @@ mod empty_statement {
     fn empty_returns_undefined() {
         assert_eq!(eval(";").unwrap(), Value::Undefined);
     }
+
+    #[test]
+    fn empty_does_not_override_previous_completion() {
+        assert_eq!(eval("2;;").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("3;;;").unwrap(), Value::Number(3.0));
+    }
 }
 
 mod var_declarations {
@@ -1491,5 +1497,17 @@ mod do_while_statement {
             eval("var x = 0; do x = 1; while (false); x").unwrap(),
             Value::Number(1.0)
         );
+    }
+}
+
+mod labeled_statement {
+    use super::*;
+
+    #[test]
+    fn eval_block_block_with_labels() {
+        // eval('{}{x: 42};') should return 42, not the object {x: 42}.
+        // {x: 42} in statement context is a Block with a labeled statement,
+        // not an object literal. The completion value should be 42.
+        assert_eq!(eval("eval('{}{x: 42};')").unwrap(), Value::Number(42.0));
     }
 }
