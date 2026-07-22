@@ -35,7 +35,38 @@ pub fn eval_member_access(
         Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_) => {
             eval_number_member(obj_val, prop_name, env)
         }
-        Value::Class(class) => eval_class_member(class, prop_name, env),
+        Value::Class(class) => {
+            // ES spec §16.1: class constructors have restricted 'caller' and 'arguments'.
+            if prop_name == "caller" || prop_name == "arguments" {
+                // But first check if there's a static member with that name
+                let has_static = class.get_static_field(prop_name).is_some()
+                    || class.static_methods.iter().any(|(n, _, _, _, _)| {
+                        prop_key_matches(n, prop_name)
+                    })
+                    || class.static_getters.iter().any(|(n, _)| {
+                        class.get_class_def_env()
+                            .and_then(|env| {
+                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
+                            })
+                            .map_or(false, |s| s == prop_name)
+                    })
+                    || class.static_setters.iter().any(|(n, _, _)| {
+                        class.get_class_def_env()
+                            .and_then(|env| {
+                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
+                            })
+                            .map_or(false, |s| s == prop_name)
+                    });
+                if !has_static {
+                    let (_, js_err) = create_js_error_with_type(
+                        "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
+            }
+            eval_class_member(class, prop_name, env)
+        }
         Value::Generator(gen) => {
             let is_async = gen.borrow().is_async;
             match prop_name {
@@ -186,11 +217,10 @@ pub fn eval_class_member(
             // ES spec §16.1: class constructors have restricted 'caller' and 'arguments'.
             // Only throw if no static member with that name was found.
             if prop_name == "caller" || prop_name == "arguments" {
-                let (err, js_err) = create_js_error_with_type(
+                let (_, js_err) = create_js_error_with_type(
                     "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
                     "TypeError",
                 );
-                crate::value::set_thrown_value(err);
                 return Err(js_err);
             }
             Ok(Value::Undefined)
