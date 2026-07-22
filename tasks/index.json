@@ -191,7 +191,7 @@
       "id": 29,
       "path": "test/language/statements/labeled",
       "tests": 24,
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 30,

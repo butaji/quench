@@ -122,6 +122,8 @@ pub fn eval_statements(
                 | Statement::ClassDeclaration { .. }
                 | Statement::SequenceDecls(_)
                 | Statement::Empty
+                | Statement::Break(_)
+                | Statement::Continue(_)
         ) || matches!(stmt, Statement::Block(s) if s.is_empty());
         if !is_empty_completion {
             last_val = val;
