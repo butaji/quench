@@ -219,14 +219,31 @@ address reports frozen. Details + repro test: T14 in
 unknown variants — BigInt literals become `undefined`. Switch the
 catch-all to `Err` so new OXC variants surface at lower time.
 
+## R17 — OXC early errors via `oxc_semantic`  *(HIGH, strategy S3)*
+
+A large slice of the 23,711 `test/language` tests are static-semantics
+early errors (duplicate declarations, invalid assignment targets,
+strict-mode restrictions, label rules). Hand-rolling them in `lower/`
+is thousands of LOC plus endless edge cases; OXC already implements
+them.
+
+- [ ] `DEPENDENCIES.md` row for `oxc_semantic` / `oxc_diagnostics` in
+      the same diff.
+- [ ] `#[test]`: a known early-error case (e.g. duplicate `let` in one
+      block) surfaces as a JS `SyntaxError`, catchable via
+      `assert.throws(SyntaxError)` semantics.
+- [ ] Parse → semantic check → SyntaxError before lowering; delete any
+      hand-rolled early-error checks it makes redundant.
+
 ## Sequencing
 
 ```
 R1 → R0   (R1 is the blocker; R0 is the pivot)
 R0 → R2 R4 R7 R8 R9 R13
-R6 parallel to R0; unblocks stage 41
+R6 parallel to R0; unblocks the ThrowTypeError stage
 R3 part of R0 (Date.js)
 R5 after R0 (storage is internal-only then)
+R17 parallel; highest test-per-LOC ratio in the language half
 R10 R11 R14 R16 anytime after their blockers
 R15 continuous gate; final sweep after R0/R5
 ```

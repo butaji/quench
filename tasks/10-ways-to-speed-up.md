@@ -1,100 +1,87 @@
-# 10 Ways to Speed Up test262 Implementation
+# Strategy — fastest path to 100% test262
 
-## Current Status
-- **Stage**: 16 (test/language/statements/class - in_progress)
-- **Total stages**: 122
-- **Remaining**: ~106 stages
-- **Target**: 100% test262 conformance
+Data-driven (per-stage counts live in `tasks/index.json`):
 
-## Speed-up Strategies
+- **48,581 tests** across 122 stages: language 23,711 · built-ins
+  23,668 · annexB 1,086 · harness 116.
+- Done: 1,487 (3%). In progress: stage 16 `class` — 4,367 (9%).
+- Largest single stages: `expressions` 11,101 · `Temporal` 4,603 ·
+  `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
+  `TypedArray` 1,446 · `String` 1,223 · `Promise` 729.
 
-### 1. Parallel Stage Testing (HIGH IMPACT)
-**Problem**: Stages run sequentially, each waiting for the previous to complete.
-**Solution**: When stages have no interdependencies, run them in parallel using `cargo test` with `--test-threads=N`.
-**Expected Gain**: ~4-8x faster on multi-core machines.
-**Implementation**: Modify `test262/runner.rs` to detect independent stages and run them concurrently.
+Speed = fixes-per-week × tests-unlocked-per-fix. The levers below are
+ranked by that metric, not by novelty.
 
-### 2. Batch Fix by Category (HIGH IMPACT)
-**Problem**: Random test failures across unrelated features.
-**Solution**: Group failures by category (e.g., all Promise failures, all Array failures) and fix them in batches.
-**Expected Gain**: Reduces context-switching overhead between different code areas.
-**Implementation**: Add `tasks/failures-categorized.md` to track failures by category.
+## S1 — Land R1 → R0 before grinding builtins stages *(highest leverage)*
 
-### 3. OXC Async-to-Generator Transform (MEDIUM IMPACT)
-**Problem**: async/await requires complex suspend/resume machinery.
-**Solution**: Use OXC's `async-to-generator` transform to convert async/await to generators, then implement generators once.
-**Expected Gain**: ~2000 fewer lines of runtime code, handles all async patterns.
-**Implementation**: Add OXC transformer pass before evaluation.
+Half the corpus (23,668 tests) is built-ins. Today every builtin fix
+costs Rust edit + full recompile; after R0 the same fix is a JS edit
+with no recompile, at ~1/3 the LOC. The `%ops%` bridge (R1) plus the
+self-hosted builtins pivot (R0) is the single biggest throughput
+multiplier. Do not grind `Object`/`Array`/`String` stages in Rust
+first — that work gets deleted by R0. See `tasks/refactor-plan.md`.
 
-### 4. Self-Hosted Builtins in JS (MEDIUM IMPACT)
-**Problem**: Rust builtins are verbose and hard to maintain.
-**Solution**: Move pure-spec algorithms to JS (`builtins/*.js`), keeping only primitives in Rust.
-**Expected Gain**: ~3x fewer LOC for builtins, easier to fix spec bugs.
-**Implementation**: See `tasks/refactor-plan.md` R0.
+## S2 — Fix by root cause, not by test *(high)*
 
-### 5. Disciplined Unit Tests (MEDIUM IMPACT)
-**Problem**: Debugging without tests is slow guesswork.
-**Solution**: Keep the AGENTS.md three-category policy — reproducers,
-core invariants test262 can't observe, refactor pins. Never replicate
-test262 assertions; no per-function coverage drives.
-**Expected Gain**: Faster debugging, regression prevention — without
-test-code bloat fighting the minimum-LOC goal.
-**Implementation**: Failing `#[test]` per fix, per the AGENTS.md
-workflow. test262 stage runs remain the spec-behavior test suite.
+One spec-op fix (`ToPropertyKey`, iterator protocol, argument
+coercion) unblocks hundreds of tests across many stages at once.
+Tactic: run `ALL_STAGES=1` periodically, harvest failures into a
+digest grouped by error message / op, and fix clusters in dependency
+order. The stage gate still applies — but the fix order inside a stage
+should follow root-cause frequency, and a root-cause fix that also
+helps future stages is preferred over a narrow one.
 
-### 6. Better Test Harness Parallelism (LOW-MEDIUM IMPACT)
-**Problem**: Current harness may not fully utilize available cores.
-**Solution**: Profile and optimize the test runner's thread pool configuration.
-**Expected Gain**: 10-20% faster harness execution.
-**Implementation**: Add `#[tokio::test]` or custom thread pool configuration.
+## S3 — OXC early errors via `oxc_semantic` / `oxc_diagnostics` *(high)*
 
-### 7. Incremental Compilation Caching (LOW IMPACT)
-**Problem**: Rebuilding unchanged code on every test run.
-**Solution**: Ensure `cargo build` uses incremental compilation properly.
-**Expected Gain**: 30-60% faster rebuilds.
-**Implementation**: Already enabled by default in cargo, but verify no cache invalidation issues.
+A large slice of the 23,711 language tests are static-semantics early
+errors (duplicate declarations, invalid assignment targets, `with` in
+strict mode, label rules…). Hand-rolling these in `lower/` is
+thousands of LOC and endless edge cases; OXC already implements them.
+Route parse → `oxc_semantic` → SyntaxError before lowering (R17 in
+`tasks/refactor-plan.md`; needs a `DEPENDENCIES.md` row).
 
-### 8. Targeted Profiling to Find Hot Paths (LOW IMPACT)
-**Problem**: Optimization efforts may target wrong code paths.
-**Solution**: Use `cargo flamegraph` to identify actual bottlenecks.
-**Expected Gain**: Focus optimization efforts on real hot paths.
-**Implementation**: Run profiling on representative test262 subset.
+## S4 — OXC `async-to-generator` transform *(medium-high)*
 
-### 9. Delete Dead Code (LOW IMPACT)
-**Problem**: Accumulated unused code slows compilation and confuses maintenance.
-**Solution**: Remove items from R4-R9 of `tasks/refactor-plan.md`.
-**Expected Gain**: Cleaner codebase, faster compilation.
-**Implementation**: Systematic dead code removal in each PR.
+Async stages (`async-function`, `async-generator`, `for-await-of`
+1,234, `await-using`) plus `Promise` 729 + `AsyncFunction`/
+`AsyncGenerator*` built-ins all reduce to generators + a job queue if
+the transform runs at lower time. Implement generators once; async
+falls out. Verify `oxc_transformer` semantics match ES before
+committing — a transform bug miscompiles silently.
 
-### 10. Automate Regression Detection (LOW IMPACT)
-**Problem**: Fixes may break previously passing tests.
-**Solution**: Run full test suite on every PR, not just affected stages.
-**Expected Gain**: Catch regressions before they land.
-**Implementation**: Add CI step to run all stages before merge.
+## S5 — Parallel in-stage runner + failure digest tooling *(medium)*
 
----
+Stages stay a sequential gate (policy), but tests *within* a stage are
+independent: run them on all cores instead of one-thread-per-test
+sequential. Pair with S2's digest: machine-readable failure list per
+run (`tasks/failures-*.md` generated, not hand-maintained). Faster
+loop + better fix targeting; no policy change.
 
-## Prioritized Implementation Order
+## S6 — Disciplined unit tests *(ongoing practice, not a work item)*
 
-1. **Batch Fix by Category** (Strategy 2) - Quick wins, visible progress
-2. **Parallel Stage Testing** (Strategy 1) - Significant speedup for the test loop
-3. **Self-Hosted Builtins** (Strategy 4) - Long-term maintainability
-4. **OXC Async Transform** (Strategy 3) - Handles async/await without custom impl
-5. **Disciplined Unit Tests** (Strategy 5) - Continuous practice per AGENTS.md, not a separate work item
+Per `AGENTS.md`: reproducers, core invariants, refactor pins only.
+test262 is the spec-behavior suite; duplicating it is waste.
 
----
+## S7 — Crate-first for every remaining primitive *(ongoing)*
 
-## Tracking Progress
+Already policy (`DEPENDENCIES.md`): regress, chrono, num-bigint,
+serde_json, urlencoding, oxc. **Known long pole: `Temporal` (4,603
+tests)** — no mature Rust crate exists; it is staged last for a
+reason. When its stage approaches, evaluate `temporal_rs` before
+hand-rolling anything.
 
-| Strategy | Status | Priority |
-|----------|--------|----------|
-| Disciplined Unit Tests | Ongoing (AGENTS.md policy) | P1 |
-| Batch Fix by Category | Pending | P1 |
-| Parallel Stage Testing | Pending | P1 |
-| Self-Hosted Builtins | Pending | P2 |
-| OXC Async Transform | Pending | P2 |
-| Harness Parallelism | Pending | P3 |
-| Incremental Caching | Pending | P3 |
-| Targeted Profiling | Pending | P3 |
-| Delete Dead Code | Pending | P4 |
-| Regression Detection | Pending | P4 |
+## Rejected / low value
+
+- *Parallel stage execution* — stages are a sequential 100% gate;
+  skipping ahead hides root causes. In-stage parallelism (S5) gets the
+  same cores.
+- *Coverage-driven unit tests* — see S6; waste.
+- *Incremental-compile tuning, generic profiling* — cargo defaults are
+  fine; profile only if the test loop itself becomes the bottleneck.
+- *Per-stage checkpoint/skip lists* — "no checkpoints, no skips" is
+  the policy; a skip list is a lie that compounds.
+
+## CI regression gate
+
+Run `ALL_STAGES=1` on every merge to `main`; a previously-done stage
+regressing blocks the merge. Cheap insurance once stage count grows.
