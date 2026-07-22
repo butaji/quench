@@ -494,6 +494,85 @@ mod tests {
     }
 
     #[test]
+    fn test_number_subclassing_via_extends() {
+        // class extends Number — the derived instance must keep its own
+        // prototype chain and expose the boxed number via inherited methods.
+        let r = eval(
+            "class MyNumber extends Number { \
+               constructor(v) { super(v); } \
+             } \
+             new MyNumber(42).valueOf()",
+        );
+        assert_eq!(r, Value::Number(42.0));
+
+        // instanceof checks
+        assert!(eval_bool(
+            "class MyNumber extends Number { constructor(v) { super(v); } } \
+             new MyNumber(42) instanceof MyNumber"
+        ));
+        assert!(eval_bool(
+            "class MyNumber extends Number { constructor(v) { super(v); } } \
+             new MyNumber(42) instanceof Number"
+        ));
+
+        // constructor identity
+        assert!(eval_bool(
+            "class MyNumber extends Number { constructor(v) { super(v); } } \
+             new MyNumber(42).constructor === MyNumber"
+        ));
+
+        // ValueOf on the derived instance should return the boxed number
+        assert_eq!(
+            eval_num(
+                "class MyNumber extends Number { constructor(v) { super(v); } } \
+                 new MyNumber(99.5).valueOf()"
+            ),
+            99.5
+        );
+    }
+
+    #[test]
+    fn test_number_subclass_default_ctor_no_args() {
+        // Default constructor (no explicit ctor), called without args
+        let r = eval(
+            "class N extends Number {} \
+             var n = new N(); \
+             n instanceof N",
+        );
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_number_subclass_default_ctor_with_args() {
+        // Default constructor (no explicit ctor), called WITH args
+        let r = eval(
+            "class N extends Number {} \
+             new N(42).toFixed(2)",
+        );
+        assert_eq!(r, Value::String("42.00".to_string()));
+    }
+
+    #[test]
+    fn test_number_subclass_via_harness_combined() {
+        // Test that the Number constructor correctly handles subclassing
+        // even after test262 harness injection (a realistic scenario for
+        // test262 runs). Uses only methods that are guaranteed to exist.
+        let mut ctx = crate::Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let r = ctx.eval(
+            "class N extends Number {} \
+             var n = new N(42); \
+             assert.sameValue(n.toFixed(2), '42.00'); \
+             assert.sameValue(n.valueOf(), 42);",
+        );
+        match r {
+            Ok(v) => assert_eq!(v, Value::Undefined),
+            Err(e) => panic!("FAILED: {:?}", e),
+        }
+    }
+
+    #[test]
     fn test_number_prototype_to_string_unwraps_boxed_value() {
         // Per ECMA-262, Number.prototype.toString returns ToString(thisNumberValue),
         // not "[object Number]" (which is what Object.prototype.toString yields).

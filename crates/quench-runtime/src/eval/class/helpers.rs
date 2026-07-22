@@ -289,6 +289,12 @@ pub fn call_super_or_default(
                     args,
                     this_val.clone(),
                 )?;
+            } else if let Some(Value::NativeFunction(nf)) = o.borrow().get("constructor") {
+                crate::eval::function::call_value_with_this(
+                    Value::NativeFunction(nf.clone()),
+                    args,
+                    this_val.clone(),
+                )?;
             } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
                 crate::eval::function::call_value_with_this(
                     Value::NativeConstructor(nc.clone()),

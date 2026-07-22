@@ -160,7 +160,140 @@ pub fn register_builtins(ctx: &mut Context) {
     typed_array::register_typed_arrays(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
+
+    // ----- Minimal builtins for extends support -----
+    // AggregateError — extends TypeError, errors + message args
+    {
+        let proto = Object::with_prototype(
+            ObjectKind::Ordinary,
+            ctx.get_global("TypeError")
+                .and_then(|v| match v {
+                    Value::NativeConstructor(ref nc) => Some(Rc::clone(&nc.prototype)),
+                    Value::NativeFunction(ref nf) => nf.get_property("prototype").and_then(|p| match p {
+                        Value::Object(o) => Some(o),
+                        _ => None,
+                    }),
+                    _ => None,
+                })
+                .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
+        );
+        let proto = Rc::new(RefCell::new(proto));
+        let p_clone = Rc::clone(&proto);
+        let ctor = NativeConstructor::new(
+            move |args| {
+                let obj = match crate::interpreter::get_native_this() {
+                    Some(Value::Object(existing)) => existing,
+                    _ => Rc::new(RefCell::new(Object::with_prototype(
+                        ObjectKind::Ordinary,
+                        Rc::clone(&p_clone),
+                    ))),
+                };
+                if let Some(msg) = args.get(1).cloned() {
+                    if msg != Value::Undefined {
+                        obj.borrow_mut().set("message", msg);
+                    }
+                }
+                Ok(Value::Object(obj))
+            },
+            Rc::clone(&proto),
+        );
+        ctor.set_name("AggregateError");
+        ctx.set_global("AggregateError".to_string(), Value::NativeConstructor(Rc::new(ctor)));
+    }
+
+    // DataView — minimal constructor accepting buffer arg
+    {
+        let proto = Object::new(ObjectKind::Ordinary);
+        let proto = Rc::new(RefCell::new(proto));
+        let p_clone = Rc::clone(&proto);
+        let ctor = native_fn(move |args| {
+            let obj = match crate::interpreter::get_native_this() {
+                Some(Value::Object(existing)) => existing,
+                _ => Rc::new(RefCell::new(Object::with_prototype(
+                    ObjectKind::Ordinary,
+                    Rc::clone(&p_clone),
+                ))),
+            };
+            if let Some(Value::Object(buf)) = args.first() {
+                let byte_len = buf
+                    .borrow()
+                    .get("byteLength")
+                    .and_then(|v| match v {
+                        Value::Number(n) => Some(n as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                obj.borrow_mut().set("byteLength", Value::Number(byte_len as f64));
+                obj.borrow_mut().set("byteOffset", Value::Number(0.0));
+                obj.borrow_mut().set("buffer", Value::Object(Rc::clone(buf)));
+            }
+            Ok(Value::Object(obj))
+        });
+        if let Value::NativeFunction(ref nf) = &ctor {
+            let _ = nf.set_property("prototype", Value::Object(proto));
+            let _ = nf.set_property("name", Value::String("DataView".to_string()));
+        }
+        ctx.set_global("DataView".to_string(), ctor);
+    }
+
+    // SharedArrayBuffer — stub constructor
+    {
+        let proto = Object::new(ObjectKind::Ordinary);
+        let proto = Rc::new(RefCell::new(proto));
+        let p_clone = Rc::clone(&proto);
+        let ctor = native_fn(move |args| {
+            let obj = match crate::interpreter::get_native_this() {
+                Some(Value::Object(existing)) => existing,
+                _ => Rc::new(RefCell::new(Object::with_prototype(
+                    ObjectKind::Ordinary,
+                    Rc::clone(&p_clone),
+                ))),
+            };
+            let byte_len = args.first().and_then(|v| match v {
+                Value::Number(n) => Some(*n as usize),
+                _ => None,
+            }).unwrap_or(0);
+            obj.borrow_mut().set("byteLength", Value::Number(byte_len as f64));
+            Ok(Value::Object(obj))
+        });
+        if let Value::NativeFunction(ref nf) = &ctor {
+            let _ = nf.set_property("prototype", Value::Object(proto));
+            let _ = nf.set_property("name", Value::String("SharedArrayBuffer".to_string()));
+        }
+        ctx.set_global("SharedArrayBuffer".to_string(), ctor);
+    }
+
+    // WeakRef — stub constructor accepting target arg
+    {
+        let proto = Object::new(ObjectKind::Ordinary);
+        let proto = Rc::new(RefCell::new(proto));
+        let p_clone = Rc::clone(&proto);
+        let ctor = native_fn(move |args| {
+            let obj = match crate::interpreter::get_native_this() {
+                Some(Value::Object(existing)) => existing,
+                _ => Rc::new(RefCell::new(Object::with_prototype(
+                    ObjectKind::Ordinary,
+                    Rc::clone(&p_clone),
+                ))),
+            };
+            if let Some(target) = args.first().cloned() {
+                obj.borrow_mut().set("deref", Value::NativeFunction(Rc::new(NativeFunction::new(
+                    move |_| Ok(target.clone()),
+                ))));
+            }
+            Ok(Value::Object(obj))
+        });
+        if let Value::NativeFunction(ref nf) = &ctor {
+            let _ = nf.set_property("prototype", Value::Object(proto));
+            let _ = nf.set_property("name", Value::String("WeakRef".to_string()));
+        }
+        ctx.set_global("WeakRef".to_string(), ctor);
+    }
 }
 
-use crate::value::{Object, ObjectKind, Value};
+use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use self::map::helpers::native_fn;
