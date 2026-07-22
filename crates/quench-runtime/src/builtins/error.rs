@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::interpreter::get_native_this;
 use crate::value::convert::to_js_string;
+use crate::value::object::PropertyDescriptor;
 use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
@@ -50,6 +51,16 @@ pub fn register_error(ctx: &mut Context) {
 fn create_error_proto(name: &str) -> Object {
     let mut proto = Object::new(ObjectKind::Ordinary);
     proto.set("name", Value::String(name.to_string()));
+    proto.define_own_property(
+        "message",
+        &PropertyDescriptor {
+            value: Some(Value::String(String::new())),
+            writable: Some(true),
+            enumerable: Some(false),
+            configurable: Some(true),
+            ..Default::default()
+        },
+    );
     let default_name = name.to_string();
     proto.set(
         "toString",
@@ -86,20 +97,28 @@ fn create_error_proto(name: &str) -> Object {
 
 fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<Object>>) {
     let proto_for_closure = Rc::clone(proto);
-    let name_str = name.to_string();
     let constructor = NativeConstructor::new(
         move |args| {
-            let message = args
-                .first()
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
+            let message = args.first().cloned();
             let error_obj =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
             let error_rc = Rc::new(RefCell::new(error_obj));
-            error_rc.borrow_mut().set("message", message);
-            error_rc
-                .borrow_mut()
-                .set("name", Value::String(name_str.clone()));
+            // Per ES spec: only set message as own property when argument is provided
+            // and not undefined. Descriptor uses enumerable: false.
+            if let Some(msg) = message {
+                if msg != Value::Undefined {
+                    error_rc.borrow_mut().define_own_property(
+                        "message",
+                        &PropertyDescriptor {
+                            value: Some(msg),
+                            writable: Some(true),
+                            enumerable: Some(false),
+                            configurable: Some(true),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             Ok(Value::Object(error_rc))
         },
         Rc::clone(proto),

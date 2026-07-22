@@ -103,7 +103,11 @@ pub fn eval_for_of(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
     }
@@ -138,7 +142,11 @@ pub fn eval_for_in(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(None)) => {}
+            Some(cf @ ControlFlow::Continue(Some(_))) => {
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
             None => {}
         }
     }
