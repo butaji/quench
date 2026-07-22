@@ -68,10 +68,20 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
         })
         .unwrap_or_default();
     match method.kind {
-        ast::MethodDefinitionKind::Get => Ok(ClassMember::Getter { name, body }),
+        ast::MethodDefinitionKind::Get => {
+            if is_static {
+                Ok(ClassMember::StaticGetter { name, body })
+            } else {
+                Ok(ClassMember::Getter { name, body })
+            }
+        }
         ast::MethodDefinitionKind::Set => {
             let param = ps.first().map(|p| p.name.clone()).unwrap_or_default();
-            Ok(ClassMember::Setter { name, param, body })
+            if is_static {
+                Ok(ClassMember::StaticSetter { name, param, body })
+            } else {
+                Ok(ClassMember::Setter { name, param, body })
+            }
         }
         _ => {
             if is_static {

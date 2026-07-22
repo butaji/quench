@@ -114,6 +114,14 @@ pub fn eval_class_expr(
         let _key_str = prop_key_to_string(name, &class_scope, true)?;
     }
 
+    // Eagerly evaluate instance accessor computed property keys during class definition.
+    for (name, _body) in &new_value.getters {
+        let _key_str = prop_key_to_string(name, &class_scope, true)?;
+    }
+    for (name, _param, _body) in &new_value.setters {
+        let _key_str = prop_key_to_string(name, &class_scope, true)?;
+    }
+
     Ok(Value::Class(Box::new(new_value)))
 }
 
