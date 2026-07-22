@@ -129,8 +129,7 @@ fn eval_function_bind_method(f: &ValueFunction) -> Result<Value, JsError> {
             let bound_func = NativeFunction::new(move |call_args: Vec<Value>| {
                 crate::interpreter::set_native_this(Value::Function(target_func.clone()));
                 crate::interpreter::set_this_value(bound_this.clone());
-                let all_args: Vec<Value> =
-                    bound_args.iter().cloned().chain(call_args).collect();
+                let all_args: Vec<Value> = bound_args.iter().cloned().chain(call_args).collect();
                 let result = crate::eval::call_value_with_this(
                     Value::Function(target_func.clone()),
                     all_args,
