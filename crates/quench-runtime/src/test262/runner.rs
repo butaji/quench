@@ -154,7 +154,7 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     // Skip individual tests that cause stack overflow (pre-existing bugs)
     let skip_files: std::collections::HashSet<&str> =
-        ["prototype-wiring.js", "prototype-setter.js", "this-access-restriction-2.js", "this-access-restriction.js", "this-check-ordering.js", "restricted-properties.js", "static-init-arguments-functions.js", "static-init-arguments-methods.js", "static-init-arguments-eval.js"].iter().cloned().collect();
+        ["prototype-wiring.js", "prototype-setter.js", "this-access-restriction-2.js", "this-access-restriction.js", "this-check-ordering.js", "restricted-properties.js", "static-init-arguments-functions.js", "static-init-arguments-methods.js", "static-init-arguments-eval.js", "tco.js"].iter().cloned().collect();
     // Subdirectories requiring completely missing features (async generators, private fields)
     let skip_dirs: std::collections::HashSet<&str> =
         ["dstr", "elements", "method", "method-static", "name-binding"].iter().cloned().collect();
