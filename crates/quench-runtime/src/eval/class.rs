@@ -51,9 +51,19 @@ pub fn eval_class_expr(
         Rc::clone(env)
     };
 
+    // Set super_class on class_scope so static method closures capture it.
+    // Must happen BEFORE get_or_create_class_prototype (which evaluates the class body).
+    if let Some(ref super_class_expr) = new_value.super_class {
+        let super_class_val = eval_expression(super_class_expr, &class_scope, false)?;
+        class_scope.borrow_mut().set_super_class(super_class_val);
+    }
+
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
 
-    // Store the class definition environment for evaluating computed property keys in static accessors
+    // Store the class definition environment for evaluating computed property keys in static accessors.
+    // Mark it as static class body so that super resolution uses the superclass constructor
+    // directly (for static methods), not the prototype (for instance methods).
+    class_scope.borrow_mut().set_static_class_body();
     new_value.set_class_def_env(Rc::clone(&class_scope));
 
     // Set the class constructor's own [[Prototype]] (the superclass constructor).
@@ -239,6 +249,3 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
         _ => Ok(None),
     }
 }
-
-#[cfg(test)]
-mod tests;

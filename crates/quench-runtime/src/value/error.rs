@@ -201,7 +201,7 @@ where
                     obj_rc.borrow_mut().set("constructor", ctor.clone());
                 }
                 Value::Function(ref f) => {
-                    f.set_property("constructor", ctor.clone());
+                    let _ = f.set_property("constructor", ctor.clone());
                 }
                 _ => {}
             }
