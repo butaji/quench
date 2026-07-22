@@ -11,7 +11,8 @@ Audit baseline (2026-07-22): ~42k production Rust LOC (tests excluded),
 0 JS builtins — R0/R1 not started. Target after migration: **~8–12k
 Rust** + **~3–5k JS**. File:line references in this plan and in
 `tasks/review-2026-07-19*.md` are snapshots from 2026-07-19; re-locate
-by symbol name before editing.
+by symbol name before editing. Object-model audit (2026-07-22):
+`tasks/review-2026-07-22-object-model.md` — R4/R5 updated from it.
 
 ## R0 — Self-host builtins in JS  *(highest, unblocks R4/R7/R8/R9/R13)*
 
@@ -73,33 +74,74 @@ names but never imports `chrono`. `chrono_now().unwrap()` also panics.
 
 ~50 LOC saved.
 
-## R4 — Delete speculative `TComp` infra  *(HIGH)*
+## R4 — Delete speculative `TComp` infra  *(HIGH, no blockers)*
 
-`value/object.rs:18-345, 381-388, 630-733`: `Key`/`Desc`/`ObjData`/
-`VTable`/`Slots`/`props`/`slots`/`data`/`vtable`. Only `Ordinary`/`Array`
-constructed; zero `vtable.X()` dispatches; `Slots` never used.
+Re-audit 2026-07-22 (`tasks/review-2026-07-22-object-model.md`): the
+layer now lives in `value/object/vtable.rs` (274 LOC),
+`value/object/array.rs` (91), `Key`/`Desc`/`VTable`/`Slots`/`ThisMode`
+in `value/object/helpers.rs` (~80), plus the `props`/`slots`/`vtable`
+fields on `Object` and their init. Grep-verified: zero callers outside
+`src/value/object/` — `.vtable` written 3×, read 0×; `.props`
+write-only; `slots` never read; only `ObjData::{Ordinary,Array,Idx}`
+constructed. The dead copy disagrees with the live store on attribute
+defaults (`unwrap_or(false)` vs legacy `unwrap_or(true)`).
 
-- [ ] R0 makes them unreachable from JS (JS only calls `%ops%`).
-- [ ] `#[test]` array assign + defineOwnProperty survives.
-- [ ] Delete the lot.
+- [ ] `#[test]`: array assign + defineOwnProperty survives (refactor pin).
+- [ ] Delete the lot, including re-exports and `props` sync writes in
+      `new_array`.
 
-~330 LOC saved.
+~470 LOC saved. No R0 dependency — nothing routes through it.
 
-## R5 — Collapse `Object` property storage  *(HIGH)*
+## R5 — Collapse `Object` property storage + fix spec semantics  *(HIGH)*
 
-`value/object.rs:347-389`. Five parallel maps (`properties`, `elements`,
-`getters`, `setters`, `descriptors`, `symbol_properties`, `holes`).
-`symbol_properties` keyed by symbol *description string* — same-desc
-symbols collide.
+Re-audit 2026-07-22 (`tasks/review-2026-07-22-object-model.md`).
+`value/object/helpers.rs:268-288`: parallel maps (`properties`,
+`elements`, `getters`, `setters`, `descriptors`, `symbol_properties`,
+`holes`) plus a hand-rolled third lookup path in
+`eval/member/object_member.rs` (own prototype walk, non-canonical index
+parsing, ignores holes/setters/descriptors, fresh Date prototype per
+access). Three same-shaped descriptor types (`PropertyFlags`,
+`PropertyDescriptor`, `Desc`); six accessor types (four dead → R9).
+
+Spec bugs to fix while collapsing — failing reproducer `#[test]` first,
+each one:
+
+- Attribute defaults inverted: `Object::define_own_property` defaults
+  writable/enumerable/configurable `true` (`property.rs:261-263`);
+  `Object.defineProperty` spec default is `false`.
+- `Object::set` silently swallows writes to non-writable props /
+  non-extensible objects (`property.rs:40-49`); strict mode must throw
+  TypeError, sloppy must no-op.
+- No ValidateAndApplyPropertyDescriptor: non-configurable invariants
+  (redefine, data↔accessor, writable flip) never checked.
+- `Symbol` has no identity id (`val.rs:37-40`); `symbol_properties`
+  keyed by desc — two `Symbol("x")` collide, all `Symbol()` share `""`.
+  AGENTS.md mandates `desc\0id`.
+- Key ordering: `keys.rs:54` excludes the string `"length"`
+  unconditionally; array `own_keys` lists hole indices; symbols never
+  appear in `own_keys`.
+- Seal/freeze uncomputable: one `extensible` bool; the elements path
+  creates no descriptor entries.
+- `get_own_property` lies about element attributes and drops `set` when
+  a getter+setter pair exists; `to_object("ab")` puts the whole string
+  in element `"0"`.
 
 - [ ] `#[test]`: two `Symbol("x")` keys on one object don't collide.
+- [ ] `#[test]`: `Object.keys({length:1})` → `["length"]`; symbols in
+      `ownPropertyKeys` after string keys; holes skipped.
+- [ ] `#[test]`: strict write to non-writable throws TypeError;
+      `Object.defineProperty(o,"x",{value:1})` yields
+      non-writable/non-enumerable/non-configurable.
+- [ ] Give `Symbol` a unique id (`desc\0id`); key by identity.
 - [ ] Collapse to `own_props: IndexMap<Key, Prop>` where
       `Prop = Value | Accessor{get,set}` + `PropertyAttributes`;
       `Key::Sym(Rc<Symbol>)`. Array as `Vec<Option<Value>>` with
-      `Value::Hole` for holes.
+      `Value::Hole` for holes. One descriptor type, one accessor type.
+- [ ] Route eval member access through the collapsed store; delete the
+      hand-rolled walk in `object_member.rs` (~50 LOC + a bug class).
 - [ ] Easier to land after R0 (JS never touches storage directly).
 
-~120 LOC saved + symbol-key correctness.
+~170 LOC saved + symbol-key correctness + the spec bugs above.
 
 ## R6 — `Realm` owns intrinsic prototypes; `%ThrowTypeError%` identity  *(MED-HIGH)*
 
@@ -145,7 +187,20 @@ After R0/R1/R4 reduce the surface:
   `object_to_primitive_for_compare` (`#[allow(dead_code)]`).
 - `interpreter.rs:36-44` `is_control_flow_set`, `:54-56`
   `set_max_call_depth`.
-- `value/object.rs:218-257` `Getter`/`Setter`/`GetterBody`/`SetterBody`.
+- `value/object.rs:218-257` `Getter`/`Setter`/`GetterBody`/`SetterBody`
+  (re-confirmed 2026-07-22: now in `value/object/helpers.rs:194-220`,
+  zero uses outside re-export lists).
+- `value/object/helpers.rs`: `ThisMode`, `ObjData::{String,Func,Proxy,
+  Args}` (never constructed).
+- `value/object/object.rs`: merge `new`/`with_prototype` (25 LOC dup).
+- `value/object/property.rs:311-371`: one-line delegation wrappers —
+  call `accessor::`/`keys::` directly (~40 LOC).
+- `value/object/keys.rs`: collapse `own_keys`/`own_property_names` into
+  one fn with an `enumerable_only` flag (~25 LOC; fixes the `"length"`
+  exclusion in passing).
+- `value/kind.rs`: collapse 4-helper Display into one 13-arm match
+  (~40 LOC; the split exists only to dodge the complexity lint).
+- `value/val.rs`: split `ClassValue` + tests out (700 → ≤ 500).
 - `value/object.rs:270-288` `PropertyFlags::default_data/default_accessor`.
 - `value/convert.rs:144-158` `to_number_unchecked`.
 - `builtins/mod.rs:42-93` `JsValueProxy` serde glue.
@@ -189,8 +244,10 @@ re-verify with `wc -l` / `rg '#\[allow\('`): T4 in
 
 - [ ] Split or shrink every production file > 500 lines
       (`eval/statement.rs`, `eval/class/helpers.rs`, `interpreter/`,
-      `value/function/value_function.rs`, `builtins/json.rs`, …). Most
-      shrink under R0/R5; split what remains.
+      `value/function/value_function.rs` (975), `value/val.rs` (700),
+      `value/error.rs` (574), `value/generator.rs` (690),
+      `eval/object.rs` (539), `builtins/json.rs`, … — 2026-07-22 counts).
+      Most shrink under R0/R5; split what remains.
 - [ ] Remove every `#[allow(...)]` in `src/` — delete the dead code or
       refactor until the lint passes unsuppressed.
 - [ ] Acceptance: `rg '#\[allow\(' crates/quench-runtime/src` zero hits;
@@ -239,10 +296,12 @@ them.
 
 ```
 R1 → R0   (R1 is the blocker; R0 is the pivot)
-R0 → R2 R4 R7 R8 R9 R13
+R0 → R2 R7 R8 R13
+R4 anytime — dead code, no blockers (~470 LOC; do first)
 R6 parallel to R0; unblocks the ThrowTypeError stage
 R3 part of R0 (Date.js)
-R5 after R0 (storage is internal-only then)
+R5 after R4 (+ R0 ideally) — includes the spec-bug reproducers
+R9 after R4
 R17 parallel; highest test-per-LOC ratio in the language half
 R10 R11 R14 R16 anytime after their blockers
 R15 continuous gate; final sweep after R0/R5

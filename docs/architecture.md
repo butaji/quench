@@ -19,7 +19,7 @@ src/
 ├── eval/
 │   └── ops.rs       # canonical spec abstract ops, exposed as %ops%
 ├── env.rs           # lexical environments
-├── value/           # Value, Object, Function, NativeFunction, JsError
+├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
 └── builtins/
     ├── core/        # crate-backed primitives only
@@ -76,6 +76,17 @@ Array.prototype.map = function (callback, thisArg) {
 
 New op → add to `eval/ops.rs` with a failing test → expose on `%ops%` →
 JS callsite. No second copy anywhere.
+
+## Object model — one canonical store
+
+`Object` has a single own-property store (R5 target:
+`IndexMap<Key, Prop>`, `Key::Sym` carrying unique symbol identity).
+eval nodes, builtins, and `%ops%` all route through it — no parallel
+lookup paths, no per-callsite prototype walks, no shadow stores (the
+dead `props`/`VTable` layer was removed in R4). Descriptor semantics
+follow the spec: `defineProperty` defaults absent attributes to `false`,
+non-configurable invariants are enforced (ValidateAndApply), and writes
+to non-writable/non-extensible targets throw in strict mode.
 
 ## Crate-backed primitives stay in Rust
 
