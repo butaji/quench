@@ -50,7 +50,7 @@ crates/quench-runtime/builtins/
 
 All `*.prototype.*`, intrinsic iterator prototypes, `Object.*`,
 `Reflect.*`, `Promise.prototype.*`, etc. are authored here. Pure spec
-algorithms on top of `%ops%`. Embdedded via `include_str!`; parsed once
+algorithms on top of `%ops%`. Embedded via `include_str!`; parsed once
 per `Realm` by `builtins/bootstrap.rs`.
 
 ## `%ops%` — the only Rust↔JS bridge for spec ops
@@ -112,7 +112,7 @@ verify, leave the test in.
 
 `.clippy.toml` + `.cargo/config.toml` (`-D warnings`) gate every build.
 No file > 500 lines, no function > 40 lines, no function complexity >
-10, no `#[allow(...)]`, no deferrals. Split `eval/object.rs` (1847
-→ `eval/assign.rs`/`eval/destructuring.rs`/`eval/accessor.rs` per R12)
-or any other offender before adding to it. JS files have no enforced
-limit but should stay under 500 too — split per builtin category.
+10, no `#[allow(...)]`, no deferrals. Split any offender before adding
+to it (current offenders are tracked in R15, `tasks/refactor-plan.md`).
+JS files have no enforced limit but should stay under 500 too — split
+per builtin category.
