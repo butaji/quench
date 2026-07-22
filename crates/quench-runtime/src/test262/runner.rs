@@ -377,6 +377,10 @@ impl Test262Runner {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        let quick = std::env::var("TEST262_QUICK")
+            .ok()
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let start = std::env::var("TEST262_STAGE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
