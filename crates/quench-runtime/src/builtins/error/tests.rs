@@ -181,6 +181,20 @@ fn test_error_instanceof_object() {
 }
 
 #[test]
+fn test_error_subclass_instanceof_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let result = ctx
+        .eval(
+            "class Subclass extends Error {} \
+             var sub = new Subclass(); \
+             sub instanceof Subclass && sub instanceof Error",
+        )
+        .unwrap();
+    assert!(to_bool(&result));
+}
+
+#[test]
 fn test_error_prototype_constructor_is_error() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx.eval("Error.prototype.constructor === Error").unwrap();
