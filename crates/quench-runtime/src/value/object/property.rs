@@ -131,10 +131,7 @@ impl Object {
     /// Get a Symbol-keyed property (own only).
     pub fn get_property(&self, key: &Value) -> Option<Value> {
         if let Value::Symbol(sym) = key {
-            return self
-                .symbol_properties
-                .get(sym.desc.as_deref().unwrap_or(""))
-                .cloned();
+            return self.symbol_properties.get(&sym.property_key()).cloned();
         }
         None
     }
@@ -162,9 +159,7 @@ impl Object {
     /// Check if object has a Symbol-keyed property.
     pub fn has_symbol(&self, key: &Value) -> bool {
         if let Value::Symbol(sym) = key {
-            return self
-                .symbol_properties
-                .contains_key(sym.desc.as_deref().unwrap_or(""));
+            return self.symbol_properties.contains_key(&sym.property_key());
         }
         false
     }
@@ -172,11 +167,7 @@ impl Object {
     /// Set a Symbol-keyed property using the full Value::Symbol.
     pub fn set_symbol_value(&mut self, value: Value) {
         if let Value::Symbol(sym_key) = &value {
-            let key = sym_key
-                .desc
-                .clone()
-                .map(|d| d.to_string())
-                .unwrap_or_default();
+            let key = sym_key.property_key();
             if let Some(flags) = self.descriptors.get(&key) {
                 if !flags.writable {
                     return;
@@ -258,9 +249,9 @@ impl Object {
             let value = desc.value.clone().unwrap_or(Value::Undefined);
             let flags = PropertyFlags {
                 value: Some(value.clone()),
-                writable: desc.writable.unwrap_or(true),
-                enumerable: desc.enumerable.unwrap_or(true),
-                configurable: desc.configurable.unwrap_or(true),
+                writable: desc.writable.unwrap_or(false),
+                enumerable: desc.enumerable.unwrap_or(false),
+                configurable: desc.configurable.unwrap_or(false),
             };
             self.properties.insert(key.to_string(), value);
             self.descriptors.insert(key.to_string(), flags);
@@ -271,8 +262,8 @@ impl Object {
             let flags = PropertyFlags {
                 value: None,
                 writable: false,
-                enumerable: desc.enumerable.unwrap_or(true),
-                configurable: desc.configurable.unwrap_or(true),
+                enumerable: desc.enumerable.unwrap_or(false),
+                configurable: desc.configurable.unwrap_or(false),
             };
             self.descriptors.insert(key.to_string(), flags);
             if let Some(ref get_val) = desc.get {

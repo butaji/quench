@@ -33,7 +33,10 @@ pub fn own_property_names(obj: &crate::value::Object) -> Vec<String> {
 /// Collect array index strings from the elements Vec or from numeric properties.
 fn array_indices(obj: &crate::value::Object) -> Vec<String> {
     if obj.kind == crate::value::kind::ObjectKind::Array {
-        (0..obj.elements.len()).map(|i| i.to_string()).collect()
+        (0..obj.elements.len())
+            .filter(|i| !obj.holes.contains(i))
+            .map(|i| i.to_string())
+            .collect()
     } else {
         let mut numeric: Vec<(usize, String)> = obj
             .properties
@@ -51,11 +54,7 @@ fn add_non_numeric_keys(
     seen: &mut std::collections::HashSet<String>,
 ) {
     for key in obj.properties.keys() {
-        if key != "length"
-            && as_array_index(key).is_none()
-            && !seen.contains(key)
-            && obj.is_enumerable(key)
-        {
+        if as_array_index(key).is_none() && !seen.contains(key) && obj.is_enumerable(key) {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
