@@ -1292,6 +1292,76 @@ mod tests {
     }
 
     #[test]
+    fn for_of_object_id_init_assignment_missing() {
+        let r = eval(
+            "var x, counter = 0; \
+             for ({ x = 1 } of [{}]) { counter += 1; } \
+             JSON.stringify([x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_assignment_undef() {
+        let r = eval(
+            "var x, counter = 0; \
+             for ({ x = 1 } of [{ x: undefined }]) { counter += 1; } \
+             JSON.stringify([x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_order() {
+        let r = eval(
+            "var x = 0, a, b, counter = 0; \
+             for ({ a = x += 1, b = x *= 2 } of [{}]) { counter += 1; } \
+             JSON.stringify([a, b, x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,2,2,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_evaluation_skips_present_property() {
+        let r = eval(
+            "var flag1 = false, flag2 = false, x, y, counter = 0; \
+             for ({ x = flag1 = true, y = flag2 = true } of [{ y: 1 }]) { counter += 1; } \
+             JSON.stringify([flag1, flag2, y, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[true,false,1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_fn_name() {
+        let r = eval(
+            "var fn, counter = 0; \
+             for ({ fn = function() {} } of [{}]) { counter += 1; } \
+             JSON.stringify([fn.name, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[\"fn\",1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_yield_expr() {
+        let r = eval(
+            "var iter = (function*() { \
+               var counter = 0, x; \
+               for ({ x = yield } of [{}]) { counter += 1; } \
+               return JSON.stringify([counter, x]); \
+             })(); \
+             iter.next(); \
+             iter.next(3).value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,3]".into()));
+    }
+
+    #[test]
     fn object_literal_rest_invokes_getter() {
         let r = eval("var o = { get v() { return 2; } }; var {...rest} = o; rest.v").unwrap();
         assert_eq!(r, Value::Number(2.0));

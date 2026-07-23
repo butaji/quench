@@ -439,6 +439,27 @@ fn lower_for_in_object_destructure() {
 }
 
 #[test]
+fn lower_for_of_object_id_init_default() {
+    let stmts = parse_statements("for ({ a = 1 } of iter) {}");
+    let for_of = match &stmts[0] {
+        Statement::Expression(e) => match e.as_ref() {
+            Expression::ForOf { variable, .. } => variable.as_ref(),
+            _ => panic!("expected ForOf, got {:?}", e),
+        },
+        _ => panic!("expected Expression(ForOf), got {:?}", stmts[0]),
+    };
+    match for_of {
+        Expression::ObjectPattern(props) => {
+            assert!(matches!(
+                &props[0].1,
+                BindingElement::Default(_, init) if matches!(init.as_ref(), Expression::Number(n) if *n == 1.0)
+            ));
+        }
+        _ => panic!("expected ObjectPattern, got {:?}", for_of),
+    }
+}
+
+#[test]
 fn lower_for_of_array_destructure() {
     let stmts = parse_statements("for ([a] of iter) {}");
     let for_of = match &stmts[0] {
