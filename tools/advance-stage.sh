@@ -10,12 +10,12 @@ cd "$(dirname "$0")/.."
 
 STAGE=${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}
 
-echo "Checking Stage $stage..."
+echo "Checking Stage $STAGE..."
 
-OUTPUT=$(TEST262_STAGE=$stage timeout 60 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
+OUTPUT=$(TEST262_STAGE=$STAGE timeout 60 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
 
 if echo "$OUTPUT" | grep -q "ALL STAGES COMPLETE"; then
-    echo "✅ Stage $stage is 100%!"
+    echo "✅ Stage $STAGE is 100%!"
     
     # Update index.json
     python3 -c "
@@ -23,10 +23,10 @@ import json
 with open('tasks/index.json') as f:
     d = json.load(f)
 for s in d['stages']:
-    if s['id'] == $stage:
+    if s['id'] == $STAGE:
         s['status'] = 'done'
         break
-if d['current_stage'] == $stage:
+if d['current_stage'] == $STAGE:
     # Advance to next pending stage
     for s in d['stages']:
         if s['status'] != 'done':
@@ -40,5 +40,5 @@ print('index.json updated')
 "
 else
     PASSED=$(echo "$OUTPUT" | grep -oP 'Stage \d+: \K\d+/\d+' || echo "?")
-    echo "❌ Stage $stage not yet 100% (${PASSED})"
+    echo "❌ Stage $STAGE not yet 100% (${PASSED})"
 fi
