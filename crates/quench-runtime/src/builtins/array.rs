@@ -127,17 +127,17 @@ fn make_array_with_new(
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;
                 obj.elements = vec![Value::Undefined; n as usize];
-                obj.set("length", Value::Number(n));
+                obj.define_array_length(n);
             } else {
                 return Err(JsError("Invalid array length".to_string()));
             }
         } else {
             obj.elements = vec![args[0].clone()];
-            obj.set("length", Value::Number(1.0));
+            obj.define_array_length(1.0);
         }
     } else if args.len() > 1 {
         obj.elements = args.to_vec();
-        obj.set("length", Value::Number(args.len() as f64));
+        obj.define_array_length(args.len() as f64);
     }
     drop(obj);
     Ok(Value::Object(obj_rc))
