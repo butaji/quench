@@ -1,5 +1,5 @@
 {
-  "failed": 50,
+  "failed": 49,
   "groups": [
     {
       "count": 1,
@@ -264,16 +264,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"\\\" !== \\\"#field\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
       ],
       "reason": "Test262Error: sameValue failed: \\\"function\\\" !== \\\"undefined\\\"",
@@ -430,7 +420,7 @@
       ]
     }
   ],
-  "passed": 4317,
+  "passed": 4318,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
