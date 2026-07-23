@@ -887,6 +887,33 @@ fn private_field_for_of_set_on_foreign_object_throws() {
 }
 
 #[test]
+fn private_field_array_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { [this.#field] = [1]; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_array_rest_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { [...this.#field] = []; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_object_rest_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { ({...this.#field} = {}); } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
 fn private_field_set_on_foreign_class_instance_throws() {
     let mut ctx = Context::new().unwrap();
     let err = ctx

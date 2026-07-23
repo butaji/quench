@@ -178,11 +178,20 @@ fn expr_to_binding_elem(expr: &ast::Expression) -> Option<BindingElement> {
 pub fn lower_object_assignment_target(
     obj: &ast::ObjectAssignmentTarget,
 ) -> Result<BindingElement, LowerError> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj
+    let mut props: Vec<(PropertyKey, BindingElement)> = obj
         .properties
         .iter()
         .filter_map(|p| lower_assignment_target_prop(p))
         .collect();
+    if let Some(rest) = &obj.rest {
+        let rest_binding = lower_assignment_target(&rest.target)
+            .ok()
+            .map(BindingElement::AssignmentTarget)
+            .or_else(|| lower_assignment_target_to_binding(&rest.target));
+        if let Some(binding) = rest_binding {
+            props.push((PropertyKey::Ident("...".to_string()), binding));
+        }
+    }
     Ok(BindingElement::ObjectPattern(props))
 }
 

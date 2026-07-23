@@ -1,15 +1,67 @@
 //! Class-scoped private name keys (unique per class id).
 
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, ForInit, PropertyKey, PropertyValue, Statement,
 };
 
-pub fn scope_class_private_names(class: &mut Class, class_id: usize) {
+thread_local! {
+    static PARENT_CLASS_ID: Cell<Option<usize>> = const { Cell::new(None) };
+    static DECLARED_PRIVATE: std::cell::RefCell<HashSet<String>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+pub fn scope_class_private_names(
+    class: &mut Class,
+    class_id: usize,
+    parent_class_id: Option<usize>,
+) {
+    let declared = collect_declared_private_names(&class.body);
+    PARENT_CLASS_ID.with(|c| c.set(parent_class_id));
+    DECLARED_PRIVATE.with(|d| *d.borrow_mut() = declared);
     for member in &mut class.body {
         scope_class_member(member, class_id);
     }
+}
+
+fn collect_declared_private_names(members: &[ClassMember]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for member in members {
+        if let Some(PropertyKey::Ident(s)) = member_private_key(member) {
+            if is_unscoped_private(s) {
+                names.insert(bare_private_name(s));
+            }
+        }
+    }
+    names
+}
+
+fn member_private_key(member: &ClassMember) -> Option<&PropertyKey> {
+    match member {
+        ClassMember::Field { name, .. }
+        | ClassMember::StaticField { name, .. }
+        | ClassMember::Method { name, .. }
+        | ClassMember::StaticMethod { name, .. }
+        | ClassMember::Getter { name, .. }
+        | ClassMember::StaticGetter { name, .. }
+        | ClassMember::Setter { name, .. }
+        | ClassMember::StaticSetter { name, .. } => Some(name),
+        ClassMember::Constructor { .. } | ClassMember::StaticBlock { .. } => None,
+    }
+}
+
+fn bare_private_name(s: &str) -> String {
+    s.strip_prefix('#')
+        .unwrap_or(s)
+        .trim_start_matches("\0private:")
+        .rsplit(':')
+        .next()
+        .unwrap_or(s)
+        .trim_end_matches('\0')
+        .to_string()
 }
 
 pub fn scope_script_private_names(body: &mut [Statement], class_id: usize) {
@@ -281,7 +333,13 @@ fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
 fn scope_property_key(key: &mut PropertyKey, class_id: usize) {
     if let PropertyKey::Ident(s) = key {
         if is_unscoped_private(s) {
-            *s = crate::value::scoped_private_name_key(class_id, s);
+            let bare = bare_private_name(s);
+            let target_id = if DECLARED_PRIVATE.with(|d| d.borrow().contains(&bare)) {
+                class_id
+            } else {
+                PARENT_CLASS_ID.with(|p| p.get().unwrap_or(class_id))
+            };
+            *s = crate::value::scoped_private_name_key(target_id, s);
         }
     }
 }
@@ -301,5 +359,16 @@ mod tests {
                    C.prototype.get.call(new D())";
         let err = Context::new().unwrap().eval(src).unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn nested_class_accesses_outer_private_field() {
+        let src = "class Outer { #x = 42; innerclass() { \
+                   return class extends Outer { f() { this.#x = 1; } }; } \
+                   value() { return this.#x; } } \
+                   var outer = new Outer(); var Inner = outer.innerclass(); var i = new Inner(); \
+                   outer.value() === 42 && i.value() === 42";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
     }
 }
