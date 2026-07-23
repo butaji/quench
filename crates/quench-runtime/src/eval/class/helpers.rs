@@ -2394,6 +2394,16 @@ mod tests {
     }
 
     #[test]
+    fn private_method_brand_check_hoisted_let_o_before_init() {
+        let ok = eval(
+            "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \
+             let c = new C(); c.access(c); let o = {};",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::String("test262".into()));
+    }
+
+    #[test]
     fn private_method_brand_check_on_foreign_object() {
         let err = eval(
             "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \

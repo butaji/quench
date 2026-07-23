@@ -132,4 +132,16 @@ mod tests {
             .unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
+
+    #[test]
+    fn static_private_setter_only_get_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let err = ctx
+            .eval(
+                "class C { static set #f(v) { throw new Test262Error(); } \
+                 static getAccess() { return this.#f; } } C.getAccess();",
+            )
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
 }
