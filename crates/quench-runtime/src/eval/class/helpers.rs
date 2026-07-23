@@ -769,6 +769,14 @@ pub fn method_function_name(
     key_str: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<String, JsError> {
+    if crate::value::is_private_element_key(key_str) {
+        return Ok(crate::value::private_method_display_name(key_str));
+    }
+    if let crate::ast::PropertyKey::Ident(s) = key {
+        if s.starts_with('#') {
+            return Ok(crate::value::private_method_display_name(s));
+        }
+    }
     match key {
         crate::ast::PropertyKey::Computed(expr) => {
             let val = eval_expression(expr, env, false)?;
@@ -1566,6 +1574,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn static_private_method_function_name_is_hash_method() {
+        let name = eval(
+            "class C { static #method() { return 'Test262'; } \
+             static getPrivateMethod() { return this.#method; } } \
+             C.getPrivateMethod().name",
+        )
+        .unwrap();
+        assert_eq!(name, Value::String("#method".into()));
     }
 
     #[test]
