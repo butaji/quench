@@ -1,13 +1,68 @@
-//! Minimal Reflect and Proxy globals. Reflect exposes only `ownKeys` for
+//! Minimal Reflect and Proxy globals. Reflect exposes `ownKeys` and `has` for
 //! the test262 harness. Proxy provides a basic target-forwarding constructor
 //! that delegates `get`/`set`/`has` traps (defaulting to forwarding when
 //! the handler omits them). Tests that require the full Reflect or Proxy
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
+use crate::builtins::object_static::to_property_key;
 use crate::context::Context;
-use crate::value::{Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
+    match target {
+        Value::Object(o) => Ok(o.borrow().has(key)),
+        Value::Function(f) => {
+            if f.get_property(key).is_some() {
+                return Ok(true);
+            }
+            Ok(f.get_prototype().borrow().has(key))
+        }
+        Value::NativeFunction(nf) => {
+            if nf.get_property(key).is_some() {
+                return Ok(true);
+            }
+            if let Some(Value::Object(p)) = nf.get_property("prototype") {
+                return Ok(p.borrow().has(key));
+            }
+            Ok(false)
+        }
+        Value::NativeConstructor(nc) => {
+            if matches!(key, "prototype" | "length" | "name") {
+                return Ok(true);
+            }
+            if nc.get_static_method(key).is_some() || nc.get_accessor(key).is_some() {
+                return Ok(true);
+            }
+            if let Some(fp) = crate::builtins::function::get_function_prototype() {
+                if fp.borrow().has(key) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Value::Class(c) => {
+            if c.static_properties_cell.borrow().contains_key(key) {
+                return Ok(true);
+            }
+            if let Some(fp) = crate::builtins::function::get_function_prototype() {
+                if fp.borrow().has(key) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "Reflect.has called on non-object",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            Err(js_err)
+        }
+    }
+}
 
 pub fn register_reflect(ctx: &mut Context) {
     let mut reflect = Object::new(ObjectKind::Ordinary);
@@ -34,6 +89,21 @@ pub fn register_reflect(ctx: &mut Context) {
                     crate::value::set_thrown_value(err_val);
                     Err(js_err)
                 }
+            },
+        ))),
+    );
+    reflect.set(
+        "has",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args.first().ok_or_else(|| {
+                    crate::value::JsError::new("Reflect.has requires target argument")
+                })?;
+                let key_val = args.get(1).ok_or_else(|| {
+                    crate::value::JsError::new("Reflect.has requires propertyKey argument")
+                })?;
+                let key = to_property_key(key_val)?;
+                Ok(Value::Boolean(reflect_has_property(target, &key)?))
             },
         ))),
     );
@@ -109,9 +179,34 @@ mod tests {
         ctx.eval(src).is_err()
     }
 
+    fn eval_ok_with_builtins(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(src).unwrap()
+    }
+
+    #[test]
+    fn reflect_has_own_property() {
+        let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_has_missing_property() {
+        let result = eval_ok_with_builtins("Reflect.has({}, 'x')");
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn reflect_has_non_object_throws() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("Reflect.has(null, 'x')").is_err());
+    }
+
     #[test]
     fn reflect_own_keys_empty_object() {
-        let result = eval_ok("Reflect.ownKeys({})");
+        let result = eval_ok_with_builtins("Reflect.ownKeys({})");
         assert!(matches!(result, Value::Object(_)));
     }
 
