@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4241 pass / 126 fail (97.1%)** as of 2026-07-23.
+**4,367 tests** · **4248 pass / 119 fail (97.3%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -32,18 +32,18 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4207** | **160** | **96.3%** | Async return TCO fix; static constructor naming; NativeFunction super() |
 | 2026-07-23 | **4211** | **156** | **96.4%** | Lexical this-binding for super() in finally; try/catch CF restore |
 | 2026-07-23 | **4241** | **126** | **97.1%** | Private eval (scoped names, ctor env, static brand); yield-spread; gen args; Array length; class bind |
+| 2026-07-23 | **4248** | **119** | **97.3%** | Proxy get traps; ctor ControlFlow::Return leak; private fields on proxy target; __lookupGetter__ |
 
-## Top remaining clusters (~126)
+## Top remaining clusters (~119)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 12 | Value is not a function (proxy/private own-prop) | Class Function.prototype inherit; private on Proxy target |
-| 7 | sameValue true !== false | Private field/proxy ordering |
-| 6 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
+| 7 | sameValue true !== false | Error subclass message own props |
+| 6 | Expected TypeError not thrown | const binding, restricted props, arguments.callee |
+| 5 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
+| 5 | Expected Test262Error not thrown | Primitive receiver, frozen objects, Proxy |
+| 5 | Value is not a function | scope-setter, builtin subclass regular-subclassing |
 | ~15 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
-| 5 | Expected exception not thrown | Primitive receiver, frozen objects, Proxy |
-| 5 | Expected TypeError not thrown | const binding, restricted props, arguments.callee |
-| ~20 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
 
 ## How to clear this stage (ASAP × min LOC)
 
