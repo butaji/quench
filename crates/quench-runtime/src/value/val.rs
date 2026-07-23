@@ -220,6 +220,10 @@ pub struct ClassValue {
     /// Keys resolved during class definition for static getters/setters (by index).
     pub(crate) static_getter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Instance field keys resolved during class definition (computed names).
+    pub(crate) instance_field_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Static field keys resolved during class definition (before value init).
+    pub(crate) static_field_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     /// Whether new private static fields may be added (Object.preventExtensions).
     pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
     /// Shared private method/accessor values installed on every instance.
@@ -298,6 +302,8 @@ impl ClassValue {
             class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            instance_field_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            static_field_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
             private_element_cache: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
             declared_private_names,
@@ -318,6 +324,22 @@ impl ClassValue {
 
     pub fn static_setter_key(&self, index: usize) -> Option<String> {
         self.static_setter_keys_cell.borrow().get(index).cloned()
+    }
+
+    pub fn push_instance_field_key(&self, key: String) {
+        self.instance_field_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn instance_field_key(&self, index: usize) -> Option<String> {
+        self.instance_field_keys_cell.borrow().get(index).cloned()
+    }
+
+    pub fn push_static_field_key(&self, key: String) {
+        self.static_field_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn static_field_key(&self, index: usize) -> Option<String> {
+        self.static_field_keys_cell.borrow().get(index).cloned()
     }
 
     /// Set the class definition environment (used for evaluating computed property keys in static accessors)

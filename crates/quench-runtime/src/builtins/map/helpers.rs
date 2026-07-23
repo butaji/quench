@@ -49,6 +49,28 @@ pub fn map_update_size(this: &Value, entries: &Rc<RefCell<Object>>) {
     }
 }
 
+/// Initialize Map internal slots on `obj`, preserving its [[Prototype]] (subclassing).
+pub fn init_map_object(obj: &Rc<RefCell<Object>>) {
+    let mut m = obj.borrow_mut();
+    if m.get("_entries").is_none() {
+        let entries = Object::new_array(0);
+        m.set("_entries", Value::Object(Rc::new(RefCell::new(entries))));
+        m.set("size", Value::Number(0.0));
+    }
+    m.kind = ObjectKind::Map;
+}
+
+/// Initialize Set internal slots on `obj`, preserving its [[Prototype]] (subclassing).
+pub fn init_set_object(obj: &Rc<RefCell<Object>>) {
+    let mut s = obj.borrow_mut();
+    if s.get("_values").is_none() {
+        let values = Object::new_array(0);
+        s.set("_values", Value::Object(Rc::new(RefCell::new(values))));
+        s.set("size", Value::Number(0.0));
+    }
+    s.kind = ObjectKind::Set;
+}
+
 /// Get the internal values array (`_values`) of a Set
 pub fn set_values(this: &Value) -> Option<Rc<RefCell<Object>>> {
     if let Value::Object(o) = this {
@@ -121,14 +143,14 @@ pub fn map_populate(map: &Rc<RefCell<Object>>, src: &Value) -> Result<(), JsErro
         _ => Vec::new(),
     };
     for pair in pairs {
-        if let Value::Object(p) = pair {
-            let elems = p.borrow().elements.clone();
-            if elems.len() >= 2 {
-                let k = elems[0].clone();
-                let v = elems[1].clone();
-                call_value_with_this(adder.clone(), vec![k, v], Value::Object(Rc::clone(map)))?;
-            }
-        }
+        let Value::Object(p) = pair else {
+            continue;
+        };
+        let p_ref = p.borrow();
+        let k = p_ref.get("0").unwrap_or(Value::Undefined);
+        let v = p_ref.get("1").unwrap_or(Value::Undefined);
+        drop(p_ref);
+        call_value_with_this(adder.clone(), vec![k, v], Value::Object(Rc::clone(map)))?;
     }
     Ok(())
 }
