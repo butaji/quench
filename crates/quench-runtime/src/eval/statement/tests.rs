@@ -37,6 +37,45 @@ mod return_statement {
     }
 }
 
+mod const_decl {
+    use super::*;
+
+    #[test]
+    fn const_fn_cover_grammar_does_not_set_function_name() {
+        let r = eval(
+            "const xCover = (0, function() {}); \
+             const cover = (function() {}); \
+             cover.name + '|' + xCover.name",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("cover|".into()));
+    }
+
+    #[test]
+    fn for_of_const_increment_throws_type_error() {
+        let r =
+            eval("try { for (const x of [1, 2, 3]) { x++ } 'ok'; } catch (e) { e.name }").unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+}
+
+mod labeled_continue {
+    use super::*;
+
+    #[test]
+    fn labeled_continue_to_for_from_inner_while() {
+        let r = eval(
+            "var count = 0; \
+             label: for (let x = 0; x < 10;) { \
+               while (true) { x++; count++; continue label; } \
+             } \
+             count",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+}
+
 mod throw_statement {
     use super::*;
 

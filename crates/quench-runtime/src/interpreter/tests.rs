@@ -139,18 +139,21 @@ var re = /\[native code\]/"#
 
 #[test]
 fn test_control_flow_break() {
-    interpreter::set_control_flow(ControlFlow::Break);
-    assert_eq!(interpreter::take_control_flow(), Some(ControlFlow::Break));
+    interpreter::set_control_flow(ControlFlow::Break(None));
+    assert_eq!(
+        interpreter::take_control_flow(),
+        Some(ControlFlow::Break(None))
+    );
     // Second take returns None (consumed)
     assert_eq!(interpreter::take_control_flow(), None);
 }
 
 #[test]
 fn test_control_flow_continue() {
-    interpreter::set_control_flow(ControlFlow::Continue);
+    interpreter::set_control_flow(ControlFlow::Continue(None));
     assert_eq!(
         interpreter::take_control_flow(),
-        Some(ControlFlow::Continue)
+        Some(ControlFlow::Continue(None))
     );
     assert_eq!(interpreter::take_control_flow(), None);
 }
@@ -208,10 +211,13 @@ fn test_control_flow_no_flow_take_returns_none() {
 #[test]
 fn test_is_control_flow_set_true() {
     let _ = interpreter::take_control_flow(); // clear
-    interpreter::set_control_flow(ControlFlow::Break);
+    interpreter::set_control_flow(ControlFlow::Break(None));
     assert!(interpreter::is_control_flow_set());
     // is_control_flow_set must not consume the value
-    assert_eq!(interpreter::take_control_flow(), Some(ControlFlow::Break));
+    assert_eq!(
+        interpreter::take_control_flow(),
+        Some(ControlFlow::Break(None))
+    );
 }
 
 #[test]
@@ -222,12 +228,12 @@ fn test_is_control_flow_set_false() {
 
 #[test]
 fn test_control_flow_overwrite() {
-    interpreter::set_control_flow(ControlFlow::Break);
+    interpreter::set_control_flow(ControlFlow::Break(None));
     // Overwrite with Continue before consuming
-    interpreter::set_control_flow(ControlFlow::Continue);
+    interpreter::set_control_flow(ControlFlow::Continue(None));
     assert_eq!(
         interpreter::take_control_flow(),
-        Some(ControlFlow::Continue)
+        Some(ControlFlow::Continue(None))
     );
 }
 

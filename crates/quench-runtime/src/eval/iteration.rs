@@ -3,12 +3,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::ast::{Expression, Statement};
+use crate::ast::{Expression, Statement, VarKind};
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::eval::object::{assign_to, call_iterator_return, obtain_iterator, take_iterator_step};
+use crate::eval::object::{
+    assign_to, call_iterator_return, declare_pattern_bindings_with_kind, obtain_iterator,
+    take_iterator_step,
+};
 use crate::eval::statement::eval_statement;
-use crate::interpreter::{set_control_flow, take_control_flow, ControlFlow};
+use crate::interpreter::{
+    loop_handles_break, loop_handles_continue, set_control_flow, take_control_flow, ControlFlow,
+};
 use crate::value::{JsError, Object, ObjectKind, Value};
 
 /// Get an iterator for for-of/for-in loops (materialized; spread/destructuring).
@@ -93,32 +98,31 @@ fn eval_for_of_iterator(
     iterator: Rc<RefCell<Object>>,
     variable: &Expression,
     body: &Statement,
+    loop_binding: Option<VarKind>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     let mut index = 0usize;
     loop {
         let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
         if done {
             break;
         }
-        assign_to(variable, &item, env)?;
-        let body_result = eval_statement(body, env, false, in_arrow_function);
-        if let Err(e) = body_result {
+        let iteration = run_for_of_iteration(
+            variable,
+            &item,
+            body,
+            loop_binding,
+            per_iteration,
+            env,
+            in_arrow_function,
+        );
+        if let Err(e) = iteration {
             return abrupt_close(&iterator, Err(e));
         }
-        match take_control_flow() {
-            Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val))
-            | Some(ControlFlow::Yield(val))
-            | Some(ControlFlow::YieldDelegate(val)) => {
-                return abrupt_close(&iterator, {
-                    set_control_flow(ControlFlow::Return(val.clone()));
-                    Ok(val)
-                });
-            }
-            Some(ControlFlow::Continue) => {}
-            None => {}
+        if let Some(flow) = iteration.unwrap() {
+            return abrupt_close(&iterator, Ok(flow));
         }
     }
     if let Some(ControlFlow::Return(val))
@@ -131,11 +135,90 @@ fn eval_for_of_iterator(
     }
 }
 
+fn run_for_of_iteration(
+    variable: &Expression,
+    item: &Value,
+    body: &Statement,
+    loop_binding: Option<VarKind>,
+    per_iteration: bool,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Option<Value>, JsError> {
+    if per_iteration {
+        env.borrow_mut().push_scope();
+    }
+    let result = (|| {
+        if let Some(kind) = loop_binding {
+            declare_for_of_binding(variable, kind, env)?;
+        }
+        assign_to(variable, item, env)?;
+        eval_statement(body, env, false, in_arrow_function)
+    })();
+    if per_iteration {
+        env.borrow_mut().pop_scope();
+    }
+    match result {
+        Ok(_) => match take_control_flow() {
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, &[]) {
+                    Ok(None)
+                } else {
+                    set_control_flow(cf);
+                    Ok(None)
+                }
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if loop_handles_continue(&cf, &[]) {
+                    Ok(None)
+                } else {
+                    set_control_flow(cf);
+                    Ok(None)
+                }
+            }
+            Some(ControlFlow::Return(val))
+            | Some(ControlFlow::Yield(val))
+            | Some(ControlFlow::YieldDelegate(val)) => {
+                set_control_flow(ControlFlow::Return(val.clone()));
+                Ok(Some(val))
+            }
+            None => Ok(None),
+        },
+        Err(e) => Err(e),
+    }
+}
+
+fn declare_for_of_binding(
+    variable: &Expression,
+    kind: VarKind,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    match variable {
+        Expression::Identifier(name) => {
+            env.borrow_mut().declare_var(name.clone(), kind);
+            Ok(())
+        }
+        Expression::ArrayPattern(bindings) => {
+            for binding in bindings {
+                declare_pattern_bindings_with_kind(binding, kind, env);
+            }
+            Ok(())
+        }
+        Expression::ObjectPattern(props) => {
+            for (_, binding) in props {
+                declare_pattern_bindings_with_kind(binding, kind, env);
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Evaluate a for-of loop
 pub fn eval_for_of(
     variable: &Expression,
     iterable: &Expression,
     body: &Statement,
+    loop_binding: Option<crate::ast::VarKind>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -152,7 +235,14 @@ pub fn eval_for_of(
         Value::Object(o) => obtain_iterator(o)?,
         _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
     };
-    eval_for_of_iterator(iterator, variable, body, env, in_arrow_function)
+    eval_for_of_iterator(
+        iterator,
+        variable,
+        body,
+        loop_binding,
+        env,
+        in_arrow_function,
+    )
 }
 
 /// Evaluate a for-in loop
@@ -169,14 +259,26 @@ pub fn eval_for_in(
         assign_to(variable, &Value::String(key), env)?;
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
-            Some(ControlFlow::Break) => break,
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, &[]) {
+                    break;
+                }
+                set_control_flow(cf);
+                break;
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if loop_handles_continue(&cf, &[]) {
+                    continue;
+                }
+                set_control_flow(cf);
+                break;
+            }
             Some(ControlFlow::Return(val))
             | Some(ControlFlow::Yield(val))
             | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
