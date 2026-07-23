@@ -90,8 +90,7 @@ fn scope_statements(stmts: &mut [Statement], class_id: usize) {
 fn scope_statement(stmt: &mut Statement, class_id: usize) {
     match stmt {
         Statement::VarDeclaration {
-            init: Some(expr),
-            ..
+            init: Some(expr), ..
         } => scope_expression(expr, class_id),
         Statement::VarDeclaration { .. } => {}
         Statement::FunctionDeclaration { body, params, .. } => {
