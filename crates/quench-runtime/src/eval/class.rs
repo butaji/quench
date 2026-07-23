@@ -137,13 +137,37 @@ pub fn eval_class_expr(
                     field_idx += 1;
                 }
             }
-            crate::ast::ClassMember::StaticMethod { name, .. }
-            | crate::ast::ClassMember::StaticGetter { name, .. }
-            | crate::ast::ClassMember::StaticSetter { name, .. } => {
+            crate::ast::ClassMember::StaticMethod { name, .. } => {
                 let key_str = prop_key_to_string(name, &class_scope, true)?;
                 if crate::value::generator_replay::yield_pending() {
                     return Ok(Value::Undefined);
                 }
+                if key_str == "prototype" || key_str == "constructor" {
+                    return Err(JsError(format!(
+                        "TypeError: static class method may not be named '{}'",
+                        key_str
+                    )));
+                }
+            }
+            crate::ast::ClassMember::StaticGetter { name, .. } => {
+                let key_str = prop_key_to_string(name, &class_scope, true)?;
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
+                new_value.push_static_getter_key(key_str.clone());
+                if key_str == "prototype" || key_str == "constructor" {
+                    return Err(JsError(format!(
+                        "TypeError: static class method may not be named '{}'",
+                        key_str
+                    )));
+                }
+            }
+            crate::ast::ClassMember::StaticSetter { name, .. } => {
+                let key_str = prop_key_to_string(name, &class_scope, true)?;
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
+                new_value.push_static_setter_key(key_str.clone());
                 if key_str == "prototype" || key_str == "constructor" {
                     return Err(JsError(format!(
                         "TypeError: static class method may not be named '{}'",

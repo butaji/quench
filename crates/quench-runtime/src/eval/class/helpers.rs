@@ -865,6 +865,37 @@ mod tests {
     }
 
     #[test]
+    fn class_static_accessor_computed_yield_in_generator() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            var yieldSet, C, iter;
+            function* g() {
+              class C_ {
+                static get [yield]() { return 'get yield'; }
+                static set [yield](param) { yieldSet = param; }
+              }
+              C = C_;
+            }
+            iter = g();
+            iter.next();
+            iter.next('first');
+            iter.next('second');
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("C.first").unwrap(),
+            Value::String("get yield".into())
+        );
+        ctx.eval("C.second = 'set yield'").unwrap();
+        assert_eq!(
+            ctx.eval("yieldSet").unwrap(),
+            Value::String("set yield".into())
+        );
+    }
+
+    #[test]
     fn class_accessor_computed_yield_in_generator() {
         let mut ctx = Context::new().unwrap();
         ctx.eval(
