@@ -398,6 +398,27 @@ fn assign_to_object(
         return Ok(());
     }
 
+    // Private methods/accessors cannot be overwritten (PrivateSet).
+    if crate::value::is_private_name_key(prop_name) {
+        let obj_ref = o.borrow();
+        if obj_ref.properties.contains_key(prop_name)
+            && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)))
+        {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Private method is not writable",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+        if obj_ref.getters.contains_key(prop_name) || obj_ref.setters.contains_key(prop_name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Private accessor is not writable",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+    }
+
     // Strict mode checks.
     if crate::interpreter::is_strict_mode() {
         let obj_ref = o.borrow();
