@@ -1,5 +1,5 @@
 {
-  "failed": 811,
+  "failed": 810,
   "groups": [
     {
       "count": 1,
@@ -1413,7 +1413,7 @@
       ]
     },
     {
-      "count": 71,
+      "count": 70,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer-alt.js",
@@ -1484,8 +1484,7 @@
         "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer-alt-by-classname.js",
         "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/super/in-static-getter.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 1",
       "samples": [
@@ -2243,7 +2242,7 @@
       ]
     }
   ],
-  "passed": 3556,
+  "passed": 3557,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
