@@ -1,7 +1,7 @@
 //! Private helper functions for class operations.
 //! All functions here are internal helpers; public API lives in the parent `class.rs`.
 
-use crate::ast::Statement;
+use crate::ast::{Expression, Statement};
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
