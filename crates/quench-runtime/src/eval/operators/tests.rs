@@ -523,6 +523,20 @@ fn binary_instanceof_subclass_extends_array() {
 }
 
 #[test]
+fn binary_instanceof_subclass_extends_function() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let result = ctx
+        .eval(
+            "class Subclass extends Function {} \
+             var sub = new Subclass(); \
+             sub instanceof Subclass && sub instanceof Function",
+        )
+        .unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(true));
+}
+
+#[test]
 fn binary_instanceof_subclass() {
     let mut ctx = crate::Context::new().unwrap();
     let r = ctx.eval(

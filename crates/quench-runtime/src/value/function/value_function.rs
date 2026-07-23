@@ -82,6 +82,8 @@ pub struct ValueFunction {
     pub is_method: bool,
     /// Cached prototype object
     proto_cell: ProtoCellRef,
+    /// Instance [[Prototype]] when created via `class Sub extends Function` super()
+    instance_proto: Option<Rc<RefCell<Object>>>,
     /// Additional properties (e.g., sameValue, notSameValue on assert)
     /// Wrapped in Rc<RefCell> so clones share mutations (see Clone impl).
     properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
@@ -103,6 +105,7 @@ impl Clone for ValueFunction {
             strict: self.strict,
             is_method: self.is_method,
             proto_cell: self.proto_cell.clone(),
+            instance_proto: self.instance_proto.as_ref().map(Rc::clone),
             properties: std::rc::Rc::clone(&self.properties),
         }
     }
@@ -155,6 +158,7 @@ impl ValueFunction {
             strict: false,
             is_method: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
+            instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
     }
@@ -181,6 +185,7 @@ impl ValueFunction {
             strict: false,
             is_method: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
+            instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
     }
@@ -200,6 +205,15 @@ impl ValueFunction {
             return proto_rc;
         }
         Rc::new(RefCell::new(self.new_prototype_object()))
+    }
+
+    /// Instance [[Prototype]] for builtin-subclassed function objects.
+    pub fn instance_proto(&self) -> Option<Rc<RefCell<Object>>> {
+        self.instance_proto.as_ref().map(Rc::clone)
+    }
+
+    pub fn set_instance_proto(&mut self, proto: Rc<RefCell<Object>>) {
+        self.instance_proto = Some(proto);
     }
 
     /// Build the prototype object for this function.

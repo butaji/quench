@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4119 pass / 248 fail (94.3%)** as of 2026-07-23.
+**4,367 tests** · **4145 pass / 222 fail (94.9%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -23,19 +23,20 @@ line is the gate to advance to stage 17.
 | 2026-07-23 start | 4080 | 287 | 93.4% | Iterator destructuring, private eval/brand |
 | 2026-07-23 | 4110 | 257 | 94.1% | PatternDeclaration, default param TDZ |
 | 2026-07-23 | **4119** | **248** | **94.3%** | Reflect.has, private method `.name`, Array subclass instanceof |
+| 2026-07-23 | **4126** | **241** | **94.5%** | Error subclass super() preserves derived prototype |
+| 2026-07-23 | **4145** | **222** | **94.9%** | Symbol computed field keys; Object/Promise/Function subclass instanceof |
 
-## Top remaining clusters (~248)
+## Top remaining clusters (~222)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 15 | Symbol() should be own property | Computed symbol class fields |
-| 13 | Expected true but got false (subclass-builtins) | More instanceof / own prop checks |
-| 19 | Value is not a function, got undefined | Residual private ref/proxy |
+| 14 | Value is not a function, got undefined | Residual private ref/proxy |
 | 17 | Expected Test262Error not thrown | Destructuring eval-order |
 | 17 | Expected TypeError not thrown | Abrupt completion / brand |
 | 11 | Private method or accessor already defined | Escape-sequence private names |
 | 9 | Value is not iterable | yield* spread |
 | 8 | Expected SyntaxError (privatename eval) | Direct eval early errors |
+| 8 | Expected ReferenceError not thrown | TDZ / uninitialized this |
 | ~20 | Missing builtins (DataView, TypedArrays, …) | Stage-gated primitives |
 
 ## How to clear this stage (ASAP × min LOC)
