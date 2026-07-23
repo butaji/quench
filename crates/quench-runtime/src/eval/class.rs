@@ -126,8 +126,9 @@ pub fn eval_class_expr(
         match member {
             crate::ast::ClassMember::StaticField { .. } => {
                 if let Some((name, value_expr)) = extracted_static_fields.get(field_idx) {
-                    let child_env: Rc<RefCell<Environment>> =
-                        Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&class_scope))));
+                    let child_env: Rc<RefCell<Environment>> = Rc::new(RefCell::new(
+                        Environment::with_parent(Rc::clone(&class_scope)),
+                    ));
                     child_env
                         .borrow_mut()
                         .current_scope()

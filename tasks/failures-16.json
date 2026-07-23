@@ -1,5 +1,5 @@
 {
-  "failed": 44,
+  "failed": 38,
   "groups": [
     {
       "count": 1,
@@ -116,20 +116,6 @@
       ]
     },
     {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/constructor-returns-non-object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-super.js"
-      ],
-      "reason": "Test262Error: Expected TypeError but got ReferenceError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/constructor-returns-non-object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-super.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
@@ -142,33 +128,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an object which did not contain it\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Frozen objects can't be changed\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private setter from an arbritary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
       ]
     },
     {
@@ -394,7 +358,7 @@
       ]
     }
   ],
-  "passed": 4323,
+  "passed": 4329,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

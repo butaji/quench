@@ -489,6 +489,16 @@ mod tests {
     }
 
     #[test]
+    fn nested_direct_eval_arguments_in_class_field_throws_syntax_error() {
+        let err = eval(
+            "class C { x = () => { var t = () => { eval('arguments'); }; t(); } } \
+             new C().x();",
+        )
+        .unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
+    }
+
+    #[test]
     fn indirect_eval_new_target_in_class_field_throws_syntax_error() {
         let err = eval("class C { x = (0, eval)('new.target'); } new C();").unwrap_err();
         assert!(is_syntax_error(&err));
