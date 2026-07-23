@@ -126,17 +126,6 @@ pub fn instantiate_simple(
         let effective_this = call_super_or_default(&sv, args.clone(), &this_val, env)?;
         if let Value::Object(o) = &effective_this {
             let field_obj = crate::eval::object::private_field_object(o);
-            if let Value::Class(super_class) = &sv {
-                if !super_class.instance_fields.is_empty() {
-                    let super_env = Rc::new(RefCell::new(build_constructor_env(
-                        super_class.as_ref(),
-                        &args,
-                        &effective_this,
-                        env,
-                    )?));
-                    init_instance_fields(super_class.as_ref(), &field_obj, &super_env)?;
-                }
-            }
             init_instance_fields(class, &field_obj, &call_env)?;
             install_privates_on_object(class, &field_obj, env)?;
         }
@@ -320,6 +309,8 @@ pub fn build_constructor_env(
     if class.super_class.is_some() {
         let sv = resolve_super_class_value(class, env)?;
         call_env.set_super_class(sv);
+    } else if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+        call_env.set_super_class(Value::Object(obj_proto));
     }
     call_env.set_private_class_context(class.class_id(), class.declared_private_names.clone());
 
@@ -3000,6 +2991,56 @@ mod tests {
     fn class_name_binding_const_in_method_throws_type_error() {
         let err = eval("class C { m() { C = 42; } } new C().m();").unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn this_assign_in_method_works() {
+        let r = eval("class A { m() { this.makeBugs = 1; return this.makeBugs; } } new A().m()")
+            .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn super_to_string_in_constructor_without_extends() {
+        eval("class A { constructor() { super.toString(); } } new A();").unwrap();
+    }
+
+    #[test]
+    fn super_property_assign_sets_on_this() {
+        let r = eval(
+            "class A { dontDoThis() { super.makeBugs = 1; } } var a = new A(); a.dontDoThis(); a.makeBugs",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn super_property_without_extends_in_constructor() {
+        eval(
+            "class A { constructor() { super.toString(); } dontDoThis() { super.makeBugs = 1; } } \
+             var a = new A(); a.dontDoThis();",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn static_block_super_property_access() {
+        let r = eval(
+            "function Parent() {} Parent.test262 = 'test262'; var value; \
+             class C extends Parent { static { value = super.test262; } } value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn derived_private_field_inherits_super_private_field_value() {
+        let r = eval(
+            "class A { #x = 'Avalue'; x() { return this.#x; } } \
+             class B extends A { #x = 'Bvalue'; } new B().x()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("Avalue".into()));
     }
 
     #[test]
