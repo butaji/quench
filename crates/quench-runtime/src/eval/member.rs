@@ -165,11 +165,13 @@ pub fn eval_class_member(
                 }
             }
             // Check static getters
-            for (name, body) in &class.static_getters {
-                // Use the class definition environment to evaluate computed property keys,
-                // so that variables in the class scope are visible.
+            for (i, (name, body)) in class.static_getters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                let key_str = if let Some(key) = class.static_getter_key(i) {
+                    key
+                } else {
+                    prop_key_to_string(name, &eval_env, false)?
+                };
                 if key_str == prop_name {
                     // Per ES spec, static method `this` is the class constructor itself.
                     // Directly evaluate the getter body with `this` bound to the Class.
@@ -191,9 +193,13 @@ pub fn eval_class_member(
                 }
             }
             // Check static setters
-            for (name, param, body) in &class.static_setters {
+            for (i, (name, param, body)) in class.static_setters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                let key_str = if let Some(key) = class.static_setter_key(i) {
+                    key
+                } else {
+                    prop_key_to_string(name, &eval_env, false)?
+                };
                 if key_str == prop_name {
                     // Return a function that wraps the setter call.
                     let param_name = param.clone();
@@ -234,7 +240,9 @@ pub fn eval_class_member(
 /// Check if a property key matches a name
 fn prop_key_matches(key: &crate::ast::PropertyKey, name: &str) -> bool {
     match key {
-        crate::ast::PropertyKey::Ident(s) => s == name,
+        crate::ast::PropertyKey::Ident(s) => {
+            s == name || (s.starts_with('#') && name == crate::value::private_name_key(s))
+        }
         crate::ast::PropertyKey::String(s) => s == name,
         crate::ast::PropertyKey::Number(n) => {
             // Parse name as f64 and compare numerically so "4" matches 4.0, "4." matches 4.0, etc.

@@ -116,7 +116,8 @@ fn lower_chain_recursive(
         }
         ast::ChainElement::PrivateFieldExpression(member) => {
             let object_expr = lower_expr(&member.object)?;
-            let property = PropertyKey::Ident(member.field.name.as_str().to_string());
+            let property =
+                PropertyKey::Ident(crate::value::private_name_key(member.field.name.as_str()));
 
             if let Some(prev) = prev_expr {
                 let undefined = Expression::Undefined;

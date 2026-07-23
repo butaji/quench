@@ -74,40 +74,68 @@ pub fn assign_array_destructuring(
         return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
     }
     let Value::Object(arr_rc) = value else {
+        if let Value::Generator(gen) = value {
+            let iter = crate::value::generator::generator_as_iterator_object(Rc::clone(gen));
+            return assign_array_with_iterator(bindings, &iter, env);
+        }
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
-        return assign_array_with_iterator(bindings, arr_rc, env);
+        let iter = obtain_iterator(arr_rc)?;
+        return assign_array_with_iterator(bindings, &iter, env);
     }
-    let iter = obtain_iterator(arr_rc);
-    let iterator = iter.as_ref().unwrap_or(arr_rc);
-    assign_array_with_iterator(bindings, iterator, env)
+    let iter = obtain_iterator(arr_rc)?;
+    assign_array_with_iterator(bindings, &iter, env)
 }
 
-/// Obtain an iterator from an object (if it has Symbol.iterator).
-fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Option<Rc<RefCell<Object>>> {
-    if o.borrow().properties.contains_key("next") {
-        return Some(Rc::clone(o));
+/// Obtain an iterator object from an iterable per ES GetIterator.
+fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
+    if o.borrow().get("next").is_some() {
+        return Ok(Rc::clone(o));
     }
-    let symbol_obj = o.borrow().get("Symbol");
-    let symbol_obj = match symbol_obj {
-        Some(Value::Object(obj)) => obj,
-        _ => return None,
-    };
-    let iter_value = symbol_obj.borrow().get("iterator");
-    let iter_value = match iter_value {
-        Some(value @ Value::Object(_)) => value,
-        _ => return None,
-    };
-    let result = match crate::eval::function::call_value(iter_value.clone(), vec![]) {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    if let Value::Object(obj) = result {
-        Some(obj)
-    } else {
-        None
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let iter_method = resolve_iterator_method(o, &env)?;
+    let result = crate::eval::function::call_value_with_this(
+        iter_method,
+        vec![],
+        Value::Object(Rc::clone(o)),
+    )?;
+    match result {
+        Value::Object(obj) => Ok(obj),
+        _ => Err(non_iterable_type_error()),
     }
+}
+
+/// Get @@iterator method from own or inherited properties (both storage key forms).
+fn resolve_iterator_method(
+    o: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let mut keys = Vec::new();
+    if let Some(key) = crate::builtins::map::helpers::iterator_prop_key() {
+        keys.push(key);
+    }
+    if let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let sym_key = sym.property_key();
+        if !keys.iter().any(|k| k == &sym_key) {
+            keys.push(sym_key);
+        }
+    }
+    for key in keys {
+        let method = crate::eval::member::eval_object_member(o, &key, Some(env))?;
+        if matches!(method, Value::Function(_) | Value::NativeFunction(_)) {
+            return Ok(method);
+        }
+    }
+    Err(non_iterable_type_error())
+}
+
+fn non_iterable_type_error() -> JsError {
+    let (_, js_err) =
+        crate::value::error::create_js_error_with_type("undefined is not iterable", "TypeError");
+    js_err
 }
 
 /// Assign destructuring bindings using an iterator.
@@ -118,6 +146,14 @@ pub fn assign_array_with_iterator(
 ) -> Result<(), JsError> {
     let mut index = 0;
     for binding in bindings {
+        if let BindingElement::Rest(inner) = binding {
+            let rest_array = collect_remaining_array(iterator, &mut index, env)?;
+            if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
+                call_iterator_return(iterator);
+                return Err(error);
+            }
+            return Ok(());
+        }
         let result = take_iterator_value(iterator, &mut index, env);
         let elem_value = match result {
             Ok(value) => value,
@@ -142,6 +178,39 @@ pub fn assign_array_with_iterator(
     Ok(())
 }
 
+/// Collect all remaining elements from an array or iterator starting at `index`.
+fn collect_remaining_array(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if iterator.borrow().kind == ObjectKind::Array {
+        let remaining = {
+            let borrowed = iterator.borrow();
+            if *index < borrowed.elements.len() {
+                borrowed.elements[*index..].to_vec()
+            } else {
+                Vec::new()
+            }
+        };
+        *index = iterator.borrow().elements.len();
+        return Ok(Value::Object(Rc::new(RefCell::new(
+            Object::new_array_from(remaining),
+        ))));
+    }
+    let mut items = Vec::new();
+    loop {
+        match take_iterator_value(iterator, index, env) {
+            Ok(Value::Undefined) => break,
+            Ok(v) => items.push(v),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(items),
+    ))))
+}
+
 /// Take the next value from an iterator (or array-like).
 pub fn take_iterator_value(
     iterator: &Rc<RefCell<Object>>,
@@ -161,25 +230,27 @@ pub fn take_iterator_value(
         return Ok(result.unwrap_or(Value::Undefined));
     }
     let next_value = iterator.borrow().get("next");
-    let next_obj = match next_value {
-        Some(Value::Object(obj)) => obj,
-        _ => return Ok(Value::Undefined),
+    let Some(next_fn) = next_value else {
+        return Ok(Value::Undefined);
     };
-    let result = crate::eval::function::call_value(Value::Object(Rc::clone(&next_obj)), vec![])?;
+    let result = match next_fn {
+        Value::Object(obj) => {
+            crate::eval::function::call_value(Value::Object(Rc::clone(&obj)), vec![])?
+        }
+        other => crate::eval::function::call_value(other, vec![])?,
+    };
     if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
         return Ok(Value::Undefined);
     };
-    let done = result_obj.borrow().get("done");
-    if let Some(value) = done {
-        if matches!(value, Value::Boolean(true)) {
-            return Ok(Value::Undefined);
-        }
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(&env))?;
+    if matches!(done, Value::Boolean(true)) {
+        return Ok(Value::Undefined);
     }
-    let value = result_obj.borrow().get("value");
-    Ok(value.unwrap_or(Value::Undefined))
+    crate::eval::member::eval_object_member(&result_obj, "value", Some(&env))
 }
 
 /// Call iterator.return, returning an error if it throws.
@@ -266,17 +337,11 @@ pub fn assign_object_destructuring(
     for (key, binding) in props {
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
-            let prop_value = {
-                let obj_ref = obj.borrow();
-                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
-            };
+            let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             crate::eval::object::assign_to(target, &prop_value, env)?;
         } else {
             let key_str = extract_destructure_key(key, env)?;
-            let prop_value = {
-                let obj_ref = obj.borrow();
-                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
-            };
+            let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             assign_binding_elem(binding, &prop_value, env)?;
         }
     }
@@ -321,6 +386,7 @@ pub fn assign_binding_elem(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match binding {
+        BindingElement::Identifier(name) if name == "__hole" => Ok(()),
         BindingElement::Identifier(name) => assign_to_identifier(name, value, env),
         BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
         BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
@@ -332,6 +398,7 @@ pub fn assign_binding_elem(
             };
             assign_binding_elem(binding, &value, env)
         }
+        BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
             if let Expression::Member {
                 object, property, ..
@@ -442,11 +509,16 @@ pub fn assign_to_identifier(
 
 #[cfg(test)]
 mod tests {
+    use crate::test262::host::Test262Host;
     use crate::Context;
     use crate::Value;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
-        Context::new().unwrap().eval(src)
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(src)
     }
 
     // ─── box_primitive_for_set: Number ────────────────────────────────────────
@@ -461,6 +533,216 @@ mod tests {
     fn box_primitive_boolean() {
         let r = eval("var b = Object(true); b.valueOf()").unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_rest_only_destructure() {
+        let r = eval("var [...[a,b,c]] = [3,4,5]; a+b+c").unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    // ─── generator destructuring ─────────────────────────────────────────────
+
+    #[test]
+    fn async_gen_default_empty_object_pattern() {
+        let r = eval(
+            "var access=0, obj=Object.defineProperty({}, 'attr', { get: function() { access++; } }); \
+             var n=0; class C { async *method({} = obj) { n=1; } } \
+             C.prototype.method.call(new C()).next(); n + access",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn destructure_default_array_literal() {
+        let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
+        assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn array_destructure_without_symbol_iterator_throws_type_error() {
+        let err = eval(
+            "try { \
+               delete Array.prototype[Symbol.iterator]; \
+               (function([a, b]) {})([1, 2]); \
+               'no throw'; \
+             } catch (e) { e.name }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn async_gen_object_destructure_getter_throws() {
+        let err = eval(
+            "try { \
+               var poisonedProperty = Object.defineProperty({}, 'poisoned', { \
+                 get: function() { throw new Error('getter'); } \
+               }); \
+               class C { async *method({ poisoned } = poisonedProperty) {} } \
+               C.prototype.method(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("getter".into()));
+    }
+
+    #[test]
+    fn async_gen_default_pattern_iter_step_error() {
+        let err = eval(
+            "try { \
+               (function() { \
+                 var g = {}; \
+                 g[Symbol.iterator] = function() { \
+                   return { next: function() { throw new Error('step'); } }; \
+                 }; \
+                 class C { async *method([x] = g) {} } \
+                 C.prototype.method(); \
+               })(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
+    }
+
+    #[test]
+    fn async_gen_default_array_pattern_from_iterator() {
+        let r = eval(
+            "var iter={}; \
+             iter[Symbol.iterator]=function(){ return { \
+               next:function(){ return {value:42,done:false}; } \
+             }; }; \
+             function f([v] = iter) { return v; } f()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn regular_fn_rest_destructure() {
+        let r = eval("function f([...[a,b,c]]) { return a+b+c; } f([3,4,5])").unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn standalone_gen_rest_destructure() {
+        let r =
+            eval("function* f([...[a,b,c]]) { return a+b+c; } f([3,4,5]).next().value").unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn generator_method_destructures_rest_param() {
+        let r = eval(
+            "var c=0,x=0,y=0,z=0; class C { *method([...[a, b, c]]) { \
+             x=a; y=b; z=c; c=1; } } new C().method([3, 4, 5]).next(); x+y+z",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn assign_array_destructuring_generator_elision() {
+        use crate::ast::BindingElement;
+        use crate::eval::object::helpers::destructuring::assign_array_destructuring;
+
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; }",
+        )
+        .unwrap();
+        let gen = ctx.eval("g()").unwrap();
+        let env = Rc::clone(ctx.env());
+        let bindings = vec![BindingElement::Identifier("__hole".into())];
+        assign_array_destructuring(&bindings, &gen, &env).unwrap();
+        assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn bind_params_destructures_generator_elision() {
+        use crate::ast::{BindingElement, Param};
+        use crate::env::Environment;
+        use crate::eval::function::bind_params;
+        use crate::value::ValueFunction;
+
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; }",
+        )
+        .unwrap();
+        let gen = ctx.eval("g()").unwrap();
+        let params = vec![Param {
+            name: "arg".to_string(),
+            default: None,
+            pattern: Some(BindingElement::ArrayPattern(vec![
+                BindingElement::Identifier("__hole".into()),
+            ])),
+            rest: false,
+        }];
+        let env = Rc::clone(ctx.env());
+        let f = ValueFunction::new(None, params.clone(), vec![], Rc::clone(&env), false, false);
+        let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&env))));
+        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env, false).unwrap();
+        assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("second").unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn rest_pattern_forwards_iterator_step_error() {
+        let err = eval(
+            "try { \
+               (function([...x]) {})(function*() { throw new Error('step'); }()); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
+    }
+
+    #[test]
+    fn async_gen_method_rest_forwards_iterator_step_error() {
+        let err = eval(
+            "try { \
+               (function() { \
+                 class C { async *method([...x]) {} } \
+                 C.prototype.method(function*() { throw new Error('step'); }()); \
+               })(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
+    }
+
+    #[test]
+    fn destructure_generator_elision_advances_iterator() {
+        let mut host = crate::test262::QuenchHost::new();
+        host.run_script(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; } \
+             class C { method([,]) {} } \
+             new C().method(g()); \
+             if (first !== 1 || second !== 0) throw new Error('got ' + first + ',' + second);",
+        )
+        .expect("class method generator destructuring");
+    }
+
+    #[test]
+    fn destructure_generator_elision_iife() {
+        let r = eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; } \
+             (function([,]) {})(g()); \
+             first + second * 10",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
     }
 
     // ─── array destructuring ─────────────────────────────────────────────────
@@ -583,5 +865,39 @@ mod tests {
     fn array_destructuring_more_values() {
         let r = eval("var [a] = [1, 2, 3]; a").unwrap();
         assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn destructure_param_iterator_value_getter_throw() {
+        let err = eval(
+            "var poisonedValue = Object.defineProperty({}, 'value', { \
+               get: function() { throw new Error('ITER_VAL_ERR'); } \
+             }); \
+             var g = {}; \
+             g[Symbol.iterator] = function() { \
+               return { next: function() { return poisonedValue; } }; \
+             }; \
+             function f([x]) {} \
+             try { f(g); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("ITER_VAL_ERR".into()));
+    }
+
+    #[test]
+    fn sync_generator_destructure_param_binds_at_call() {
+        let err = eval(
+            "var poisonedValue = Object.defineProperty({}, 'value', { \
+               get: function() { throw new Error('GEN_PARAM_ERR'); } \
+             }); \
+             var g = {}; \
+             g[Symbol.iterator] = function() { \
+               return { next: function() { return poisonedValue; } }; \
+             }; \
+             function* f([x]) {} \
+             try { f(g); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("GEN_PARAM_ERR".into()));
     }
 }

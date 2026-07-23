@@ -18,6 +18,12 @@ use crate::eval;
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
 
+/// Internal object key for a private name — distinct from public `"#name"` string keys.
+pub fn private_name_key(name: &str) -> String {
+    let bare = name.strip_prefix('#').unwrap_or(name);
+    format!("\0private:{bare}\0")
+}
+
 /// A class method: (name, params, body, is_async, is_generator)
 pub type ClassMethod = (
     PropertyKey,
@@ -33,10 +39,30 @@ pub use crate::value::convert::{
 };
 
 /// ECMA-262 6.1.6 Symbol type — unique, immutable, optionally described.
+/// Property keys use [`Symbol::property_key`] (`desc\0id`) so equal
+/// descriptions never collide.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Symbol {
     pub desc: Option<Rc<str>>,
     pub global: bool, // Symbol.for / Symbol.keyFor
+    pub id: u64,
+}
+
+static SYMBOL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl Symbol {
+    pub fn new(desc: Option<Rc<str>>, global: bool) -> Self {
+        Self {
+            desc,
+            global,
+            id: SYMBOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Canonical property-key form: `desc\0id` (AGENTS.md).
+    pub fn property_key(&self) -> String {
+        format!("{}\0{}", self.desc.as_deref().unwrap_or(""), self.id)
+    }
 }
 
 /// A JavaScript value - the fundamental runtime type.
@@ -83,6 +109,10 @@ pub struct ClassValue {
     pub constructor_params: Vec<String>,
     /// Constructor body statements
     pub constructor_body: Vec<crate::ast::Statement>,
+    /// True when the class AST had an explicit `constructor` member.
+    /// Missing constructor on a derived class gets a synthetic
+    /// `constructor(...args){ super(...args); }` — only then may we auto-call super.
+    pub has_explicit_constructor: bool,
     /// Instance methods
     pub methods: Vec<ClassMethod>,
     /// Static methods
@@ -126,6 +156,9 @@ pub struct ClassValue {
     /// for static accessors with the correct lexical scope.
     pub(crate) class_def_env_cell:
         std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Environment>>>>>,
+    /// Keys resolved during class definition for static getters/setters (by index).
+    pub(crate) static_getter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 impl ClassValue {
@@ -134,6 +167,7 @@ impl ClassValue {
     pub fn from_ast(class: &Class) -> Self {
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
+        let mut has_explicit_constructor = false;
         let mut methods = Vec::new();
         let mut static_methods = Vec::new();
         let mut getters = Vec::new();
@@ -148,6 +182,7 @@ impl ClassValue {
             &class.body,
             &mut constructor_params,
             &mut constructor_body,
+            &mut has_explicit_constructor,
             &mut methods,
             &mut static_methods,
             &mut getters,
@@ -164,6 +199,7 @@ impl ClassValue {
             name: class.name.clone(),
             constructor_params,
             constructor_body,
+            has_explicit_constructor,
             methods,
             static_methods,
             getters,
@@ -182,7 +218,25 @@ impl ClassValue {
                 std::collections::HashSet::new(),
             )),
             class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         }
+    }
+
+    pub fn push_static_getter_key(&self, key: String) {
+        self.static_getter_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn push_static_setter_key(&self, key: String) {
+        self.static_setter_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn static_getter_key(&self, index: usize) -> Option<String> {
+        self.static_getter_keys_cell.borrow().get(index).cloned()
+    }
+
+    pub fn static_setter_key(&self, index: usize) -> Option<String> {
+        self.static_setter_keys_cell.borrow().get(index).cloned()
     }
 
     /// Set the class definition environment (used for evaluating computed property keys in static accessors)
@@ -229,9 +283,51 @@ impl ClassValue {
             Some(e) => e,
             None => return false,
         };
-        for (key, _param, _body) in &self.static_setters {
-            let key_str = crate::eval::class::helpers::prop_key_to_string(key, env, false);
+        for (i, (key, _param, _body)) in self.static_setters.iter().enumerate() {
+            let key_str = if let Some(cached) = self.static_setter_key(i) {
+                Ok(cached)
+            } else {
+                crate::eval::class::helpers::prop_key_to_string(key, env, false)
+            };
             if key_str.is_ok_and(|k| k == name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether `name` is an own property of this class constructor (static members).
+    pub fn has_static_own_property(&self, name: &str) -> bool {
+        if self.deleted_properties.borrow().contains(name) {
+            return false;
+        }
+        if name == "name" || name == "prototype" {
+            return true;
+        }
+        if self.get_static_field(name).is_some() {
+            return true;
+        }
+        let eval_env = self
+            .get_class_def_env()
+            .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+        for (key, _) in &self.static_getters {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
+            {
+                return true;
+            }
+        }
+        for (key, _, _) in &self.static_setters {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
+            {
+                return true;
+            }
+        }
+        for (key, _, _, _, _) in &self.static_methods {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
+            {
                 return true;
             }
         }
@@ -252,8 +348,12 @@ impl ClassValue {
             .map(Rc::clone)
             .unwrap_or_else(|| Rc::clone(env));
 
-        for (key, param, body) in &self.static_setters {
-            let key_str = crate::eval::class::helpers::prop_key_to_string(key, &env, false)?;
+        for (i, (key, param, body)) in self.static_setters.iter().enumerate() {
+            let key_str = if let Some(cached) = self.static_setter_key(i) {
+                cached
+            } else {
+                crate::eval::class::helpers::prop_key_to_string(key, &env, false)?
+            };
             if key_str == name {
                 // Bind `this` to the class itself so `this._v = v` in the setter body
                 // writes to the class's own static properties, not a throwaway object.
@@ -294,6 +394,7 @@ fn fill_members_from_ast(
     members: &[ClassMember],
     constructor_params: &mut Vec<String>,
     constructor_body: &mut Vec<crate::ast::Statement>,
+    has_explicit_constructor: &mut bool,
     methods: &mut Vec<ClassMethod>,
     static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
@@ -309,6 +410,7 @@ fn fill_members_from_ast(
             ClassMember::Constructor { params, body } => {
                 *constructor_params = params.clone();
                 *constructor_body = body.clone();
+                *has_explicit_constructor = true;
             }
             ClassMember::Method {
                 name,
@@ -487,10 +589,7 @@ mod tests {
     }
 
     fn sym(desc: &str) -> Value {
-        Value::Symbol(Rc::new(Symbol {
-            desc: Some(Rc::from(desc)),
-            global: false,
-        }))
+        Value::Symbol(Rc::new(Symbol::new(Some(Rc::from(desc)), false)))
     }
 
     fn big(n: i32) -> Value {
@@ -583,23 +682,13 @@ mod tests {
 
     #[test]
     fn test_symbol_struct() {
-        let s = Symbol {
-            desc: Some(Rc::from("foo")),
-            global: false,
-        };
+        let s = Symbol::new(Some(Rc::from("foo")), false);
         assert_eq!(s.desc.as_deref(), Some("foo"));
         assert!(!s.global);
-        assert_eq!(
-            Symbol {
-                desc: Some(Rc::from("foo")),
-                global: false
-            },
-            s
-        );
-        let sg = Symbol {
-            desc: None,
-            global: true,
-        };
+        let s2 = Symbol::new(Some(Rc::from("foo")), false);
+        assert_ne!(s.id, s2.id);
+        assert_ne!(s.property_key(), s2.property_key());
+        let sg = Symbol::new(None, true);
         assert!(sg.global);
         assert!(sg.desc.is_none());
     }

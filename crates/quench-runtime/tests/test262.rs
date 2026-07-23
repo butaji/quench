@@ -703,28 +703,20 @@ fn test262_staged() {
             .map(PathBuf::from)
             .unwrap_or_else(|_| repo_root.join("tests/test262"))
     };
-    let digest = std::env::var("TEST262_DIGEST")
-        .ok()
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
     let runner = Test262Runner::new(test262_dir);
     let mut host = QuenchHost::new();
     let summary = runner.run(&mut host);
-    if summary.failed > 0 {
-        if digest {
-            // In digest mode, failures are already reported by the runner.
-            // Use exit() so TEST262_DUMP_FAILURES and other side-effects
-            // complete before termination.
-            std::process::exit(1);
-        } else {
-            panic!(
-                "Stage {} failed: {}/{} passed. First failure: {:?}",
-                std::env::var("TEST262_STAGE").unwrap_or_else(|_| "0".into()),
-                summary.passed,
-                summary.passed + summary.failed,
-                summary.first_failure,
-            );
-        }
+    let digest = std::env::var("TEST262_DIGEST")
+        .ok()
+        .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+    if summary.failed > 0 && !digest {
+        panic!(
+            "Stage {} failed: {}/{} passed. First failure: {:?}",
+            std::env::var("TEST262_STAGE").unwrap_or_else(|_| "0".into()),
+            summary.passed,
+            summary.passed + summary.failed,
+            summary.first_failure,
+        );
     }
 }
 

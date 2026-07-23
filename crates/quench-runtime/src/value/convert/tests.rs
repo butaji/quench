@@ -185,10 +185,7 @@ fn test_try_to_number_valid() {
 
 #[test]
 fn test_try_to_number_symbol_throws() {
-    let sym = Value::Symbol(Rc::new(Symbol {
-        desc: Some("test".into()),
-        global: false,
-    }));
+    let sym = Value::Symbol(Rc::new(Symbol::new(Some("test".into()), false)));
     assert!(
         try_to_number(&sym).is_err(),
         "ToNumber(Symbol) must throw TypeError"
@@ -419,10 +416,10 @@ fn test_to_object_bigint() {
 
 #[test]
 fn test_to_object_symbol() {
-    let r = to_object(&Value::Symbol(Rc::new(Symbol {
-        desc: Some("sym".into()),
-        global: false,
-    })));
+    let r = to_object(&Value::Symbol(Rc::new(Symbol::new(
+        Some("sym".into()),
+        false,
+    ))));
     assert!(matches!(r, Value::Object(_)));
 }
 
@@ -652,23 +649,14 @@ fn test_strict_eq_bigint_zero() {
 
 #[test]
 fn test_strict_eq_same_symbol() {
-    let sym = Rc::new(Symbol {
-        desc: Some("test".into()),
-        global: false,
-    });
+    let sym = Rc::new(Symbol::new(Some("test".into()), false));
     assert!(strict_eq(&Value::Symbol(sym.clone()), &Value::Symbol(sym)));
 }
 
 #[test]
 fn test_strict_eq_different_symbols() {
-    let a = Value::Symbol(Rc::new(Symbol {
-        desc: Some("a".into()),
-        global: false,
-    }));
-    let b = Value::Symbol(Rc::new(Symbol {
-        desc: Some("a".into()),
-        global: false,
-    }));
+    let a = Value::Symbol(Rc::new(Symbol::new(Some("a".into()), false)));
+    let b = Value::Symbol(Rc::new(Symbol::new(Some("a".into()), false)));
     assert!(
         !strict_eq(&a, &b),
         "Symbols with same desc are different objects"
@@ -677,10 +665,7 @@ fn test_strict_eq_different_symbols() {
 
 #[test]
 fn test_strict_eq_symbol_no_desc() {
-    let sym = Rc::new(Symbol {
-        desc: None,
-        global: false,
-    });
+    let sym = Rc::new(Symbol::new(None, false));
     assert!(strict_eq(&Value::Symbol(sym.clone()), &Value::Symbol(sym)));
 }
 

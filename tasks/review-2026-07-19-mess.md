@@ -1,5 +1,10 @@
 # Code Review — Duplications, Unnecessary Complexity, Messy Parts (2026-07-19)
 
+> **Sequencing:** follow `tasks/10-ways-to-speed-up.md` Phases A–C.
+> Dedup items that are ops (`same_value_zero`, `to_object`, iterators)
+> land via incremental R1 on touch; do not block stage 16 on a full
+> hoist sweep.
+
 Companion to `tasks/review-2026-07-19.md` (arch+ranked findings).
 This document focuses on **duplication**, **unnecessary complexity**,
 and **messy patterns** at the code-idiom level — the smaller-scale

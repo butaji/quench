@@ -35,10 +35,7 @@ fn obj() -> Value {
 }
 
 fn sym(desc: &str) -> Value {
-    Value::Symbol(Rc::new(Symbol {
-        desc: Some(desc.into()),
-        global: false,
-    }))
+    Value::Symbol(Rc::new(Symbol::new(Some(desc.into()), false)))
 }
 
 fn big(n: i64) -> Value {
@@ -312,6 +309,7 @@ fn test_to_bool_class_gen_sym_bigint() {
         name: None,
         constructor_params: vec![],
         constructor_body: vec![],
+        has_explicit_constructor: false,
         methods: vec![],
         static_methods: vec![],
         getters: vec![],
@@ -328,6 +326,8 @@ fn test_to_bool_class_gen_sym_bigint() {
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
         class_def_env_cell: Rc::new(RefCell::new(None)),
+        static_getter_keys_cell: Rc::new(RefCell::new(Vec::new())),
+        static_setter_keys_cell: Rc::new(RefCell::new(Vec::new())),
     }));
     assert!(to_bool(&cls_val));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
@@ -392,10 +392,7 @@ fn test_to_js_string_primitives() {
 #[test]
 fn test_to_js_string_symbols() {
     assert_eq!(to_js_string(&sym("mySym")), "Symbol(mySym)");
-    let no_desc = Value::Symbol(Rc::new(Symbol {
-        desc: None,
-        global: false,
-    }));
+    let no_desc = Value::Symbol(Rc::new(Symbol::new(None, false)));
     assert_eq!(to_js_string(&no_desc), "Symbol()");
 }
 
@@ -471,6 +468,7 @@ fn test_to_object_identity_preserved() {
         name: None,
         constructor_params: vec![],
         constructor_body: vec![],
+        has_explicit_constructor: false,
         methods: vec![],
         static_methods: vec![],
         getters: vec![],
@@ -487,6 +485,8 @@ fn test_to_object_identity_preserved() {
         static_properties_cell: Rc::new(RefCell::new(HashMap::new())),
         deleted_properties: Rc::new(RefCell::new(HashSet::new())),
         class_def_env_cell: Rc::new(RefCell::new(None)),
+        static_getter_keys_cell: Rc::new(RefCell::new(Vec::new())),
+        static_setter_keys_cell: Rc::new(RefCell::new(Vec::new())),
     }));
     assert!(matches!(to_object(&cls_val), Value::Class(_)));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(

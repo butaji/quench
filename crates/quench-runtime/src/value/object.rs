@@ -4,37 +4,27 @@
 //! Property operations are in `property.rs`.
 
 mod accessor;
-mod array;
 pub(crate) mod helpers;
 mod keys;
 mod property;
-mod vtable;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
-use rustc_hash::{FxBuildHasher, FxHashMap};
 
 pub use helpers::{
-    as_array_index, as_key, is_array_index, Desc, Getter, GetterBody, GetterStorage, Key, ObjData,
-    Object, ObjectKind, PromiseObjectData, PromiseState, PropertyDescriptor, PropertyFlags, Setter,
-    SetterBody, SetterStorage, Slots, ThisMode, TypedArrayName, VTable, Value, MAX_ARRAY_ELEMENTS,
+    as_array_index, is_array_index, Getter, GetterBody, GetterStorage, ObjData, Object, ObjectKind,
+    PromiseObjectData, PromiseState, PropertyDescriptor, PropertyFlags, Setter, SetterBody,
+    SetterStorage, TypedArrayName, Value, MAX_ARRAY_ELEMENTS,
 };
 
 pub use accessor::{
     define_accessor, get_getter, get_setter, get_setter_func, has_getter, has_setter, set_getter,
     set_getter_func, set_setter, set_setter_func,
 };
-pub use array::{array_define_own_property, array_length_value, array_set_length, ARRAY_VTABLE};
 pub use keys::{own_keys, own_property_names};
-pub use vtable::{
-    ordinary_define_own_property, ordinary_delete, ordinary_get, ordinary_get_own_property,
-    ordinary_get_prototype_of, ordinary_has_property, ordinary_is_extensible,
-    ordinary_own_property_keys, ordinary_prevent_extensions, ordinary_set,
-    ordinary_set_prototype_of, ORDINARY_VTABLE,
-};
 
 // ─── Object impl ───────────────────────────────────────────────────────────────
 
@@ -61,10 +51,7 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
-            slots: FxHashMap::default(),
-            props: IndexMap::with_hasher(FxBuildHasher),
             data,
-            vtable: &ORDINARY_VTABLE,
         }
     }
 
@@ -90,10 +77,7 @@ impl Object {
             symbol_properties: IndexMap::new(),
             holes: HashSet::new(),
             extensible: true,
-            slots: FxHashMap::default(),
-            props: IndexMap::with_hasher(FxBuildHasher),
             data,
-            vtable: &ORDINARY_VTABLE,
         }
     }
 
@@ -104,20 +88,18 @@ impl Object {
         obj.elements = vec![Value::Undefined; len];
         let len_val = Value::Number(len as f64);
         obj.properties.insert("length".to_string(), len_val.clone());
-        obj.props.insert(
-            as_key("length"),
-            Desc {
+        obj.descriptors.insert(
+            "length".to_string(),
+            helpers::PropertyFlags {
                 value: Some(len_val),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(false),
-                ..Default::default()
+                writable: true,
+                enumerable: false,
+                configurable: false,
             },
         );
         if let Some(proto) = crate::builtins::get_array_prototype() {
             obj.prototype = Some(proto);
         }
-        obj.vtable = &ARRAY_VTABLE;
         obj
     }
 
