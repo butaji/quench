@@ -330,6 +330,15 @@ impl ClassValue {
         self.id
     }
 
+    /// Whether this class constructor carries the brand for `prop_name`.
+    pub fn private_brand_matches(&self, prop_name: &str) -> bool {
+        if let Some(decl_id) = private_name_declaring_class_id(prop_name) {
+            decl_id == self.id
+        } else {
+            self.declared_private_names.contains(prop_name)
+        }
+    }
+
     /// Get the class definition environment
     pub fn get_class_def_env(&self) -> Option<Rc<RefCell<Environment>>> {
         self.class_def_env_cell.borrow().clone()
@@ -442,6 +451,13 @@ impl ClassValue {
         value: Value,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<(), JsError> {
+        if crate::value::is_private_name_key(name) && !self.private_brand_matches(name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot write private member to an object whose class did not declare it",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         // Check if there's a static setter
         let eval_env = self.class_def_env_cell.borrow();
         let env = eval_env
