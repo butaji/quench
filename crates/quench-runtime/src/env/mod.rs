@@ -37,6 +37,8 @@ pub struct Environment {
     /// Static class body marker — set when evaluating static class members.
     /// Persists across pushed scopes within the same class body.
     is_static_class_body_flag: bool,
+    /// Class id for resolving private names in direct eval (PrivateEnvironment).
+    private_class_id: Option<usize>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -65,6 +67,7 @@ impl Environment {
             super_class: None,
             pending_fields: None,
             is_static_class_body_flag: false,
+            private_class_id: None,
         }
     }
 
@@ -75,6 +78,7 @@ impl Environment {
             super_class: None,
             pending_fields: None,
             is_static_class_body_flag: false,
+            private_class_id: None,
         }
     }
 
@@ -112,7 +116,22 @@ impl Environment {
         captured.parent = self.parent.clone();
         captured.super_class = self.super_class.clone();
         captured.is_static_class_body_flag = self.is_static_class_body_flag;
+        captured.private_class_id = self.private_class_id;
         captured
+    }
+
+    pub fn set_private_class_id(&mut self, class_id: usize) {
+        self.private_class_id = Some(class_id);
+    }
+
+    pub fn private_class_id(&self) -> Option<usize> {
+        if let Some(id) = self.private_class_id {
+            return Some(id);
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().private_class_id();
+        }
+        None
     }
 
     pub fn binding_scope(&self, name: &str) -> Option<Rc<RefCell<Scope>>> {
@@ -403,6 +422,7 @@ impl Clone for Environment {
             super_class: self.super_class.clone(),
             pending_fields: None,
             is_static_class_body_flag: self.is_static_class_body_flag,
+            private_class_id: self.private_class_id,
         }
     }
 }
