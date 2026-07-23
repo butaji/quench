@@ -52,6 +52,35 @@ fn lower_array_pattern(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerE
     Ok(BindingElement::ArrayPattern(elements))
 }
 
+/// Lower an OXC array pattern to a runtime binding element.
+pub fn lower_array_binding(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerError> {
+    lower_array_pattern(arr)
+}
+
+/// Collect identifier names bound by a destructuring pattern (excluding holes).
+pub fn collect_pattern_identifiers(pattern: &BindingElement) -> Vec<String> {
+    match pattern {
+        BindingElement::Identifier(name) => {
+            if name != "__hole" {
+                vec![name.clone()]
+            } else {
+                vec![]
+            }
+        }
+        BindingElement::ArrayPattern(elements) => elements
+            .iter()
+            .flat_map(collect_pattern_identifiers)
+            .collect(),
+        BindingElement::ObjectPattern(props) => props
+            .iter()
+            .flat_map(|(_, binding)| collect_pattern_identifiers(binding))
+            .collect(),
+        BindingElement::Default(binding, _) => collect_pattern_identifiers(binding),
+        BindingElement::Rest(binding) => collect_pattern_identifiers(binding),
+        BindingElement::AssignmentTarget(_) => vec![],
+    }
+}
+
 pub fn lower_elem_pat(elem: &ast::BindingPattern) -> Option<BindingElement> {
     lower_binding_elem(elem).ok()
 }

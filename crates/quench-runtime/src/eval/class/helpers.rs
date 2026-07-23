@@ -822,6 +822,33 @@ mod tests {
     }
 
     #[test]
+    fn instance_private_method_via_getter_ref_call() {
+        let r = eval("class C { #m() { return 42; } get ref() { return this.#m; } } new C().ref()")
+            .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn prod_private_method_two_instances_ref_call() {
+        let r = eval(
+            "class C { \
+               #m() { return 42; } \
+               get ref() { return this.#m; } \
+               constructor() { \
+                 if (typeof this.#m !== 'function') throw new Error('bad typeof'); \
+                 if (this.ref !== this.#m) throw new Error('ref mismatch'); \
+               } \
+             } \
+             var c = new C(); \
+             var other = new C(); \
+             if (c.ref !== other.ref) throw new Error('not shared'); \
+             c.ref()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn static_getter_return_super_after_stmt() {
         let r = eval(
             "class B { static m() { return 1; } } \

@@ -61,6 +61,9 @@ pub fn eval_class_expr(
     // Set super_class on class_scope so static method closures capture it.
     // Must happen BEFORE get_or_create_class_prototype (which evaluates the class body).
     // Evaluate the superclass expression ONCE and cache for reuse.
+    class_scope
+        .borrow_mut()
+        .set_private_class_id(new_value.class_id());
     let cached_super_class_val = if let Some(ref super_class_expr) = new_value.super_class {
         let val = eval_expression(super_class_expr, &class_scope, false)?;
         if crate::value::generator_replay::yield_pending() {
@@ -277,6 +280,9 @@ pub fn call_super_constructor(
     let call_env = Rc::new(RefCell::new(call_env));
 
     if body.is_empty() {
+        if let Value::Object(o) = &this_val {
+            crate::eval::class::install_instance_private_elements(&class, o, env)?;
+        }
         Ok(this_val)
     } else {
         crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
