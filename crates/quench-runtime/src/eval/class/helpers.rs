@@ -58,15 +58,15 @@ fn finish_ctor_result(
         | Value::NativeConstructor(_) => Ok(result),
         _ => {
             if class.super_class.is_some() {
-                if !crate::interpreter::is_this_binding_initialized(call_env) {
-                    return throw_uninitialized_this();
-                }
                 if explicit_return && !matches!(result, Value::Undefined) {
                     let (_, js_err) = crate::value::error::create_js_error_with_type(
                         "Derived constructors may only return object or undefined",
                         "TypeError",
                     );
                     return Err(js_err);
+                }
+                if !crate::interpreter::is_this_binding_initialized(call_env) {
+                    return throw_uninitialized_this();
                 }
             }
             Ok(crate::interpreter::get_this_binding(call_env))
@@ -2746,6 +2746,23 @@ mod tests {
     #[test]
     fn static_private_method_assignment_throws_type_error() {
         let err = eval("class C { static #m() {} static assign() { this.#m = 0; } } C.assign()")
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn derived_constructor_return_primitive_before_super_throws_type_error() {
+        let err = eval(
+            "class C extends class {} { constructor() { try { return 0; } catch(e) { super(); } } } \
+             new C()",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn derived_extends_object_return_number_throws_type_error() {
+        let err = eval("class Obj extends Object { constructor() { return 42; } } new Obj()")
             .unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
