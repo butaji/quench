@@ -74,8 +74,12 @@ pub(crate) fn call_value_impl(
                 gen_obj.args = Some(args);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if f.is_generator {
-                // Sync generator function: return a GeneratorObject (body not executed yet).
-                // Parameters are evaluated when generator.next() is first called.
+                // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
+                // runs synchronously at [[Call]] before returning the generator object.
+                let eval_env = Environment::with_parent(Rc::clone(&f.closure));
+                let eval_env_rc = Rc::new(RefCell::new(eval_env));
+                bind_params(&f, &f.params, &args, &eval_env_rc, false)?;
+
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
                     f.params.clone(),

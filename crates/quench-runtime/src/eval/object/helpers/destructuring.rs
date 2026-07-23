@@ -221,14 +221,12 @@ pub fn take_iterator_value(
     let Value::Object(result_obj) = result else {
         return Ok(Value::Undefined);
     };
-    let done = result_obj.borrow().get("done");
-    if let Some(value) = done {
-        if matches!(value, Value::Boolean(true)) {
-            return Ok(Value::Undefined);
-        }
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(&env))?;
+    if matches!(done, Value::Boolean(true)) {
+        return Ok(Value::Undefined);
     }
-    let value = result_obj.borrow().get("value");
-    Ok(value.unwrap_or(Value::Undefined))
+    crate::eval::member::eval_object_member(&result_obj, "value", Some(&env))
 }
 
 /// Call iterator.return, returning an error if it throws.
@@ -772,5 +770,39 @@ mod tests {
     fn array_destructuring_more_values() {
         let r = eval("var [a] = [1, 2, 3]; a").unwrap();
         assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn destructure_param_iterator_value_getter_throw() {
+        let err = eval(
+            "var poisonedValue = Object.defineProperty({}, 'value', { \
+               get: function() { throw new Error('ITER_VAL_ERR'); } \
+             }); \
+             var g = {}; \
+             g[Symbol.iterator] = function() { \
+               return { next: function() { return poisonedValue; } }; \
+             }; \
+             function f([x]) {} \
+             try { f(g); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("ITER_VAL_ERR".into()));
+    }
+
+    #[test]
+    fn sync_generator_destructure_param_binds_at_call() {
+        let err = eval(
+            "var poisonedValue = Object.defineProperty({}, 'value', { \
+               get: function() { throw new Error('GEN_PARAM_ERR'); } \
+             }); \
+             var g = {}; \
+             g[Symbol.iterator] = function() { \
+               return { next: function() { return poisonedValue; } }; \
+             }; \
+             function* f([x]) {} \
+             try { f(g); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("GEN_PARAM_ERR".into()));
     }
 }

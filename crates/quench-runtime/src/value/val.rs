@@ -312,21 +312,21 @@ impl ClassValue {
             .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
         for (key, _) in &self.static_getters {
             if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
-                .is_ok_and(|k| k == name)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
             {
                 return true;
             }
         }
         for (key, _, _) in &self.static_setters {
             if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
-                .is_ok_and(|k| k == name)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
             {
                 return true;
             }
         }
         for (key, _, _, _, _) in &self.static_methods {
             if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
-                .is_ok_and(|k| k == name)
+                .is_ok_and(|k| !k.starts_with('#') && k == name)
             {
                 return true;
             }
