@@ -451,6 +451,46 @@ impl ClassValue {
             }
         }
 
+        // No setter found — enforce PrivateSet before writing static storage.
+        if crate::value::is_private_name_key(name) {
+            if self.static_methods.iter().any(|(key, _, _, _, _)| {
+                crate::eval::class::helpers::prop_key_to_string(key, &env, false)
+                    .is_ok_and(|k| k == name)
+            }) {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Private method is not writable",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
+            if self.static_getters.iter().enumerate().any(|(i, (key, _))| {
+                let key_str = self
+                    .static_getter_key(i)
+                    .or_else(|| {
+                        crate::eval::class::helpers::prop_key_to_string(key, &env, false).ok()
+                    })
+                    .unwrap_or_default();
+                key_str == name
+            }) && !self
+                .static_setters
+                .iter()
+                .enumerate()
+                .any(|(i, (key, _, _))| {
+                    self.static_setter_key(i)
+                        .or_else(|| {
+                            crate::eval::class::helpers::prop_key_to_string(key, &env, false).ok()
+                        })
+                        .is_some_and(|k| k == name)
+                })
+            {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Private accessor has no setter",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
+        }
+
         // No setter found, set the static field directly
         self.set_static_field(name, value)?;
         Ok(())
