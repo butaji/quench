@@ -1,26 +1,6 @@
 {
-  "failed": 16,
+  "failed": 12,
   "groups": [
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
-      ],
-      "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(24), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }, OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(33), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto-this.js"
-      ],
-      "reason": "Test262Error: Expected ReferenceError but got Test262Error. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto-this.js"
-      ]
-    },
     {
       "count": 1,
       "paths": [
@@ -32,33 +12,45 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
       ],
       "reason": "Test262Error: Expected ReferenceError but got TypeError. \")",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-getter-before-super-return-in-field-initializer.js"
       ],
-      "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
+      "reason": "Test262Error: Expected TypeError but got ReferenceError. private getters are not installed before super returns\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-getter-before-super-return-in-field-initializer.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-method-before-super-return-in-field-initializer.js"
       ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
+      "reason": "Test262Error: Expected TypeError but got ReferenceError. private methods are not installed before super returns\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-method-before-super-return-in-field-initializer.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-setter-before-super-return-in-field-initializer.js"
+      ],
+      "reason": "Test262Error: Expected TypeError but got ReferenceError. private setters are not installed before super returns\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-setter-before-super-return-in-field-initializer.js"
       ]
     },
     {
@@ -69,16 +61,6 @@
       "reason": "Test262Error: Symbol() should be an own property\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/instance-prototype.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 1 !== 0",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/instance-prototype.js"
       ]
     },
     {
@@ -99,36 +81,6 @@
       "reason": "Test262Error: sameValue failed: [object] !== 1",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/nested-indirect-eval-contains-arguments.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"function\\\" !== \\\"undefined\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
-      ],
-      "reason": "Test262Error: sameValue failed: false !== true",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto.js"
-      ],
-      "reason": "Test262Error: sameValue failed: null !== [object]",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto.js"
       ]
     },
     {
@@ -162,7 +114,7 @@
       ]
     }
   ],
-  "passed": 4351,
+  "passed": 4355,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

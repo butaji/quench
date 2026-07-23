@@ -134,6 +134,9 @@ impl Object {
     }
 
     pub(crate) fn get_own(&self, key: &str) -> Option<Value> {
+        if let Some(v) = self.symbol_properties.get(key) {
+            return Some(v.clone());
+        }
         if let Some(v) = self.properties.get(key) {
             return Some(v.clone());
         }

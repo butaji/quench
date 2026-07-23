@@ -189,7 +189,11 @@ pub fn create_data_property_or_throw(
             enumerable: true,
             configurable: true,
         };
-        obj.borrow_mut().define(key, value, flags);
+        if key.contains('\0') {
+            obj.borrow_mut().set_symbol(key, value);
+        } else {
+            obj.borrow_mut().define(key, value, flags);
+        }
         Ok(())
     }
 }

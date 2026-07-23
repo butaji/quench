@@ -80,11 +80,24 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             let proto = o.borrow().prototype.clone();
             Ok(proto.map(Value::Object).unwrap_or(Value::Null))
         }
-        Value::Function(_) => {
-            // Per ES §9.2.1 [[GetPrototypeOf]]: the internal [[Prototype]]
-            // of a function is %FunctionPrototype% (Function.prototype),
-            // NOT the function's own `.prototype` property (which is the
-            // prototype for instances created via `new`).
+        Value::Function(f) => {
+            if f.is_async && f.is_generator {
+                if let Some(fp) =
+                    crate::builtins::function::get_async_generator_function_prototype()
+                {
+                    return Ok(Value::Object(fp));
+                }
+            } else if f.is_generator {
+                if let Some(fp) = crate::builtins::function::get_generator_function_prototype() {
+                    return Ok(Value::Object(fp));
+                }
+            } else if f.is_async {
+                if let Some(fp) = crate::builtins::function::get_async_function_prototype() {
+                    return Ok(Value::Object(fp));
+                }
+            }
+            // Per ES §9.2.1 [[GetPrototypeOf]]: ordinary functions inherit
+            // from %FunctionPrototype% (Function.prototype).
             if let Some(fp) = crate::builtins::function::get_function_prototype() {
                 return Ok(Value::Object(fp));
             }
