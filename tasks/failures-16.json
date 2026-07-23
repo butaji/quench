@@ -1,5 +1,5 @@
 {
-  "failed": 62,
+  "failed": 56,
   "groups": [
     {
       "count": 1,
@@ -308,22 +308,6 @@
       ]
     },
     {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-name.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"\\0private:3:method\\0\\\" !== \\\"#method\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-name.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
@@ -331,26 +315,6 @@
       "reason": "Test262Error: sameValue failed: \\\"function\\\" !== \\\"undefined\\\"",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-length-static-precedence.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"number\\\" !== \\\"function\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-length-static-precedence.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-static-precedence.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"string\\\" !== \\\"function\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-static-precedence.js"
       ]
     },
     {
@@ -502,7 +466,7 @@
       ]
     }
   ],
-  "passed": 4305,
+  "passed": 4311,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
