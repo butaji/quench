@@ -12,7 +12,7 @@ mod descriptors;
 mod freezing;
 
 pub use descriptors::{
-    get_class_property_descriptor, get_function_property_descriptor,
+    class_own_property_names, get_class_property_descriptor, get_function_property_descriptor,
     get_native_constructor_property_descriptor, get_native_function_property_descriptor,
     get_object_property_descriptor, make_descriptor_value, make_property_descriptor_number,
     make_property_descriptor_string, object_define_property, object_get_own_property_descriptor,
@@ -141,23 +141,23 @@ pub fn object_get_own_property_names(args: Vec<Value>) -> Result<Value, JsError>
     let obj = args
         .first()
         .ok_or_else(|| JsError::from("Object.getOwnPropertyNames requires argument"))?;
-    if let Value::Object(o) = obj {
-        let keys: Vec<Value> = o
-            .borrow()
-            .own_property_names()
-            .into_iter()
-            .map(Value::String)
-            .collect();
-        Ok(Value::Object(Rc::new(RefCell::new(
-            Object::new_array_from(keys),
-        ))))
-    } else if matches!(obj, Value::Null | Value::Undefined) {
-        Err(JsError::from(
-            "TypeError: Object.getOwnPropertyNames called on null or undefined",
-        ))
-    } else {
-        Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))))
-    }
+    let keys: Vec<String> = match obj {
+        Value::Object(o) => o.borrow().own_property_names(),
+        Value::Class(c) => descriptors::class_own_property_names(c),
+        Value::Function(f) => descriptors::function_own_property_names(f),
+        Value::NativeFunction(nf) => descriptors::native_function_own_property_names(nf),
+        Value::NativeConstructor(nc) => descriptors::native_constructor_own_property_names(nc),
+        Value::Null | Value::Undefined => {
+            return Err(JsError::from(
+                "TypeError: Object.getOwnPropertyNames called on null or undefined",
+            ));
+        }
+        _ => Vec::new(),
+    };
+    let key_vals: Vec<Value> = keys.into_iter().map(Value::String).collect();
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(key_vals),
+    ))))
 }
 
 /// Object.values(obj) - returns array of own property values

@@ -46,9 +46,9 @@ fn next_symbol_desc() -> u64 {
     SYMBOL_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Create a new unique symbol value with the given description.
-pub fn new_symbol(desc: &str) -> Value {
-    Value::Symbol(Rc::new(ValSymbol::new(Some(Rc::from(desc)), false)))
+/// Create a new unique symbol value with the given description (`None` = no description).
+pub fn new_symbol(desc: Option<&str>) -> Value {
+    Value::Symbol(Rc::new(ValSymbol::new(desc.map(Rc::from), false)))
 }
 
 /// Store a well-known symbol in thread-local storage
@@ -131,11 +131,12 @@ pub fn register_symbol(ctx: &mut Context) {
                 "TypeError: Symbol is not a constructor",
             ));
         }
-        // Symbol() with no arg should have empty description
-        let desc = if args.is_empty() {
-            String::new()
-        } else {
-            crate::value::to_js_string(&args[0])
+        let sym = match args.first() {
+            None | Some(Value::Undefined) => Value::Symbol(Rc::new(ValSymbol::new(None, false))),
+            Some(v) => {
+                let s = crate::value::to_js_string(v);
+                Value::Symbol(Rc::new(ValSymbol::new(Some(Rc::from(s.as_str())), false)))
+            }
         };
         // Store only the description; to_js_string will format as "Symbol(desc)"
         //
@@ -242,7 +243,7 @@ fn register_well_known_symbols(symbol_fn: &Rc<NativeFunction>) {
         "matchAll",
         "asyncIterator",
     ] {
-        let symbol = new_symbol(&format!("Symbol.{}", name));
+        let symbol = new_symbol(Some(&format!("Symbol.{}", name)));
         store_well_known_symbol(name, symbol.clone());
         let _ = symbol_fn.set_property(name, symbol);
     }

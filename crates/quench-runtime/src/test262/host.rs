@@ -91,6 +91,72 @@ mod tests {
     }
 
     #[test]
+    fn fn_name_method_test262_case() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/definition/fn-name-method.js");
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &path);
+        assert_eq!(outcome, TestOutcome::Pass, "fn-name-method: {:?}", outcome);
+    }
+
+    #[test]
+    fn fn_name_method_static_id_via_build_script() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let ph = harness
+            .build_script("", &["propertyHelper.js".to_string()])
+            .unwrap();
+        let script = format!(
+            "{ph}class A {{ static id() {{}} }} \
+             verifyProperty(A.id, 'name', {{ value: 'id', writable: false, enumerable: false, configurable: true }});"
+        );
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "static A.id verifyProperty: {:?}", result);
+    }
+
+    #[test]
+    fn fn_name_method_via_build_script_first_two() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let ph = harness
+            .build_script("", &["propertyHelper.js".to_string()])
+            .unwrap();
+        let script = format!(
+            "{ph}var namedSym = Symbol('test262'); var anonSym = Symbol(); \
+             class A {{ id() {{}} [anonSym]() {{}} [namedSym]() {{}} }} \
+             verifyProperty(A.prototype.id, 'name', {{ value: 'id', writable: false, enumerable: false, configurable: true }}); \
+             verifyProperty(A.prototype[anonSym], 'name', {{ value: '', writable: false, enumerable: false, configurable: true }});"
+        );
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "first two verifyProperty: {:?}", result);
+    }
+
+    #[test]
+    fn fn_name_method_via_build_script() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::metadata::Test262Metadata;
+        use crate::test262::runner::default_test262_dir;
+        use std::fs;
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/definition/fn-name-method.js");
+        let source = fs::read_to_string(&path).unwrap();
+        let meta = Test262Metadata::parse(&source).unwrap();
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let script = harness.build_script(&source, &meta.includes).unwrap();
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "build_script fn-name-method: {:?}", result);
+    }
+
+    #[test]
     fn quench_host_cptn_decl_class_completion() {
         let mut host = QuenchHost::new();
         let result = host.run_script(
