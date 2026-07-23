@@ -17,733 +17,977 @@
       "id": 0,
       "path": "test/harness",
       "tests": 116,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 1,
       "path": "test/language/literals",
       "tests": 534,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 2,
       "path": "test/language/identifiers",
       "tests": 268,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 3,
       "path": "test/language/future-reserved-words",
       "tests": 55,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 4,
       "path": "test/language/reserved-words",
       "tests": 27,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 5,
       "path": "test/language/keywords",
       "tests": 25,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 6,
       "path": "test/language/punctuators",
       "tests": 11,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 7,
       "path": "test/language/white-space",
       "tests": 67,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 8,
       "path": "test/language/line-terminators",
       "tests": 41,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 9,
       "path": "test/language/comments",
       "tests": 52,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 10,
       "path": "test/language/source-text",
       "tests": 1,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 11,
       "path": "test/language/types",
       "tests": 113,
-      "status": "done"
+      "status": "done",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 12,
       "path": "test/language/directive-prologue",
       "tests": 62,
-      "status": "done"
+      "status": "done",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 13,
       "path": "test/language/statements/async-function",
       "tests": 74,
-      "status": "done"
+      "status": "done",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 14,
       "path": "test/language/statements/block",
       "tests": 21,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 15,
       "path": "test/language/statements/break",
       "tests": 20,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 16,
       "path": "test/language/statements/class",
       "tests": 4367,
-      "status": "in_progress"
+      "status": "in_progress",
+      "difficulty": 7,
+      "impl": "rust"
     },
     {
       "id": 17,
       "path": "test/language/statements/const",
       "tests": 136,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 18,
       "path": "test/language/statements/continue",
       "tests": 24,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 19,
       "path": "test/language/statements/debugger",
       "tests": 2,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 20,
       "path": "test/language/statements/do-while",
       "tests": 36,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 21,
       "path": "test/language/statements/empty",
       "tests": 2,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 22,
       "path": "test/language/statements/expression",
       "tests": 3,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 23,
       "path": "test/language/statements/for",
       "tests": 385,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 24,
       "path": "test/language/statements/for-in",
       "tests": 115,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 25,
       "path": "test/language/statements/for-of",
       "tests": 751,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "rust"
     },
     {
       "id": 26,
       "path": "test/language/statements/function",
       "tests": 451,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 27,
       "path": "test/language/statements/generators",
       "tests": 266,
-      "status": "done"
+      "status": "done",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 28,
       "path": "test/language/statements/if",
       "tests": 69,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 29,
       "path": "test/language/statements/labeled",
       "tests": 24,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 30,
       "path": "test/language/statements/let",
       "tests": 145,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 31,
       "path": "test/language/statements/return",
       "tests": 16,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 32,
       "path": "test/language/statements/switch",
       "tests": 111,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 33,
       "path": "test/language/statements/throw",
       "tests": 14,
-      "status": "done"
+      "status": "done",
+      "difficulty": 1,
+      "impl": "rust"
     },
     {
       "id": 34,
       "path": "test/language/statements/try",
       "tests": 201,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 35,
       "path": "test/language/statements/variable",
       "tests": 178,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 36,
       "path": "test/language/statements/while",
       "tests": 38,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 37,
       "path": "test/language/statements/with",
       "tests": 181,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 38,
       "path": "test/language/statements/async-generator",
       "tests": 301,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "rust"
     },
     {
       "id": 39,
       "path": "test/language/statements/await-using",
       "tests": 94,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "hybrid"
     },
     {
       "id": 40,
       "path": "test/language/statements/for-await-of",
       "tests": 1234,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "rust"
     },
     {
       "id": 41,
       "path": "test/language/statements/using",
       "tests": 78,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "js"
     },
     {
       "id": 42,
       "path": "test/language/statementList",
       "tests": 80,
-      "status": "done"
+      "status": "done",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 43,
       "path": "test/language/block-scope",
       "tests": 145,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 44,
       "path": "test/language/expressions",
       "tests": 11101,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 8,
+      "impl": "rust"
     },
     {
       "id": 45,
       "path": "test/language/computed-property-names",
       "tests": 48,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 46,
       "path": "test/language/destructuring",
       "tests": 19,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "rust"
     },
     {
       "id": 47,
       "path": "test/language/rest-parameters",
       "tests": 11,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 48,
       "path": "test/language/function-code",
       "tests": 217,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 49,
       "path": "test/language/arguments-object",
       "tests": 263,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "rust"
     },
     {
       "id": 50,
       "path": "test/language/eval-code",
       "tests": 347,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "rust"
     },
     {
       "id": 51,
       "path": "test/language/global-code",
       "tests": 42,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 52,
       "path": "test/language/identifier-resolution",
       "tests": 14,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 53,
       "path": "test/language/module-code",
       "tests": 599,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "hybrid"
     },
     {
       "id": 54,
       "path": "test/language/import",
       "tests": 127,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 55,
       "path": "test/language/export",
       "tests": 3,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 56,
       "path": "test/language/asi",
       "tests": 102,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 57,
       "path": "test/built-ins/global",
       "tests": 29,
-      "status": "done"
+      "status": "done",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 58,
       "path": "test/built-ins/Infinity",
       "tests": 6,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 59,
       "path": "test/built-ins/NaN",
       "tests": 6,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 60,
       "path": "test/built-ins/undefined",
       "tests": 8,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 61,
       "path": "test/built-ins/parseInt",
       "tests": 55,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 62,
       "path": "test/built-ins/parseFloat",
       "tests": 54,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 63,
       "path": "test/built-ins/isNaN",
       "tests": 15,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 64,
       "path": "test/built-ins/isFinite",
       "tests": 15,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 65,
       "path": "test/built-ins/decodeURI",
       "tests": 55,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 66,
       "path": "test/built-ins/decodeURIComponent",
       "tests": 56,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 67,
       "path": "test/built-ins/encodeURI",
       "tests": 31,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 68,
       "path": "test/built-ins/encodeURIComponent",
       "tests": 31,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 69,
       "path": "test/built-ins/eval",
       "tests": 10,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "rust"
     },
     {
       "id": 70,
       "path": "test/built-ins/ThrowTypeError",
       "tests": 14,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "rust"
     },
     {
       "id": 71,
       "path": "test/built-ins/Object",
       "tests": 3411,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "js"
     },
     {
       "id": 72,
       "path": "test/built-ins/Function",
       "tests": 509,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "js"
     },
     {
       "id": 73,
       "path": "test/built-ins/Boolean",
       "tests": 51,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 74,
       "path": "test/built-ins/Error",
       "tests": 93,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 75,
       "path": "test/built-ins/NativeErrors",
       "tests": 94,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 76,
       "path": "test/built-ins/AggregateError",
       "tests": 25,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 77,
       "path": "test/built-ins/SuppressedError",
       "tests": 22,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 78,
       "path": "test/built-ins/Number",
       "tests": 340,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 79,
       "path": "test/built-ins/BigInt",
       "tests": 77,
-      "status": "done"
+      "status": "done",
+      "difficulty": 2,
+      "impl": "js"
     },
     {
       "id": 80,
       "path": "test/built-ins/Math",
       "tests": 327,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "js"
     },
     {
       "id": 81,
       "path": "test/built-ins/Date",
       "tests": 594,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 82,
       "path": "test/built-ins/String",
       "tests": 1223,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "js"
     },
     {
       "id": 83,
       "path": "test/built-ins/Symbol",
       "tests": 98,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "js"
     },
     {
       "id": 84,
       "path": "test/built-ins/RegExp",
       "tests": 1879,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "hybrid"
     },
     {
       "id": 85,
       "path": "test/built-ins/Array",
       "tests": 3081,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "js"
     },
     {
       "id": 86,
       "path": "test/built-ins/JSON",
       "tests": 165,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "js"
     },
     {
       "id": 87,
       "path": "test/built-ins/Iterator",
       "tests": 514,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 88,
       "path": "test/built-ins/ArrayIteratorPrototype",
       "tests": 27,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 89,
       "path": "test/built-ins/StringIteratorPrototype",
       "tests": 7,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "js"
     },
     {
       "id": 90,
       "path": "test/built-ins/RegExpStringIteratorPrototype",
       "tests": 17,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "js"
     },
     {
       "id": 91,
       "path": "test/built-ins/MapIteratorPrototype",
       "tests": 11,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 92,
       "path": "test/built-ins/SetIteratorPrototype",
       "tests": 11,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 93,
       "path": "test/built-ins/AsyncIteratorPrototype",
       "tests": 13,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 94,
       "path": "test/built-ins/AsyncFromSyncIteratorPrototype",
       "tests": 38,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 95,
       "path": "test/built-ins/GeneratorFunction",
       "tests": 23,
-      "status": "done"
+      "status": "done",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 96,
       "path": "test/built-ins/GeneratorPrototype",
       "tests": 61,
-      "status": "done"
+      "status": "done",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 97,
       "path": "test/built-ins/AsyncGeneratorFunction",
       "tests": 23,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "rust"
     },
     {
       "id": 98,
       "path": "test/built-ins/AsyncGeneratorPrototype",
       "tests": 48,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "rust"
     },
     {
       "id": 99,
       "path": "test/built-ins/AsyncFunction",
       "tests": 18,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "rust"
     },
     {
       "id": 100,
       "path": "test/built-ins/ArrayBuffer",
       "tests": 221,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "hybrid"
     },
     {
       "id": 101,
       "path": "test/built-ins/SharedArrayBuffer",
       "tests": 104,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "hybrid"
     },
     {
       "id": 102,
       "path": "test/built-ins/TypedArray",
       "tests": 1446,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "hybrid"
     },
     {
       "id": 103,
       "path": "test/built-ins/TypedArrayConstructors",
       "tests": 738,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "hybrid"
     },
     {
       "id": 104,
       "path": "test/built-ins/Uint8Array",
       "tests": 70,
-      "status": "done"
+      "status": "done",
+      "difficulty": 4,
+      "impl": "hybrid"
     },
     {
       "id": 105,
       "path": "test/built-ins/DataView",
       "tests": 561,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "hybrid"
     },
     {
       "id": 106,
       "path": "test/built-ins/Atomics",
       "tests": 389,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "rust"
     },
     {
       "id": 107,
       "path": "test/built-ins/Map",
       "tests": 204,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 108,
       "path": "test/built-ins/Set",
       "tests": 383,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 109,
       "path": "test/built-ins/WeakMap",
       "tests": 141,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 110,
       "path": "test/built-ins/WeakSet",
       "tests": 85,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 111,
       "path": "test/built-ins/WeakRef",
       "tests": 29,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "hybrid"
     },
     {
       "id": 112,
       "path": "test/built-ins/FinalizationRegistry",
       "tests": 47,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 5,
+      "impl": "js"
     },
     {
       "id": 113,
       "path": "test/built-ins/Promise",
       "tests": 729,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 6,
+      "impl": "hybrid"
     },
     {
       "id": 114,
       "path": "test/built-ins/Reflect",
       "tests": 153,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 115,
       "path": "test/built-ins/Proxy",
       "tests": 311,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 8,
+      "impl": "hybrid"
     },
     {
       "id": 116,
       "path": "test/built-ins/DisposableStack",
       "tests": 93,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 117,
       "path": "test/built-ins/AsyncDisposableStack",
       "tests": 104,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 4,
+      "impl": "js"
     },
     {
       "id": 118,
       "path": "test/built-ins/ShadowRealm",
       "tests": 64,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 9,
+      "impl": "rust"
     },
     {
       "id": 119,
       "path": "test/built-ins/AbstractModuleSource",
       "tests": 8,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 3,
+      "impl": "js"
     },
     {
       "id": 120,
       "path": "test/built-ins/Temporal",
       "tests": 4603,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 9,
+      "impl": "rust"
     },
     {
       "id": 121,
       "path": "test/annexB",
       "tests": 1086,
-      "status": "pending"
+      "status": "pending",
+      "difficulty": 2,
+      "impl": "js"
     }
   ]
 }
