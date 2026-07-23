@@ -89,6 +89,10 @@ pub(crate) fn set_generator_yield(val: Value) {
     GENERATOR_YIELD_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
 }
 
+pub(crate) fn peek_generator_yield() -> bool {
+    GENERATOR_YIELD_VALUE.with(|cell| cell.borrow().is_some())
+}
+
 pub(crate) fn take_generator_yield() -> Option<Value> {
     GENERATOR_YIELD_VALUE.with(|cell| cell.borrow_mut().take())
 }

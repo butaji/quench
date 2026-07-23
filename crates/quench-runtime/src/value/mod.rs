@@ -12,6 +12,7 @@ pub mod convert;
 pub mod error;
 pub mod function;
 pub mod generator;
+pub mod generator_replay;
 pub mod kind;
 pub mod object;
 pub mod primitive;
