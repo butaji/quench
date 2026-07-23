@@ -23,6 +23,7 @@ pub mod symbol;
 pub mod typed_array;
 pub mod uri;
 pub mod weak;
+pub mod weak_ref;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -159,6 +160,7 @@ pub fn register_builtins(ctx: &mut Context) {
     array_buffer::register_array_buffer(ctx);
     data_view::register_data_view(ctx);
     typed_array::register_typed_arrays(ctx);
+    weak_ref::register_weak_ref(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
     // Array.prototype[Symbol.iterator] requires Symbol to be registered first.

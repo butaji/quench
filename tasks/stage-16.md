@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4286 pass / 81 fail (98.1%)** as of 2026-07-23.
+**4,367 tests** · **4298 pass / 69 fail (98.4%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -39,16 +39,18 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4278** | **89** | **98.0%** | Super in static blocks, super field init in call_super_constructor, super without extends, assignment lowering |
 | 2026-07-23 | **4282** | **85** | **98.1%** | Date/Number/ArrayBuffer builtin subclass auto-super, nested private field on parameter, eval_super_call NativeConstructor wrapper |
 | 2026-07-23 | **4286** | **81** | **98.1%** | super.prop in static field arrow assigns to class; minimal DataView builtin + subclass |
+| 2026-07-23 | **4298** | **69** | **98.4%** | finish_constructor on function super; AggregateError/SAB/WeakRef/BigInt64/Uint64; object literal spread + yield-spread-obj |
 
-## Top remaining clusters (~81)
+## Top remaining clusters (~69)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
 | 7 | sameValue true !== false | Error subclass message own props |
 | 5 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
 | 5 | Expected Test262Error not thrown | Primitive receiver, frozen objects, Proxy |
-| 5 | Value is not a function | scope-setter, builtin subclass regular-subclassing |
-| ~15 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
+| 2 | Cannot destructure non-object value | static-init-arguments (param destructure ToObject) |
+| 2 | Actual [] expected [length,name,...] | static field / method definition order on class |
+| 8 | yield-spread-obj (private/async variants) | verify remaining private-gen spread cases |
 
 ## How to clear this stage (ASAP × min LOC)
 

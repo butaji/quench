@@ -19,6 +19,8 @@ const CONSTRUCTORS: &[(&str, usize, TypedArrayName)] = &[
     ("Float32Array", 4, TypedArrayName::Float32),
     ("Float64Array", 8, TypedArrayName::Float64),
     ("Uint8ClampedArray", 1, TypedArrayName::Uint8Clamped),
+    ("BigInt64Array", 8, TypedArrayName::BigInt64),
+    ("BigUint64Array", 8, TypedArrayName::BigUint64),
 ];
 
 // Thread-local storage for TypedArray.prototype (shared by all TypedArray types)

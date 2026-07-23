@@ -38,7 +38,7 @@ use crate::builtins;
 use crate::env::Environment;
 use crate::eval::iteration::get_iterator;
 use crate::value::error::create_js_error_with_type;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{to_object, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -182,28 +182,45 @@ pub fn eval_object_literal(
         obj.prototype = Some(prototype);
     }
     for (key, value) in props {
-        let key_str = eval_property_key(key, env, in_arrow_function)?;
         match value {
-            PropertyValue::Value(expr) => {
-                let val = crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
-                obj.set(&key_str, val);
+            PropertyValue::Spread(expr) => {
+                let spread_val = after_expr_eval(crate::eval::expression::eval_expression(
+                    expr,
+                    env,
+                    in_arrow_function,
+                ))?;
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(Value::Object(Rc::new(RefCell::new(obj))));
+                }
+                copy_spread_into_object(&mut obj, spread_val, env)?;
             }
-            PropertyValue::Getter { params: _, body } => {
-                obj.set_getter(
-                    &key_str,
-                    Rc::new(body.clone()),
-                    crate::eval::expression::capture_env_for_closure(env),
-                    false,
-                );
-            }
-            PropertyValue::Setter { param, body } => {
-                obj.set_setter(
-                    &key_str,
-                    crate::ast::Param::new(param),
-                    Rc::new(body.clone()),
-                    crate::eval::expression::capture_env_for_closure(env),
-                    false,
-                );
+            _ => {
+                let key_str = eval_property_key(key, env, in_arrow_function)?;
+                match value {
+                    PropertyValue::Value(expr) => {
+                        let val =
+                            crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
+                        obj.set(&key_str, val);
+                    }
+                    PropertyValue::Getter { params: _, body } => {
+                        obj.set_getter(
+                            &key_str,
+                            Rc::new(body.clone()),
+                            crate::eval::expression::capture_env_for_closure(env),
+                            false,
+                        );
+                    }
+                    PropertyValue::Setter { param, body } => {
+                        obj.set_setter(
+                            &key_str,
+                            crate::ast::Param::new(param),
+                            Rc::new(body.clone()),
+                            crate::eval::expression::capture_env_for_closure(env),
+                            false,
+                        );
+                    }
+                    PropertyValue::Spread(_) => unreachable!(),
+                }
             }
         }
     }
@@ -288,6 +305,68 @@ fn after_expr_eval(result: Result<Value, JsError>) -> Result<Value, JsError> {
         return Ok(Value::Undefined);
     }
     Ok(val)
+}
+
+fn copy_spread_into_object(
+    target: &mut Object,
+    source: Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    if matches!(source, Value::Null | Value::Undefined) {
+        return Ok(());
+    }
+    let source_obj = match source {
+        Value::Object(o) => o,
+        other => {
+            let Value::Object(o) = to_object(&other) else {
+                return Ok(());
+            };
+            o
+        }
+    };
+    let src = source_obj.borrow();
+    for i in 0..src.elements.len() {
+        if src.holes.contains(&i) || !src.is_enumerable(&i.to_string()) {
+            continue;
+        }
+        let key = i.to_string();
+        let val = spread_property_value(&source_obj, &key, &src, env)?;
+        target.set(&key, val);
+    }
+    let mut keys: Vec<String> = src
+        .properties
+        .keys()
+        .chain(src.getters.keys())
+        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
+        .cloned()
+        .collect();
+    keys.sort();
+    keys.dedup();
+    for key in keys {
+        if !src.is_enumerable(&key) {
+            continue;
+        }
+        let val = spread_property_value(&source_obj, &key, &src, env)?;
+        target.set(&key, val);
+    }
+    Ok(())
+}
+
+fn spread_property_value(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    src: &Object,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(getter) = src.get_getter(key) {
+        return crate::eval::object::call_getter(obj, getter, env);
+    }
+    if let Some(idx) = crate::value::object::helpers::as_array_index(key) {
+        if idx < src.elements.len() && !src.holes.contains(&idx) {
+            return Ok(src.elements[idx].clone());
+        }
+    }
+    Ok(src.properties.get(key).cloned().unwrap_or(Value::Undefined))
 }
 
 /// Get the super class value from the environment (public for use by expression.rs)
