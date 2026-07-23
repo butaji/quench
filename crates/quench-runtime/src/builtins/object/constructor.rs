@@ -127,6 +127,37 @@ pub fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
                     }
                 }
             }
+            obj.elements = chars;
+            let len_val = Value::Number(len as f64);
+            obj.properties.insert("length".to_string(), len_val.clone());
+            obj.descriptors.insert(
+                "length".to_string(),
+                PropertyFlags {
+                    value: Some(len_val),
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+            obj
+        }
+        Value::Symbol(_) => {
+            let mut obj = boxed_object("Symbol");
+            set_boxed_value(&mut obj, args[0].clone());
+            obj
+        }
+        Value::BigInt(_) => {
+            let mut obj = boxed_object("BigInt");
+            set_boxed_value(&mut obj, args[0].clone());
+            obj
+        }
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Generator(_)
+        | Value::Class(_) => {
+            return Ok(args[0].clone());
         }
         // No argument — keep existing object as-is.
         return Ok(Value::Object(Rc::clone(&obj_rc)));
