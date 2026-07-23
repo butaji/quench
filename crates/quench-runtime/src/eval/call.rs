@@ -251,13 +251,17 @@ fn eval_super_member(
     let proto = match &super_val {
         Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
         Value::Object(o) => {
-            let proto_val = o.borrow().get("prototype");
-            match proto_val {
-                Some(Value::Object(proto_obj)) => proto_obj.clone(),
-                _ => {
-                    let mut p = Object::new(ObjectKind::Ordinary);
-                    p.set("constructor", Value::Object(Rc::clone(o)));
-                    Rc::new(RefCell::new(p))
+            if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
+                Rc::clone(o)
+            } else {
+                let proto_val = o.borrow().get("prototype");
+                match proto_val {
+                    Some(Value::Object(proto_obj)) => proto_obj.clone(),
+                    _ => {
+                        let mut p = Object::new(ObjectKind::Ordinary);
+                        p.set("constructor", Value::Object(Rc::clone(o)));
+                        Rc::new(RefCell::new(p))
+                    }
                 }
             }
         }
