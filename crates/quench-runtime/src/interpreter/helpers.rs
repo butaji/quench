@@ -192,8 +192,15 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             Statement::While { body, .. } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
             }
-            Statement::For { body, .. } => {
+            Statement::DoWhile { body, .. } => {
                 collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
+            }
+            Statement::Labeled { body, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
+            }
+            Statement::For { init, body, .. } => {
+                collect_var_names_from_for_init(init.as_ref(), names);
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
             }
             Statement::Try {
                 body,
@@ -221,6 +228,39 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             }
             _ => {}
         }
+    }
+}
+
+fn collect_var_names_from_for_init(init: Option<&ForInit>, names: &mut Vec<String>) {
+    let Some(init) = init else {
+        return;
+    };
+    match init {
+        ForInit::VarDeclaration {
+            kind: VarKind::Var,
+            name,
+            ..
+        } => names.push(name.clone()),
+        ForInit::PatternDeclaration {
+            kind: VarKind::Var,
+            pattern,
+            ..
+        } => {
+            names.extend(crate::lower::pattern::collect_pattern_identifiers(pattern));
+        }
+        ForInit::DeclarationList {
+            kind: VarKind::Var,
+            decls,
+        } => {
+            for decl in decls {
+                if let Some(name) = &decl.name {
+                    names.push(name.clone());
+                } else if let Some(pattern) = &decl.pattern {
+                    names.extend(crate::lower::pattern::collect_pattern_identifiers(pattern));
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -308,6 +348,64 @@ pub fn predeclare_let_const(stmts: &[Statement], env: &mut Environment) {
             env.declare_var(name, kind);
         }
     }
+}
+
+/// Bound names from a C-style `for` head lexical/`const` init (empty for `var`/expression).
+pub fn collect_for_head_lexical_names(init: Option<&ForInit>) -> Vec<String> {
+    let Some(init) = init else {
+        return Vec::new();
+    };
+    match init {
+        ForInit::VarDeclaration {
+            kind: VarKind::Let | VarKind::Const,
+            name,
+            ..
+        } => vec![name.clone()],
+        ForInit::PatternDeclaration {
+            kind: VarKind::Let | VarKind::Const,
+            pattern,
+            ..
+        } => crate::lower::pattern::collect_pattern_identifiers(pattern),
+        ForInit::DeclarationList {
+            kind: VarKind::Let | VarKind::Const,
+            decls,
+        } => decls
+            .iter()
+            .flat_map(|decl| {
+                if let Some(name) = &decl.name {
+                    vec![name.clone()]
+                } else if let Some(pattern) = &decl.pattern {
+                    crate::lower::pattern::collect_pattern_identifiers(pattern)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Snapshot lexical binding values from the current environment chain.
+pub fn snapshot_lexical_bindings(env: &Environment, names: &[String]) -> Vec<(String, Value)> {
+    names
+        .iter()
+        .filter_map(|name| env.get(name).map(|value| (name.clone(), value)))
+        .collect()
+}
+
+/// Push a scope initialized with copied lexical binding values.
+pub fn push_lexical_scope_with_values(env: &mut Environment, copies: &[(String, Value)]) {
+    env.push_scope();
+    for (name, value) in copies {
+        env.declare_var(name.clone(), VarKind::Let);
+        env.initialize_declared(name, value.clone());
+    }
+}
+
+/// Push a per-iteration body scope with copies of loop-head lexical bindings.
+pub fn push_for_body_iteration_scope(env: &mut Environment, names: &[String]) {
+    let copies = snapshot_lexical_bindings(env, names);
+    push_lexical_scope_with_values(env, &copies);
 }
 
 /// Returns true if `source` contains a legacy octal literal (e.g. `01`, `07`).
@@ -558,7 +656,7 @@ pub fn has_legacy_octal(source: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Expression, Statement, VarKind};
+    use crate::ast::{Expression, ForInit, Statement, VarKind};
 
     // ── check_use_strict_directive ───────────────────────────────────────────────
 
@@ -659,6 +757,37 @@ mod tests {
         ];
         let names = crate::interpreter::helpers::collect_var_names(&stmts);
         assert_eq!(names.iter().filter(|n| *n == "x").count(), 1);
+    }
+
+    #[test]
+    fn test_collect_var_names_in_do_while() {
+        let stmts = vec![Statement::DoWhile {
+            body: Box::new(Statement::Block(vec![Statement::VarDeclaration {
+                kind: VarKind::Var,
+                name: "inner".to_string(),
+                init: None,
+            }])),
+            condition: Box::new(Expression::Boolean(false)),
+            labels: vec![],
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(names.contains(&"inner".to_string()));
+    }
+
+    #[test]
+    fn test_collect_var_names_in_for_init() {
+        let stmts = vec![Statement::For {
+            init: Some(ForInit::VarDeclaration {
+                kind: VarKind::Var,
+                name: "index".to_string(),
+                init: Some(Expression::Number(0.0)),
+            }),
+            condition: None,
+            update: None,
+            body: Box::new(Statement::Empty),
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(names.contains(&"index".to_string()));
     }
 
     #[test]

@@ -162,12 +162,28 @@ impl Statement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ForInitDecl {
+    pub name: Option<String>,
+    pub pattern: Option<BindingElement>,
+    pub init: Option<Expression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ForInit {
     Expression(Box<Expression>),
     VarDeclaration {
         kind: VarKind,
         name: String,
         init: Option<Expression>,
+    },
+    PatternDeclaration {
+        kind: VarKind,
+        pattern: BindingElement,
+        init: Option<Expression>,
+    },
+    DeclarationList {
+        kind: VarKind,
+        decls: Vec<ForInitDecl>,
     },
 }
 
