@@ -690,6 +690,9 @@ fn eval_class_decl(
     // Evaluate the class expression with the declared name so static field
     // initializers observe `this.name === "<name>"` per ES §14.6.13.
     let class_val = crate::eval::class::eval_class_expr(class, env, Some(name))?;
+    if crate::value::generator_replay::yield_pending() {
+        return Ok(Value::Undefined);
+    }
     env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }

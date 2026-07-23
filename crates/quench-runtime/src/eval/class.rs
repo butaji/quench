@@ -60,6 +60,9 @@ pub fn eval_class_expr(
     // Evaluate the superclass expression ONCE and cache for reuse.
     let cached_super_class_val = if let Some(ref super_class_expr) = new_value.super_class {
         let val = eval_expression(super_class_expr, &class_scope, false)?;
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Value::Undefined);
+        }
         class_scope.borrow_mut().set_super_class(val.clone());
         Some(val)
     } else {
@@ -73,6 +76,9 @@ pub fn eval_class_expr(
     };
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
+    if crate::value::generator_replay::yield_pending() {
+        return Ok(Value::Undefined);
+    }
 
     // Store the class definition environment for evaluating computed property keys in static accessors.
     // Mark it as static class body so that super resolution uses the superclass constructor
@@ -114,7 +120,13 @@ pub fn eval_class_expr(
                         .borrow_mut()
                         .set_this(class_value.clone());
                     let field_value = eval_expression(value_expr, &child_env, false)?;
+                    if crate::value::generator_replay::yield_pending() {
+                        return Ok(Value::Undefined);
+                    }
                     let key_str = prop_key_to_string(name, &child_env, true)?;
+                    if crate::value::generator_replay::yield_pending() {
+                        return Ok(Value::Undefined);
+                    }
                     if key_str == "prototype" || key_str == "constructor" {
                         return Err(JsError(format!(
                             "TypeError: static class field may not be named '{}'",
@@ -129,6 +141,9 @@ pub fn eval_class_expr(
             | crate::ast::ClassMember::StaticGetter { name, .. }
             | crate::ast::ClassMember::StaticSetter { name, .. } => {
                 let key_str = prop_key_to_string(name, &class_scope, true)?;
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
                 if key_str == "prototype" || key_str == "constructor" {
                     return Err(JsError(format!(
                         "TypeError: static class method may not be named '{}'",
@@ -154,38 +169,25 @@ pub fn eval_class_expr(
                 let prev_strict = crate::interpreter::is_strict_mode();
                 crate::interpreter::set_strict_mode(true);
                 let _ = crate::eval::statement::eval_function_body(body, &block_env, false)?;
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
                 crate::interpreter::set_strict_mode(prev_strict);
             }
             _ => {}
         }
     }
 
-    // Evaluate static accessor computed property keys during class definition.
-    // This ensures that any abrupt completions (e.g., thrower() in the test)
-    // cause the class definition to throw, as required by the ES spec.
-    // Per ES §15.7.14 (ClassDefinitionEvaluation), PropertyDefinitionEvaluation
-    // is performed for each ClassElement, including static accessors.
-    for (name, _body) in &new_value.static_getters {
-        let _key_str = prop_key_to_string(name, &class_scope, false)?;
-    }
-    for (name, _param, _body) in &new_value.static_setters {
-        let _key_str = prop_key_to_string(name, &class_scope, false)?;
-    }
-
     // Eagerly evaluate instance field property keys during class definition.
     // Per ES §15.7.14 (ClassDefinitionEvaluation), ClassElementEvaluation
     // is performed for each element, and property key evaluation can throw.
     // If a computed key throws, the class declaration must throw.
+    // Instance accessor keys are evaluated in create_class_prototype_helper_with_env.
     for (name, _value) in &new_value.instance_fields {
         let _key_str = prop_key_to_string(name, &class_scope, true)?;
-    }
-
-    // Eagerly evaluate instance accessor computed property keys during class definition.
-    for (name, _body) in &new_value.getters {
-        let _key_str = prop_key_to_string(name, &class_scope, true)?;
-    }
-    for (name, _param, _body) in &new_value.setters {
-        let _key_str = prop_key_to_string(name, &class_scope, true)?;
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Value::Undefined);
+        }
     }
 
     Ok(Value::Class(Box::new(new_value)))
