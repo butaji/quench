@@ -133,10 +133,17 @@ fn lower_chain_recursive(
                     alternate: Box::new(member_access),
                 })
             } else {
-                Ok(Expression::Member {
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(&object_expr);
+                let member_access = Expression::Member {
                     object: Box::new(object_expr),
                     property,
                     computed: false,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
                 })
             }
         }

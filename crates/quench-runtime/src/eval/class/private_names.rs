@@ -562,6 +562,15 @@ mod tests {
     }
 
     #[test]
+    fn nested_class_static_private_field_on_outer_class() {
+        let src = "class C { static #m = 'outer class'; \
+                   static B = class { static fieldAccess(o) { return o.#m; } }; } \
+                   C.B.fieldAccess(C)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("outer class".into()));
+    }
+
+    #[test]
     fn nested_class_with_own_private_reads_outer_private_on_parameter() {
         let src = "class C { #outer = 'test262'; \
                    B = class { #inner = 42; method(o) { return o.#outer; } }; } \
