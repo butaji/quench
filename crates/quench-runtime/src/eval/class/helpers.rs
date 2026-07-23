@@ -712,6 +712,48 @@ mod tests {
     }
 
     #[test]
+    fn class_generator_yield_after_let_binding() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            function* g() {
+              class C { get [yield 1]() { return 1; } };
+              let c = new C();
+              return c[1];
+            }
+            var iter = g();
+            iter.next();
+            iter.next(1);
+            iter.next().value
+            "#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn class_prototype_wiring_derived_constructors() {
+        let r = eval(
+            r#"
+            class Base {
+              constructor(x) { this.foobar = x; }
+            }
+            class Subclass extends Base {
+              constructor(x) { super(x); }
+            }
+            class Subclass2 extends Subclass {
+              constructor() { super(5, 6, 7); }
+            }
+            class Subclass3 extends Base {
+              constructor(x, y) { super(x + y); }
+            }
+            var ss3 = new Subclass3(27, 42 - 27);
+            ss3.foobar
+            "#,
+        );
+        assert_eq!(r.unwrap(), Value::Number(42.0));
+    }
+
+    #[test]
     fn class_static_accessor_computed_yield_in_generator() {
         let mut ctx = Context::new().unwrap();
         ctx.eval(
