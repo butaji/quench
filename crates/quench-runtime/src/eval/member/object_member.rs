@@ -4,7 +4,7 @@ use crate::context::CURRENT_CONTEXT;
 use crate::env::Environment;
 use crate::eval::object::call_getter;
 use crate::value::object::as_array_index;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -22,6 +22,9 @@ pub fn eval_object_member(
         return Err(JsError(
             crate::builtins::function::get_restricted_prop_error(),
         ));
+    }
+    if crate::value::is_private_name_key(prop_name) {
+        return eval_private_name_get(o, prop_name);
     }
     {
         let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
@@ -88,6 +91,23 @@ pub fn eval_object_member(
     Ok(Value::Undefined)
 }
 
+fn eval_private_name_get(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
+    let obj = o.borrow();
+    if let Some(getter_storage) = obj.get_getter(prop_name) {
+        let getter_clone = getter_storage.clone();
+        drop(obj);
+        return call_getter(o, &getter_clone, &Rc::new(RefCell::new(Environment::new())));
+    }
+    if let Some(val) = obj.properties.get(prop_name) {
+        return Ok(val.clone());
+    }
+    let (_, js_err) = create_js_error_with_type(
+        "Cannot read private member from an object whose class did not declare it",
+        "TypeError",
+    );
+    Err(js_err)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::value::Value;
@@ -98,5 +118,18 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("var a = [10, 20]; a['01']").unwrap();
         assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn private_field_brand_check_throws_for_foreign_object() {
+        let mut ctx = Context::new().unwrap();
+        let err = ctx
+            .eval(
+                "class C { #m = 44; getWithEval() { return eval(\"this.#m\"); } } \
+                 class D { #m = 44; } \
+                 C.prototype.getWithEval.call(new D())",
+            )
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
 }
