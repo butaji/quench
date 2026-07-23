@@ -549,6 +549,25 @@ mod tests {
     }
 
     #[test]
+    fn async_gen_default_pattern_iter_step_error() {
+        let err = eval(
+            "try { \
+               (function() { \
+                 var g = {}; \
+                 g[Symbol.iterator] = function() { \
+                   return { next: function() { throw new Error('step'); } }; \
+                 }; \
+                 class C { async *method([x] = g) {} } \
+                 C.prototype.method(); \
+               })(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
+    }
+
+    #[test]
     fn async_gen_default_array_pattern_from_iterator() {
         let r = eval(
             "var iter={}; \
