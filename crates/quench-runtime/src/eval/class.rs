@@ -135,7 +135,9 @@ pub fn eval_class_expr(
                             key_str
                         )));
                     }
-                    let storage_key = if key_str.starts_with('#') {
+                    let storage_key = if crate::value::is_private_name_key(&key_str) {
+                        key_str
+                    } else if key_str.starts_with('#') {
                         crate::value::private_name_key(&key_str)
                     } else {
                         key_str
