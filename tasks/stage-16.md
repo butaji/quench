@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4331 pass / 36 fail (99.2%)** as of 2026-07-23.
+**4,367 tests** · **4338 pass / 29 fail (99.3%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -45,14 +45,16 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4318** | **49** | **98.9%** | Generator completion undefined unless return; class field SetFunctionName; arrow no spurious empty `.name` |
 | 2026-07-23 | **4329** | **38** | **99.1%** | Nested static private on Class; derived invalid return TypeError; static private setter brand |
 | 2026-07-23 | **4331** | **36** | **99.2%** | Nested direct eval `arguments` in deferred class-field arrows |
+| 2026-07-23 | **4332** | **35** | **99.2%** | Optional chain prefix before private field (`o?.c.#f`) |
+| 2026-07-23 | **4338** | **29** | **99.3%** | Builtin subclass auto-super; field key cache + intercalated ordering; sparse numeric keys; WeakMap/WeakSet subclass |
 
-## Top remaining clusters (~36)
+## Top remaining clusters (~29)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
 | 2 | Expected Test262Error not thrown | Proxy field observability, derived for-of return |
 | 2 | sameValue false !== true | this-access-restriction, RegExp subclass |
-| ~34 | Single-test edge cases | See `tasks/failures-16.json` |
+| ~25 | Single-test edge cases | See `tasks/failures-16.json` |
 
 ## How to clear this stage (ASAP × min LOC)
 
