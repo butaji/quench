@@ -199,7 +199,7 @@ pub fn eval_object_literal(
             PropertyValue::Setter { param, body } => {
                 obj.set_setter(
                     &key_str,
-                    param.clone(),
+                    crate::ast::Param::new(param),
                     Rc::new(body.clone()),
                     crate::eval::expression::capture_env_for_closure(env),
                     false,

@@ -239,7 +239,7 @@ impl Object {
                 configurable: Some(flags.configurable),
                 set_body: Some(Rc::clone(&s.body)),
                 set_closure: Some(Rc::clone(&s.closure)),
-                set_param: Some(s.param.clone()),
+                set_param: Some(s.param.name.clone()),
                 ..Default::default()
             });
         }
@@ -295,7 +295,7 @@ impl Object {
             {
                 self.set_setter(
                     key,
-                    desc.set_param.clone().unwrap_or_default(),
+                    crate::ast::Param::new(&desc.set_param.clone().unwrap_or_default()),
                     Rc::clone(body),
                     Rc::clone(closure),
                     false,
@@ -334,7 +334,7 @@ impl Object {
     pub fn set_setter(
         &mut self,
         key: &str,
-        param: String,
+        param: crate::ast::Param,
         body: Rc<Vec<crate::ast::Statement>>,
         closure: Rc<RefCell<Environment>>,
         is_method: bool,
