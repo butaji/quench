@@ -50,7 +50,7 @@ pub fn eval_member_access(
                             .and_then(|env| {
                                 crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
                             })
-                            .map_or(false, |s| s == prop_name)
+                            .is_some_and(|s| s == prop_name)
                     })
                     || class.static_setters.iter().any(|(n, _, _)| {
                         class
@@ -58,7 +58,7 @@ pub fn eval_member_access(
                             .and_then(|env| {
                                 crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
                             })
-                            .map_or(false, |s| s == prop_name)
+                            .is_some_and(|s| s == prop_name)
                     });
                 if !has_static {
                     let (_, js_err) = create_js_error_with_type(
