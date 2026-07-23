@@ -1,5 +1,5 @@
 {
-  "failed": 36,
+  "failed": 35,
   "groups": [
     {
       "count": 1,
@@ -298,16 +298,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-after-optional-chain.js"
-      ],
-      "reason": "TypeError: Cannot read property 'c' of null",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-after-optional-chain.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
       ],
       "reason": "TypeError: Cannot read property 'name' of undefined",
@@ -346,7 +336,7 @@
       ]
     }
   ],
-  "passed": 4331,
+  "passed": 4332,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
