@@ -335,6 +335,25 @@ fn lower_param_object_destructure() {
 }
 
 #[test]
+fn lower_param_object_destructure_computed_key() {
+    let stmts = parse_statements("function f({ [k()]: x }) {}");
+    assert_eq!(stmts.len(), 1);
+    let Statement::FunctionDeclaration { params, .. } = &stmts[0] else {
+        panic!("expected FunctionDeclaration");
+    };
+    let pattern = params[0].pattern.as_ref().expect("expected pattern");
+    let BindingElement::ObjectPattern(props) = pattern else {
+        panic!("expected ObjectPattern, got {:?}", pattern);
+    };
+    assert_eq!(props.len(), 1);
+    assert!(
+        matches!(&props[0].0, PropertyKey::Computed(_)),
+        "computed key should be preserved, got {:?}",
+        props[0].0
+    );
+}
+
+#[test]
 fn lower_param_rest_array() {
     let stmts = parse_statements("function f(...args) {}");
     assert_eq!(stmts.len(), 1);

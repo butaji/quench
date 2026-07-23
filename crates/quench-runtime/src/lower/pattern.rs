@@ -271,7 +271,11 @@ fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(b.raw.to_string())),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
-        _ => None,
+        _ => {
+            let expr = key.to_expression();
+            let lowered = lower_expr(expr).ok()?;
+            Some(PropertyKey::Computed(Box::new(lowered)))
+        }
     }
 }
 
