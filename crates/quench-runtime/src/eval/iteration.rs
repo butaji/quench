@@ -92,6 +92,12 @@ fn abrupt_close(
     completion
 }
 
+enum ForOfIterResult {
+    Done(Value),
+    Break(Value),
+    Step(Value),
+}
+
 fn eval_for_of_iterator(
     iterator: Rc<RefCell<Object>>,
     variable: &Expression,
@@ -102,12 +108,13 @@ fn eval_for_of_iterator(
 ) -> Result<Value, JsError> {
     let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     let mut index = 0usize;
+    let mut completion = Value::Undefined;
     loop {
         let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
         if done {
             break;
         }
-        let iteration = run_for_of_iteration(
+        match run_for_of_iteration(
             variable,
             &item,
             body,
@@ -143,7 +150,7 @@ fn eval_for_of_iterator(
     {
         Ok(val)
     } else {
-        Ok(Value::Undefined)
+        Ok(completion)
     }
 }
 
@@ -155,7 +162,7 @@ fn run_for_of_iteration(
     per_iteration: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-) -> Result<Option<Value>, JsError> {
+) -> Result<ForOfIterResult, JsError> {
     if per_iteration {
         env.borrow_mut().push_scope();
     }
@@ -170,30 +177,30 @@ fn run_for_of_iteration(
         env.borrow_mut().pop_scope();
     }
     match result {
-        Ok(_) => match take_control_flow() {
+        Ok(body_val) => match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &[]) {
-                    Ok(None)
+                    Ok(ForOfIterResult::Break(body_val))
                 } else {
                     set_control_flow(cf);
-                    Ok(None)
+                    Ok(ForOfIterResult::Step(body_val))
                 }
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if loop_handles_continue(&cf, &[]) {
-                    Ok(None)
+                    Ok(ForOfIterResult::Step(body_val))
                 } else {
                     set_control_flow(cf);
-                    Ok(None)
+                    Ok(ForOfIterResult::Step(body_val))
                 }
             }
             Some(ControlFlow::Return(val))
             | Some(ControlFlow::Yield(val))
             | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
-                Ok(Some(val))
+                Ok(ForOfIterResult::Done(val))
             }
-            None => Ok(None),
+            None => Ok(ForOfIterResult::Step(body_val)),
         },
         Err(e) => Err(e),
     }
@@ -234,7 +241,18 @@ pub fn eval_for_of(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let head_lexical = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    if head_lexical {
+        env.borrow_mut().push_scope();
+        declare_for_in_head_bindings(variable, loop_binding.unwrap(), env)?;
+    }
+
     let iter_value = eval_expression(iterable, env, in_arrow_function)?;
+
+    if head_lexical {
+        env.borrow_mut().pop_scope();
+    }
+
     let iterator = match &iter_value {
         Value::String(s) => {
             let items: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
@@ -513,6 +531,25 @@ mod tests {
         let mut ctx = new_ctx();
         let err = ctx
             .eval("let x = 1; for (const x in { x }) {}")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("ReferenceError"),
+            "expected ReferenceError, got {err}"
+        );
+    }
+
+    #[test]
+    fn for_of_completion_value_from_body() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval("var b; for (b of [0]) { 3; }").unwrap();
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn for_of_head_tdz_before_iterable_expr() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval("let x = 1; for (const x of [x]) {}")
             .unwrap_err();
         assert!(
             err.to_string().contains("ReferenceError"),

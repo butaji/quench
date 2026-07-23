@@ -4,8 +4,8 @@
 
 use super::expr::lower_expr;
 use super::pattern::{
-    binding_to_expr, lower_array_assignment_target, lower_binding_elem, lower_elem_pat,
-    lower_object_assignment_target, lower_object_pat_prop,
+    binding_to_expr, lower_array_assignment_target, lower_binding_elem,
+    lower_object_assignment_target,
 };
 use super::stmt::lower_stmt;
 use crate::ast::{
@@ -143,7 +143,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
                 .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
             if matches!(kind, VarKind::Var) {
                 let vd = if has_pattern {
-                    crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+                    crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
                 } else {
                     crate::lower::stmt::lower_var_decl(decl)
                 };
@@ -399,22 +399,17 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
 }
 
 fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
-    let elements: Vec<BindingElement> = arr
-        .elements
-        .iter()
-        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .chain(arr.rest.as_ref().and_then(|r| lower_elem_pat(&r.argument)))
-        .collect();
-    Some(Expression::ArrayPattern(elements))
+    match crate::lower::pattern::lower_array_binding(arr).ok()? {
+        BindingElement::ArrayPattern(elements) => Some(Expression::ArrayPattern(elements)),
+        _ => None,
+    }
 }
 
 fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj
-        .properties
-        .iter()
-        .filter_map(lower_object_pat_prop)
-        .collect();
-    Some(Expression::ObjectPattern(props))
+    match crate::lower::pattern::lower_object_binding(obj).ok()? {
+        BindingElement::ObjectPattern(props) => Some(Expression::ObjectPattern(props)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
