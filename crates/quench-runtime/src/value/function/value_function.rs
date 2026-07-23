@@ -259,6 +259,23 @@ impl ValueFunction {
         self.properties.borrow().get(key).cloned()
     }
 
+    /// Own property names including non-enumerable `length` and `name`.
+    pub fn own_property_names(&self) -> Vec<String> {
+        let mut names = vec!["length".to_string()];
+        if self.get_property("name").is_some() || self.name.is_some() {
+            names.push("name".to_string());
+        }
+        if self.get_property("prototype").is_some() {
+            names.push("prototype".to_string());
+        }
+        for key in self.properties.borrow().keys() {
+            if key != "length" && key != "name" && key != "prototype" {
+                names.push(key.clone());
+            }
+        }
+        names
+    }
+
     /// Set a property on this function (e.g., prototype).
     /// Per ES spec §16.1, class methods (is_method=true) have restricted
     /// `caller` and `arguments` properties.

@@ -105,6 +105,14 @@ impl Symbol {
     pub fn property_key(&self) -> String {
         format!("{}\0{}", self.desc.as_deref().unwrap_or(""), self.id)
     }
+
+    /// SetFunctionName display form: `[desc]` or `` for anonymous symbols.
+    pub fn display_name(&self) -> String {
+        match self.desc.as_deref() {
+            Some(d) => format!("[{d}]"),
+            None => String::new(),
+        }
+    }
 }
 
 /// A JavaScript value - the fundamental runtime type.
@@ -383,7 +391,7 @@ impl ClassValue {
         if self.deleted_properties.borrow().contains(name) {
             return false;
         }
-        if name == "name" || name == "prototype" {
+        if name == "length" || name == "name" || name == "prototype" {
             return true;
         }
         if self.get_static_field(name).is_some() {
