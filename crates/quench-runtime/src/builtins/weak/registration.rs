@@ -201,16 +201,32 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
     }
     let weakset_proto_for_ctor = Rc::clone(&weakset_proto);
     let weakset_constructor = native_fn(move |args| {
-        let ws_obj =
-            Object::with_prototype(ObjectKind::WeakSet, Rc::clone(&weakset_proto_for_ctor));
-        let ws = Rc::new(RefCell::new(ws_obj));
-        {
-            let mut w = ws.borrow_mut();
-            let entries_key = weakset_entries_key(&ws);
-            let entries = Object::new_array_from(Vec::new());
-            w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
-            w.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let ws = if let Value::Object(obj_rc) = this_val {
+            {
+                let mut w = obj_rc.borrow_mut();
+                let entries_key = weakset_entries_key(&obj_rc);
+                if w.get(&entries_key).is_none() {
+                    let entries = Object::new_array_from(Vec::new());
+                    w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
+                    w.set("size", Value::Number(0.0));
+                }
+                w.kind = ObjectKind::WeakSet;
+            }
+            obj_rc
+        } else {
+            let ws_obj =
+                Object::with_prototype(ObjectKind::WeakSet, Rc::clone(&weakset_proto_for_ctor));
+            let ws = Rc::new(RefCell::new(ws_obj));
+            {
+                let mut w = ws.borrow_mut();
+                let entries_key = weakset_entries_key(&ws);
+                let entries = Object::new_array_from(Vec::new());
+                w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
+                w.set("size", Value::Number(0.0));
+            }
+            ws
+        };
 
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
@@ -271,16 +287,32 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
     }
     let weakmap_proto_for_ctor = Rc::clone(&weakmap_proto);
     let weakmap_constructor = native_fn(move |args| {
-        let wm_obj =
-            Object::with_prototype(ObjectKind::WeakMap, Rc::clone(&weakmap_proto_for_ctor));
-        let wm = Rc::new(RefCell::new(wm_obj));
-        {
-            let mut w = wm.borrow_mut();
-            let entries_key = weakmap_entries_key(&wm);
-            let entries = Object::new_array_from(Vec::new());
-            w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
-            w.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let wm = if let Value::Object(obj_rc) = this_val {
+            {
+                let mut w = obj_rc.borrow_mut();
+                let entries_key = weakmap_entries_key(&obj_rc);
+                if w.get(&entries_key).is_none() {
+                    let entries = Object::new_array_from(Vec::new());
+                    w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
+                    w.set("size", Value::Number(0.0));
+                }
+                w.kind = ObjectKind::WeakMap;
+            }
+            obj_rc
+        } else {
+            let wm_obj =
+                Object::with_prototype(ObjectKind::WeakMap, Rc::clone(&weakmap_proto_for_ctor));
+            let wm = Rc::new(RefCell::new(wm_obj));
+            {
+                let mut w = wm.borrow_mut();
+                let entries_key = weakmap_entries_key(&wm);
+                let entries = Object::new_array_from(Vec::new());
+                w.set(&entries_key, Value::Object(Rc::new(RefCell::new(entries))));
+                w.set("size", Value::Number(0.0));
+            }
+            wm
+        };
 
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {

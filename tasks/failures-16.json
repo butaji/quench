@@ -1,5 +1,5 @@
 {
-  "failed": 35,
+  "failed": 31,
   "groups": [
     {
       "count": 1,
@@ -19,26 +19,6 @@
       "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(24), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }, OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(33), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/intercalated-static-non-static-computed-fields.js"
-      ],
-      "reason": "Test262Error: 0 descriptor value should be 4; 0 value should be 4\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/intercalated-static-non-static-computed-fields.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/init-value-incremental.js"
-      ],
-      "reason": "Test262Error: 1 descriptor value should be 3; 1 value should be 3\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/init-value-incremental.js"
       ]
     },
     {
@@ -124,13 +104,15 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakMap.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakSet.js"
       ],
       "reason": "Test262Error: Expected true but got false\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakMap.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakSet.js"
       ]
     },
     {
@@ -146,19 +128,9 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/init-value-defined-after-class.js"
-      ],
-      "reason": "Test262Error: false should be an own property\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/init-value-defined-after-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js"
       ],
-      "reason": "Test262Error: lastIndex should be an own property\")",
+      "reason": "Test262Error: lastIndex descriptor enumerable should be false\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js"
       ]
@@ -168,19 +140,9 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js"
       ],
-      "reason": "Test262Error: length should be an own property\")",
+      "reason": "Test262Error: length descriptor enumerable should be false\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/regular-subclassing.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 0 !== 2",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/regular-subclassing.js"
       ]
     },
     {
@@ -216,6 +178,16 @@
     {
       "count": 1,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/static-init-sequence.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"first block\\\" !== \\\"first field\\\"",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/static-init-sequence.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
       ],
       "reason": "Test262Error: sameValue failed: \\\"function\\\" !== \\\"undefined\\\"",
@@ -224,15 +196,13 @@
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
       ]
     },
     {
@@ -248,21 +218,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/intercalated-static-non-static-computed-fields.js"
       ],
-      "reason": "Test262Error: sameValue failed: undefined !== 1",
+      "reason": "Test262Error: sameValue failed: true !== false",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/regular-subclassing.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 2",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/intercalated-static-non-static-computed-fields.js"
       ]
     },
     {
@@ -288,11 +248,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Boolean/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/static-init-scope-private.js"
       ],
-      "reason": "TypeError: Boolean.prototype.valueOf requires a Boolean receiver",
+      "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Boolean/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/static-init-scope-private.js"
       ]
     },
     {
@@ -336,7 +296,7 @@
       ]
     }
   ],
-  "passed": 4332,
+  "passed": 4336,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
