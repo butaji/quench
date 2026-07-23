@@ -65,6 +65,20 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     };
     reject_eval_var_lexical_conflict(&program, ctx)?;
+    if crate::interpreter::is_direct_eval() && crate::interpreter::is_eval_in_class_field() {
+        let ast::Program::Script(body) = &program;
+        if crate::eval::class::private_elements::program_contains_super_call(body) {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "super is not allowed in class field initializer eval",
+                "SyntaxError",
+            );
+            crate::value::set_thrown_value(err_val);
+            CURRENT_CONTEXT.with(|cell| {
+                *cell.borrow_mut() = prev_ctx;
+            });
+            return Err(js_err);
+        }
+    }
     // Establish the eval barrier so eval code cannot see outer labels.
     // has_label will only search up to this depth.
     crate::interpreter::set_eval_barrier_depth(label_depth);
