@@ -476,9 +476,7 @@ pub enum ClassMember {
         body: Vec<Statement>,
     },
     /// Static initialization block: static { ... }
-    StaticBlock {
-        body: Vec<Statement>,
-    },
+    StaticBlock { body: Vec<Statement> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

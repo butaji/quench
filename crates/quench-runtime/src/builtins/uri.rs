@@ -219,7 +219,7 @@ pub fn register_uri(ctx: &mut Context) {
     ctx.register_native("eval", |args| {
         let source = args
             .first()
-            .map(|v| crate::value::to_js_string(v))
+            .map(crate::value::to_js_string)
             .unwrap_or_default();
         let ctx_ptr = crate::context::CURRENT_CONTEXT.with(|cell| *cell.borrow());
         match ctx_ptr {
