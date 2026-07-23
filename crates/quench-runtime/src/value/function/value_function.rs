@@ -894,7 +894,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     body_str
                 )
             }
-            Expression::ArrowFunction { params, body } => {
+            Expression::ArrowFunction { params, body, .. } => {
                 let body_str = match body.as_ref() {
                     ArrowBody::Expression(e) => expr_to_string(e),
                     ArrowBody::Block(stmts) => {
