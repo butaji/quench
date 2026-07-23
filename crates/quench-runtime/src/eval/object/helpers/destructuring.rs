@@ -402,18 +402,30 @@ pub fn assign_binding_elem(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    assign_binding_elem_with_default(binding, value, env, None)
+}
+
+fn assign_binding_elem_with_default(
+    binding: &BindingElement,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
     match binding {
         BindingElement::Identifier(name) if name == "__hole" => Ok(()),
-        BindingElement::Identifier(name) => assign_to_identifier(name, value, env),
+        BindingElement::Identifier(name) => assign_to_identifier(name, value, env, default_expr),
         BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
         BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
         BindingElement::Default(binding, default) => {
-            let value = if matches!(value, Value::Undefined) {
-                eval_expression(default, env, false)?
+            let (value, name_default) = if matches!(value, Value::Undefined) {
+                (
+                    eval_expression(default, env, false)?,
+                    Some(default.as_ref()),
+                )
             } else {
-                value.clone()
+                (value.clone(), None)
             };
-            assign_binding_elem(binding, &value, env)
+            assign_binding_elem_with_default(binding, &value, env, name_default)
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
@@ -455,9 +467,12 @@ pub fn assign_to_identifier(
     name: &str,
     value: &Value,
     env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
 ) -> Result<(), JsError> {
     let value = match value {
-        Value::Function(ref f) if f.name.is_none() => {
+        Value::Function(ref f)
+            if f.name.is_none() && default_expr.is_some_and(is_anonymous_function_definition) =>
+        {
             let mut cloned = f.clone();
             cloned.name = Some(name.to_string());
             let _ = cloned.set_property("name", Value::String(name.to_string()));
@@ -522,6 +537,16 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+fn is_anonymous_function_definition(expr: &Expression) -> bool {
+    match expr {
+        Expression::FunctionExpression { name: None, .. } => true,
+        Expression::Sequence(exprs) if exprs.len() == 1 => {
+            is_anonymous_function_definition(&exprs[0])
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

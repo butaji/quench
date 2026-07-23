@@ -13,6 +13,22 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value
 use std::cell::RefCell;
 use std::rc::Rc;
 
+thread_local! {
+    static CONSTRUCTING_CLASS: RefCell<Option<ClassValue>> = const { RefCell::new(None) };
+}
+
+pub fn set_constructing_class(class: Option<ClassValue>) {
+    CONSTRUCTING_CLASS.with(|cell| *cell.borrow_mut() = class);
+}
+
+fn constructing_class() -> Option<ClassValue> {
+    CONSTRUCTING_CLASS.with(|cell| cell.borrow().clone())
+}
+
+pub(crate) fn constructing_class_for_super() -> Option<ClassValue> {
+    constructing_class()
+}
+
 /// Synthetic derived constructor: auto-call `super(...args)` only when
 /// the class had no explicit `constructor` member.
 fn should_auto_super(class: &ClassValue) -> bool {
@@ -86,6 +102,7 @@ pub fn instantiate_simple(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
+    set_constructing_class(Some(class.clone()));
     let this_val = new_instance(class, env)?;
     let body = class.constructor_body.clone();
     let call_env = Rc::new(RefCell::new(build_constructor_env(
@@ -173,7 +190,7 @@ pub fn instantiate_simple(
     } else {
         run_ctor_body(&body, &call_env)?
     };
-    finish_ctor_result(result, &this_val, class, &call_env)
+    finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
 }
 
 fn init_instance_fields(
@@ -182,9 +199,15 @@ fn init_instance_fields(
     call_env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     for (name, value_expr) in &class.instance_fields {
+        crate::interpreter::set_eval_in_class_field(true);
         let field_val = eval_expression(value_expr, call_env, false)?;
+        crate::interpreter::set_eval_in_class_field(false);
         let key_str = prop_key_to_string(name, call_env, false)?;
-        private_field_add(instance_rc, &key_str, field_val)?;
+        private_field_add(
+            instance_rc,
+            &storage_key_for_property(name, &key_str),
+            field_val,
+        )?;
     }
     Ok(())
 }
@@ -196,7 +219,14 @@ pub fn private_field_add(
 ) -> Result<(), JsError> {
     if crate::value::is_private_name_key(key) {
         let o = obj.borrow();
-        if !o.extensible && !o.properties.contains_key(key) {
+        if o.properties.contains_key(key) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Private field already defined",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+        if !o.extensible {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot add private field to non-extensible object",
                 "TypeError",
@@ -208,6 +238,19 @@ pub fn private_field_add(
     Ok(())
 }
 
+fn finalize_instance(result: Value) -> Result<Value, JsError> {
+    set_constructing_class(None);
+    Ok(result)
+}
+
+fn install_privates_on_object(
+    class: &ClassValue,
+    obj: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    crate::eval::class::install_instance_private_elements(class, obj, env)
+}
+
 /// Instantiate with instance fields: fields init after super(), before body
 pub fn instantiate_with_fields(
     class: &ClassValue,
@@ -215,6 +258,7 @@ pub fn instantiate_with_fields(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
+    set_constructing_class(Some(class.clone()));
     let this_val = new_instance(class, env)?;
     let instance_rc = match &this_val {
         Value::Object(o) => Rc::clone(o),
@@ -360,22 +404,20 @@ pub fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsEr
     }
 }
 
-/// Call the super constructor or use default behavior
+/// Call the super constructor or use default behavior; returns effective `this`.
 pub fn call_super_or_default(
     super_val: &Value,
     args: Vec<Value>,
     this_val: &Value,
     env: &Rc<RefCell<Environment>>,
-) -> Result<(), JsError> {
+) -> Result<Value, JsError> {
     match super_val {
-        Value::Class(super_class) => {
-            crate::eval::class::call_super_constructor(
-                super_class.as_ref().clone(),
-                args,
-                this_val.clone(),
-                env,
-            )?;
-        }
+        Value::Class(super_class) => crate::eval::class::call_super_constructor(
+            super_class.as_ref().clone(),
+            args,
+            this_val.clone(),
+            env,
+        ),
         Value::Object(o) => {
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
                 crate::eval::function::call_value_with_this(
@@ -394,7 +436,9 @@ pub fn call_super_or_default(
                     Value::NativeConstructor(nc.clone()),
                     args,
                     this_val.clone(),
-                )?;
+                )
+            } else {
+                Ok(this_val.clone())
             }
         }
         Value::NativeConstructor(nc) => {
@@ -413,7 +457,6 @@ pub fn call_super_or_default(
         }
         _ => {}
     }
-    Ok(())
 }
 
 /// Check if the constructor body contains a super() call anywhere
@@ -628,7 +671,10 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        let storage_key = class_member_storage_key(&key_str);
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let storage_key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -656,7 +702,11 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, body) in &class.getters {
-        let key = class_member_storage_key(&prop_key_to_string(name, &closure, false)?);
+        let key_str = prop_key_to_string(name, &closure, false)?;
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -669,7 +719,11 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, param, body) in &class.setters {
-        let key = class_member_storage_key(&prop_key_to_string(name, &closure, false)?);
+        let key_str = prop_key_to_string(name, &closure, false)?;
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -698,7 +752,16 @@ pub fn create_class_prototype_helper_with_env(
     Ok(Rc::new(RefCell::new(proto)))
 }
 
-fn class_member_storage_key(key: &str) -> String {
+pub fn storage_key_for_property(name: &crate::ast::PropertyKey, evaluated: &str) -> String {
+    match name {
+        crate::ast::PropertyKey::Ident(s) if s.starts_with('#') => {
+            crate::value::private_name_key(s)
+        }
+        _ => evaluated.to_string(),
+    }
+}
+
+pub fn class_member_storage_key(key: &str) -> String {
     if key.starts_with('#') {
         crate::value::private_name_key(key)
     } else {
@@ -886,6 +949,52 @@ mod tests {
             "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
              class C extends Base { #val; constructor(seal) { super(seal); this.#val = 42; } } \
              (function() { try { new C(true); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_method_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { constructor(seal) { super(seal); } #m() { return 42; } \
+             pub() { return this.#m(); } } \
+             (function() { try { new C(true).pub(); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_method_double_install_on_same_object_throws() {
+        let r = eval(
+            "class Base { constructor(o) { return o; } } \
+             class C extends Base { get #p() {} } \
+             var obj = {}; new C(obj); \
+             (function() { try { new C(obj); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_accessor_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { constructor(seal) { super(seal); } \
+             get #a() { return 42; } get b() { return this.#a; } } \
+             (function() { try { new C(true).b; return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn base_class_field_init_on_self_nonextensible_throws_type_error() {
+        let r = eval(
+            "(function() { try { class C { #g = (Object.preventExtensions(this), 'Test262'); } \
+             new C(); return 'ok'; } catch (e) { return e.name; } })()",
         )
         .unwrap();
         assert_eq!(r, Value::String("TypeError".into()));

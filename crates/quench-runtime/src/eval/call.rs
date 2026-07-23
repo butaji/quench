@@ -156,20 +156,36 @@ fn eval_super_call(
         }
     }
 
+    let current_this = get_this_binding(env);
+    let current_obj = match &current_this {
+        Value::Object(o) => Some(Rc::clone(o)),
+        _ => None,
+    };
+
     // After super() succeeds, run pending field initializers (for derived
     // classes with instance fields) before returning to the constructor body.
     // Per ES §13.2.6.1 SuperCall, fields are initialized right after super()
     // returns and before the rest of the constructor body.
-    // NOTE: separate let-bind from if-let to avoid temporary scope extension
-    // keeping the RefMut borrow alive into the body.
     let pending = env.borrow_mut().take_pending_fields();
     if let Some(fields) = pending {
-        if let Some(ref obj_rc) = this_obj {
+        if let Some(ref obj_rc) = current_obj {
             for (prop_key, expr) in fields {
+                crate::interpreter::set_eval_in_class_field(true);
                 let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
+                crate::interpreter::set_eval_in_class_field(false);
                 let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
-                crate::eval::class::helpers::private_field_add(obj_rc, &key_str, val)?;
+                crate::eval::class::helpers::private_field_add(
+                    obj_rc,
+                    &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),
+                    val,
+                )?;
             }
+        }
+    }
+
+    if let Some(class) = crate::eval::class::helpers::constructing_class_for_super() {
+        if let Some(obj_rc) = current_obj.as_ref() {
+            crate::eval::class::install_instance_private_elements(&class, obj_rc, env)?;
         }
     }
 
