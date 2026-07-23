@@ -96,4 +96,115 @@ mod tests {
         let result = eval_ok("ArrayBuffer.prototype");
         assert!(!matches!(result, Value::Undefined));
     }
+
+    #[test]
+    fn array_buffer_regular_subclassing() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            class AB extends ArrayBuffer {
+                constructor() {
+                    super(4);
+                }
+            }
+            var ab = new AB();
+            [ab instanceof AB, ab instanceof ArrayBuffer, ab.byteLength];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert_eq!(
+                    arr.elements.first().map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "ab instanceof AB should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(1).map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "ab instanceof ArrayBuffer should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(2).map(|v| v.to_string()),
+                    Some("4".to_string()),
+                    "ab.byteLength should be 4"
+                );
+            }
+            _ => panic!("expected array result, got {:?}", r),
+        }
+    }
+
+    #[test]
+    fn dataview_regular_subclassing() {
+        let mut ctx = Context::new().unwrap();
+        // First create an ArrayBuffer, then subclass DataView
+        let r = ctx
+            .eval(
+                r#"
+            var buffer = new ArrayBuffer(1);
+            class DV extends DataView {}
+            var dv = new DV(buffer);
+            [dv.buffer === buffer, dv instanceof DV, dv instanceof DataView];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert_eq!(
+                    arr.elements.first().map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "dv.buffer === buffer should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(1).map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "dv instanceof DV should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(2).map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "dv instanceof DataView should be true"
+                );
+            }
+            _ => panic!("expected array result, got {:?}", r),
+        }
+    }
+
+    #[test]
+    fn array_buffer_subclass_default_constructor() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            class AB extends ArrayBuffer {}
+            var ab = new AB(4);
+            [ab instanceof AB, ab instanceof ArrayBuffer, ab.byteLength];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert_eq!(
+                    arr.elements.first().map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "ab instanceof AB should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(1).map(|v| v.to_string()),
+                    Some("true".to_string()),
+                    "ab instanceof ArrayBuffer should be true"
+                );
+                assert_eq!(
+                    arr.elements.get(2).map(|v| v.to_string()),
+                    Some("4".to_string()),
+                    "ab.byteLength should be 4"
+                );
+            }
+            _ => panic!("expected array result, got {:?}", r),
+        }
+    }
 }

@@ -436,6 +436,10 @@ pub fn is_constructor_value(val: &Value) -> bool {
             // Check if prototype is set (native constructors)
             if nf.prototype.borrow().is_some() {
                 true
+            } else if nf.constructable {
+                // Special built-ins (e.g. Proxy) that have [[Construct]] but
+                // deliberately no .prototype property.
+                true
             } else if let Some(Value::String(n)) = nf.get_property("name") {
                 // Bound functions have [[Construct]] but no .prototype
                 n.starts_with("bound ")

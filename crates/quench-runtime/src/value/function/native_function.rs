@@ -35,6 +35,10 @@ pub struct NativeFunction {
     /// Accessor properties (getters/setters) stored as HashMap for quick lookup
     accessors:
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
+    /// True if this function has [[Construct]] despite having no .prototype property.
+    /// Only set for special built-ins like Proxy which are constructable but
+    /// deliberately have no `.prototype` (so they cannot be `extends`ed).
+    pub constructable: bool,
 }
 
 impl NativeFunction {
@@ -53,6 +57,7 @@ impl NativeFunction {
             )),
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            constructable: false,
         }
     }
 
@@ -71,6 +76,7 @@ impl NativeFunction {
             )),
             name: name.to_string(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            constructable: false,
         }
     }
 
@@ -89,6 +95,7 @@ impl NativeFunction {
             )),
             name: name.to_string(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            constructable: false,
         }
     }
 
@@ -107,6 +114,7 @@ impl NativeFunction {
             )),
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            constructable: false,
         }
     }
 
@@ -135,6 +143,7 @@ impl NativeFunction {
             )),
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
+            constructable: false,
         }
     }
 
@@ -146,6 +155,12 @@ impl NativeFunction {
     /// Set the function's own [[Prototype]] to a NativeFunction.
     pub fn set_own_prototype_fn(&mut self, proto: Rc<NativeFunction>) {
         self.own_prototype = Some(Value::NativeFunction(proto));
+    }
+
+    /// Mark this function as having [[Construct]] even without a .prototype property.
+    /// Used for built-ins like Proxy which are constructable but lack a .prototype.
+    pub fn set_constructable(&mut self, val: bool) {
+        self.constructable = val;
     }
 
     /// Get a property from this native function
@@ -250,6 +265,7 @@ impl Clone for NativeFunction {
             property_flags: std::rc::Rc::clone(&self.property_flags),
             name: self.name.clone(),
             accessors: std::rc::Rc::clone(&self.accessors),
+            constructable: self.constructable,
         }
     }
 }
