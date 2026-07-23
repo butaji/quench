@@ -1,5 +1,5 @@
 {
-  "failed": 335,
+  "failed": 319,
   "groups": [
     {
       "count": 1,
@@ -216,10 +216,19 @@
       ]
     },
     {
-      "count": 9,
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
+      ],
+      "reason": "Test262Error: Expected ReferenceError but got TypeError. \")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
+      ]
+    },
+    {
+      "count": 8,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
@@ -231,13 +240,13 @@
       "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/method-static/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js"
+        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
+        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
       ]
     },
     {
@@ -344,16 +353,12 @@
       ]
     },
     {
-      "count": 21,
+      "count": 17,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-9.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
@@ -372,34 +377,12 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-9.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an arbitrary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-arrow-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an object which did not contain it\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-arrow-function.js"
+        "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
+        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
+        "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js"
       ]
     },
     {
@@ -420,26 +403,6 @@
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Frozen objects can't be changed\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-setter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. access of inner class accessor from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-setter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-field-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed inner class field from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-field-on-nested-class.js"
       ]
     },
     {
@@ -476,68 +439,6 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private setter from an ordinary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-function.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-private-static-getter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. get operation on private accessor without getter should throw TypeError\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-private-static-getter.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access a private setter\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-multiple-evaluations-of-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of c1 private method\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-multiple-evaluations-of-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-getter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class getter from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-getter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class method from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
       ]
     },
     {
@@ -979,19 +880,8 @@
       ]
     },
     {
-      "count": 1,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 53",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
@@ -999,7 +889,6 @@
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"Test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
@@ -1019,32 +908,10 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"pass\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"super class\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js"
       ]
     },
@@ -1179,6 +1046,24 @@
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-skip-non-enumerable.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-skip-non-enumerable.js"
+      ]
+    },
+    {
+      "count": 5,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
+      ],
+      "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ]
     },
     {
@@ -1351,7 +1236,7 @@
       ]
     }
   ],
-  "passed": 4032,
+  "passed": 4048,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
