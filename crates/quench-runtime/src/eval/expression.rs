@@ -5,7 +5,7 @@
 
 use crate::ast::*;
 use crate::env::Environment;
-use crate::eval::call::{eval_call, eval_member, eval_new};
+use crate::eval::call::{eval_call, eval_member, eval_new, set_super_property};
 use crate::eval::class::eval_class_expr;
 use crate::eval::iteration::{eval_for_in, eval_for_of};
 use crate::eval::jsx::{eval_jsx_element, eval_jsx_fragment};
@@ -158,6 +158,25 @@ pub fn eval_expression(
                 _ => None,
             };
             let right_val = eval_expression(right, env, in_arrow_function)?;
+            // Handle super.property = value — uses super [[Set]] semantics.
+            if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = left.as_ref()
+            {
+                if let Expression::Identifier(name) = object.as_ref() {
+                    if name == "super" {
+                        return set_super_property(
+                            property,
+                            *computed,
+                            right_val,
+                            env,
+                            in_arrow_function,
+                        );
+                    }
+                }
+            }
             if let Expression::Member {
                 object,
                 property,
