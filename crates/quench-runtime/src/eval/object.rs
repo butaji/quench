@@ -24,7 +24,7 @@ pub fn assign_to(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match target {
-        Expression::Identifier(name) => assign_to_identifier(name, value, env),
+        Expression::Identifier(name) => assign_to_identifier(name, value, env, None),
         Expression::Member {
             object,
             property,
@@ -412,6 +412,17 @@ pub(crate) fn assign_to_object(
         } else if !obj_ref.extensible && !obj_ref.properties.contains_key(prop_name) {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot add property to non-extensible object",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+    }
+
+    if crate::value::is_private_name_key(prop_name) {
+        let obj_ref = o.borrow();
+        if !obj_ref.extensible && !obj_ref.properties.contains_key(prop_name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot add private field to non-extensible object",
                 "TypeError",
             );
             return Err(js_err);
