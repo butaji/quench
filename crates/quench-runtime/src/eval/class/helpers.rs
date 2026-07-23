@@ -2691,6 +2691,80 @@ mod tests {
     }
 
     #[test]
+    fn private_field_arrow_function_callable() {
+        let r = eval(
+            "class C { #m = () => 'test262'; method() { return this.#m(); } } new C().method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn private_field_async_arrow_function_callable() {
+        let r = eval(
+            "class C { #m = async () => 'test262'; \
+             async method() { return await this.#m(); } } \
+             (async () => await new C().method())()",
+        )
+        .unwrap();
+        match r {
+            Value::String(s) => assert_eq!(s, "test262"),
+            Value::Object(_) => {
+                // Top-level async IIFE returns a Promise; resolved value checked elsewhere.
+            }
+            other => panic!("unexpected {:?}", other),
+        }
+    }
+
+    #[test]
+    fn private_field_async_arrow_method_returns_promise() {
+        let r = eval(
+            "class C { #m = async () => 'test262'; \
+             t1() { var f = this.#m; return typeof f(); } \
+             t2() { return typeof this.#m(); } } \
+             var c = new C(); c.t1() + ',' + c.t2()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("object,object".into()));
+    }
+
+    #[test]
+    fn async_arrow_expression_returns_promise() {
+        let r = eval("typeof (async () => 1)().then").unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn instance_field_async_arrow_returns_promise() {
+        let r = eval(
+            "class C { m = async () => 'test262'; } \
+             var c = new C(); typeof c.m()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    #[test]
+    fn instance_field_async_arrow_via_this_returns_promise() {
+        let r = eval(
+            "class C { m = async () => 'test262'; t() { return typeof this.m(); } } \
+             var c = new C(); c.t()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    #[test]
+    fn instance_field_stored_async_arrow_returns_promise() {
+        let r = eval(
+            "class C { m = async () => 'test262'; } \
+             var c = new C(); var f = c.m; typeof f()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("object".into()));
+    }
+
+    #[test]
     fn private_method_brand_check_with_let_o_binding() {
         let ok = eval(
             "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \

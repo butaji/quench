@@ -1,5 +1,5 @@
 {
-  "failed": 215,
+  "failed": 186,
   "groups": [
     {
       "count": 1,
@@ -278,20 +278,8 @@
       ]
     },
     {
-      "count": 17,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-primitive-receiver.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldput-primitive-receiver.js",
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
@@ -300,14 +288,11 @@
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-eval-err.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-primitive-receiver.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldput-primitive-receiver.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ]
     },
     {
@@ -867,39 +852,6 @@
       ]
     },
     {
-      "count": 17,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-shadowed-private-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-common.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-dollar.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-underscore.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-double-initialisation-get-and-set.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-missing-shadowed-private-setter.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-shadowed-private-method.js"
-      ],
-      "reason": "TypeError: Private method or accessor already defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-shadowed-private-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-common.js"
-      ]
-    },
-    {
       "count": 14,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
@@ -1025,7 +977,7 @@
       ]
     }
   ],
-  "passed": 4152,
+  "passed": 4181,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
