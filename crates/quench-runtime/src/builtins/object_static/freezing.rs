@@ -79,15 +79,28 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             let proto = o.borrow().prototype.clone();
             Ok(proto.map(Value::Object).unwrap_or(Value::Null))
         }
-        Value::Function(_) => {
+        Value::Function(f) => {
             // Per ES §9.2.1 [[GetPrototypeOf]]: the internal [[Prototype]]
-            // of a function is %FunctionPrototype% (Function.prototype),
-            // NOT the function's own `.prototype` property (which is the
-            // prototype for instances created via `new`).
-            if let Some(fp) = crate::builtins::function::get_function_prototype() {
-                return Ok(Value::Object(fp));
+            // of a function depends on its kind:
+            //   - generators → %GeneratorFunctionPrototype%
+            //   - async       → %AsyncFunctionPrototype%
+            //   - async gen   → %AsyncGeneratorFunctionPrototype%
+            //   - normal      → %FunctionPrototype%
+            // These prototypes each have .constructor pointing to the
+            // corresponding constructor (GeneratorFunction, etc.).
+            let proto = if f.is_generator && !f.is_async {
+                crate::builtins::function::get_generator_function_prototype()
+            } else if f.is_async && !f.is_generator {
+                crate::builtins::function::get_async_function_prototype()
+            } else if f.is_async {
+                crate::builtins::function::get_async_generator_function_prototype()
+            } else {
+                crate::builtins::function::get_function_prototype()
+            };
+            if let Some(p) = proto {
+                return Ok(Value::Object(p));
             }
-            // Fallback if Function.prototype not yet registered.
+            // Fallback if prototype not yet registered.
             let mut proto = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
             proto.set("constructor", Value::String("Function".to_string()));
             Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
@@ -325,5 +338,15 @@ mod tests {
     fn test_set_prototype_of_function_throws() {
         let mut ctx = Context::new().unwrap();
         assert!(ctx.eval("Object.setPrototypeOf(function(){}, {})").is_err());
+    }
+
+    #[test]
+    fn test_generator_function_prototype_chain() {
+        let mut ctx = Context::new().unwrap();
+        // Object.getPrototypeOf(function*(){}).constructor should be GeneratorFunction
+        let result = ctx
+            .eval("Object.getPrototypeOf(function*(){}).constructor.name")
+            .unwrap();
+        assert_eq!(result, Value::String("GeneratorFunction".to_string()));
     }
 }

@@ -13,11 +13,32 @@ use crate::Context;
 // Thread-local storage for Function.prototype (used by interpreter for function expressions)
 thread_local! {
     static FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
+    static ASYNC_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
+    static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
 }
 
 /// Get the Function.prototype object (for use by interpreter)
 pub fn get_function_prototype() -> Option<Rc<RefCell<Object>>> {
     FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+/// Get the GeneratorFunction.prototype object
+pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    GENERATOR_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
+}
+
+/// Get the AsyncFunction.prototype object
+pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
+}
+
+/// Get the AsyncGeneratorFunction.prototype object
+pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
 }
 
 /// Check if an object is Function.prototype (for special property access handling)
@@ -165,26 +186,34 @@ pub fn register_function(ctx: &mut Context) {
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
     // as native constructors that delegate to the Function constructor logic
     // but generate the correct source text per kind.
+    // Each has its own prototype object so Object.getPrototypeOf(genFn) returns
+    // the correct prototype (GeneratorFunction.prototype, not Function.prototype).
     let async_func_ctor =
         make_function_constructor("async ", function_proto.clone(), Rc::clone(ctx.env()));
     async_func_ctor.set_name("AsyncFunction");
-    ctx.set_global(
-        "AsyncFunction".to_string(),
-        Value::NativeConstructor(Rc::new(async_func_ctor)),
-    );
+    let async_func_ctor_val = Value::NativeConstructor(Rc::new(async_func_ctor));
+    let async_func_proto = make_function_kind_prototype(async_func_ctor_val.clone());
+    ASYNC_FUNCTION_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&async_func_proto)));
+    ctx.set_global("AsyncFunction".to_string(), async_func_ctor_val);
+
     let gen_func_ctor =
         make_function_constructor("*", function_proto.clone(), Rc::clone(ctx.env()));
     gen_func_ctor.set_name("GeneratorFunction");
-    ctx.set_global(
-        "GeneratorFunction".to_string(),
-        Value::NativeConstructor(Rc::new(gen_func_ctor)),
-    );
+    let gen_func_ctor_val = Value::NativeConstructor(Rc::new(gen_func_ctor));
+    let gen_func_proto = make_function_kind_prototype(gen_func_ctor_val.clone());
+    GENERATOR_FUNCTION_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&gen_func_proto)));
+    ctx.set_global("GeneratorFunction".to_string(), gen_func_ctor_val);
+
     let async_gen_func_ctor =
         make_function_constructor("async *", function_proto.clone(), Rc::clone(ctx.env()));
     async_gen_func_ctor.set_name("AsyncGeneratorFunction");
+    let async_gen_func_ctor_val = Value::NativeConstructor(Rc::new(async_gen_func_ctor));
+    let async_gen_func_proto = make_function_kind_prototype(async_gen_func_ctor_val.clone());
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE
+        .with(|p| *p.borrow_mut() = Some(Rc::clone(&async_gen_func_proto)));
     ctx.set_global(
         "AsyncGeneratorFunction".to_string(),
-        Value::NativeConstructor(Rc::new(async_gen_func_ctor)),
+        async_gen_func_ctor_val,
     );
 }
 
@@ -261,6 +290,21 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         },
     );
     function_proto_rc
+}
+
+/// Create a prototype object for a specific function kind (GeneratorFunction,
+/// AsyncFunction, AsyncGeneratorFunction). This object serves as the [[Prototype]]
+/// of instances created by that kind (e.g., `Object.getPrototypeOf(function*() {})`
+/// returns GeneratorFunction.prototype). Its own [[Prototype]] is Function.prototype
+/// so that generator/async functions inherit Function.prototype methods.
+fn make_function_kind_prototype(ctor: Value) -> Rc<RefCell<Object>> {
+    let proto = Object::new(ObjectKind::Ordinary);
+    let proto_rc = Rc::new(RefCell::new(proto));
+    if let Some(fp) = get_function_prototype() {
+        proto_rc.borrow_mut().prototype = Some(fp);
+    }
+    proto_rc.borrow_mut().set("constructor", ctor);
+    proto_rc
 }
 
 fn make_function_constructor(
