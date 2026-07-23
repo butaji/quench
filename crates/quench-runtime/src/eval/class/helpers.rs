@@ -377,6 +377,15 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
                 None
             }
         }
+        Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
+        Value::NativeFunction(nf) => {
+            if let Some(Value::Object(proto_obj)) = nf.get_property("prototype") {
+                Some(proto_obj)
+            } else {
+                None
+            }
+        }
+        Value::Function(f) => Some(f.get_prototype()),
         _ => None,
     }
 }
@@ -846,6 +855,64 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn prod_private_method_with_builtins_and_hasprop() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "function hasProp(obj, name, expected, msg) { \
+                   var hasOwnProperty = Object.prototype.hasOwnProperty.call(obj, name); \
+                   if (hasOwnProperty !== expected) throw new Error('hasOwn: ' + msg); \
+                   var hasProperty = Reflect.has(obj, name); \
+                   if (hasProperty !== expected) throw new Error('reflect: ' + msg); \
+                 } \
+                 class C { \
+                   #m() { return 42; } \
+                   get ref() { return this.#m; } \
+                   constructor() { \
+                     hasProp(this, '#m', false, 'slot'); \
+                     if (typeof this.#m !== 'function') throw new Error('typeof'); \
+                     if (this.ref !== this.#m) throw new Error('ref in ctor'); \
+                   } \
+                 } \
+                 var c = new C(); \
+                 var other = new C(); \
+                 if (c.ref !== other.ref) throw new Error('not shared'); \
+                 c.ref()",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn prod_private_method_function_name_is_hash_m() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("class C { #m() { return 42; } get n() { return this.#m.name; } } new C().n")
+            .unwrap();
+        assert_eq!(r, Value::String("#m".into()));
+    }
+
+    #[test]
+    fn reflect_has_does_not_break_private_method_getter() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let without =
+            ctx.eval("class C { #m() { return 42; } get ref() { return this.#m; } } new C().ref()");
+        let with = ctx.eval(
+            "class C { \
+               #m() { return 42; } \
+               get ref() { return this.#m; } \
+               constructor() { Object.prototype.hasOwnProperty.call(this, '#m'); } \
+             } \
+             new C().ref()",
+        );
+        assert_eq!(without.unwrap(), Value::Number(42.0));
+        assert_eq!(with.unwrap(), Value::Number(42.0));
     }
 
     #[test]

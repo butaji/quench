@@ -60,7 +60,7 @@ pub fn install_instance_private_elements(
                 cached.clone()
             } else {
                 let mut func = ValueFunction::new(
-                    Some(key_str.clone()),
+                    Some(crate::value::private_method_display_name(&key_str)),
                     params.clone(),
                     body.clone(),
                     Rc::clone(&member_closure),

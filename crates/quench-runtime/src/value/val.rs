@@ -53,6 +53,19 @@ pub fn is_unscoped_private_name_key(key: &str) -> bool {
     !inner.contains(':')
 }
 
+/// Source-visible name for a private method (`#m`) from storage or scoped key.
+pub fn private_method_display_name(key: &str) -> String {
+    if let Some(rest) = key.strip_prefix('#') {
+        return format!("#{rest}");
+    }
+    if is_private_name_key(key) {
+        let inner = &key[9..key.len() - 1];
+        let bare = inner.rsplit(':').next().unwrap_or(inner);
+        return format!("#{bare}");
+    }
+    key.to_string()
+}
+
 /// A class method: (name, params, body, is_async, is_generator)
 pub type ClassMethod = (
     PropertyKey,
