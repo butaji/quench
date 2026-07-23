@@ -132,7 +132,6 @@ pub fn eval_expression(
             func.strict = crate::interpreter::is_strict_mode();
             func.is_async = *is_async;
             func.is_generator = *is_generator;
-            let _ = func.set_property("name", Value::String(String::new()));
             Ok(Value::Function(func))
         }
         Expression::Binary { op, left, right } => {
