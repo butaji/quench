@@ -296,6 +296,44 @@ impl ClassValue {
         false
     }
 
+    /// Whether `name` is an own property of this class constructor (static members).
+    pub fn has_static_own_property(&self, name: &str) -> bool {
+        if self.deleted_properties.borrow().contains(name) {
+            return false;
+        }
+        if name == "name" || name == "prototype" {
+            return true;
+        }
+        if self.get_static_field(name).is_some() {
+            return true;
+        }
+        let eval_env = self
+            .get_class_def_env()
+            .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+        for (key, _) in &self.static_getters {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| k == name)
+            {
+                return true;
+            }
+        }
+        for (key, _, _) in &self.static_setters {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| k == name)
+            {
+                return true;
+            }
+        }
+        for (key, _, _, _, _) in &self.static_methods {
+            if crate::eval::class::helpers::prop_key_to_string(key, &eval_env, false)
+                .is_ok_and(|k| k == name)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Set a static property on this class, invoking a setter if one exists.
     pub fn set_static_property(
         &self,
