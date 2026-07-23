@@ -30,13 +30,16 @@ pub struct TailCallSignal {
     pub function: ValueFunction,
     /// The evaluated arguments.
     pub arguments: Vec<Value>,
+    /// `this` binding for member-expression tail calls; otherwise `Undefined`.
+    pub this_val: Value,
 }
 
 impl TailCallSignal {
-    pub fn new(function: ValueFunction, arguments: Vec<Value>) -> Self {
+    pub fn new(function: ValueFunction, arguments: Vec<Value>, this_val: Value) -> Self {
         Self {
             function,
             arguments,
+            this_val,
         }
     }
 }
@@ -176,7 +179,8 @@ pub fn eval_function_body(
 
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
-            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
+            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) && acc_stack_len() > 0
+            {
                 // Set tail-call signal, then break to let the trampoline extract
                 // the accumulator from the acc_stack. If no signal was set
                 // (e.g. callee is a NativeFunction, not a JS ValueFunction),
@@ -190,7 +194,7 @@ pub fn eval_function_body(
                     break;
                 }
             }
-            // Non-tail return.
+            // Non-tail return (or tail return outside an active trampoline).
             let val = match expr {
                 Some(e) => eval_expression(e, env, in_arrow_function)?,
                 None => Value::Undefined,
@@ -203,7 +207,9 @@ pub fn eval_function_body(
         // Per ES §14.2.1, the block's body is in tail position.
         if is_last_stmt {
             if let Statement::Block(inner_stmts) = stmt {
-                if let Some(()) = handle_tail_call_in_block(inner_stmts, env, in_arrow_function)? {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function)?.is_some()
+                {
                     // Tail call was set; break to let trampoline run.
                     break;
                 }
@@ -269,7 +275,16 @@ fn handle_tail_call(
 ) -> Result<(), JsError> {
     if let Some(e) = expr.as_ref() {
         if let Expression::Call { callee, arguments } = e.as_ref() {
-            let callee_val = eval_expression(callee, env, in_arrow_function)?;
+            let (callee_val, this_val) = match callee.as_ref() {
+                Expression::Member { .. } => {
+                    let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
+                    (func, this)
+                }
+                _ => (
+                    eval_expression(callee, env, in_arrow_function)?,
+                    Value::Undefined,
+                ),
+            };
             let args: Vec<Value> = arguments
                 .iter()
                 .map(|arg| eval_expression(arg, env, in_arrow_function))
@@ -279,7 +294,7 @@ fn handle_tail_call(
             // cannot be stored in a TailCallSignal; skip the optimization and let
             // normal evaluation handle the call.
             if let Ok(function) = resolve_callee_to_function(callee_val) {
-                set_tail_call_signal(TailCallSignal::new(function, args));
+                set_tail_call_signal(TailCallSignal::new(function, args, this_val));
             }
         }
     }
@@ -690,6 +705,9 @@ fn eval_class_decl(
     // Evaluate the class expression with the declared name so static field
     // initializers observe `this.name === "<name>"` per ES §14.6.13.
     let class_val = crate::eval::class::eval_class_expr(class, env, Some(name))?;
+    if crate::value::generator_replay::yield_pending() {
+        return Ok(Value::Undefined);
+    }
     env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }

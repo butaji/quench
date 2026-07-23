@@ -1,12 +1,34 @@
 use crate::value::kind::ObjectKind;
 use crate::value::object::helpers::as_array_index;
 use crate::value::object::{
-    define_accessor, has_getter, has_setter, set_getter_func, set_setter_func, Desc, Object,
+    define_accessor, has_getter, has_setter, set_getter_func, set_setter_func, Object,
     PropertyDescriptor, PropertyFlags, Value,
 };
 use crate::value::NativeFunction;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+// ─── R4 refactor pin: live store survives TComp deletion ────────────────
+
+#[test]
+fn array_assign_and_define_own_property_survive() {
+    let mut obj = Object::new_array(1);
+    obj.set("0", Value::Number(10.0));
+    let pd = PropertyDescriptor {
+        value: Some(Value::Number(20.0)),
+        writable: Some(true),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..Default::default()
+    };
+    assert!(obj.define_own_property("1", &pd));
+    assert_eq!(obj.get("0"), Some(Value::Number(10.0)));
+    assert_eq!(obj.get("1"), Some(Value::Number(20.0)));
+    assert_eq!(
+        obj.properties.get("length"),
+        Some(&Value::Number(obj.elements.len() as f64))
+    );
+}
 
 // ─── Core existing tests ────────────────────────────────────────────────
 
@@ -226,6 +248,52 @@ fn test_has_and_has_own() {
 }
 
 #[test]
+fn object_keys_includes_enumerable_length() {
+    let mut ctx = crate::Context::new().unwrap();
+    let keys = ctx.eval("Object.keys({length: 1})").unwrap();
+    let Value::Object(arr) = keys else {
+        panic!("Object.keys must return an array");
+    };
+    let arr = arr.borrow();
+    assert_eq!(arr.elements.len(), 1);
+    assert_eq!(arr.elements[0], Value::String("length".into()));
+}
+
+#[test]
+fn object_keys_skips_array_holes() {
+    let mut ctx = crate::Context::new().unwrap();
+    let keys = ctx.eval("Object.keys([1,,3])").unwrap();
+    let Value::Object(arr) = keys else {
+        panic!("Object.keys must return an array");
+    };
+    let arr = arr.borrow();
+    let got: Vec<_> = arr
+        .elements
+        .iter()
+        .filter(|v| !matches!(v, Value::Undefined))
+        .cloned()
+        .collect();
+    assert_eq!(
+        got,
+        vec![Value::String("0".into()), Value::String("2".into())]
+    );
+}
+
+#[test]
+fn define_own_property_defaults_attributes_false() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    let pd = PropertyDescriptor {
+        value: Some(Value::Number(1.0)),
+        ..Default::default()
+    };
+    assert!(obj.define_own_property("x", &pd));
+    let d = obj.get_descriptor("x").unwrap();
+    assert!(!d.writable);
+    assert!(!d.enumerable);
+    assert!(!d.configurable);
+}
+
+#[test]
 fn test_own_keys_vs_property_names() {
     let mut obj = Object::new(ObjectKind::Ordinary);
     obj.set("visible", Value::Number(1.0));
@@ -438,20 +506,21 @@ fn test_function_property_helpers_non_function() {
 
 #[test]
 fn test_symbol_properties() {
-    let sym = |d: &str| {
-        Value::Symbol(Rc::new(crate::value::Symbol {
-            desc: Some(Rc::from(d)),
-            global: false,
-        }))
-    };
+    let sym = |d: &str| Value::Symbol(Rc::new(crate::value::Symbol::new(Some(Rc::from(d)), false)));
     let mut obj = Object::new(ObjectKind::Ordinary);
-    obj.set_symbol("test", Value::Number(42.0));
-    assert!(obj.has_symbol(&sym("test")));
-    assert_eq!(obj.get_property(&sym("test")), Some(Value::Number(42.0)));
+    let key = sym("test");
+    let key_str = match &key {
+        Value::Symbol(s) => s.property_key(),
+        _ => unreachable!(),
+    };
+    obj.set_symbol(&key_str, Value::Number(42.0));
+    assert!(obj.has_symbol(&key));
+    assert_eq!(obj.get_property(&key), Some(Value::Number(42.0)));
     assert!(!obj.has_symbol(&sym("missing")));
     assert_eq!(obj.get_property(&sym("missing")), None);
-    obj.set_symbol_value(sym("sym"));
-    assert!(obj.has_symbol(&sym("sym")));
+    let sym_val = sym("sym");
+    obj.set_symbol_value(sym_val.clone());
+    assert!(obj.has_symbol(&sym_val));
 }
 
 #[test]
@@ -479,21 +548,6 @@ fn test_property_descriptor_type_checks() {
         ..Default::default()
     };
     assert!(!acc.is_data() && acc.is_accessor());
-}
-
-#[test]
-fn test_desc_type_checks() {
-    let data = Desc {
-        value: Some(Value::Number(1.0)),
-        ..Default::default()
-    };
-    assert!(data.is_data() && !data.is_accessor() && !data.is_generic());
-    let acc = Desc {
-        get: Some(Value::Null),
-        ..Default::default()
-    };
-    assert!(!acc.is_data() && acc.is_accessor() && !acc.is_generic());
-    assert!(Desc::default().is_generic());
 }
 
 #[test]

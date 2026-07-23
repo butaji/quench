@@ -499,9 +499,7 @@ pub fn extract_property_name(
                     in_arrow_function,
                 )?;
                 match &val {
-                    Value::Symbol(s) => {
-                        Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default())
-                    }
+                    Value::Symbol(s) => Ok(s.property_key()),
                     _ => Ok(to_js_string(&val)),
                 }
             } else {
@@ -513,7 +511,7 @@ pub fn extract_property_name(
         PropertyKey::Computed(expr) => {
             let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
             match &val {
-                Value::Symbol(s) => Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
+                Value::Symbol(s) => Ok(s.property_key()),
                 _ => Ok(to_js_string(&val)),
             }
         }

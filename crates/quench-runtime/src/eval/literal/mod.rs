@@ -223,7 +223,7 @@ pub fn eval_property_key(
         PropertyKey::Computed(e) => {
             let val = crate::eval::expression::eval_expression(e, env, in_arrow_function)?;
             let result = match &val {
-                Value::Symbol(s) => s.desc.clone().map(|d| d.to_string()).unwrap_or_default(),
+                Value::Symbol(s) => s.property_key(),
                 _ => crate::value::to_js_string(&val),
             };
             Ok(result)
