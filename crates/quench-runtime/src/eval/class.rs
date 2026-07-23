@@ -301,7 +301,8 @@ pub fn call_super_constructor(
         &class, &args, &this_val, env,
     )?));
 
-    if body.is_empty() {
+    crate::interpreter::push_inside_super_call();
+    let result = if body.is_empty() {
         if let Value::Object(o) = &this_val {
             if !class.instance_fields.is_empty() {
                 init_instance_fields(&class, o, &call_env)?;
@@ -309,12 +310,11 @@ pub fn call_super_constructor(
             let field_obj = crate::eval::object::private_field_object(o);
             install_instance_private_elements(&class, &field_obj, env)?;
         }
-        return Ok(this_val);
-    }
-
-    crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
-    crate::interpreter::push_inside_super_call();
-    let result = crate::eval::statement::eval_function_body(&body, &call_env, false);
+        Ok(this_val.clone())
+    } else {
+        crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
+        crate::eval::statement::eval_function_body(&body, &call_env, false)
+    };
     crate::interpreter::pop_inside_super_call();
     let result = result?;
     let _ = crate::interpreter::take_control_flow();

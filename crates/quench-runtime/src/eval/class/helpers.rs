@@ -909,7 +909,10 @@ pub fn prop_key_to_string(
                 Value::Symbol(s) => Ok(s.property_key()),
                 _ => {
                     let prim = crate::value::to_primitive(&val, Some("string"))?;
-                    Ok(crate::value::to_js_string(&prim))
+                    match &prim {
+                        Value::Symbol(s) => Ok(s.property_key()),
+                        _ => Ok(crate::value::to_js_string(&prim)),
+                    }
                 }
             }
         }
@@ -1052,6 +1055,59 @@ mod tests {
             "class Base {} class Derived extends Base {} Object.getPrototypeOf(Derived) === Base",
         )
         .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn super_bracket_super_call_throws_reference_error_before_evaluating_key() {
+        let r = eval(
+            "class Derived extends Object { constructor() { super[super()]; throw new Error('fail'); } } new Derived()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError, got {msg}"
+        );
+    }
+
+    #[test]
+    fn super_member_before_super_throws_reference_error() {
+        let r = eval(
+            "class Base {} class C extends Base { constructor() { super.method(); } } new C()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError, got {msg}"
+        );
+    }
+
+    #[test]
+    fn private_method_before_super_returns_in_field_initializer() {
+        let r = eval(
+            "class C { f = this.g(); } class D extends C { g() { this.#m(); } #m() { return 42; } } new D()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("TypeError"),
+            "expected TypeError for private method before super returns, got {msg}"
+        );
+    }
+
+    #[test]
+    fn symbol_toprimitive_computed_field_is_own_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var s = Symbol(); var obj = { [Symbol.toPrimitive]: function(){ return s; } }; \
+                 class C { [obj] = 42; } var c = new C(); \
+                 Object.prototype.hasOwnProperty.call(c, s)",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 

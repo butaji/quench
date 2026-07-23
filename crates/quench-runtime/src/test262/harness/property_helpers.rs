@@ -78,7 +78,11 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     let is_own = match &obj {
         Value::Object(obj_ref) => {
             let obj = obj_ref.borrow();
-            obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
+            if matches!(&name, Value::Symbol(_)) {
+                obj.has_symbol(&name)
+            } else {
+                obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
+            }
         }
         Value::Class(class_ref) => class_ref.has_static_own_property(&name_str),
         Value::Function(f) => {
