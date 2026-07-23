@@ -30,10 +30,9 @@ pub fn set_getter(
             strict,
         },
     );
-    // Set correct flags: non-enumerable (class getters are not enumerable),
-    // configurable (can be deleted/reconfigured).
+    // Class getters are non-enumerable; object-literal accessors are enumerable.
     let flags = crate::value::object::helpers::PropertyFlags {
-        enumerable: false,
+        enumerable: !is_method,
         configurable: true,
         ..Default::default()
     };
@@ -85,10 +84,8 @@ pub fn set_setter(
             strict,
         },
     );
-    // Set correct flags: non-enumerable (class setters are not enumerable),
-    // configurable (can be deleted/reconfigured).
     let flags = crate::value::object::helpers::PropertyFlags {
-        enumerable: false,
+        enumerable: !is_method,
         configurable: true,
         ..Default::default()
     };

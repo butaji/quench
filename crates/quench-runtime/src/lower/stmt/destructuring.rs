@@ -3,132 +3,24 @@
 use crate::ast::{Expression, PropertyKey, Statement, VarKind};
 use oxc::ast::ast;
 
-use crate::lower::pattern::{expand_nested_array_pattern, expand_nested_pattern};
+use crate::lower::pattern::{
+    expand_nested_array_pattern, expand_nested_pattern, lower_array_binding,
+};
 
-/// Lower array destructuring pattern
+/// Lower array destructuring pattern via runtime iterator protocol.
 pub fn lower_array_destructuring(
     kind: VarKind,
     arr: &ast::ArrayPattern,
     init_expr: Option<Expression>,
     idx: usize,
 ) -> Vec<Statement> {
-    let mut stmts = Vec::new();
-    let temp_var_name = format!("__arr_src_{}", idx);
-    stmts.push(Statement::VarDeclaration {
-        kind: VarKind::Const,
-        name: temp_var_name.clone(),
+    let _ = idx;
+    let pattern = lower_array_binding(arr).expect("valid array destructuring pattern");
+    vec![Statement::PatternDeclaration {
+        kind,
+        pattern,
         init: init_expr,
-    });
-    lower_array_elems(kind, arr, &temp_var_name, &mut stmts);
-    stmts
-}
-
-fn lower_array_elems(
-    kind: VarKind,
-    arr: &ast::ArrayPattern,
-    temp_var_name: &str,
-    stmts: &mut Vec<Statement>,
-) {
-    for (i, elem) in arr.elements.iter().enumerate() {
-        if let Some(elem) = elem {
-            let member = array_member_access(temp_var_name, i);
-            match &elem.kind {
-                ast::BindingPatternKind::BindingIdentifier(id) => {
-                    stmts.push(Statement::VarDeclaration {
-                        kind,
-                        name: id.name.as_str().to_string(),
-                        init: Some(member),
-                    });
-                }
-                ast::BindingPatternKind::AssignmentPattern(assign) => {
-                    // [a = default] pattern: use nullish coalescing
-                    if let Ok(default_expr) = crate::lower::expr::lower_expr(&assign.right) {
-                        let initializer = Expression::Binary {
-                            left: Box::new(member),
-                            op: crate::ast::BinaryOp::NullishCoalescing,
-                            right: Box::new(default_expr),
-                        };
-                        match &assign.left.kind {
-                            ast::BindingPatternKind::BindingIdentifier(id) => {
-                                stmts.push(Statement::VarDeclaration {
-                                    kind,
-                                    name: id.name.as_str().to_string(),
-                                    init: Some(initializer),
-                                });
-                            }
-                            _ => {
-                                // Nested default pattern (e.g., [[a = 1] = []])
-                                let elem_temp_name = format!("__arr_elem_{}", i);
-                                stmts.push(Statement::VarDeclaration {
-                                    kind: VarKind::Const,
-                                    name: elem_temp_name.clone(),
-                                    init: Some(initializer),
-                                });
-                                stmts.extend(expand_nested_pattern(
-                                    kind,
-                                    &assign.left,
-                                    &elem_temp_name,
-                                ));
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    let elem_temp_name = format!("__arr_elem_{}", i);
-                    stmts.push(Statement::VarDeclaration {
-                        kind: VarKind::Const,
-                        name: elem_temp_name.clone(),
-                        init: Some(member),
-                    });
-                    stmts.extend(expand_nested_pattern(kind, elem, &elem_temp_name));
-                }
-            }
-        }
-    }
-    // Handle trailing rest element
-    if let Some(rest) = &arr.rest {
-        // Start index = count of elements before the rest (each element at position i is
-        // accessed via arr[i], so rest starts at position `arr.elements.len()`).
-        let start_index = arr.elements.len();
-        let rest_temp_name = format!("__arr_rest_{}", temp_var_name);
-        stmts.push(Statement::VarDeclaration {
-            kind: VarKind::Const,
-            name: rest_temp_name.clone(),
-            init: Some(rest_slice_expr(temp_var_name, start_index)),
-        });
-        stmts.extend(expand_nested_pattern(kind, &rest.argument, &rest_temp_name));
-    }
-}
-
-fn array_member_access(source_var: &str, index: usize) -> Expression {
-    Expression::Member {
-        object: Box::new(Expression::Identifier(source_var.to_string())),
-        property: PropertyKey::String(index.to_string()),
-        computed: false,
-    }
-}
-
-/// Generate `Array.prototype.slice.call(source_var, start_index)` for rest elements.
-/// Generate `[].slice.call(source_var, start_index)` which slices the source array
-/// from start_index to the end. Using `[]` as the receiver avoids the `this` binding
-/// issue that arises with `Array.prototype.slice.call` when the callee resolution
-/// does not properly set up the `this` value.
-fn rest_slice_expr(source_var: &str, start_index: usize) -> Expression {
-    Expression::Call {
-        callee: Box::new(Expression::Member {
-            object: Box::new(Expression::Member {
-                object: Box::new(Expression::Array(vec![])),
-                property: PropertyKey::Ident("slice".to_string()),
-                computed: false,
-            }),
-            property: PropertyKey::Ident("call".to_string()),
-            computed: false,
-        }),
-        arguments: vec![
-            Expression::Identifier(source_var.to_string()),
-            Expression::Number(start_index as f64),
-        ],
-    }
+    }]
 }
 
 /// Lower object destructuring pattern

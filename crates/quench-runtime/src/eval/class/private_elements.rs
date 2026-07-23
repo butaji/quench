@@ -54,17 +54,27 @@ pub fn install_instance_private_elements(
         }
         let storage_key = storage_key_for_property(name, &key_str);
         ensure_private_add(instance, &storage_key)?;
-        let mut func = ValueFunction::new(
-            Some(key_str.clone()),
-            params.clone(),
-            body.clone(),
-            Rc::clone(&member_closure),
-            *is_async,
-            *is_generator,
-        );
-        func.strict = true;
-        func.is_method = true;
-        private_field_add(instance, &storage_key, Value::Function(func))?;
+        let func_val = {
+            let mut cache = class.private_element_cache.borrow_mut();
+            if let Some(cached) = cache.get(&storage_key) {
+                cached.clone()
+            } else {
+                let mut func = ValueFunction::new(
+                    Some(key_str.clone()),
+                    params.clone(),
+                    body.clone(),
+                    Rc::clone(&member_closure),
+                    *is_async,
+                    *is_generator,
+                );
+                func.strict = true;
+                func.is_method = true;
+                let val = Value::Function(func);
+                cache.insert(storage_key.clone(), val.clone());
+                val
+            }
+        };
+        private_field_add(instance, &storage_key, func_val)?;
     }
 
     for (name, body) in &class.getters {

@@ -29,6 +29,12 @@ pub enum Statement {
         name: String,
         init: Option<Expression>,
     },
+    /// Destructuring variable declaration (`let [a, b] = arr`) evaluated via iterator.
+    PatternDeclaration {
+        kind: VarKind,
+        pattern: BindingElement,
+        init: Option<Expression>,
+    },
     /// Function declaration
     FunctionDeclaration {
         name: String,
