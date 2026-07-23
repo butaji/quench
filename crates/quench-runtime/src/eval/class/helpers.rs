@@ -193,7 +193,7 @@ pub fn instantiate_simple(
     finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
 }
 
-fn init_instance_fields(
+pub(crate) fn init_instance_fields(
     class: &ClassValue,
     instance_rc: &Rc<RefCell<Object>>,
     call_env: &Rc<RefCell<Environment>>,

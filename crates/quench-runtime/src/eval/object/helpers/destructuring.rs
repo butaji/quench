@@ -502,35 +502,7 @@ fn assign_binding_elem_with_default(
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
-            if let Expression::Member {
-                object, property, ..
-            } = target
-            {
-                let lref_obj = eval_expression(object, env, false)?;
-                let key_string = match property {
-                    PropertyKey::Computed(expr) => {
-                        let key_value = eval_expression(expr, env, false)?;
-                        crate::value::to_js_string(&key_value)
-                    }
-                    PropertyKey::Ident(name) => name.clone(),
-                    PropertyKey::String(s) => s.clone(),
-                    PropertyKey::Number(n) => n.to_string(),
-                };
-                if let Value::Object(o) = lref_obj {
-                    if let Some(setter) = o.borrow().get_setter(&key_string) {
-                        crate::eval::object::call_setter(&o, setter, value.clone(), env)?;
-                    } else {
-                        o.borrow_mut().set(&key_string, value.clone());
-                    }
-                } else {
-                    return Err(JsError(
-                        "Cannot assign to property of non-object".to_string(),
-                    ));
-                }
-                Ok(())
-            } else {
-                crate::eval::object::assign_to(target, value, env)
-            }
+            crate::eval::object::assign_to(target, value, env)
         }
     }
 }

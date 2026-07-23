@@ -29,7 +29,8 @@ pub fn eval_class_expr(
     env: &Rc<RefCell<Environment>>,
     inferred_name: Option<&str>,
 ) -> Result<Value, JsError> {
-    let mut new_value = ClassValue::from_ast(class);
+    let parent_class_id = env.borrow().private_class_id();
+    let mut new_value = ClassValue::from_ast(class, parent_class_id);
     if let Some(name) = inferred_name {
         new_value.set_name(name);
     }
