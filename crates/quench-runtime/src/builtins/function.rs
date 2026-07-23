@@ -165,13 +165,15 @@ pub fn register_function(ctx: &mut Context) {
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
     // as native constructors that delegate to the Function constructor logic
     // but generate the correct source text per kind.
-    let async_func_ctor = make_function_constructor("async ", function_proto.clone(), Rc::clone(ctx.env()));
+    let async_func_ctor =
+        make_function_constructor("async ", function_proto.clone(), Rc::clone(ctx.env()));
     async_func_ctor.set_name("AsyncFunction");
     ctx.set_global(
         "AsyncFunction".to_string(),
         Value::NativeConstructor(Rc::new(async_func_ctor)),
     );
-    let gen_func_ctor = make_function_constructor("*", function_proto.clone(), Rc::clone(ctx.env()));
+    let gen_func_ctor =
+        make_function_constructor("*", function_proto.clone(), Rc::clone(ctx.env()));
     gen_func_ctor.set_name("GeneratorFunction");
     ctx.set_global(
         "GeneratorFunction".to_string(),
@@ -283,8 +285,10 @@ fn make_function_constructor(
                 .map(to_js_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            let source =
-                format!("function{} anonymous({}) {{\n{}\n}}", kind_owned, params_src, body_src);
+            let source = format!(
+                "function{} anonymous({}) {{\n{}\n}}",
+                kind_owned, params_src, body_src
+            );
             // Per ES spec §16.1, a hashbang comment (#! ...) is only valid at the
             // very beginning of source text. The Function constructor wraps the body
             // in `function anonymous() { ... }`, so a hashbang inside the body is
@@ -327,8 +331,7 @@ fn make_function_constructor(
                         // on the existing object's internal slots instead of creating
                         // a new Value::Function. This preserves the derived class's
                         // prototype chain on the object.
-                        if let Some(Value::Object(existing)) =
-                            crate::interpreter::get_native_this()
+                        if let Some(Value::Object(existing)) = crate::interpreter::get_native_this()
                         {
                             existing.borrow_mut().slots.insert("[[Call]]", func);
                             {
@@ -357,11 +360,15 @@ fn make_function_constructor(
                                 );
                                 // Set .prototype for non-Async functions (Normal, Generator, AsyncGenerator)
                                 // Async functions (kind starts with "async " but not "async *") get no .prototype
-                                if kind_owned.is_empty() || kind_owned == "*" || kind_owned == "async *" {
+                                if kind_owned.is_empty()
+                                    || kind_owned == "*"
+                                    || kind_owned == "async *"
+                                {
                                     let mut proto = Object::new(ObjectKind::Ordinary);
                                     // Set the prototype of this object to Object.prototype
                                     // so that methods like hasOwnProperty work.
-                                    if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+                                    if let Some(obj_proto) = crate::builtins::get_object_prototype()
+                                    {
                                         proto.prototype = Some(obj_proto);
                                     }
                                     obj.define(

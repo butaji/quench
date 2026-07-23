@@ -169,10 +169,12 @@ pub fn register_builtins(ctx: &mut Context) {
             ctx.get_global("TypeError")
                 .and_then(|v| match v {
                     Value::NativeConstructor(ref nc) => Some(Rc::clone(&nc.prototype)),
-                    Value::NativeFunction(ref nf) => nf.get_property("prototype").and_then(|p| match p {
-                        Value::Object(o) => Some(o),
-                        _ => None,
-                    }),
+                    Value::NativeFunction(ref nf) => {
+                        nf.get_property("prototype").and_then(|p| match p {
+                            Value::Object(o) => Some(o),
+                            _ => None,
+                        })
+                    }
                     _ => None,
                 })
                 .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
@@ -198,7 +200,10 @@ pub fn register_builtins(ctx: &mut Context) {
             Rc::clone(&proto),
         );
         ctor.set_name("AggregateError");
-        ctx.set_global("AggregateError".to_string(), Value::NativeConstructor(Rc::new(ctor)));
+        ctx.set_global(
+            "AggregateError".to_string(),
+            Value::NativeConstructor(Rc::new(ctor)),
+        );
     }
 
     // DataView — minimal constructor accepting buffer arg
@@ -223,9 +228,11 @@ pub fn register_builtins(ctx: &mut Context) {
                         _ => None,
                     })
                     .unwrap_or(0);
-                obj.borrow_mut().set("byteLength", Value::Number(byte_len as f64));
+                obj.borrow_mut()
+                    .set("byteLength", Value::Number(byte_len as f64));
                 obj.borrow_mut().set("byteOffset", Value::Number(0.0));
-                obj.borrow_mut().set("buffer", Value::Object(Rc::clone(buf)));
+                obj.borrow_mut()
+                    .set("buffer", Value::Object(Rc::clone(buf)));
             }
             Ok(Value::Object(obj))
         });
@@ -249,11 +256,15 @@ pub fn register_builtins(ctx: &mut Context) {
                     Rc::clone(&p_clone),
                 ))),
             };
-            let byte_len = args.first().and_then(|v| match v {
-                Value::Number(n) => Some(*n as usize),
-                _ => None,
-            }).unwrap_or(0);
-            obj.borrow_mut().set("byteLength", Value::Number(byte_len as f64));
+            let byte_len = args
+                .first()
+                .and_then(|v| match v {
+                    Value::Number(n) => Some(*n as usize),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            obj.borrow_mut()
+                .set("byteLength", Value::Number(byte_len as f64));
             Ok(Value::Object(obj))
         });
         if let Value::NativeFunction(ref nf) = &ctor {
@@ -277,9 +288,12 @@ pub fn register_builtins(ctx: &mut Context) {
                 ))),
             };
             if let Some(target) = args.first().cloned() {
-                obj.borrow_mut().set("deref", Value::NativeFunction(Rc::new(NativeFunction::new(
-                    move |_| Ok(target.clone()),
-                ))));
+                obj.borrow_mut().set(
+                    "deref",
+                    Value::NativeFunction(Rc::new(NativeFunction::new(
+                        move |_| Ok(target.clone()),
+                    ))),
+                );
             }
             Ok(Value::Object(obj))
         });
