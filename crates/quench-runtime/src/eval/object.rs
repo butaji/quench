@@ -398,25 +398,8 @@ fn assign_to_object(
         return Ok(());
     }
 
-    // Private methods/accessors cannot be overwritten (PrivateSet).
     if crate::value::is_private_name_key(prop_name) {
-        let obj_ref = o.borrow();
-        if obj_ref.properties.contains_key(prop_name)
-            && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)))
-        {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Private method is not writable",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
-        if obj_ref.getters.contains_key(prop_name) || obj_ref.setters.contains_key(prop_name) {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Private accessor is not writable",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
+        return assign_private_name(o, prop_name, value);
     }
 
     // Strict mode checks.
@@ -439,17 +422,6 @@ fn assign_to_object(
         }
     }
 
-    if crate::value::is_private_name_key(prop_name) {
-        let obj_ref = o.borrow();
-        if !obj_ref.extensible && !obj_ref.properties.contains_key(prop_name) {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Cannot add private field to non-extensible object",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
-    }
-
     o.borrow_mut().set(prop_name, value.clone());
 
     // Mirror writes on globalThis into the global binding.
@@ -462,6 +434,51 @@ fn assign_to_object(
         env.borrow_mut()
             .define(prop_name.to_string(), value.clone());
     }
+    Ok(())
+}
+
+fn assign_private_name(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    value: &Value,
+) -> Result<(), JsError> {
+    let obj_ref = o.borrow();
+    let has_field = obj_ref.properties.contains_key(prop_name);
+    let is_method =
+        has_field && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)));
+    let has_getter = obj_ref.getters.contains_key(prop_name);
+    let has_setter = obj_ref.setters.contains_key(prop_name);
+
+    if !has_field && !has_getter && !has_setter {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot write private member to an object whose class did not declare it",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if is_method {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Private method is not writable",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if has_getter && !has_setter {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Private accessor has no setter",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if !obj_ref.extensible && !has_field {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot add private field to non-extensible object",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    drop(obj_ref);
+    o.borrow_mut().set(prop_name, value.clone());
     Ok(())
 }
 
