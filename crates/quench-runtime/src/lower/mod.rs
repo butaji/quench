@@ -17,7 +17,7 @@ pub use stmt::{lower_module, lower_program, lower_script, lower_stmt};
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Program, Statement};
+    use crate::ast::{Expression, Program, Statement};
     use crate::lower::{lower_module, lower_script};
     use oxc::allocator::Allocator;
     use oxc::parser::Parser;
@@ -417,6 +417,19 @@ mod tests {
     fn test_lower_for_of_stmt() {
         let stmt = first_stmt("for (x of arr) {}");
         assert!(matches!(stmt, Statement::Expression(_)));
+    }
+
+    #[test]
+    fn test_lower_for_of_member_lhs() {
+        let stmt = first_stmt("for (obj.x of arr) {}");
+        let for_of = match &stmt {
+            Statement::Expression(e) => match e.as_ref() {
+                Expression::ForOf { variable, .. } => variable.as_ref(),
+                other => panic!("expected ForOf, got {:?}", other),
+            },
+            other => panic!("expected Expression(ForOf), got {:?}", other),
+        };
+        assert!(matches!(for_of, Expression::Member { .. }));
     }
 
     #[test]

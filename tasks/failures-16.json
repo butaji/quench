@@ -1,5 +1,5 @@
 {
-  "failed": 222,
+  "failed": 220,
   "groups": [
     {
       "count": 1,
@@ -335,12 +335,10 @@
       ]
     },
     {
-      "count": 17,
+      "count": 15,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
@@ -359,12 +357,12 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch.js"
       ]
     },
     {
@@ -1069,7 +1067,7 @@
       ]
     }
   ],
-  "passed": 4145,
+  "passed": 4147,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
