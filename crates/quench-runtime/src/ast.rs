@@ -216,6 +216,8 @@ pub enum Expression {
     ArrowFunction {
         params: Vec<Param>,
         body: Box<ArrowBody>,
+        is_async: bool,
+        is_generator: bool,
     },
     Binary {
         op: BinaryOp,

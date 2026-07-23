@@ -121,10 +121,17 @@ pub fn eval_expression(
             }
             Ok(func)
         }
-        Expression::ArrowFunction { params, body } => {
+        Expression::ArrowFunction {
+            params,
+            body,
+            is_async,
+            is_generator,
+        } => {
             let closure = capture_env_for_closure(env);
             let mut func = ValueFunction::new_arrow(params.clone(), body.clone(), closure);
             func.strict = crate::interpreter::is_strict_mode();
+            func.is_async = *is_async;
+            func.is_generator = *is_generator;
             let _ = func.set_property("name", Value::String(String::new()));
             Ok(Value::Function(func))
         }
