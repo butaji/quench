@@ -4,6 +4,29 @@ use crate::value::{JsError, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// If `obj` is a Proxy exotic object, return `(handler, target)`.
+pub fn proxy_handler_and_target(
+    obj: &Rc<RefCell<crate::value::Object>>,
+) -> Option<(Rc<RefCell<crate::value::Object>>, Value)> {
+    let borrowed = obj.borrow();
+    let handler = borrowed.properties.get("__quench_proxy_handler")?;
+    let target = borrowed.properties.get("__quench_proxy_target")?.clone();
+    match handler {
+        Value::Object(h) => Some((Rc::clone(h), target)),
+        _ => None,
+    }
+}
+
+/// Object that owns private fields/methods — the proxy target when `obj` is a Proxy.
+pub fn private_field_object(
+    obj: &Rc<RefCell<crate::value::Object>>,
+) -> Rc<RefCell<crate::value::Object>> {
+    if let Some(Value::Object(target)) = obj.borrow().properties.get("__quench_proxy_target") {
+        return Rc::clone(target);
+    }
+    Rc::clone(obj)
+}
+
 /// Find a proxy in the prototype chain, returning (proxy_rc, handler, target).
 #[allow(clippy::type_complexity)]
 pub fn find_proxy_in_prototype_chain(

@@ -47,7 +47,7 @@ fn throw_uninitialized_this() -> Result<Value, JsError> {
 fn finish_ctor_result(
     result: Value,
     explicit_return: bool,
-    this_val: &Value,
+    _this_val: &Value,
     class: &ClassValue,
     call_env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
@@ -69,7 +69,7 @@ fn finish_ctor_result(
                     return Err(js_err);
                 }
             }
-            Ok(this_val.clone())
+            Ok(crate::interpreter::get_this_binding(call_env))
         }
     }
 }
@@ -99,6 +99,11 @@ fn run_ctor_body(
     crate::interpreter::set_current_eval_env(previous_eval_env);
     set_strict_mode(prev_strict);
     let body_result = body_result?;
+    // Constructor bodies run via eval_function_body directly (not
+    // call_js_function_impl). Explicit `return` leaves ControlFlow::Return
+    // pending; the next call whose body has multiple statements can consume
+    // it between stmts (e.g. Proxy get traps returning the ctor's object).
+    let _ = crate::interpreter::take_control_flow();
     Ok((body_result.value, body_result.explicit_return))
 }
 
@@ -2827,6 +2832,65 @@ mod tests {
         let obj = o.borrow();
         assert_eq!(obj.get("0"), Some(Value::Number(1.0)));
         assert_eq!(obj.get("1"), Some(Value::Number(2.0)));
+    }
+
+    fn eval_with_builtins(src: &str) -> Result<Value, crate::value::JsError> {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(src)
+    }
+
+    #[test]
+    fn method_call_on_proxy_after_super_return() {
+        let r = eval_with_builtins(
+            "class P { constructor() { return new Proxy(this, { get(o,k){ return o[k]; } }); } } \
+             class T extends P { #f = 3; method() { return this.#f; } } \
+             new T().method()",
+        );
+        assert!(r.is_ok(), "{:?}", r);
+        assert_eq!(r.unwrap(), Value::Number(3.0));
+    }
+
+    /// Reproducer: ctor explicit `return obj` must not leave ControlFlow::Return
+    /// pending — the next multi-statement function would consume it between stmts.
+    #[test]
+    fn constructor_explicit_return_does_not_leak_control_flow() {
+        let r = eval_with_builtins(
+            "var G, TARGET; \
+             class P { constructor() { \
+               TARGET = this; \
+               G = { get(o,k){ 1; return 42; } }; \
+               return new Proxy(this, G); \
+             } } \
+             new P(); \
+             G.get(TARGET, 'foo')",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    /// Reproducer: multi-statement Proxy get traps after super-returned Proxy.
+    #[test]
+    fn proxy_get_trap_multi_stmt_returns_function() {
+        let r = eval_with_builtins(
+            "class P { constructor() { return new Proxy(this, { \
+               get(o,k){ 1; return o[k]; } \
+             }); } } \
+             class T extends P { #f = 3; method() { return this.#f; } } \
+             typeof new T().method",
+        );
+        assert!(r.is_ok(), "{:?}", r);
+        assert_eq!(r.unwrap(), Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn lookup_getter_returns_undefined_for_private_name() {
+        let r = eval_with_builtins(
+            "class C { get #m() { return 1; } check() { return this.__lookupGetter__('#m'); } } \
+             new C().check()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Undefined);
     }
 
     #[test]
