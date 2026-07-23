@@ -277,19 +277,13 @@ fn test_to_js_string_value_function_with_body() {
 
 #[test]
 fn test_to_js_string_symbol_with_desc() {
-    let sym = Value::Symbol(Rc::new(Symbol {
-        desc: Some("myDesc".into()),
-        global: false,
-    }));
+    let sym = Value::Symbol(Rc::new(Symbol::new(Some("myDesc".into()), false)));
     assert_eq!(to_js_string(&sym), "Symbol(myDesc)");
 }
 
 #[test]
 fn test_to_js_string_symbol_no_desc() {
-    let sym = Value::Symbol(Rc::new(Symbol {
-        desc: None,
-        global: false,
-    }));
+    let sym = Value::Symbol(Rc::new(Symbol::new(None, false)));
     assert_eq!(to_js_string(&sym), "Symbol()");
 }
 
@@ -322,10 +316,7 @@ fn test_to_number_function_is_nan() {
 
 #[test]
 fn test_to_number_symbol_is_nan() {
-    let sym = Value::Symbol(Rc::new(Symbol {
-        desc: Some("test".into()),
-        global: false,
-    }));
+    let sym = Value::Symbol(Rc::new(Symbol::new(Some("test".into()), false)));
     // to_number on Symbol returns NaN (per ES spec, ToNumber throws)
     assert!(to_number(&sym).is_nan());
 }
@@ -401,10 +392,7 @@ fn test_to_bool_object_function_symbol_bigint() {
     ));
     assert!(crate::value::to_bool(&func));
     assert!(crate::value::to_bool(&Value::Symbol(std::rc::Rc::new(
-        crate::value::Symbol {
-            desc: None,
-            global: false
-        }
+        crate::value::Symbol::new(None, false)
     ))));
     assert!(!crate::value::to_bool(&Value::BigInt(std::rc::Rc::new(
         num_bigint::BigInt::from(0i64)

@@ -153,11 +153,18 @@ mod tests {
     #[test]
     fn test_ops_to_property_key_symbol() {
         use std::rc::Rc;
-        let sym = Value::Symbol(Rc::new(crate::value::Symbol {
-            desc: Some("myKey".into()),
-            global: false,
-        }));
-        assert_eq!(to_property_key(&sym).unwrap(), "myKey");
+        let a = Value::Symbol(Rc::new(crate::value::Symbol::new(
+            Some("myKey".into()),
+            false,
+        )));
+        let b = Value::Symbol(Rc::new(crate::value::Symbol::new(
+            Some("myKey".into()),
+            false,
+        )));
+        let ka = to_property_key(&a).unwrap();
+        let kb = to_property_key(&b).unwrap();
+        assert!(ka.starts_with("myKey\0"));
+        assert_ne!(ka, kb);
     }
 
     #[test]
