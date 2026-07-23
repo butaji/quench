@@ -2,7 +2,7 @@
 //! All functions here are internal helpers; public API lives in the parent `interpreter.rs`.
 
 use crate::ast::*;
-use crate::env::Environment;
+use crate::env::{Environment, Scope};
 use crate::value::{Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,6 +48,36 @@ pub fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
         return global_this;
     }
     Value::Undefined
+}
+
+/// Scope holding the lexical `this` binding (not necessarily `current_scope()`).
+pub fn find_this_scope(env: &Rc<RefCell<Environment>>) -> Option<Rc<RefCell<Scope>>> {
+    let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
+    while let Some(e) = current {
+        for scope_rc in e.borrow().scopes.iter().rev() {
+            if scope_rc.borrow().get_this().is_some() {
+                return Some(Rc::clone(scope_rc));
+            }
+        }
+        current = e.borrow().get_parent();
+    }
+    None
+}
+
+pub fn is_this_binding_initialized(env: &Rc<RefCell<Environment>>) -> bool {
+    find_this_scope(env).is_some_and(|s| s.borrow().is_this_initialized())
+}
+
+pub fn mark_this_binding_initialized(env: &Rc<RefCell<Environment>>) {
+    if let Some(scope) = find_this_scope(env) {
+        scope.borrow_mut().mark_this_initialized();
+    }
+}
+
+pub fn set_this_binding_value(env: &Rc<RefCell<Environment>>, value: Value) {
+    if let Some(scope) = find_this_scope(env) {
+        scope.borrow_mut().set_this(value);
+    }
 }
 
 /// Hoist function declarations to the top of the script/function scope
