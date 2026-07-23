@@ -1,12 +1,12 @@
 {
-  "failed": 93,
+  "failed": 89,
   "groups": [
     {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
       ],
-      "reason": "Cannot assign to property of non-object, got undefined",
+      "reason": "Cannot assign to property of non-object, got Function(...)",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
       ]
@@ -95,18 +95,6 @@
       "reason": "ReferenceError: WeakRef is not defined",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakRef.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
-      ],
-      "reason": "ReferenceError: super is only valid in class methods",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
       ]
     },
     {
@@ -214,16 +202,14 @@
       ]
     },
     {
-      "count": 3,
+      "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ]
     },
@@ -574,13 +560,12 @@
       ]
     },
     {
-      "count": 6,
+      "count": 5,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ],
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
@@ -589,7 +574,6 @@
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ]
     },
@@ -668,7 +652,7 @@
       ]
     }
   ],
-  "passed": 4274,
+  "passed": 4278,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
