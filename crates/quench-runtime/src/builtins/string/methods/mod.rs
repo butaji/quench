@@ -14,7 +14,19 @@ pub mod trim;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::Object;
+use crate::value::{Object, Value};
+
+/// String payload from `this` for String.prototype methods (primitive or boxed).
+pub(crate) fn this_js_string() -> Option<String> {
+    match crate::builtins::get_native_this()? {
+        Value::String(s) => Some(s),
+        Value::Object(obj) => match obj.borrow().get("_value") {
+            Some(Value::String(s)) => Some(s),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 /// Install all String.prototype methods on the prototype object
 pub fn install_string_methods(proto: &Rc<RefCell<Object>>) {

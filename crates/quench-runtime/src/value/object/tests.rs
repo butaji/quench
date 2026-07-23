@@ -608,10 +608,11 @@ fn object_define_accessor() {
 }
 
 #[test]
-fn object_numeric_keys() {
+fn ordinary_sparse_numeric_keys_no_intermediate_holes() {
     let mut obj = Object::new(ObjectKind::Ordinary);
-    obj.set("0", Value::Number(10.0));
-    obj.set("1", Value::Number(20.0));
-    assert_eq!(obj.get("0"), Some(Value::Number(10.0)));
-    assert_eq!(obj.get("1"), Some(Value::Number(20.0)));
+    obj.set("0", Value::Number(4.0));
+    obj.set("2", Value::Number(5.0));
+    assert_eq!(obj.get_own("0"), Some(Value::Number(4.0)));
+    assert_eq!(obj.get_own("1"), None);
+    assert_eq!(obj.get_own("2"), Some(Value::Number(5.0)));
 }

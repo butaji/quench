@@ -85,7 +85,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     }
     reject_eval_var_lexical_conflict(&program, ctx)?;
-    if crate::interpreter::is_eval_in_class_field() {
+    let in_class_field = crate::interpreter::is_eval_in_class_field()
+        || crate::interpreter::get_current_eval_env()
+            .is_some_and(|e| e.borrow().is_in_class_field_initializer());
+    if in_class_field {
         let ast::Program::Script(body) = &program;
         if let Err(js_err) =
             crate::eval::class::private_elements::reject_class_field_eval_early_errors(

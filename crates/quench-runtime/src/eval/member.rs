@@ -16,8 +16,8 @@ pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;
-use crate::eval::class::helpers::prop_key_to_string;
-use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
+use crate::eval::class::helpers::{method_function_name, prop_key_to_string};
+use crate::value::{create_js_error_with_type, ClassValue, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -132,19 +132,6 @@ pub fn eval_class_member(
             let proto = get_class_prototype_cached(class, env)?;
             Ok(Value::Object(proto))
         }
-        "length" => {
-            // Per ES spec, the `length` property of a class constructor
-            // is the number of formal parameters of the constructor.
-            Ok(Value::Number(class.constructor_params.len() as f64))
-        }
-        "name" => {
-            // "name" is configurable; if deleted, return undefined
-            if class.deleted_properties.borrow().contains("name") {
-                Ok(Value::Undefined)
-            } else {
-                Ok(Value::String(class.name.clone().unwrap_or_default()))
-            }
-        }
         _ => {
             if matches!(prop_name, "call" | "apply" | "bind") {
                 return eval_callable_proto_method(
@@ -158,21 +145,31 @@ pub fn eval_class_member(
             }
             // Check static methods
             for (name, params, body, is_async, is_generator) in &class.static_methods {
-                if prop_key_matches(name, prop_name) {
-                    // Use class definition env so static methods have access to super_class.
-                    let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                    let mut func = crate::value::ValueFunction::new(
-                        Some(prop_name.to_string()),
-                        params.clone(),
-                        body.clone(),
-                        closure_env,
-                        *is_async,
-                        *is_generator,
-                    );
-                    // Class bodies are always strict mode (ES spec 15.7).
-                    func.strict = true;
-                    return Ok(Value::Function(func));
-                }
+                let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+                let key_str = if prop_key_matches(name, prop_name) {
+                    prop_name.to_string()
+                } else {
+                    match prop_key_to_string(name, &closure_env, false) {
+                        Ok(k) if k == prop_name => k,
+                        _ => continue,
+                    }
+                };
+                let fn_name = crate::eval::class::helpers::method_function_name(
+                    name,
+                    &key_str,
+                    &closure_env,
+                )?;
+                let mut func = crate::value::ValueFunction::new(
+                    Some(fn_name),
+                    params.clone(),
+                    body.clone(),
+                    closure_env,
+                    *is_async,
+                    *is_generator,
+                );
+                func.strict = true;
+                func.is_method = true;
+                return Ok(Value::Function(func));
             }
             // Check static getters
             for (i, (name, body)) in class.static_getters.iter().enumerate() {
@@ -203,7 +200,7 @@ pub fn eval_class_member(
                 }
             }
             // Check static setters
-            for (i, (name, param, body)) in class.static_setters.iter().enumerate() {
+            for (i, (name, _param, _body)) in class.static_setters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
                 let key_str = if let Some(key) = class.static_setter_key(i) {
                     key
@@ -218,21 +215,22 @@ pub fn eval_class_member(
                         );
                         return Err(js_err);
                     }
-                    // Return a function that wraps the setter call.
-                    let param = param.clone();
-                    let setter_body = body.clone();
-                    let setter_closure = Rc::clone(&eval_env);
-                    let mut setter_func = crate::value::ValueFunction::new(
-                        Some(key_str),
-                        vec![param],
-                        setter_body,
-                        setter_closure,
-                        false,
-                        false,
-                    );
-                    setter_func.strict = true;
-                    return Ok(Value::Function(setter_func));
+                    // Setter-only: [[Get]] returns undefined (assignment uses set_static_property).
+                    return Ok(Value::Undefined);
                 }
+            }
+            // Intrinsic constructor properties (shadowed by static members above)
+            match prop_name {
+                "length" => {
+                    return Ok(Value::Number(class.constructor_params.len() as f64));
+                }
+                "name" => {
+                    if class.deleted_properties.borrow().contains("name") {
+                        return Ok(Value::Undefined);
+                    }
+                    return Ok(Value::String(class.name.clone().unwrap_or_default()));
+                }
+                _ => {}
             }
             // Look up the superclass chain for inherited static members
             if let Some(ref super_expr) = class.super_class {
@@ -309,6 +307,86 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
+fn private_member_type_error() -> JsError {
+    let (_, js_err) = create_js_error_with_type(
+        "Cannot read private member from an object whose class did not declare it",
+        "TypeError",
+    );
+    js_err
+}
+
+fn class_private_brand_matches(class: &ClassValue, prop_name: &str) -> bool {
+    class.private_brand_matches(prop_name)
+}
+
+fn static_member_storage_key(
+    name: &crate::ast::PropertyKey,
+    env: &Rc<RefCell<Environment>>,
+) -> Option<String> {
+    match name {
+        crate::ast::PropertyKey::Ident(s) if crate::value::is_private_name_key(s) => {
+            Some(s.clone())
+        }
+        crate::ast::PropertyKey::Ident(s) if s.starts_with('#') => {
+            Some(crate::value::private_name_key(s))
+        }
+        _ => prop_key_to_string(name, env, false).ok(),
+    }
+}
+
+fn eval_class_private_member_get(
+    class: &ClassValue,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if !class_private_brand_matches(class, prop_name) {
+        return Err(private_member_type_error());
+    }
+    if let Some(val) = class.get_static_field(prop_name) {
+        return Ok(val);
+    }
+    let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+    for (name, params, body, is_async, is_generator) in &class.static_methods {
+        if static_member_storage_key(name, &eval_env).as_deref() != Some(prop_name) {
+            continue;
+        }
+        let key_str = crate::value::private_method_display_name(prop_name);
+        let fn_name = method_function_name(name, &key_str, &eval_env)?;
+        let mut func = crate::value::ValueFunction::new(
+            Some(fn_name),
+            params.clone(),
+            body.clone(),
+            Rc::clone(&eval_env),
+            *is_async,
+            *is_generator,
+        );
+        func.strict = true;
+        func.is_method = true;
+        return Ok(Value::Function(func));
+    }
+    for (i, (name, body)) in class.static_getters.iter().enumerate() {
+        let key_str = class
+            .static_getter_key(i)
+            .or_else(|| static_member_storage_key(name, &eval_env))
+            .filter(|k| k == prop_name);
+        let Some(_) = key_str else {
+            continue;
+        };
+        let class_val = Value::Class(Box::new(class.clone()));
+        let mut call_env = crate::env::Environment::with_parent(Rc::clone(&eval_env));
+        call_env.push_scope();
+        call_env.current_scope().borrow_mut().set_this(class_val);
+        let call_env = Rc::new(RefCell::new(call_env));
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
+        let result = crate::eval::statement::eval_function_body(body, &call_env, false);
+        crate::interpreter::set_strict_mode(prev_strict);
+        let _ = crate::interpreter::take_control_flow();
+        return result;
+    }
+    Err(private_member_type_error())
+}
+
 fn eval_private_member_get(
     obj_val: &Value,
     prop_name: &str,
@@ -316,14 +394,8 @@ fn eval_private_member_get(
 ) -> Result<Value, JsError> {
     match obj_val {
         Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
-        Value::Class(class) => eval_class_member(class, prop_name, env),
-        _ => {
-            let (_, js_err) = create_js_error_with_type(
-                "Cannot read private member from an object whose class did not declare it",
-                "TypeError",
-            );
-            Err(js_err)
-        }
+        Value::Class(class) => eval_class_private_member_get(class, prop_name, env),
+        _ => Err(private_member_type_error()),
     }
 }
 

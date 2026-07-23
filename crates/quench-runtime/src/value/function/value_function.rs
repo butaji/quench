@@ -80,6 +80,8 @@ pub struct ValueFunction {
     /// getter, or setter). Such functions have restricted `caller` and
     /// `arguments` properties per ES spec §16.1.
     pub is_method: bool,
+    /// GeneratorFunction-constructed functions omit `.prototype.constructor`.
+    pub empty_prototype: bool,
     /// Cached prototype object
     proto_cell: ProtoCellRef,
     /// Instance [[Prototype]] when created via `class Sub extends Function` super()
@@ -104,6 +106,7 @@ impl Clone for ValueFunction {
             is_generator: self.is_generator,
             strict: self.strict,
             is_method: self.is_method,
+            empty_prototype: self.empty_prototype,
             proto_cell: self.proto_cell.clone(),
             instance_proto: self.instance_proto.as_ref().map(Rc::clone),
             properties: std::rc::Rc::clone(&self.properties),
@@ -157,10 +160,15 @@ impl ValueFunction {
             is_generator,
             strict: false,
             is_method: false,
+            empty_prototype: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
         }
+    }
+
+    pub fn set_empty_prototype(&mut self, empty: bool) {
+        self.empty_prototype = empty;
     }
 
     /// Create a new arrow function
@@ -184,6 +192,7 @@ impl ValueFunction {
             is_generator: false,
             strict: false,
             is_method: false,
+            empty_prototype: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
@@ -219,7 +228,9 @@ impl ValueFunction {
     /// Build the prototype object for this function.
     fn new_prototype_object(&self) -> Object {
         let mut proto = Object::new(ObjectKind::Ordinary);
-        proto.set("constructor", self.constructor_value());
+        if !self.empty_prototype {
+            proto.set("constructor", self.constructor_value());
+        }
         if let Some(func_proto) = crate::builtins::get_function_prototype() {
             proto.prototype = Some(func_proto);
         }
@@ -257,6 +268,23 @@ impl ValueFunction {
     /// Get a property from this function (e.g., sameValue, notSameValue)
     pub fn get_property(&self, key: &str) -> Option<Value> {
         self.properties.borrow().get(key).cloned()
+    }
+
+    /// Own property names including non-enumerable `length` and `name`.
+    pub fn own_property_names(&self) -> Vec<String> {
+        let mut names = vec!["length".to_string()];
+        if self.get_property("name").is_some() || self.name.is_some() {
+            names.push("name".to_string());
+        }
+        if self.get_property("prototype").is_some() {
+            names.push("prototype".to_string());
+        }
+        for key in self.properties.borrow().keys() {
+            if key != "length" && key != "name" && key != "prototype" {
+                names.push(key.clone());
+            }
+        }
+        names
     }
 
     /// Set a property on this function (e.g., prototype).

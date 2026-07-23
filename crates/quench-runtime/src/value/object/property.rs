@@ -12,7 +12,8 @@ use crate::value::object::accessor::{
     set_getter_func, set_setter, set_setter_func,
 };
 use crate::value::object::helpers::{
-    as_array_index, GetterStorage, PropertyDescriptor, PropertyFlags, SetterStorage,
+    as_array_index, GetterStorage, ObjData, PropertyDescriptor, PropertyFlags, SetterStorage,
+    TypedArrayName,
 };
 use crate::value::object::keys::{own_keys, own_property_names};
 use crate::value::Object;
@@ -59,15 +60,30 @@ impl Object {
             );
         }
         if let Some(idx) = as_array_index(key) {
-            while self.elements.len() <= idx {
-                self.elements.push(Value::Undefined);
+            if let ObjData::Idx { length, name, .. } = self.data {
+                if (idx as u64) < length {
+                    let coerced = coerce_typed_array_element(name, &value);
+                    while self.elements.len() <= idx {
+                        self.elements.push(Value::Undefined);
+                    }
+                    self.elements[idx] = coerced;
+                    self.properties.shift_remove(key);
+                    return;
+                }
             }
-            self.elements[idx] = value;
-            self.holes.remove(&idx);
-            self.properties.insert(
-                "length".to_string(),
-                Value::Number(self.elements.len() as f64),
-            );
+            if self.kind == ObjectKind::Array {
+                while self.elements.len() <= idx {
+                    self.elements.push(Value::Undefined);
+                }
+                self.elements[idx] = value.clone();
+                self.holes.remove(&idx);
+                self.properties.insert(
+                    "length".to_string(),
+                    Value::Number(self.elements.len() as f64),
+                );
+            } else {
+                self.properties.insert(key.to_string(), value);
+            }
         } else if key == "length" && self.kind == ObjectKind::Array {
             self.set_array_length_value(value);
         } else {
@@ -130,15 +146,40 @@ impl Object {
     }
 
     pub(crate) fn get_own(&self, key: &str) -> Option<Value> {
+        if let Some(v) = self.symbol_properties.get(key) {
+            return Some(v.clone());
+        }
         if let Some(v) = self.properties.get(key) {
             return Some(v.clone());
         }
         if let Some(idx) = as_array_index(key) {
-            if idx < self.elements.len() {
+            if let ObjData::Idx { length, .. } = self.data {
+                if (idx as u64) < length && idx < self.elements.len() {
+                    return Some(self.elements[idx].clone());
+                }
+            }
+            if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(self.elements[idx].clone());
             }
         }
         None
+    }
+}
+
+fn coerce_typed_array_element(name: TypedArrayName, value: &Value) -> Value {
+    use TypedArrayName::{
+        BigInt64, BigUint64, Float32, Float64, Int16, Int32, Int8, Uint16, Uint32, Uint8,
+        Uint8Clamped,
+    };
+    let n = crate::value::to_number(value);
+    let u32 = crate::value::to_uint32(n);
+    match name {
+        Uint8 | Int8 => Value::Number(f64::from(u32 & 0xFF)),
+        Uint8Clamped => Value::Number(n.clamp(0.0, 255.0).trunc()),
+        Uint16 | Int16 => Value::Number(f64::from(u32 & 0xFFFF)),
+        Uint32 | Int32 => Value::Number(f64::from(u32)),
+        Float32 | Float64 => Value::Number(n),
+        BigInt64 | BigUint64 => value.clone(),
     }
 }
 
@@ -244,7 +285,7 @@ impl Object {
             });
         }
         if let Some(idx) = as_array_index(key) {
-            if idx < self.elements.len() {
+            if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(PropertyDescriptor {
                     value: Some(self.elements[idx].clone()),
                     writable: Some(true),
@@ -287,7 +328,13 @@ impl Object {
                 self.set_getter_func(key, get_val.clone());
             } else if let (Some(ref body), Some(ref closure)) = (&desc.get_body, &desc.get_closure)
             {
-                self.set_getter(key, Rc::clone(body), Rc::clone(closure), false);
+                self.set_getter(
+                    key,
+                    Rc::clone(body),
+                    Rc::clone(closure),
+                    false,
+                    Some(format!("get {key}")),
+                );
             }
             if let Some(ref set_val) = desc.set {
                 self.set_setter_func(key, set_val.clone());
@@ -299,6 +346,7 @@ impl Object {
                     Rc::clone(body),
                     Rc::clone(closure),
                     false,
+                    Some(format!("set {key}")),
                 );
             }
             self.properties.shift_remove(key);
@@ -323,8 +371,9 @@ impl Object {
         body: Rc<Vec<crate::ast::Statement>>,
         closure: Rc<RefCell<Environment>>,
         is_method: bool,
+        fn_name: Option<String>,
     ) {
-        set_getter(self, key, body, closure, is_method);
+        set_getter(self, key, body, closure, is_method, fn_name);
     }
 
     pub fn set_getter_func(&mut self, key: &str, func: Value) {
@@ -338,8 +387,9 @@ impl Object {
         body: Rc<Vec<crate::ast::Statement>>,
         closure: Rc<RefCell<Environment>>,
         is_method: bool,
+        fn_name: Option<String>,
     ) {
-        set_setter(self, key, param, body, closure, is_method);
+        set_setter(self, key, param, body, closure, is_method, fn_name);
     }
 
     pub fn set_setter_func(&mut self, key: &str, func: Value) {
