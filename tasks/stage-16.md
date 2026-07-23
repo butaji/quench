@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4145 pass / 222 fail (94.9%)** as of 2026-07-23.
+**4,367 tests** · **4147 pass / 220 fail (95.0%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -25,6 +25,7 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4119** | **248** | **94.3%** | Reflect.has, private method `.name`, Array subclass instanceof |
 | 2026-07-23 | **4126** | **241** | **94.5%** | Error subclass super() preserves derived prototype |
 | 2026-07-23 | **4145** | **222** | **94.9%** | Symbol computed field keys; Object/Promise/Function subclass instanceof |
+| 2026-07-23 | **4147** | **220** | **95.0%** | for-of/for-in member+private LHS lowering (private field brand checks) |
 
 ## Top remaining clusters (~222)
 
