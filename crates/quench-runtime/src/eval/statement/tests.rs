@@ -401,6 +401,26 @@ mod for_in_statement {
     fn for_in_with_break() {
         assert_eq!(eval("let keys = []; for (let k in {a: 1, b: 2, c: 3}) { keys.push(k); if (keys.length >= 2) break; } keys.length").unwrap(), Value::Number(2.0));
     }
+
+    #[test]
+    fn for_in_var_redecl_in_body_preserves_binding() {
+        assert_eq!(
+            eval(
+                "var iterCount = 0; for (var x in { attr: null }) { var x; \
+                 if (x !== 'attr') throw new Error('bad'); iterCount++; } iterCount",
+            )
+            .unwrap(),
+            Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn for_in_break_returns_body_completion() {
+        assert_eq!(
+            eval("var b; for (b in { x: 0 }) { 3; break; }").unwrap(),
+            Value::Number(3.0)
+        );
+    }
 }
 
 // ─── Function declaration (eval_func_decl) ────────────────────────────────

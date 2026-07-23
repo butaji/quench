@@ -14,6 +14,8 @@ use crate::eval::statement::eval_statement;
 use crate::interpreter::{
     loop_handles_break, loop_handles_continue, set_control_flow, take_control_flow, ControlFlow,
 };
+use crate::value::object::enumerate_for_in_keys;
+use crate::value::object::helpers::ObjData;
 use crate::value::{JsError, Object, ObjectKind, Value};
 
 /// Get an iterator for for-of/for-in loops (materialized; spread/destructuring).
@@ -66,22 +68,18 @@ fn get_string_iterator(s: &str) -> Result<Vec<Value>, JsError> {
 /// Get enumerable property keys for for-in loop
 pub fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
     match value {
-        Value::Object(o) => get_object_keys(o),
+        Value::Object(o) => Ok(enumerate_for_in_keys(o)),
         Value::String(s) => Ok((0..s.len()).map(|i| i.to_string()).collect()),
         _ => Ok(vec![]),
     }
 }
 
-fn get_object_keys(o: &Rc<RefCell<Object>>) -> Result<Vec<String>, JsError> {
-    let obj = o.borrow();
-    let mut keys = obj.own_keys();
-    for i in 0..obj.elements.len() {
-        let key = i.to_string();
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
-    }
-    Ok(keys)
+fn declare_for_in_head_bindings(
+    variable: &Expression,
+    kind: VarKind,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    declare_for_of_binding(variable, kind, env)
 }
 
 fn abrupt_close(
@@ -245,50 +243,146 @@ pub fn eval_for_of(
     )
 }
 
-/// Evaluate a for-in loop
-pub fn eval_for_in(
+fn key_still_enumerable(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(o) => {
+            let obj = o.borrow();
+            if let ObjData::Idx { length, .. } = obj.data {
+                return key
+                    .parse::<usize>()
+                    .ok()
+                    .is_some_and(|i| (i as u64) < length);
+            }
+            drop(obj);
+            let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
+            while let Some(cur_rc) = current {
+                let cur = cur_rc.borrow();
+                if cur.has_own(key) {
+                    return cur.is_enumerable(key);
+                }
+                current = cur.prototype.clone();
+            }
+            false
+        }
+        Value::String(s) => key.parse::<usize>().ok().is_some_and(|i| i < s.len()),
+        _ => false,
+    }
+}
+
+enum ForInIterResult {
+    Done(Value),
+    Break(Value),
+    Step(Value),
+}
+
+fn run_for_in_iteration(
     variable: &Expression,
-    object: &Expression,
+    key: &str,
     body: &Statement,
+    loop_binding: Option<VarKind>,
+    per_iteration: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-) -> Result<Value, JsError> {
-    let obj_value = eval_expression(object, env, in_arrow_function)?;
-    let keys = get_enumerable_keys(&obj_value)?;
-    for key in keys {
-        assign_to(variable, &Value::String(key), env)?;
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
-        match take_control_flow() {
+) -> Result<ForInIterResult, JsError> {
+    if per_iteration {
+        env.borrow_mut().push_scope();
+    }
+    let result = (|| {
+        if let Some(kind) = loop_binding {
+            declare_for_of_binding(variable, kind, env)?;
+        }
+        assign_to(variable, &Value::String(key.to_string()), env)?;
+        eval_statement(body, env, false, in_arrow_function)
+    })();
+    if per_iteration {
+        env.borrow_mut().pop_scope();
+    }
+    match result {
+        Ok(body_val) => match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &[]) {
-                    break;
+                    Ok(ForInIterResult::Break(body_val))
+                } else {
+                    set_control_flow(cf);
+                    Ok(ForInIterResult::Step(body_val))
                 }
-                set_control_flow(cf);
-                break;
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if loop_handles_continue(&cf, &[]) {
-                    continue;
+                    Ok(ForInIterResult::Step(body_val))
+                } else {
+                    set_control_flow(cf);
+                    Ok(ForInIterResult::Step(body_val))
                 }
-                set_control_flow(cf);
-                break;
             }
             Some(ControlFlow::Return(val))
             | Some(ControlFlow::Yield(val))
             | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
-                return Ok(val);
+                Ok(ForInIterResult::Done(val))
             }
-            None => {}
+            None => Ok(ForInIterResult::Step(body_val)),
+        },
+        Err(e) => Err(e),
+    }
+}
+
+/// Evaluate a for-in loop
+pub fn eval_for_in(
+    variable: &Expression,
+    object: &Expression,
+    body: &Statement,
+    loop_binding: Option<VarKind>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let head_lexical = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    if head_lexical {
+        env.borrow_mut().push_scope();
+        declare_for_in_head_bindings(variable, loop_binding.unwrap(), env)?;
+    }
+
+    let obj_value = eval_expression(object, env, in_arrow_function)?;
+
+    if head_lexical {
+        env.borrow_mut().pop_scope();
+    }
+
+    let per_iteration = head_lexical;
+    let mut completion = Value::Undefined;
+    let key_queue = get_enumerable_keys(&obj_value)?;
+    let mut index = 0usize;
+
+    while index < key_queue.len() {
+        let key = key_queue[index].clone();
+        index += 1;
+        if !key_still_enumerable(&obj_value, &key) {
+            continue;
+        }
+
+        match run_for_in_iteration(
+            variable,
+            &key,
+            body,
+            loop_binding,
+            per_iteration,
+            env,
+            in_arrow_function,
+        ) {
+            Ok(ForInIterResult::Done(val)) => return Ok(val),
+            Ok(ForInIterResult::Break(val)) => return Ok(val),
+            Ok(ForInIterResult::Step(body_val)) => completion = body_val,
+            Err(e) => return Err(e),
         }
     }
+
     if let Some(ControlFlow::Return(val))
     | Some(ControlFlow::Yield(val))
     | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
     {
         Ok(val)
     } else {
-        Ok(Value::Undefined)
+        Ok(completion)
     }
 }
 
@@ -352,5 +446,109 @@ mod tests {
         let mut ctx = new_ctx();
         let result = ctx.eval("let s = 0; for (let x of 42) { s += x; }");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn for_in_destructures_key_string() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "var obj = Object.create(null); obj.key = 1; var value; \
+                 for (let [x] in obj) { value = x; } value",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("k".to_string()));
+    }
+
+    #[test]
+    fn for_in_typed_array_indices() {
+        let mut ctx = new_ctx();
+        let count = ctx
+            .eval(
+                "var rab = new ArrayBuffer(8); var ta = new Uint8Array(rab, 0, 3); \
+                 var keys = []; for (var k in ta) keys.push(k); keys.length",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(3.0));
+    }
+
+    #[test]
+    fn get_enumerable_keys_after_set_prototype_of() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var proto = { p4: 1 }; var o = { p1: 1, p2: 2, p3: 3 }; \
+             Object.setPrototypeOf(o, proto); globalThis.__o = o;",
+        )
+        .unwrap();
+        let o = ctx.get_global("__o").expect("__o");
+        let keys = get_enumerable_keys(&o).unwrap();
+        assert_eq!(keys, vec!["p1", "p2", "p3", "p4"]);
+    }
+
+    #[test]
+    fn for_in_set_prototype_enumerates_inherited_keys() {
+        let mut ctx = new_ctx();
+        assert_eq!(
+            ctx.eval(
+                "var proto = { p4: 1 }; var o = { p1: 1, p2: 2, p3: 3 }; \
+                 Object.setPrototypeOf(o, proto); Object.getPrototypeOf(o) === proto",
+            )
+            .unwrap(),
+            Value::Boolean(true)
+        );
+        let result = ctx
+            .eval(
+                "var proto = { p4: 1 }; var o = { p1: 1, p2: 2, p3: 3 }; \
+                 Object.setPrototypeOf(o, proto); var keys = []; \
+                 for (var k in o) keys.push(k); keys.join(',')",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("p1,p2,p3,p4".to_string()));
+    }
+
+    #[test]
+    fn for_in_prototype_enumeration() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "var proto = { p4: 1 }; var o = { p1: 1, p2: 2, p3: 3 }; \
+                 Object.setPrototypeOf(o, proto); var keys = []; \
+                 for (var k in o) { keys.push(k); } keys.join(',')",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("p1,p2,p3,p4".to_string()));
+    }
+
+    #[test]
+    fn for_in_completion_value_from_body() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval("var b; for (b in { x: 0 }) { 3; }").unwrap();
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn for_in_let_fresh_binding_per_iteration() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "var fns = {}; var obj = Object.create(null); \
+                 obj.a = 1; obj.b = 1; obj.c = 1; \
+                 for (let x in obj) { fns[x] = function() { return x; }; } \
+                 fns.a() + fns.b() + fns.c()",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("abc".to_string()));
+    }
+
+    #[test]
+    fn for_in_head_tdz_before_object_expr() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval("let x = 1; for (const x in { x }) {}")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("ReferenceError"),
+            "expected ReferenceError, got {err}"
+        );
     }
 }

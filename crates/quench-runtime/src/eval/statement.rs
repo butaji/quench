@@ -706,8 +706,9 @@ fn eval_var_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
     let already_declared = env.borrow().current_scope().borrow().has(name);
-    if !already_declared {
+    if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let mut value = if let Some(expr) = init {
@@ -722,10 +723,12 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
-    env.borrow_mut().initialize_declared(name, value.clone());
-    // For top-level var declarations, also set on globalThis
-    if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-        set_on_global_this(env, name, value);
+    if init.is_some() || !existing_var {
+        env.borrow_mut().initialize_declared(name, value.clone());
+        // For top-level var declarations, also set on globalThis
+        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+            set_on_global_this(env, name, value);
+        }
     }
     Ok(Value::Undefined)
 }
@@ -1229,45 +1232,7 @@ fn eval_for_in_stmt(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    use crate::eval::iteration::get_enumerable_keys;
-    use crate::eval::object::assign_to;
-
-    let obj_value = eval_expression(object, env, in_arrow_function)?;
-    let keys = get_enumerable_keys(&obj_value)?;
-    if matches!(variable, Expression::ObjectPattern(_)) {
-        return Err(JsError("unsupported pattern in for-in loop".to_string()));
-    }
-    for key in keys {
-        assign_to(variable, &Value::String(key), env)?;
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
-        match take_control_flow() {
-            Some(cf @ ControlFlow::Break(_)) => {
-                if loop_handles_break(&cf, &[]) {
-                    break;
-                }
-                set_control_flow(cf);
-                break;
-            }
-            Some(cf @ ControlFlow::Continue(_)) => {
-                if loop_handles_continue(&cf, &[]) {
-                    continue;
-                }
-                set_control_flow(cf);
-                break;
-            }
-            Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
-                set_control_flow(ControlFlow::Return(val.clone()));
-                return Ok(val);
-            }
-            // YieldDelegate: also propagate as Return (the generator handles it)
-            Some(ControlFlow::YieldDelegate(val)) => {
-                set_control_flow(ControlFlow::Return(val.clone()));
-                return Ok(val);
-            }
-            None => {}
-        }
-    }
-    Ok(Value::Undefined)
+    crate::eval::iteration::eval_for_in(variable, object, body, None, env, in_arrow_function)
 }
 
 #[cfg(test)]

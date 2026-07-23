@@ -35,13 +35,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
 
-    // Per spec, absent descriptor flags default to false
+    // Per spec, absent descriptor flags default to false for new properties.
     let mut flags = PropertyFlags {
         value: None,
         writable: false,
         enumerable: false,
         configurable: false,
     };
+    let mut has_writable = false;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
     let mut getter: Option<Value> = None;
     let mut setter: Option<Value> = None;
 
@@ -51,12 +54,15 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             flags.value = Some(val.clone());
         }
         if let Some(writable) = desc_borrowed.properties.get("writable") {
+            has_writable = true;
             flags.writable = to_bool(writable);
         }
         if let Some(enumerable) = desc_borrowed.properties.get("enumerable") {
+            has_enumerable = true;
             flags.enumerable = to_bool(enumerable);
         }
         if let Some(configurable) = desc_borrowed.properties.get("configurable") {
+            has_configurable = true;
             flags.configurable = to_bool(configurable);
         }
         // Per ES §10.1.6.1 ToPropertyDescriptor: "get" in desc → accessor descriptor.
@@ -124,7 +130,21 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // Accessor descriptor: store the get/set functions themselves so
         // invocation and getOwnPropertyDescriptor see the same values.
         if let Value::Object(o) = &obj {
-            o.borrow_mut().define_accessor(&prop, getter, setter, flags);
+            let mut obj = o.borrow_mut();
+            if obj.has_own(&prop) {
+                if let Some(existing) = obj.get_descriptor(&prop) {
+                    if !has_writable {
+                        flags.writable = existing.writable;
+                    }
+                    if !has_enumerable {
+                        flags.enumerable = existing.enumerable;
+                    }
+                    if !has_configurable {
+                        flags.configurable = existing.configurable;
+                    }
+                }
+            }
+            obj.define_accessor(&prop, getter, setter, flags);
         } else if let Value::NativeConstructor(nc) = &obj {
             // Object.defineProperty on a native constructor (e.g., Promise)
             nc.define_accessor(&prop, getter, setter);
@@ -138,7 +158,21 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let value = flags.value.clone().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &obj {
-        o.borrow_mut().define(&prop, value, flags);
+        let mut obj = o.borrow_mut();
+        if obj.has_own(&prop) {
+            if let Some(existing) = obj.get_descriptor(&prop) {
+                if !has_writable {
+                    flags.writable = existing.writable;
+                }
+                if !has_enumerable {
+                    flags.enumerable = existing.enumerable;
+                }
+                if !has_configurable {
+                    flags.configurable = existing.configurable;
+                }
+            }
+        }
+        obj.define(&prop, value, flags);
     }
     Ok(obj)
 }
