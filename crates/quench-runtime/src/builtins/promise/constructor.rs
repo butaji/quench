@@ -33,12 +33,21 @@ pub fn create_promise_constructor(
                 ));
             }
 
-            let promise_obj = Object::new(ObjectKind::Promise);
-            let promise_rc = Rc::new(RefCell::new(promise_obj));
+            let promise_rc =
+                if let Some(Value::Object(obj_rc)) = crate::interpreter::get_native_this() {
+                    Rc::clone(&obj_rc)
+                } else {
+                    Rc::new(RefCell::new(Object::new(ObjectKind::Promise)))
+                };
             {
                 let mut obj = promise_rc.borrow_mut();
-                obj.prototype = Some(Rc::clone(&proto_clone));
-                obj.promise_data = Some(PromiseObjectData::new());
+                if obj.prototype.is_none() {
+                    obj.prototype = Some(Rc::clone(&proto_clone));
+                }
+                obj.kind = ObjectKind::Promise;
+                if obj.promise_data.is_none() {
+                    obj.promise_data = Some(PromiseObjectData::new());
+                }
             }
 
             {

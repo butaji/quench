@@ -148,7 +148,7 @@ pub fn call_getter(
                     .set_this(Value::Undefined);
             }
             let new_env_rc: Rc<RefCell<Environment>> = Rc::new(RefCell::new(new_env));
-            bind_params(f, &f.params, &tail_args, &new_env_rc, false)?;
+            bind_params(f, &f.params, &tail_args, &new_env_rc)?;
             current_env = new_env_rc;
             let r = eval_function_body(&f.body, &current_env, false);
             let tail = take_tail_call_signal();
@@ -196,6 +196,23 @@ pub fn assign_to_member(
 ) -> Result<(), JsError> {
     let prop_name = extract_property_name(property, computed, env, false)?;
 
+    if let Expression::Identifier(id) = object {
+        if id == "super" {
+            let this_val =
+                eval_expression(&Expression::Identifier("this".to_string()), env, false)?;
+            if let Value::Object(o) = this_val {
+                return assign_to_object(&o, &prop_name, value, env);
+            }
+            if let Value::Class(class) = this_val {
+                return class.set_static_field(&prop_name, value.clone());
+            }
+            return Err(JsError(format!(
+                "Cannot assign to property of non-object, got {:?}",
+                this_val
+            )));
+        }
+    }
+
     // Handle chained member: e.g. assert.deepEqual._compare = ...
     if let Expression::Member {
         object: parent_obj,
@@ -242,6 +259,16 @@ pub fn assign_to_member(
     }
 
     let obj_val = eval_expression(object, env, false)?;
+
+    if crate::value::is_private_name_key(&prop_name)
+        && !matches!(obj_val, Value::Object(_) | Value::Class(_))
+    {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot write private member to an object whose class did not declare it",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
 
     match obj_val {
         // Box primitives per ES §10.2.9 [[Set]] (ToObject coercion).
@@ -398,25 +425,9 @@ pub(crate) fn assign_to_object(
         return Ok(());
     }
 
-    // Private methods/accessors cannot be overwritten (PrivateSet).
     if crate::value::is_private_name_key(prop_name) {
-        let obj_ref = o.borrow();
-        if obj_ref.properties.contains_key(prop_name)
-            && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)))
-        {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Private method is not writable",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
-        if obj_ref.getters.contains_key(prop_name) || obj_ref.setters.contains_key(prop_name) {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Private accessor is not writable",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
+        let target = private_field_object(o);
+        return assign_private_name(&target, prop_name, value);
     }
 
     // Strict mode checks.
@@ -439,17 +450,6 @@ pub(crate) fn assign_to_object(
         }
     }
 
-    if crate::value::is_private_name_key(prop_name) {
-        let obj_ref = o.borrow();
-        if !obj_ref.extensible && !obj_ref.properties.contains_key(prop_name) {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Cannot add private field to non-extensible object",
-                "TypeError",
-            );
-            return Err(js_err);
-        }
-    }
-
     o.borrow_mut().set(prop_name, value.clone());
 
     // Mirror writes on globalThis into the global binding.
@@ -462,6 +462,51 @@ pub(crate) fn assign_to_object(
         env.borrow_mut()
             .define(prop_name.to_string(), value.clone());
     }
+    Ok(())
+}
+
+fn assign_private_name(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    value: &Value,
+) -> Result<(), JsError> {
+    let obj_ref = o.borrow();
+    let has_field = obj_ref.properties.contains_key(prop_name);
+    let is_method =
+        has_field && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)));
+    let has_getter = obj_ref.getters.contains_key(prop_name);
+    let has_setter = obj_ref.setters.contains_key(prop_name);
+
+    if !has_field && !has_getter && !has_setter {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot write private member to an object whose class did not declare it",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if is_method {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Private method is not writable",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if has_getter && !has_setter {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Private accessor has no setter",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    if !obj_ref.extensible && !has_field {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot add private field to non-extensible object",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+    drop(obj_ref);
+    o.borrow_mut().set(prop_name, value.clone());
     Ok(())
 }
 
@@ -557,17 +602,39 @@ pub fn call_setter(
     let closure = Rc::clone(&setter_storage.closure);
     let body = setter_storage.body.clone();
     let param = setter_storage.param.clone();
-    let mut call_env = Environment::with_parent(Rc::clone(&closure));
-    call_env.current_scope().borrow_mut().set_this(this_val);
-    call_env.define(param, value);
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Environment::with_parent(Rc::clone(&closure));
+    call_env
+        .current_scope()
+        .borrow_mut()
+        .set_this(this_val.clone());
+    let call_env_rc = Rc::new(RefCell::new(call_env));
+    let mut setter_fn = crate::value::ValueFunction::new(
+        None,
+        vec![param.clone()],
+        (*body).clone(),
+        Rc::clone(&setter_storage.closure),
+        false,
+        false,
+    );
+    setter_fn.strict = setter_storage.strict;
+    crate::eval::function::bind_params(&setter_fn, &setter_fn.params, &[value], &call_env_rc)?;
     if body.is_empty() {
         Ok(Value::Undefined)
     } else {
+        let body_env_rc = crate::eval::function::function_body_env(
+            &call_env_rc,
+            &setter_fn,
+            &this_val,
+            std::slice::from_ref(&param),
+        );
+        body_env_rc.borrow_mut().push_scope();
+        crate::interpreter::predeclare_var(&body, &mut body_env_rc.borrow_mut());
+        crate::interpreter::predeclare_let_const(&body, &mut body_env_rc.borrow_mut());
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(setter_storage.strict);
-        let result = eval_function_body(&body, &call_env, false);
+        let result = eval_function_body(&body, &body_env_rc, false);
         crate::interpreter::set_strict_mode(prev_strict);
+        let _ = crate::interpreter::take_control_flow();
         result
     }
 }

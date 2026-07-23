@@ -88,9 +88,19 @@ impl Object {
         let mut obj = Object::new(ObjectKind::Array);
         let len = len.min(MAX_ARRAY_ELEMENTS);
         obj.elements = vec![Value::Undefined; len];
-        let len_val = Value::Number(len as f64);
-        obj.properties.insert("length".to_string(), len_val.clone());
-        obj.descriptors.insert(
+        obj.define_array_length(len as f64);
+        if let Some(proto) = crate::builtins::get_array_prototype() {
+            obj.prototype = Some(proto);
+        }
+        obj
+    }
+
+    /// Define the `length` own property per ES array instance semantics.
+    pub fn define_array_length(&mut self, len: f64) {
+        let len_val = Value::Number(len);
+        self.properties
+            .insert("length".to_string(), len_val.clone());
+        self.descriptors.insert(
             "length".to_string(),
             helpers::PropertyFlags {
                 value: Some(len_val),
@@ -99,10 +109,6 @@ impl Object {
                 configurable: false,
             },
         );
-        if let Some(proto) = crate::builtins::get_array_prototype() {
-            obj.prototype = Some(proto);
-        }
-        obj
     }
 
     /// Create a new array, returning RangeError for lengths above MAX_ARRAY_ELEMENTS.

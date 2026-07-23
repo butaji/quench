@@ -87,8 +87,13 @@ impl GeneratorObject {
             .borrow_mut()
             .current_scope()
             .borrow_mut()
-            .set_this(global_this);
+            .set_this(global_this.clone());
         if let Some(ref args) = self.args {
+            let args_obj =
+                crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+            call_env
+                .borrow_mut()
+                .define("arguments".to_string(), args_obj);
             let stub = crate::value::ValueFunction::new(
                 None,
                 self.params.clone(),
@@ -97,7 +102,18 @@ impl GeneratorObject {
                 self.is_async,
                 true,
             );
-            crate::eval::function::bind_params(&stub, &self.params, args, &call_env, false)?;
+            crate::eval::function::bind_params(&stub, &self.params, args, &call_env)?;
+            let body_env_rc = crate::eval::function::function_body_env(
+                &call_env,
+                &stub,
+                &global_this,
+                &self.params,
+            );
+            body_env_rc.borrow_mut().push_scope();
+            crate::interpreter::predeclare_var(&self.body, &mut body_env_rc.borrow_mut());
+            crate::interpreter::predeclare_let_const(&self.body, &mut body_env_rc.borrow_mut());
+            self.call_env = Some(body_env_rc);
+            return Ok(Rc::clone(self.call_env.as_ref().unwrap()));
         }
         self.call_env = Some(Rc::clone(&call_env));
         Ok(call_env)

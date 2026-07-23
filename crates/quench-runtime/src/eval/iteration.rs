@@ -17,8 +17,24 @@ pub fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
     match value {
         Value::Object(o) => get_object_iterator(o),
         Value::String(s) => get_string_iterator(s),
+        Value::Generator(gen) => get_generator_values(gen),
         _ => Err(JsError("TypeError: Value is not iterable".to_string())),
     }
+}
+
+fn get_generator_values(
+    gen: &Rc<RefCell<crate::value::GeneratorObject>>,
+) -> Result<Vec<Value>, JsError> {
+    let mut values = Vec::new();
+    let mut g = gen.borrow_mut();
+    loop {
+        let result = g.next(Value::Undefined)?;
+        if result.done {
+            break;
+        }
+        values.push(result.value);
+    }
+    Ok(values)
 }
 
 fn get_object_iterator(o: &Rc<RefCell<Object>>) -> Result<Vec<Value>, JsError> {
@@ -191,6 +207,24 @@ mod tests {
         let mut ctx = new_ctx();
         let arr = ctx.eval("[]").unwrap();
         let items = get_iterator(&arr).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_get_iterator_generator() {
+        let mut ctx = new_ctx();
+        let gen = ctx.eval("(function*(){ yield 1; yield 2; })()").unwrap();
+        let items = get_iterator(&gen).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], Value::Number(1.0));
+        assert_eq!(items[1], Value::Number(2.0));
+    }
+
+    #[test]
+    fn test_get_iterator_empty_generator() {
+        let mut ctx = new_ctx();
+        let gen = ctx.eval("(function*(){})()").unwrap();
+        let items = get_iterator(&gen).unwrap();
         assert!(items.is_empty());
     }
 
