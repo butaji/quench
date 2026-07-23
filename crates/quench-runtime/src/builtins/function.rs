@@ -187,6 +187,34 @@ fn proto_bind(args: Vec<Value>) -> Result<Value, JsError> {
 // Function
 // ============================================================================
 
+#[derive(Clone, Copy)]
+enum FunctionCtorKind {
+    Ordinary,
+    Async,
+    Generator,
+    AsyncGenerator,
+}
+
+impl FunctionCtorKind {
+    fn parse_prefix(self) -> &'static str {
+        match self {
+            FunctionCtorKind::Ordinary => "function anonymous",
+            FunctionCtorKind::Async => "async function anonymous",
+            FunctionCtorKind::Generator => "function* anonymous",
+            FunctionCtorKind::AsyncGenerator => "async function* anonymous",
+        }
+    }
+
+    fn expected_flags(self) -> (bool, bool) {
+        match self {
+            FunctionCtorKind::Ordinary => (false, false),
+            FunctionCtorKind::Async => (true, false),
+            FunctionCtorKind::Generator => (false, true),
+            FunctionCtorKind::AsyncGenerator => (true, true),
+        }
+    }
+}
+
 pub fn register_function(ctx: &mut Context) {
     let function_proto = make_function_prototype();
     FUNCTION_PROTOTYPE.with(|fp| {
@@ -331,6 +359,7 @@ fn make_function_constructor(
     kind: &str,
     function_proto: Rc<RefCell<Object>>,
     global_env: Rc<RefCell<crate::env::Environment>>,
+    kind: FunctionCtorKind,
 ) -> NativeConstructor {
     let kind_owned = kind.to_string();
     NativeConstructor::new(
@@ -451,6 +480,26 @@ fn make_function_constructor(
                         } else {
                             Ok(func)
                         }
+                        let mut func = ValueFunction::new(
+                            Some(name),
+                            params,
+                            body,
+                            Rc::clone(&global_env),
+                            is_async,
+                            is_generator,
+                        );
+                        if matches!(
+                            kind,
+                            FunctionCtorKind::Generator | FunctionCtorKind::AsyncGenerator
+                        ) {
+                            func.set_empty_prototype(true);
+                        }
+                        if let Some(Value::Object(this_obj)) = crate::builtins::get_native_this() {
+                            if let Some(sub_proto) = this_obj.borrow().prototype.clone() {
+                                func.set_instance_proto(sub_proto);
+                            }
+                        }
+                        Ok(Value::Function(func))
                     } else {
                         Err(JsError::new(
                             "SyntaxError: Function constructor produced no function",

@@ -86,8 +86,7 @@ pub fn eval_class_expr(
             .borrow_mut()
             .current_scope()
             .borrow_mut()
-            .initialize_declared(name, class_val.clone());
-        env.borrow_mut().define(name.to_string(), class_val);
+            .initialize_declared(name, class_val);
     }
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
@@ -314,7 +313,10 @@ pub fn call_super_constructor(
     }
 
     crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
-    let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
+    crate::interpreter::push_inside_super_call();
+    let result = crate::eval::statement::eval_function_body(&body, &call_env, false);
+    crate::interpreter::pop_inside_super_call();
+    let result = result?;
     let _ = crate::interpreter::take_control_flow();
     finish_constructor(result, &this_val)
 }

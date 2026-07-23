@@ -95,6 +95,7 @@ fn eval_super_call(
     // may run user code that increments counters etc.), THEN check whether
     // `this` was already initialized. The check throws ReferenceError after
     // super() side-effects have already happened.
+    crate::interpreter::push_inside_super_call();
     let result = match super_val {
         Value::Class(super_class) => {
             crate::eval::class::call_super_constructor(*super_class, args, this_val, env)
@@ -118,9 +119,10 @@ fn eval_super_call(
         }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
-            return Err(js_err);
+            Err(js_err)
         }
     };
+    crate::interpreter::pop_inside_super_call();
 
     // After super() ran, check the lexical this-binding status. Per ES
     // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
