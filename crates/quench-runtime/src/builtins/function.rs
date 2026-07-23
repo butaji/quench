@@ -126,17 +126,22 @@ fn proto_bind(args: Vec<Value>) -> Result<Value, JsError> {
     };
     let bound_len = target_len.saturating_sub(bound_args.len());
 
+    let target_for_closure = target_func.clone();
     let bound_func = NativeFunction::new(move |extra_args: Vec<Value>| {
         crate::interpreter::set_this_value(bound_this.clone());
         let mut all_args = bound_args.clone();
         all_args.extend(extra_args);
-        let result =
-            crate::eval::call_value_with_this(target_func.clone(), all_args, bound_this.clone());
+        let result = crate::eval::call_value_with_this(
+            target_for_closure.clone(),
+            all_args,
+            bound_this.clone(),
+        );
         crate::interpreter::take_this_value();
         result
     });
     let _ = bound_func.set_property("length", Value::Number(bound_len as f64));
     let _ = bound_func.set_property("name", Value::String(format!("bound {}", target_name)));
+    let _ = bound_func.set_property("__quench_bound_target", target_func);
 
     Ok(Value::NativeFunction(Rc::new(bound_func)))
 }

@@ -61,6 +61,26 @@ thread_local! {
     // gets a result back, it pops and combines with the returned value.
     static ACC_STACK: std::cell::RefCell<Vec<Value>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static EXPLICIT_RETURN_STACK: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+}
+
+fn set_explicit_return_for_current_body() {
+    EXPLICIT_RETURN_STACK.with(|stack| {
+        if let Some(top) = stack.borrow_mut().last_mut() {
+            *top = true;
+        }
+    });
+}
+
+/// Result of evaluating a function body, including whether it used an explicit `return`.
+pub(crate) struct FunctionBodyResult {
+    pub value: Value,
+    pub explicit_return: bool,
+}
+
+/// Whether the most recent `eval_function_body` completed via an explicit `return`.
+pub fn take_explicit_function_return() -> bool {
+    EXPLICIT_RETURN_STACK.with(|stack| stack.borrow().last().copied().unwrap_or(false))
 }
 
 /// Set the tail-call signal for the trampoline to pick up.
@@ -179,6 +199,29 @@ pub fn eval_function_body(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    eval_function_body_with_meta(stmts, env, in_arrow_function).map(|r| r.value)
+}
+
+pub(crate) fn eval_function_body_with_meta(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<FunctionBodyResult, JsError> {
+    EXPLICIT_RETURN_STACK.with(|stack| stack.borrow_mut().push(false));
+    let value = eval_function_body_impl(stmts, env, in_arrow_function)?;
+    let explicit_return =
+        EXPLICIT_RETURN_STACK.with(|stack| stack.borrow_mut().pop().unwrap_or(false));
+    Ok(FunctionBodyResult {
+        value,
+        explicit_return,
+    })
+}
+
+fn eval_function_body_impl(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
     let last_idx = stmts.len().saturating_sub(1);
     let mut last_val = Value::Undefined;
     for (i, stmt) in stmts.iter().enumerate() {
@@ -199,6 +242,7 @@ pub fn eval_function_body(
                 None => Value::Undefined,
             };
             set_control_flow(ControlFlow::Return(val.clone()));
+            set_explicit_return_for_current_body();
             return Ok(val);
         }
 
@@ -240,7 +284,10 @@ pub fn eval_function_body(
             continue;
         }
         match take_control_flow() {
-            Some(ControlFlow::Return(val)) => return Ok(val),
+            Some(ControlFlow::Return(val)) => {
+                set_explicit_return_for_current_body();
+                return Ok(val);
+            }
             Some(
                 cf @ (ControlFlow::Break
                 | ControlFlow::Continue
@@ -260,6 +307,7 @@ pub fn eval_function_body(
     // try/catch, or a bare return inside an if/else chain).
     if let Some(ControlFlow::Return(val)) = take_control_flow() {
         set_control_flow(ControlFlow::Return(val.clone()));
+        set_explicit_return_for_current_body();
         return Ok(val);
     }
     Ok(last_val)
