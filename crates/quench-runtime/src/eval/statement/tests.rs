@@ -388,6 +388,18 @@ mod try_catch_finally_statement {
         let r = eval("try { throw 42; } catch (e) { e }").unwrap();
         assert_eq!(r, Value::Number(42.0));
     }
+
+    #[test]
+    fn try_return_finally_side_effect_runs() {
+        assert_eq!(
+            eval(
+                "var n=0; class C { constructor(){ try { return; } finally { n=1; } } } \
+                  try { new C(); } catch(e) {} n"
+            )
+            .unwrap(),
+            Value::Number(1.0)
+        );
+    }
 }
 
 mod for_in_statement {
@@ -605,6 +617,15 @@ mod multiple_statements {
 
 mod function_body {
     use super::*;
+
+    /// Empty block: undefined per ES §13.2.1.
+    #[test]
+    fn return_async_call_yields_promise_not_tco() {
+        assert_eq!(
+            eval("function g() { return (async function() {})(); } typeof g()").unwrap(),
+            Value::String("object".into())
+        );
+    }
 
     /// Empty block: undefined per ES §13.2.1.
     #[test]
@@ -1074,6 +1095,7 @@ mod acc_stack {
         acc_stack_len, acc_stack_pop_to, acc_stack_push, acc_stack_top, acc_stack_update_last,
     };
     use crate::value::Value;
+    use crate::Context;
 
     fn sym(desc: &'static str) -> Value {
         crate::builtins::symbol::new_symbol(desc)
@@ -1162,6 +1184,25 @@ mod acc_stack {
         acc_stack_push(sym("L2a"));
         assert_eq!(acc_stack_len(), 2);
         assert!(acc_stack_top().is_some_and(|v| v.is_symbol_with("L2a")));
+        drain();
+    }
+
+    #[test]
+    fn acc_stack_empty_after_proxy_class_construct() {
+        drain();
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "class P { constructor() { return new Proxy(this, { get(o,k){ 1; return o[k]; } }); } } \
+             class T extends P { method() { return 1; } } \
+             new T()",
+        )
+        .unwrap();
+        assert_eq!(
+            acc_stack_len(),
+            0,
+            "class construction must not leak acc_stack entries"
+        );
         drain();
     }
 }

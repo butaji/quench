@@ -1,160 +1,14 @@
 {
-  "failed": 336,
+  "failed": 67,
   "groups": [
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/regular-subclassing.js"
-      ],
-      "reason": "Actual is not array-like",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
-      ],
-      "reason": "Cannot assign to property of non-object, got undefined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-functions.js",
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-methods.js"
-      ],
-      "reason": "Cannot destructure non-object value",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-functions.js",
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-methods.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-AggregateError.js"
-      ],
-      "reason": "ReferenceError: AggregateError is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-AggregateError.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-BigInt64Array.js"
-      ],
-      "reason": "ReferenceError: BigInt64Array is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-BigInt64Array.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-BigUint64Array.js"
-      ],
-      "reason": "ReferenceError: BigUint64Array is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-BigUint64Array.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/DataView/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/DataView/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-DataView.js"
-      ],
-      "reason": "ReferenceError: DataView is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/DataView/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/DataView/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-DataView.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of-arrow.js"
       ],
       "reason": "ReferenceError: Must call super constructor in derived class before returning",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of-arrow.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
-      ],
-      "reason": "ReferenceError: ReferenceError: Cannot access 'o' before initialization",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-SharedArrayBuffer.js"
-      ],
-      "reason": "ReferenceError: SharedArrayBuffer is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-SharedArrayBuffer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakRef.js"
-      ],
-      "reason": "ReferenceError: WeakRef is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-WeakRef.js"
-      ]
-    },
-    {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-ref-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-ref-arguments.js"
-      ],
-      "reason": "ReferenceError: arguments is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-ref-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-ref-arguments.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
-      ],
-      "reason": "ReferenceError: super is only valid in class methods",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
-        "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
       ]
     },
     {
@@ -192,7 +46,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
       ],
-      "reason": "Test262Error: Actual [] and expected [f, 3, null, g, Test262, null] should have the same contents. \")",
+      "reason": "Test262Error: Actual [] and expected [f, 3, [Function], g, Test262, [Function]] should have the same contents. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
       ]
@@ -230,62 +84,23 @@
       ]
     },
     {
-      "count": 9,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
       ],
-      "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
+      "reason": "Test262Error: Expected ReferenceError but got TypeError. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-1.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
       ],
-      "reason": "Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be false. returns the class prototype\")",
+      "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 8,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-8.js"
-      ],
-      "reason": "Test262Error: Expected SyntaxError but got TypeError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-8.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
       ]
     },
     {
@@ -301,36 +116,15 @@
       ]
     },
     {
-      "count": 17,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-primitive-receiver.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldput-primitive-receiver.js",
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-eval-err.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ]
     },
     {
@@ -350,70 +144,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-arrow-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError but got Test262Error. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-arrow-function.js"
-      ]
-    },
-    {
-      "count": 21,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-9.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
-        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
-        "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-boolean.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-null.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-number.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-string.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-async-generator-function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-generator-function.js"
+        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-9.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an arbitrary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-arrow-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an object which did not contain it\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-arrow-function.js"
+        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
       ]
     },
     {
@@ -437,50 +172,6 @@
       ]
     },
     {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-setter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. access of inner class accessor from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-setter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-field-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed inner class field from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-field-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private field from an arbritary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private getter from an arbritary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
-      ]
-    },
-    {
       "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
@@ -493,155 +184,23 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private setter from an ordinary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-access-on-inner-function.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-private-static-getter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. get operation on private accessor without getter should throw TypeError\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-private-static-getter.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-multiple-evaluations-of-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of c1 private method\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-multiple-evaluations-of-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-getter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class getter from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-getter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class method from an object of outer class\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-getter-before-super-return-in-field-initializer.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. private getters are not installed before super returns\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-getter-before-super-return-in-field-initializer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-method-before-super-return-in-field-initializer.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. private methods are not installed before super returns\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-method-before-super-return-in-field-initializer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-setter-before-super-return-in-field-initializer.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. private setters are not installed before super returns\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/prod-private-setter-before-super-return-in-field-initializer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-missing-private-static-setter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. set operation on private accessor without setter should throw TypeError\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-missing-private-static-setter.js"
-      ]
-    },
-    {
-      "count": 13,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Array.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Number.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-RangeError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-ReferenceError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-SyntaxError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-TypeError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-URIError.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js"
       ],
       "reason": "Test262Error: Expected true but got false\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Array.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Number.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js"
       ]
     },
     {
-      "count": 15,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/redeclaration-symbol.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-computed-symbol-names.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js"
       ],
       "reason": "Test262Error: Symbol() should be an own property\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-computed-symbol-names.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-computed-symbol-names.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js"
       ]
     },
     {
@@ -691,38 +250,6 @@
       ]
     },
     {
-      "count": 16,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-obj-ptrn-rest-getter.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 0 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-getter.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/regular-subclassing.js"
@@ -755,11 +282,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
       ],
-      "reason": "Test262Error: sameValue failed: 3 !== 1",
+      "reason": "Test262Error: sameValue failed: 2 !== 10",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
       ]
     },
     {
@@ -775,31 +302,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-comparison.js"
-      ],
-      "reason": "Test262Error: sameValue failed: [Function] !== [Function]",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-comparison.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/nested-indirect-eval-contains-arguments.js"
       ],
       "reason": "Test262Error: sameValue failed: [object] !== 1",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/nested-indirect-eval-contains-arguments.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/replacing-prototype.js"
-      ],
-      "reason": "Test262Error: sameValue failed: [object] !== 42",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Object/replacing-prototype.js"
       ]
     },
     {
@@ -829,11 +336,8 @@
       ]
     },
     {
-      "count": 7,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
@@ -841,9 +345,6 @@
       ],
       "reason": "Test262Error: sameValue failed: \\\"\\0private:3:method\\0\\\" !== \\\"#method\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
@@ -858,22 +359,6 @@
       "reason": "Test262Error: sameValue failed: \\\"function\\\" !== \\\"undefined\\\"",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/syntax/class-expression-binding-identifier-opt-class-element-list.js"
-      ]
-    },
-    {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-meth-paramsbody-var-open.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"inside\\\" !== \\\"outside\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-meth-paramsbody-var-open.js"
       ]
     },
     {
@@ -899,13 +384,13 @@
     {
       "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
       ]
     },
     {
@@ -916,30 +401,6 @@
       "reason": "Test262Error: sameValue failed: null !== [object]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto.js"
-      ]
-    },
-    {
-      "count": 8,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/ReferenceError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/TypeError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/URIError-message.js"
-      ],
-      "reason": "Test262Error: sameValue failed: true !== false",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/ReferenceError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/TypeError-message.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/URIError-message.js"
       ]
     },
     {
@@ -965,90 +426,30 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
+        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 42",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
+        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 44",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 53",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"Test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"outer class\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"pass\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"super class\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check-super-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js"
       ]
     },
@@ -1063,80 +464,19 @@
       ]
     },
     {
-      "count": 19,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-4.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-valid-no-earlyerr.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ],
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-brand-check-super-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check-super-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js"
-      ],
-      "reason": "TypeError: Cannot read property '\\0private:3:m\\0' of null",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js"
-      ]
-    },
-    {
-      "count": 16,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-obj-ptrn-rest-val-obj.js"
-      ],
-      "reason": "TypeError: Cannot read property 'a' of undefined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-val-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-val-obj.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ]
     },
     {
@@ -1150,202 +490,37 @@
       ]
     },
     {
-      "count": 20,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-obj.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-obj.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
       ],
-      "reason": "TypeError: Cannot read property 'x' of undefined",
+      "reason": "TypeError: Cannot read property 'name' of undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-skip-non-enumerable.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-skip-non-enumerable.js"
-      ]
-    },
-    {
-      "count": 11,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-common.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-dollar.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-underscore.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-double-initialisation-get-and-set.js"
-      ],
-      "reason": "TypeError: Private method or accessor already defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u2118.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-u6F.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-ZWNJ.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-common.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-name-dollar.js"
-      ]
-    },
-    {
-      "count": 19,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatemethods-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/binding.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/default-constructor-2.js"
-      ],
-      "reason": "TypeError: Value is not a function, got undefined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js"
-      ]
-    },
-    {
-      "count": 9,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-star-before-newline.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-single.js"
-      ],
-      "reason": "TypeError: Value is not iterable",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-star-before-newline.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-computed-var-propname-constructor.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-propname-constructor.js"
-      ],
-      "reason": "TypeError: static class field may not be named 'constructor'",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-computed-var-propname-constructor.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-propname-constructor.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js"
-      ],
-      "reason": "TypeError: static class method may not be named 'constructor'",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js"
-      ]
-    },
-    {
-      "count": 6,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakMap/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakSet/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
-      ],
-      "reason": "TypeError: super is not a constructor",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakMap/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakSet/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/super-must-be-called.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ],
-      "reason": "TypeError: super is not a constructor (Testing with Float64Array and makePassthrough.)",
+      "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/super-must-be-called.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-10.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-8.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
       ],
-      "reason": "isolated exit 1: panicked",
+      "reason": "object is not a function",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-10.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-8.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
       ]
     }
   ],
-  "passed": 4031,
+  "passed": 4300,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

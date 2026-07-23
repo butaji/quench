@@ -102,19 +102,24 @@ fn eval_super_call(
         Value::Object(o) => {
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
                 call_value_with_this(Value::Function(constructor.clone()), args, this_val)
-            } else if let Some(Value::NativeFunction(nf)) = o.borrow().get("constructor") {
-                call_value_with_this(Value::NativeFunction(nf.clone()), args, this_val)
             } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
                 call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
             } else {
-                Ok(Value::Undefined)
+                Ok(this_val)
             }
         }
         Value::NativeConstructor(nc) => {
             call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
         }
         Value::NativeFunction(nf) => {
-            call_value_with_this(Value::NativeFunction(nf), args, this_val)
+            let nf_val = Value::NativeFunction(nf.clone());
+            if crate::eval::class::helpers::is_constructor_value(&nf_val) {
+                call_value_with_this(nf_val, args, this_val)
+            } else {
+                let (_, js_err) =
+                    create_js_error_with_type("super is not a constructor", "TypeError");
+                Err(js_err)
+            }
         }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
@@ -124,14 +129,7 @@ fn eval_super_call(
 
     // After super() ran, check the lexical this-binding status. Per ES
     // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
-    // Only check the current env's scopes — parents may have `this_initialized`
-    // set from the calling function (e.g., IIFE wrapping new C()).
-    if env
-        .borrow()
-        .scopes
-        .iter()
-        .any(|s| s.borrow().is_this_initialized())
-    {
+    if crate::interpreter::is_this_binding_initialized(env) {
         let (thrown_val, _) = crate::value::error::create_js_error_with_type(
             "super() called after `this` was already initialized",
             "ReferenceError",
@@ -142,58 +140,49 @@ fn eval_super_call(
         ));
     }
 
-    // Mark `this` as initialized on the current scope now that super()
+    // Mark `this` as initialized on the lexical binding now that super()
     // succeeded, per ES §13.2.6.1 SuperCall step 7.
-    env.borrow_mut()
-        .current_scope()
-        .borrow_mut()
-        .mark_this_initialized();
+    crate::interpreter::mark_this_binding_initialized(env);
 
     // Per ES §13.2.6.1: if the super constructor returns an Object,
     // it replaces the `this` value for the derived constructor.
     if let Ok(ref super_result) = result {
         match super_result {
             Value::Object(obj) if this_obj.as_ref().map_or(true, |o| !Rc::ptr_eq(o, obj)) => {
-                env.borrow_mut()
-                    .current_scope()
-                    .borrow_mut()
-                    .set_this(super_result.clone());
+                crate::interpreter::set_this_binding_value(env, super_result.clone());
             }
             _ => {}
         }
     }
 
     let current_this = get_this_binding(env);
-    let current_obj = match &current_this {
-        Value::Object(o) => Some(Rc::clone(o)),
-        _ => None,
+    let field_target = match &current_this {
+        Value::Object(o) => crate::eval::object::private_field_object(o),
+        _ => return result,
     };
 
     // After super() succeeds, run pending field initializers (for derived
     // classes with instance fields) before returning to the constructor body.
     // Per ES §13.2.6.1 SuperCall, fields are initialized right after super()
     // returns and before the rest of the constructor body.
+    // Private fields live on the original instance even when super() returns a Proxy.
     let pending = env.borrow_mut().take_pending_fields();
     if let Some(fields) = pending {
-        if let Some(ref obj_rc) = current_obj {
-            for (prop_key, expr) in fields {
-                crate::interpreter::set_eval_in_class_field(true);
-                let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
-                crate::interpreter::set_eval_in_class_field(false);
-                let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
-                crate::eval::class::helpers::private_field_add(
-                    obj_rc,
-                    &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),
-                    val,
-                )?;
-            }
+        for (prop_key, expr) in fields {
+            crate::interpreter::set_eval_in_class_field(true);
+            let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
+            crate::interpreter::set_eval_in_class_field(false);
+            let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
+            crate::eval::class::helpers::private_field_add(
+                &field_target,
+                &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),
+                val,
+            )?;
         }
     }
 
     if let Some(class) = crate::eval::class::helpers::constructing_class_for_super() {
-        if let Some(obj_rc) = current_obj.as_ref() {
-            crate::eval::class::install_instance_private_elements(&class, obj_rc, env)?;
-        }
+        crate::eval::class::install_instance_private_elements(&class, &field_target, env)?;
     }
 
     result
@@ -264,13 +253,17 @@ fn eval_super_member(
     let proto = match &super_val {
         Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
         Value::Object(o) => {
-            let proto_val = o.borrow().get("prototype");
-            match proto_val {
-                Some(Value::Object(proto_obj)) => proto_obj.clone(),
-                _ => {
-                    let mut p = Object::new(ObjectKind::Ordinary);
-                    p.set("constructor", Value::Object(Rc::clone(o)));
-                    Rc::new(RefCell::new(p))
+            if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
+                Rc::clone(o)
+            } else {
+                let proto_val = o.borrow().get("prototype");
+                match proto_val {
+                    Some(Value::Object(proto_obj)) => proto_obj.clone(),
+                    _ => {
+                        let mut p = Object::new(ObjectKind::Ordinary);
+                        p.set("constructor", Value::Object(Rc::clone(o)));
+                        Rc::new(RefCell::new(p))
+                    }
                 }
             }
         }
@@ -303,91 +296,6 @@ fn eval_super_member(
     Ok(Value::Undefined)
 }
 
-/// Evaluate super.property = value — assignment through super [[Set]] semantics
-pub fn set_super_property(
-    property: &PropertyKey,
-    _computed: bool,
-    value: Value,
-    env: &Rc<RefCell<Environment>>,
-    in_arrow_function: bool,
-) -> Result<Value, JsError> {
-    let super_val = get_super_value(env).ok_or_else(|| {
-        JsError("ReferenceError: super is only valid in class methods".to_string())
-    })?;
-    let prop_name = eval_property_key(property, env, in_arrow_function)?;
-
-    // Check if we're in a static context (static method, static init block).
-    let is_static = {
-        let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
-        let mut found = false;
-        while let Some(e) = current {
-            if e.borrow().is_static_class_body() {
-                found = true;
-                break;
-            }
-            current = e.borrow().get_parent();
-        }
-        found
-    };
-
-    if is_static {
-        // Static: set property on the superclass constructor.
-        if let Value::Class(class) = &super_val {
-            class.set_static_property(&prop_name, value.clone(), env)?;
-        }
-        return Ok(value);
-    }
-
-    // Instance: super [[Set]] — look up the property on the super base prototype,
-    // then call [[Set]] with `this` as receiver so the property ends up on the instance.
-    let this_val = crate::interpreter::get_this_binding(env);
-    let proto = match &super_val {
-        Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
-        Value::Object(o) => {
-            let proto_val = o.borrow().get("prototype");
-            match proto_val {
-                Some(Value::Object(proto_obj)) => proto_obj.clone(),
-                _ => {
-                    let mut p = Object::new(ObjectKind::Ordinary);
-                    p.set("constructor", Value::Object(Rc::clone(o)));
-                    Rc::new(RefCell::new(p))
-                }
-            }
-        }
-        _ => return Ok(value),
-    };
-
-    // Walk the prototype chain for inherited setters.
-    let mut prototype: Option<Rc<RefCell<Object>>> = Some(proto);
-    let mut setter_clone: Option<crate::value::object::helpers::SetterStorage> = None;
-    while let Some(current) = prototype {
-        let obj_ref = current.borrow();
-        if obj_ref.get_setter(&prop_name).is_some() {
-            setter_clone = obj_ref.get_setter(&prop_name).cloned();
-            break;
-        }
-        prototype = obj_ref.prototype.as_ref().map(Rc::clone);
-    }
-
-    if let Some(setter_storage) = setter_clone {
-        if let Value::Object(ref this_obj) = this_val {
-            crate::eval::object::call_setter(
-                this_obj,
-                &setter_storage,
-                value.clone(),
-                env,
-            )?;
-        }
-        return Ok(value);
-    }
-
-    // No setter found: set the property on `this` (the receiver).
-    if let Value::Object(ref o) = this_val {
-        o.borrow_mut().set(&prop_name, value.clone());
-    }
-    Ok(value)
-}
-
 /// Evaluate a new expression (constructor call)
 pub fn eval_new(
     constructor: &Expression,
@@ -415,6 +323,16 @@ pub fn eval_new(
     let prev_new_target = crate::interpreter::get_new_target();
     crate::interpreter::set_new_target(Some(constructor_val.clone()));
 
+    // Bound class constructor: `new Subclass.bind(thisArg, ...fixed)()`
+    if let Some((Value::Class(class), _bound_this, mut bound_args)) =
+        crate::eval::member::bound_callable_target(&constructor_val)
+    {
+        bound_args.extend(args);
+        let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), bound_args, env);
+        crate::interpreter::set_new_target(prev_new_target);
+        return r;
+    }
+
     // Handle class instantiation
     if let Value::Class(class) = &constructor_val {
         let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), args, env);
@@ -437,14 +355,13 @@ pub fn eval_new(
     };
 
     // NativeFunction without an explicit prototype is not a constructor,
-    // UNLESS it's a bound function (bound functions delegate [[Construct]] to the target)
-    // or it has the constructable flag set (e.g. Proxy).
+    // UNLESS it's a bound function (bound functions delegate [[Construct]] to the target).
     if let Value::NativeFunction(ref nf) = actual_constructor {
         let has_prototype = nf.prototype.borrow().is_some();
         let is_bound = nf
             .get_property("name")
             .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
-        if !has_prototype && !is_bound && !nf.constructable {
+        if !has_prototype && !is_bound {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
             return Err(js_err);

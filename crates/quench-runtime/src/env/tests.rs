@@ -420,6 +420,19 @@ fn test_parent_chain_has() {
 // ── var/let/const declaration ─────────────────────────────────────────────
 
 #[test]
+fn test_is_tdz_finds_param_in_outer_call_scope() {
+    let mut call_env = Environment::new();
+    call_env.define("o".to_string(), Value::Number(1.0));
+    call_env.push_scope();
+
+    let mut script = Environment::with_parent(Rc::new(RefCell::new(call_env)));
+    script.declare_var("o".to_string(), VarKind::Let);
+
+    assert!(!script.is_tdz("o"));
+    assert_eq!(script.get("o"), Some(Value::Number(1.0)));
+}
+
+#[test]
 fn test_declare_var_hoists_to_global() {
     let mut env = Environment::new();
     env.define("global".to_string(), Value::Undefined); // global scope

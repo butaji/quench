@@ -52,7 +52,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     });
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
-    let program = match ctx.parse(&source) {
+    let mut program = match ctx.parse(&source) {
         Ok(program) => program,
         Err(e) => {
             CURRENT_CONTEXT.with(|cell| {
@@ -64,6 +64,26 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             return Err(js_err);
         }
     };
+    if crate::interpreter::is_direct_eval() {
+        if let Some(eval_env) = crate::interpreter::get_current_eval_env() {
+            let declared = eval_env.borrow().declared_private_names();
+            let ast::Program::Script(body) = &program;
+            if let Err(js_err) =
+                crate::eval::class::private_names::reject_undeclared_private_names_in_eval(
+                    body, &declared,
+                )
+            {
+                CURRENT_CONTEXT.with(|cell| {
+                    *cell.borrow_mut() = prev_ctx;
+                });
+                return Err(js_err);
+            }
+            if let Some(class_id) = eval_env.borrow().private_class_id() {
+                let ast::Program::Script(body) = &mut program;
+                crate::eval::class::private_names::scope_script_private_names(body, class_id);
+            }
+        }
+    }
     reject_eval_var_lexical_conflict(&program, ctx)?;
     if crate::interpreter::is_eval_in_class_field() {
         let ast::Program::Script(body) = &program;

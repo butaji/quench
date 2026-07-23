@@ -5,6 +5,7 @@ pub mod array;
 pub mod array_buffer;
 pub mod bigint;
 pub mod console;
+pub mod data_view;
 pub mod date;
 pub mod error;
 pub mod function;
@@ -22,6 +23,7 @@ pub mod symbol;
 pub mod typed_array;
 pub mod uri;
 pub mod weak;
+pub mod weak_ref;
 
 // Re-export the public items from submodules
 pub use array::get_array_prototype;
@@ -111,8 +113,7 @@ impl Object {
     pub(crate) fn new_array_from(items: Vec<Value>) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = items.clone();
-        obj.properties
-            .insert("length".to_string(), Value::Number(items.len() as f64));
+        obj.define_array_length(items.len() as f64);
         if let Some(proto) = crate::builtins::array::get_array_prototype() {
             obj.prototype = Some(proto);
         }
@@ -157,7 +158,9 @@ pub fn register_builtins(ctx: &mut Context) {
     reflect::register_reflect(ctx);
     // ArrayBuffer and typed-array constructors are needed by harness utilities.
     array_buffer::register_array_buffer(ctx);
+    data_view::register_data_view(ctx);
     typed_array::register_typed_arrays(ctx);
+    weak_ref::register_weak_ref(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
     // Array.prototype[Symbol.iterator] requires Symbol to be registered first.

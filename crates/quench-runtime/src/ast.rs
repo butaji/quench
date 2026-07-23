@@ -29,6 +29,12 @@ pub enum Statement {
         name: String,
         init: Option<Expression>,
     },
+    /// Destructuring variable declaration (`let [a, b] = arr`) evaluated via iterator.
+    PatternDeclaration {
+        kind: VarKind,
+        pattern: BindingElement,
+        init: Option<Expression>,
+    },
     /// Function declaration
     FunctionDeclaration {
         name: String,
@@ -183,6 +189,8 @@ pub enum PropertyValue {
     },
     /// Setter property: { set x(v) { this._x = v; } }
     Setter { param: String, body: Vec<Statement> },
+    /// Spread property: { ...expr }
+    Spread(Expression),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,6 +218,8 @@ pub enum Expression {
     ArrowFunction {
         params: Vec<Param>,
         body: Box<ArrowBody>,
+        is_async: bool,
+        is_generator: bool,
     },
     Binary {
         op: BinaryOp,
@@ -445,7 +455,7 @@ pub enum ClassMember {
     /// Setter
     Setter {
         name: PropertyKey,
-        param: String,
+        param: Param,
         body: Vec<Statement>,
     },
     /// Static method (params include default values)
@@ -474,7 +484,7 @@ pub enum ClassMember {
     /// Static setter
     StaticSetter {
         name: PropertyKey,
-        param: String,
+        param: Param,
         body: Vec<Statement>,
     },
     /// Static initialization block: static { ... }

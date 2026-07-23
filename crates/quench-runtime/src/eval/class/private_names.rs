@@ -1,15 +1,212 @@
 //! Class-scoped private name keys (unique per class id).
 
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, ForInit, PropertyKey, PropertyValue, Statement,
 };
+use crate::value::JsError;
 
-pub fn scope_class_private_names(class: &mut Class, class_id: usize) {
+thread_local! {
+    static PARENT_CLASS_ID: Cell<Option<usize>> = const { Cell::new(None) };
+    static DECLARED_PRIVATE: std::cell::RefCell<HashSet<String>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+pub fn scope_class_private_names(
+    class: &mut Class,
+    class_id: usize,
+    parent_class_id: Option<usize>,
+) {
+    let declared = collect_declared_private_names(&class.body);
+    PARENT_CLASS_ID.with(|c| c.set(parent_class_id));
+    DECLARED_PRIVATE.with(|d| *d.borrow_mut() = declared);
     for member in &mut class.body {
         scope_class_member(member, class_id);
     }
+}
+
+pub(crate) fn collect_declared_private_names(members: &[ClassMember]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for member in members {
+        if let Some(PropertyKey::Ident(s)) = member_private_key(member) {
+            if is_private_name(s) {
+                names.insert(bare_private_name(s));
+            }
+        }
+    }
+    names
+}
+
+fn is_private_name(s: &str) -> bool {
+    is_unscoped_private(s) || crate::value::is_private_name_key(s)
+}
+
+fn member_private_key(member: &ClassMember) -> Option<&PropertyKey> {
+    match member {
+        ClassMember::Field { name, .. }
+        | ClassMember::StaticField { name, .. }
+        | ClassMember::Method { name, .. }
+        | ClassMember::StaticMethod { name, .. }
+        | ClassMember::Getter { name, .. }
+        | ClassMember::StaticGetter { name, .. }
+        | ClassMember::Setter { name, .. }
+        | ClassMember::StaticSetter { name, .. } => Some(name),
+        ClassMember::Constructor { .. } | ClassMember::StaticBlock { .. } => None,
+    }
+}
+
+fn bare_private_name(s: &str) -> String {
+    s.strip_prefix('#')
+        .unwrap_or(s)
+        .trim_start_matches("\0private:")
+        .rsplit(':')
+        .next()
+        .unwrap_or(s)
+        .trim_end_matches('\0')
+        .to_string()
+}
+
+pub fn scope_script_private_names(body: &mut [Statement], class_id: usize) {
+    scope_statements(body, class_id);
+}
+
+/// Direct eval in a class constructor/method: reject references to private names
+/// not declared in the enclosing class (and not inherited via `extends`).
+pub fn reject_undeclared_private_names_in_eval(
+    body: &[Statement],
+    declared: &HashSet<String>,
+) -> Result<(), JsError> {
+    if body
+        .iter()
+        .any(|s| stmt_references_undeclared_private(s, declared))
+    {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "Private field must be declared in an enclosing class",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
+    Ok(())
+}
+
+fn stmt_references_undeclared_private(stmt: &Statement, declared: &HashSet<String>) -> bool {
+    match stmt {
+        Statement::Expression(expr) | Statement::Return(Some(expr)) | Statement::Throw(expr) => {
+            expr_references_undeclared_private(expr, declared)
+        }
+        Statement::VarDeclaration {
+            init: Some(expr), ..
+        } => expr_references_undeclared_private(expr, declared),
+        Statement::Block(stmts) | Statement::SequenceDecls(stmts) => stmts
+            .iter()
+            .any(|s| stmt_references_undeclared_private(s, declared)),
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || stmt_references_undeclared_private(consequent, declared)
+                || alternate
+                    .as_ref()
+                    .is_some_and(|s| stmt_references_undeclared_private(s, declared))
+        }
+        Statement::While { condition, body }
+        | Statement::DoWhile {
+            condition, body, ..
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || stmt_references_undeclared_private(body, declared)
+        }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            init.as_ref()
+                .is_some_and(|i| for_init_references_undeclared_private(i, declared))
+                || condition
+                    .as_ref()
+                    .is_some_and(|e| expr_references_undeclared_private(e, declared))
+                || update
+                    .as_ref()
+                    .is_some_and(|e| expr_references_undeclared_private(e, declared))
+                || stmt_references_undeclared_private(body, declared)
+        }
+        Statement::Return(None) => false,
+        _ => false,
+    }
+}
+
+fn for_init_references_undeclared_private(init: &ForInit, declared: &HashSet<String>) -> bool {
+    match init {
+        ForInit::Expression(expr) => expr_references_undeclared_private(expr, declared),
+        ForInit::VarDeclaration { init, .. } => init
+            .as_ref()
+            .is_some_and(|e| expr_references_undeclared_private(e, declared)),
+    }
+}
+
+fn expr_references_undeclared_private(expr: &Expression, declared: &HashSet<String>) -> bool {
+    match expr {
+        Expression::Member {
+            object, property, ..
+        } => {
+            expr_references_undeclared_private(object, declared)
+                || private_key_undeclared(property, declared)
+        }
+        Expression::Assignment { left, right, .. }
+        | Expression::CompoundAssignment { left, right, .. }
+        | Expression::LogicalCompoundAssignment { left, right, .. } => {
+            expr_references_undeclared_private(left, declared)
+                || expr_references_undeclared_private(right, declared)
+        }
+        Expression::Call { callee, arguments } => {
+            expr_references_undeclared_private(callee, declared)
+                || arguments
+                    .iter()
+                    .any(|a| expr_references_undeclared_private(a, declared))
+        }
+        Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
+            expr_references_undeclared_private(argument, declared)
+        }
+        Expression::Binary { left, right, .. } => {
+            expr_references_undeclared_private(left, declared)
+                || expr_references_undeclared_private(right, declared)
+        }
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || expr_references_undeclared_private(consequent, declared)
+                || expr_references_undeclared_private(alternate, declared)
+        }
+        Expression::Array(exprs) | Expression::Sequence(exprs) => exprs
+            .iter()
+            .any(|e| expr_references_undeclared_private(e, declared)),
+        Expression::Spread(inner) => expr_references_undeclared_private(inner, declared),
+        Expression::Yield(Some(inner)) | Expression::YieldDelegate(inner) => {
+            expr_references_undeclared_private(inner, declared)
+        }
+        _ => false,
+    }
+}
+
+fn private_key_undeclared(key: &PropertyKey, declared: &HashSet<String>) -> bool {
+    let PropertyKey::Ident(s) = key else {
+        return false;
+    };
+    if !is_unscoped_private(s) {
+        return false;
+    }
+    !declared.contains(&bare_private_name(s))
 }
 
 fn scope_class_member(member: &mut ClassMember, class_id: usize) {
@@ -197,9 +394,15 @@ fn scope_expression(expr: &mut Expression, class_id: usize) {
                 scope_expression(arg, class_id);
             }
         }
-        Expression::ArrowFunction { params, body } => {
+        Expression::ArrowFunction {
+            params,
+            body,
+            is_async,
+            is_generator,
+        } => {
             scope_params(params, class_id);
             scope_arrow_body(body, class_id);
+            let _ = (is_async, is_generator);
         }
         Expression::FunctionExpression { params, body, .. } => {
             scope_params(params, class_id);
@@ -268,6 +471,7 @@ fn scope_arrow_body(body: &mut ArrowBody, class_id: usize) {
 fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
     match val {
         PropertyValue::Value(expr) => scope_expression(expr, class_id),
+        PropertyValue::Spread(expr) => scope_expression(expr, class_id),
         PropertyValue::Getter { body, .. } | PropertyValue::Setter { body, .. } => {
             scope_statements(body, class_id);
         }
@@ -277,7 +481,13 @@ fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
 fn scope_property_key(key: &mut PropertyKey, class_id: usize) {
     if let PropertyKey::Ident(s) = key {
         if is_unscoped_private(s) {
-            *s = crate::value::scoped_private_name_key(class_id, s);
+            let bare = bare_private_name(s);
+            let target_id = if DECLARED_PRIVATE.with(|d| d.borrow().contains(&bare)) {
+                class_id
+            } else {
+                PARENT_CLASS_ID.with(|p| p.get().unwrap_or(class_id))
+            };
+            *s = crate::value::scoped_private_name_key(target_id, s);
         }
     }
 }
@@ -297,5 +507,66 @@ mod tests {
                    C.prototype.get.call(new D())";
         let err = Context::new().unwrap().eval(src).unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn nested_class_accesses_outer_private_field() {
+        let src = "class Outer { #x = 42; innerclass() { \
+                   return class extends Outer { f() { this.#x = 1; } }; } \
+                   value() { return this.#x; } } \
+                   var outer = new Outer(); var Inner = outer.innerclass(); var i = new Inner(); \
+                   outer.value() === 42 && i.value() === 42";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn nested_class_field_accessor_reads_outer_private_on_parameter() {
+        let src = "class C { #outer = 'test262'; \
+                   B = class { method(o) { return o.#outer; } }; } \
+                   let c = new C(); let b = new c.B(); b.method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_first_of_two_without_own_private() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   dummy = 1; } \
+                   let c = new C(); (new c.B_withoutPrivateField()).method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_field_two_variants_first_only() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   B_withPrivateField = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); (new c.B_withoutPrivateField()).method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_field_two_variants_like_test262() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   B_withPrivateField = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); \
+                   (new c.B_withoutPrivateField()).method(c) === 'test262' && \
+                   (new c.B_withPrivateField()).method(c) === 'test262'";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn nested_class_with_own_private_reads_outer_private_on_parameter() {
+        let src = "class C { #outer = 'test262'; \
+                   B = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); let b = new c.B(); b.method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
     }
 }

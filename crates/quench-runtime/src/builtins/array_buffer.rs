@@ -18,7 +18,43 @@ pub fn register_array_buffer(ctx: &mut Context) {
     }
 
     let proto_clone = Rc::clone(&proto_rc);
-    let ab_fn_rc = Rc::new(NativeFunction::new_with_prototype(
+    proto_rc.borrow_mut().set(
+        "slice",
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(this_obj) = this_val else {
+                return Err(crate::JsError::new(
+                    "TypeError: ArrayBuffer.prototype.slice requires an ArrayBuffer receiver",
+                ));
+            };
+            let len = this_obj
+                .borrow()
+                .get("byteLength")
+                .map(|v| to_number(&v) as usize)
+                .unwrap_or(0);
+            let start = args
+                .first()
+                .map(|v| to_number(v) as isize)
+                .unwrap_or(0)
+                .clamp(0, len as isize) as usize;
+            let end = args
+                .get(1)
+                .map(|v| to_number(v) as isize)
+                .unwrap_or(len as isize)
+                .clamp(start as isize, len as isize) as usize;
+            let sliced_len = (end - start) as f64;
+            let proto = this_obj.borrow().prototype.clone();
+            let mut sliced = Object::new(ObjectKind::Ordinary);
+            if let Some(p) = proto {
+                sliced.prototype = Some(p);
+            }
+            sliced.set("byteLength", Value::Number(sliced_len));
+            crate::builtins::object::set_boxed_value(&mut sliced, Value::Number(sliced_len));
+            Ok(Value::Object(Rc::new(RefCell::new(sliced))))
+        }))),
+    );
+
+    let mut ab_native = NativeFunction::new_with_prototype(
         move |args| {
             let len = args.first().map(to_number).unwrap_or(0.0);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -39,12 +75,49 @@ pub fn register_array_buffer(ctx: &mut Context) {
             }
         },
         Rc::clone(&proto_rc),
-    ));
+    );
+    ab_native.name = "ArrayBuffer".to_string();
+    let ab_fn_rc = Rc::new(ab_native);
     // Set prototype property so eval_new can find it
     let _ = ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     let ab_fn = Value::NativeFunction(ab_fn_rc);
 
     ctx.set_global("ArrayBuffer".to_string(), ab_fn);
+    register_shared_array_buffer(ctx);
+}
+
+fn register_shared_array_buffer(ctx: &mut Context) {
+    let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
+    let proto_clone = Rc::clone(&proto_rc);
+    let mut sab_native = NativeFunction::new_with_prototype(
+        move |args| {
+            let len = args.first().map(to_number).unwrap_or(0.0);
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            if let Value::Object(this_obj) = this_val {
+                this_obj.borrow_mut().set("byteLength", Value::Number(len));
+                if this_obj.borrow().prototype.is_none() {
+                    this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
+                }
+                Ok(Value::Object(this_obj))
+            } else {
+                Err(crate::JsError::new(
+                    "TypeError: SharedArrayBuffer constructor requires 'new'",
+                ))
+            }
+        },
+        Rc::clone(&proto_rc),
+    );
+    sab_native.name = "SharedArrayBuffer".to_string();
+    let sab_fn_rc = Rc::new(sab_native);
+    let _ = sab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    ctx.set_global(
+        "SharedArrayBuffer".to_string(),
+        Value::NativeFunction(sab_fn_rc),
+    );
 }
 
 #[cfg(test)]
@@ -92,9 +165,17 @@ mod tests {
     }
 
     #[test]
-    fn array_buffer_prototype_exists() {
-        let result = eval_ok("ArrayBuffer.prototype");
-        assert!(!matches!(result, Value::Undefined));
+    fn array_buffer_subclass_auto_super() {
+        assert_eq!(
+            eval_ok("class AB extends ArrayBuffer {} new AB(4).byteLength").to_string(),
+            "4"
+        );
+    }
+
+    #[test]
+    fn array_buffer_subclass_slice() {
+        let result = eval_ok("class AB extends ArrayBuffer {} (new AB(4)).slice(0, 1).byteLength");
+        assert_eq!(result.to_string(), "1");
     }
 
     #[test]

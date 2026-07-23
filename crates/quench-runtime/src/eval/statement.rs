@@ -61,6 +61,26 @@ thread_local! {
     // gets a result back, it pops and combines with the returned value.
     static ACC_STACK: std::cell::RefCell<Vec<Value>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    static EXPLICIT_RETURN_STACK: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+}
+
+fn set_explicit_return_for_current_body() {
+    EXPLICIT_RETURN_STACK.with(|stack| {
+        if let Some(top) = stack.borrow_mut().last_mut() {
+            *top = true;
+        }
+    });
+}
+
+/// Result of evaluating a function body, including whether it used an explicit `return`.
+pub(crate) struct FunctionBodyResult {
+    pub value: Value,
+    pub explicit_return: bool,
+}
+
+/// Whether the most recent `eval_function_body` completed via an explicit `return`.
+pub fn take_explicit_function_return() -> bool {
+    EXPLICIT_RETURN_STACK.with(|stack| stack.borrow().last().copied().unwrap_or(false))
 }
 
 /// Set the tail-call signal for the trampoline to pick up.
@@ -157,7 +177,7 @@ pub fn eval_statements(
                 return Ok(val);
             }
             // Propagate break/continue so enclosing loops can observe them.
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue(_))) => {
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
                 set_control_flow(cf);
                 return Ok(last_val);
             }
@@ -179,6 +199,29 @@ pub fn eval_function_body(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    eval_function_body_with_meta(stmts, env, in_arrow_function).map(|r| r.value)
+}
+
+pub(crate) fn eval_function_body_with_meta(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<FunctionBodyResult, JsError> {
+    EXPLICIT_RETURN_STACK.with(|stack| stack.borrow_mut().push(false));
+    let value = eval_function_body_impl(stmts, env, in_arrow_function)?;
+    let explicit_return =
+        EXPLICIT_RETURN_STACK.with(|stack| stack.borrow_mut().pop().unwrap_or(false));
+    Ok(FunctionBodyResult {
+        value,
+        explicit_return,
+    })
+}
+
+fn eval_function_body_impl(
+    stmts: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
     let last_idx = stmts.len().saturating_sub(1);
     let mut last_val = Value::Undefined;
     for (i, stmt) in stmts.iter().enumerate() {
@@ -186,20 +229,12 @@ pub fn eval_function_body(
 
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
-            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) && acc_stack_len() > 0
-            {
-                // Set tail-call signal, then break to let the trampoline extract
-                // the accumulator from the acc_stack. If no signal was set
-                // (e.g. callee is a NativeFunction, not a JS ValueFunction),
-                // fall through to normal return evaluation.
-                handle_tail_call(expr, env, in_arrow_function)?;
-                // Check if a tail-call signal was actually set. NativeFunction and
-                // NativeConstructor callees skip TCO, so no signal is set — fall
-                // through to normal return evaluation instead.
-                if let Some(signal) = take_tail_call_signal() {
-                    set_tail_call_signal(signal);
-                    break;
-                }
+            let handled_tail = is_last_stmt
+                && expr.as_ref().is_some_and(|e| is_tail_expr(e))
+                && acc_stack_len() > 0
+                && try_handle_tail_call(expr, env, in_arrow_function)?;
+            if handled_tail {
+                break;
             }
             // Non-tail return (or tail return outside an active trampoline).
             let val = match expr {
@@ -207,6 +242,7 @@ pub fn eval_function_body(
                 None => Value::Undefined,
             };
             set_control_flow(ControlFlow::Return(val.clone()));
+            set_explicit_return_for_current_body();
             return Ok(val);
         }
 
@@ -248,10 +284,13 @@ pub fn eval_function_body(
             continue;
         }
         match take_control_flow() {
-            Some(ControlFlow::Return(val)) => return Ok(val),
+            Some(ControlFlow::Return(val)) => {
+                set_explicit_return_for_current_body();
+                return Ok(val);
+            }
             Some(
                 cf @ (ControlFlow::Break
-                | ControlFlow::Continue(_)
+                | ControlFlow::Continue
                 | ControlFlow::Yield(_)
                 | ControlFlow::YieldDelegate(_)),
             ) => {
@@ -268,44 +307,45 @@ pub fn eval_function_body(
     // try/catch, or a bare return inside an if/else chain).
     if let Some(ControlFlow::Return(val)) = take_control_flow() {
         set_control_flow(ControlFlow::Return(val.clone()));
+        set_explicit_return_for_current_body();
         return Ok(val);
     }
     Ok(last_val)
 }
 
-/// Handle a tail-call return expression: resolve callee and args, then
-/// set the thread-local signal for the trampoline to pick up.
-fn handle_tail_call(
+/// Handle a tail-call return expression when eligible. Returns true if a tail-call
+/// signal was set (async/generator callees are excluded — they use Promise wrapping).
+fn try_handle_tail_call(
     expr: &Option<Box<Expression>>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-) -> Result<(), JsError> {
-    if let Some(e) = expr.as_ref() {
-        if let Expression::Call { callee, arguments } = e.as_ref() {
-            let (callee_val, this_val) = match callee.as_ref() {
-                Expression::Member { .. } => {
-                    let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
-                    (func, this)
-                }
-                _ => (
-                    eval_expression(callee, env, in_arrow_function)?,
-                    Value::Undefined,
-                ),
-            };
-            let args: Vec<Value> = arguments
-                .iter()
-                .map(|arg| eval_expression(arg, env, in_arrow_function))
-                .collect::<Result<Vec<_>, _>>()?;
-            // Tail-call optimization only applies to ValueFunction (JS functions).
-            // NativeFunction / NativeConstructor / Class values are callable but
-            // cannot be stored in a TailCallSignal; skip the optimization and let
-            // normal evaluation handle the call.
-            if let Ok(function) = resolve_callee_to_function(callee_val) {
-                set_tail_call_signal(TailCallSignal::new(function, args, this_val));
-            }
+) -> Result<bool, JsError> {
+    let Some(e) = expr.as_ref() else {
+        return Ok(false);
+    };
+    let Expression::Call { callee, arguments } = e.as_ref() else {
+        return Ok(false);
+    };
+    let args: Vec<Value> = arguments
+        .iter()
+        .map(|arg| eval_expression(arg, env, in_arrow_function))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (callee_val, this_val) = match callee.as_ref() {
+        Expression::Member { .. } => {
+            let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
+            (func, this)
         }
+        _ => (
+            eval_expression(callee, env, in_arrow_function)?,
+            Value::Undefined,
+        ),
+    };
+    let function = resolve_callee_to_function(callee_val)?;
+    if function.is_async || function.is_generator {
+        return Ok(false);
     }
-    Ok(())
+    set_tail_call_signal(TailCallSignal::new(function, args, this_val));
+    Ok(true)
 }
 
 /// Recursively find a tail-call return inside a block at the last position.
@@ -323,15 +363,10 @@ fn handle_tail_call_in_block(
 
     // Last statement is a Return → check for tail call.
     if let Statement::Return(ref expr) = last_stmt {
-        if expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
-            handle_tail_call(expr, env, in_arrow_function)?;
-            // Only signal success if a tail-call signal was actually set
-            // (NativeFunction / NativeConstructor skip TCO).
-            let sig = take_tail_call_signal();
-            if let Some(signal) = sig {
-                set_tail_call_signal(signal);
-                return Ok(Some(()));
-            }
+        if expr.as_ref().is_some_and(|e| is_tail_expr(e))
+            && try_handle_tail_call(expr, env, in_arrow_function)?
+        {
+            return Ok(Some(()));
         }
         // Non-tail return inside block: evaluate it and propagate via control flow.
         let val = match expr.as_ref() {
@@ -393,6 +428,11 @@ pub fn eval_statement(
         Statement::VarDeclaration { kind, name, init } => {
             eval_var_decl(kind, name, init, env, in_arrow_function)
         }
+        Statement::PatternDeclaration {
+            kind,
+            pattern,
+            init,
+        } => eval_pattern_decl(kind, pattern, init, env, in_arrow_function),
         Statement::FunctionDeclaration {
             name,
             params,
@@ -415,9 +455,7 @@ pub fn eval_statement(
                 Ok(Value::Undefined)
             }
         }
-        Statement::While { condition, body } => {
-            eval_while(condition, body, &[], env, in_arrow_function)
-        }
+        Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
         Statement::DoWhile {
             body,
             condition,
@@ -428,7 +466,7 @@ pub fn eval_statement(
             condition,
             update,
             body,
-        } => eval_for(init, condition, update, body, &[], env, in_arrow_function),
+        } => eval_for(init, condition, update, body, env, in_arrow_function),
         Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
         Statement::SequenceDecls(stmts) => {
             // Evaluate var declarations in sequence without creating a new scope
@@ -452,9 +490,8 @@ pub fn eval_statement(
             push_label_scope();
             add_label(label);
             // Transfer this label (and any others already in scope) to a
-            // DoWhile / While / For body so break/continue can find it. This
-            // is needed because these loops are evaluated outside the Labeled
-            // statement's scope.
+            // DoWhile body so break/continue can find it. This is needed because
+            // DoWhile is evaluated outside the Labeled statement's scope.
             if let Statement::DoWhile {
                 body: inner_body,
                 condition,
@@ -465,36 +502,6 @@ pub fn eval_statement(
                 all_labels.extend(labels.iter().cloned());
                 let result =
                     eval_do_while(inner_body, condition, all_labels, env, in_arrow_function);
-                pop_label_scope();
-                return result;
-            }
-            if let Statement::While {
-                condition,
-                body: inner_body,
-            } = body.as_ref()
-            {
-                let labels = vec![label.clone()];
-                let result = eval_while(condition, inner_body, &labels, env, in_arrow_function);
-                pop_label_scope();
-                return result;
-            }
-            if let Statement::For {
-                init,
-                condition,
-                update,
-                body: inner_body,
-            } = body.as_ref()
-            {
-                let labels = vec![label.clone()];
-                let result = eval_for(
-                    init,
-                    condition,
-                    update,
-                    inner_body,
-                    &labels,
-                    env,
-                    in_arrow_function,
-                );
                 pop_label_scope();
                 return result;
             }
@@ -527,7 +534,7 @@ pub fn eval_statement(
                     return Err(js_err);
                 }
             }
-            set_control_flow(ControlFlow::Continue(label.clone()));
+            set_control_flow(ControlFlow::Continue);
             Ok(Value::Undefined)
         }
         Statement::Try {
@@ -625,6 +632,7 @@ pub fn eval_statement(
 }
 
 /// Helper to set a property on globalThis if we're at the top level.
+/// Helper to set a property on globalThis if we're at the top level.
 fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
     // Only set on globalThis if this is the top-level environment
     let is_top_level = env.borrow().get_parent().is_none();
@@ -635,6 +643,31 @@ fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) 
             global_obj.borrow_mut().set(name, value);
         }
     }
+}
+
+fn eval_pattern_decl(
+    kind: &VarKind,
+    pattern: &BindingElement,
+    init: &Option<Expression>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    crate::eval::object::declare_pattern_bindings_with_kind(pattern, *kind, env);
+    let value = if let Some(expr) = init {
+        eval_expression(expr, env, in_arrow_function)?
+    } else {
+        Value::Undefined
+    };
+    let target = crate::eval::object::binding_pattern_expression(pattern.clone());
+    crate::eval::object::assign_to(&target, &value, env)?;
+    if *kind == VarKind::Var {
+        for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
+            if let Some(bound) = env.borrow().get(&name) {
+                set_on_global_this(env, &name, bound);
+            }
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 fn eval_var_decl(
@@ -660,13 +693,6 @@ fn eval_var_decl(
         if f.name.is_none() {
             f.name = Some(name.to_string());
             let _ = f.set_property("name", Value::String(name.to_string()));
-        }
-    }
-    // Per ES §14.6.13 step 18a: when a VariableDeclaration's initializer
-    // evaluates to an anonymous class expression, set the class name.
-    if let Value::Class(ref mut c) = value {
-        if c.name.is_none() {
-            c.set_name(name);
         }
     }
     env.borrow_mut().initialize_declared(name, value.clone());
@@ -719,15 +745,9 @@ fn eval_class_decl(
     Ok(Value::Undefined)
 }
 
-/// Check if `label` matches one of the loop's own labels.
-fn matches_loop_label(label: &str, own_labels: &[String]) -> bool {
-    own_labels.iter().any(|l| l == label)
-}
-
 fn eval_while(
     condition: &Expression,
     body: &Statement,
-    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -745,12 +765,7 @@ fn eval_while(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
+            Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
@@ -769,7 +784,7 @@ fn eval_do_while(
     for lbl in &labels {
         add_label(lbl);
     }
-    let result = eval_do_while_impl(body, condition, &labels, env, in_arrow_function);
+    let result = eval_do_while_impl(body, condition, env, in_arrow_function);
     pop_label_scope();
     result
 }
@@ -777,7 +792,6 @@ fn eval_do_while(
 fn eval_do_while_impl(
     body: &Statement,
     condition: &Expression,
-    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -794,12 +808,7 @@ fn eval_do_while_impl(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
+            Some(ControlFlow::Continue) => {}
             None => {}
         }
         // Check condition; if false, return the body completion value
@@ -815,7 +824,6 @@ fn eval_for(
     condition: &Option<Box<Expression>>,
     update: &Option<Box<Expression>>,
     body: &Statement,
-    labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -855,12 +863,7 @@ fn eval_for(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(ControlFlow::Continue(Some(ref label))) if matches_loop_label(label, labels) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
+            Some(ControlFlow::Continue) => {}
             None => {}
         }
         if let Some(update) = update {
@@ -910,29 +913,17 @@ fn eval_try(
         Ok(try_val) => {
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
-                // Check for pending control flow before finally
+                // Suspend pending control flow while finally runs.
                 let pending_cf = take_control_flow();
-                drop(pending_cf);
 
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
                 match fin_result {
                     Ok(_) => {
-                        // Finally completed normally - check if it set a new control flow
-                        if let Some(cf) = take_control_flow() {
-                            match cf {
-                                ControlFlow::Return(val) => {
-                                    set_control_flow(ControlFlow::Return(val));
-                                }
-                                ControlFlow::Break => {
-                                    set_control_flow(ControlFlow::Break);
-                                }
-                                ControlFlow::Continue(label) => {
-                                    set_control_flow(ControlFlow::Continue(label));
-                                }
-                                _ => {}
+                        if take_control_flow().is_none() {
+                            if let Some(cf) = pending_cf {
+                                set_control_flow(cf);
                             }
                         }
-                        // Return the try value if no control flow override
                         Ok(try_val)
                     }
                     Err(e) => Err(e), // Finally threw - propagate
@@ -957,27 +948,14 @@ fn eval_try(
                 // Run finally if present
                 if let Some(fin) = finalizer {
                     let pending_cf = take_control_flow();
-                    drop(pending_cf);
-
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
-                            // Propagate control flow from catch or finally
-                            if let Some(cf) = take_control_flow() {
-                                match cf {
-                                    ControlFlow::Return(val) => {
-                                        set_control_flow(ControlFlow::Return(val));
-                                    }
-                                    ControlFlow::Break => {
-                                        set_control_flow(ControlFlow::Break);
-                                    }
-                                    ControlFlow::Continue(label) => {
-                                        set_control_flow(ControlFlow::Continue(label));
-                                    }
-                                    _ => {}
+                            if take_control_flow().is_none() {
+                                if let Some(cf) = pending_cf {
+                                    set_control_flow(cf);
                                 }
                             }
-                            // Return catch result if no control flow override
                             catch_result
                         }
                         Err(e) => Err(e), // Finally threw
@@ -988,9 +966,7 @@ fn eval_try(
             } else {
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
-                    let pending_cf = take_control_flow();
-                    drop(pending_cf);
-
+                    let _pending_cf = take_control_flow();
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
@@ -1127,11 +1103,7 @@ fn eval_for_in_stmt(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
+            Some(ControlFlow::Continue) => {}
             None => {}
         }
     }

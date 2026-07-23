@@ -220,6 +220,27 @@ fn async_call_returns_promise_object() {
 }
 
 #[test]
+fn sync_function_returning_async_call_returns_promise() {
+    let mut ctx = Context::new().unwrap();
+    let empty = ctx
+        .eval("function g() { return (async function() {})(); } typeof g()")
+        .unwrap();
+    assert_eq!(
+        empty,
+        Value::String("object".into()),
+        "return (async fn)() must yield a Promise, not the resolved value"
+    );
+    let with_val = ctx
+        .eval("function g() { return (async function() { return 42; })(); } typeof g()")
+        .unwrap();
+    assert_eq!(
+        with_val,
+        Value::String("object".into()),
+        "return (async fn returning 42)() must yield a Promise"
+    );
+}
+
+#[test]
 fn async_call_is_not_value_directly() {
     let mut ctx = Context::new().unwrap();
     let v = ctx
@@ -977,7 +998,7 @@ fn bind_params_positional() {
     let params = vec![Param::new("a"), Param::new("b")];
     let args = vec![Value::Number(1.0), Value::Number(2.0)];
 
-    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+    crate::eval::function::bind_params(&func, &params, &args, &call_env).unwrap();
 
     assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
     assert_eq!(call_env.borrow().get("b"), Some(Value::Number(2.0)));
@@ -998,7 +1019,7 @@ fn bind_params_extra_args() {
     let params = vec![Param::new("a")];
     let args = vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)];
 
-    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+    crate::eval::function::bind_params(&func, &params, &args, &call_env).unwrap();
 
     assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
     // Extra args are ignored — no additional bindings created
@@ -1020,7 +1041,7 @@ fn bind_params_missing_args() {
     let params = vec![Param::new("a"), Param::new("b")];
     let args = vec![Value::Number(1.0)]; // Only one arg, 'b' is missing
 
-    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+    crate::eval::function::bind_params(&func, &params, &args, &call_env).unwrap();
 
     assert_eq!(call_env.borrow().get("a"), Some(Value::Number(1.0)));
     assert_eq!(call_env.borrow().get("b"), Some(Value::Undefined));
@@ -1043,8 +1064,23 @@ fn bind_params_arrow_no_this() {
     let params = vec![Param::new("x")];
     let args = vec![Value::Number(42.0)];
 
-    crate::eval::function::bind_params(&func, &params, &args, &call_env, false).unwrap();
+    crate::eval::function::bind_params(&func, &params, &args, &call_env).unwrap();
 
     // Arrow function parameters are still bound correctly
     assert_eq!(call_env.borrow().get("x"), Some(Value::Number(42.0)));
+}
+
+#[test]
+fn class_method_default_param_self_reference_throws_reference_error() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let err = ctx
+        .eval(
+            "var x = 0; \
+             var callCount = 0; \
+             class C { method(x = x) { callCount = callCount + 1; } } \
+             try { C.prototype.method(); 'ok'; } catch (e) { e.name + ':' + callCount; }",
+        )
+        .unwrap();
+    assert_eq!(err, Value::String("ReferenceError:0".into()));
 }
