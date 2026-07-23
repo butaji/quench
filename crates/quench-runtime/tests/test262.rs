@@ -706,7 +706,10 @@ fn test262_staged() {
     let runner = Test262Runner::new(test262_dir);
     let mut host = QuenchHost::new();
     let summary = runner.run(&mut host);
-    if summary.failed > 0 {
+    let digest = std::env::var("TEST262_DIGEST")
+        .ok()
+        .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+    if summary.failed > 0 && !digest {
         panic!(
             "Stage {} failed: {}/{} passed. First failure: {:?}",
             std::env::var("TEST262_STAGE").unwrap_or_else(|_| "0".into()),

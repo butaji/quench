@@ -170,6 +170,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let output = std::process::Command::new(&bin)
         .arg(&path)
         .env("TEST262_NOSKIP", "1")
+        .env("RUST_MIN_STACK", "33554432")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output();
@@ -177,13 +178,13 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
         Ok(out) => match out.status.code().unwrap_or(-1) {
             0 => TestOutcome::Pass,
             2 => TestOutcome::Skip {
-                reason: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                reason: isolated_message(&out.stderr, &out.stdout),
             },
             code => TestOutcome::Fail {
                 reason: format!(
                     "isolated exit {}: {}",
                     code,
-                    String::from_utf8_lossy(&out.stderr).trim()
+                    isolated_message(&out.stderr, &out.stdout)
                 ),
             },
         },
@@ -193,9 +194,30 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
     }
 }
 
+fn isolated_message(stderr: &[u8], stdout: &[u8]) -> String {
+    let err = String::from_utf8_lossy(stderr);
+    let out = String::from_utf8_lossy(stdout);
+    if let Some(line) = out.lines().find(|l| l.contains("Reason:") || l.contains("FAILED")) {
+        return line.trim().to_string();
+    }
+    if let Some(line) = err.lines().find(|l| !l.is_empty()) {
+        return line.trim().to_string();
+    }
+    out.lines().last().unwrap_or("").trim().to_string()
+}
+
 fn run_test_binary() -> std::path::PathBuf {
     if let Ok(bin) = std::env::var("RUN_TEST_BIN") {
         return std::path::PathBuf::from(bin);
+    }
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ws = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(&manifest);
+    let candidate = ws.join("target/debug/run-test");
+    if candidate.is_file() {
+        return candidate;
     }
     std::path::PathBuf::from("target/debug/run-test")
 }
