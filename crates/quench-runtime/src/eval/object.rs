@@ -148,7 +148,7 @@ pub fn call_getter(
                     .set_this(Value::Undefined);
             }
             let new_env_rc: Rc<RefCell<Environment>> = Rc::new(RefCell::new(new_env));
-            bind_params(f, &f.params, &tail_args, &new_env_rc, false)?;
+            bind_params(f, &f.params, &tail_args, &new_env_rc)?;
             current_env = new_env_rc;
             let r = eval_function_body(&f.body, &current_env, false);
             let tail = take_tail_call_signal();

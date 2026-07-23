@@ -97,7 +97,7 @@ impl GeneratorObject {
                 self.is_async,
                 true,
             );
-            crate::eval::function::bind_params(&stub, &self.params, args, &call_env, false)?;
+            crate::eval::function::bind_params(&stub, &self.params, args, &call_env)?;
         }
         self.call_env = Some(Rc::clone(&call_env));
         Ok(call_env)
