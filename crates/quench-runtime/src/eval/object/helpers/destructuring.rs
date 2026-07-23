@@ -349,8 +349,20 @@ pub fn assign_object_destructuring(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let obj = match value {
+        Value::Null | Value::Undefined => {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot destructure non-object value",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         Value::Object(o) => o.clone(),
-        _ => return Err(JsError("Cannot destructure non-object value".to_string())),
+        other => {
+            let Value::Object(o) = crate::value::to_object(other) else {
+                return Err(JsError("Cannot destructure non-object value".to_string()));
+            };
+            o
+        }
     };
     let mut excluded = std::collections::HashSet::new();
     let mut rest_binding: Option<&BindingElement> = None;
@@ -1132,6 +1144,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(err, Value::String("GEN_PARAM_ERR".into()));
+    }
+
+    #[test]
+    fn object_destructure_param_string_argument_uses_to_object() {
+        let r = eval(
+            "var fnParam; (function({test262 = fnParam = arguments}) { \
+             fnParam = arguments; })('function'); fnParam[0]",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".into()));
     }
 
     #[test]
