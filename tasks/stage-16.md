@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4266 pass / 101 fail (97.7%)** as of 2026-07-23.
+**4,367 tests** · **4274 pass / 93 fail (97.9%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)

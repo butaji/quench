@@ -381,6 +381,13 @@ pub fn call_super_or_default(
             args,
             this_val.clone(),
         ),
+        Value::NativeFunction(nf) if nf.name == "Symbol" => {
+            crate::eval::function::call_value_with_this(
+                Value::NativeFunction(nf.clone()),
+                args,
+                this_val.clone(),
+            )
+        }
         Value::Function(f) => crate::eval::function::call_value_with_this(
             Value::Function(f.clone()),
             args,
@@ -507,7 +514,14 @@ pub fn create_class_prototype_helper_with_env(
         // For NativeFunction (e.g. bound functions), use proper member access
         // to get the .prototype property (handles Object.defineProperty accessors).
         // Per ES spec §15.2.4 step 5f: if Get(ctor, "prototype") is not Object/Null, throw TypeError
+        // Per ES §26.2.1: Proxy is not subclassable (no valid .prototype for extends).
         if let Value::NativeFunction(nf) = &super_class_val {
+            if nf.name == "Proxy" {
+                return Err(JsError(
+                    "TypeError: superclass constructor prototype is not an object or null"
+                        .to_string(),
+                ));
+            }
             let proto_val = crate::eval::member::eval_native_function_member(nf, "prototype")?;
             if matches!(&proto_val, Value::Null) {
                 None
@@ -2986,6 +3000,24 @@ mod tests {
     fn class_name_binding_const_in_method_throws_type_error() {
         let err = eval("class C { m() { C = 42; } } new C().m();").unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn symbol_subclass_super_call_throws_type_error() {
+        let err = eval("class S extends Symbol {} new S();").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_proxy_without_prototype_throws_type_error() {
+        let err = eval("class P extends Proxy {}").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_name_in_extends_expression_throws_reference_error() {
+        let err = eval("class x extends x {}").unwrap_err();
+        assert!(err.0.contains("ReferenceError"), "got {}", err.0);
     }
 
     #[test]
