@@ -52,3 +52,5 @@ Do not edit `tests/test262.rs` or anything under `tests/test262/`.
 - 2026-07-23 — Derived ctor fix (`has_explicit_constructor`): explicit `constructor() {}` without `super` → ReferenceError.
 - 2026-07-23 — QUICK digest (913 files sampled): **666 pass / 247 fail / 0 skip**. Top cluster: `TypeError: Cannot read property 'prototype' of undefined` (~228, yield-in-class). Stack overflow: `dstr/async-private-gen-meth-*`, `prototype-wiring.js` (fix recursion, not skip).
 - 2026-07-23 — **Yield-in-class computed keys** fixed: `generator_replay.rs` suspends mid-class-eval, replays completed yields on resume (`accessor-name-inst-computed-yield-expr.js` passes). Re-run full digest to measure cluster drop.
+- 2026-07-23 — **Generator env persistence** + `return yield` handling: cpn-class-decl yield cluster (4 files) passes.
+- 2026-07-23 — **Multi-level super()** fix in `call_super_constructor`: `set_super_class` + `set_this_value`; `prototype-wiring.js` passes (removed from crash skip list).
