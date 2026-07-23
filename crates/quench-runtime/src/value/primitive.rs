@@ -184,11 +184,8 @@ fn try_to_primitive_symbol(
     let Value::Symbol(symbol_key) = to_prim_symbol else {
         return Ok(None);
     };
-    let to_prim_method = crate::eval::member::eval_object_member(
-        obj,
-        symbol_key.desc.as_deref().unwrap_or(""),
-        None,
-    )?;
+    let to_prim_method =
+        crate::eval::member::eval_object_member(obj, &symbol_key.property_key(), None)?;
     if matches!(to_prim_method, Value::Undefined) {
         return Ok(None);
     }

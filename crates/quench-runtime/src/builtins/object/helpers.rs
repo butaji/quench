@@ -127,7 +127,7 @@ pub fn get_property_key(arg: &Value) -> Option<String> {
         // For symbols, return the raw symbol string (e.g., "Symbol():123")
         // Note: to_js_string wraps this as "Symbol(...)" for display purposes,
         // but the raw string is what's stored in properties
-        Value::Symbol(s) => Some(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
+        Value::Symbol(s) => Some(s.property_key()),
         _ => None,
     }
 }

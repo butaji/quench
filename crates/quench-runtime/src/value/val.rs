@@ -33,10 +33,30 @@ pub use crate::value::convert::{
 };
 
 /// ECMA-262 6.1.6 Symbol type — unique, immutable, optionally described.
+/// Property keys use [`Symbol::property_key`] (`desc\0id`) so equal
+/// descriptions never collide.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Symbol {
     pub desc: Option<Rc<str>>,
     pub global: bool, // Symbol.for / Symbol.keyFor
+    pub id: u64,
+}
+
+static SYMBOL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl Symbol {
+    pub fn new(desc: Option<Rc<str>>, global: bool) -> Self {
+        Self {
+            desc,
+            global,
+            id: SYMBOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Canonical property-key form: `desc\0id` (AGENTS.md).
+    pub fn property_key(&self) -> String {
+        format!("{}\0{}", self.desc.as_deref().unwrap_or(""), self.id)
+    }
 }
 
 /// A JavaScript value - the fundamental runtime type.
@@ -487,10 +507,7 @@ mod tests {
     }
 
     fn sym(desc: &str) -> Value {
-        Value::Symbol(Rc::new(Symbol {
-            desc: Some(Rc::from(desc)),
-            global: false,
-        }))
+        Value::Symbol(Rc::new(Symbol::new(Some(Rc::from(desc)), false)))
     }
 
     fn big(n: i32) -> Value {
@@ -583,23 +600,13 @@ mod tests {
 
     #[test]
     fn test_symbol_struct() {
-        let s = Symbol {
-            desc: Some(Rc::from("foo")),
-            global: false,
-        };
+        let s = Symbol::new(Some(Rc::from("foo")), false);
         assert_eq!(s.desc.as_deref(), Some("foo"));
         assert!(!s.global);
-        assert_eq!(
-            Symbol {
-                desc: Some(Rc::from("foo")),
-                global: false
-            },
-            s
-        );
-        let sg = Symbol {
-            desc: None,
-            global: true,
-        };
+        let s2 = Symbol::new(Some(Rc::from("foo")), false);
+        assert_ne!(s.id, s2.id);
+        assert_ne!(s.property_key(), s2.property_key());
+        let sg = Symbol::new(None, true);
         assert!(sg.global);
         assert!(sg.desc.is_none());
     }

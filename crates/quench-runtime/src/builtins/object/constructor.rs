@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::set_boxed_value;
-use crate::value::{kind::ExoticKind, JsError, Object, ObjectKind, Value};
+use crate::value::{kind::ExoticKind, JsError, Object, ObjectKind, PropertyFlags, Value};
 
 /// Resolve a global constructor's `prototype` object via the current context.
 pub fn constructor_prototype(name: &str) -> Option<Rc<RefCell<Object>>> {
@@ -71,11 +71,30 @@ pub fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
                 let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
                 let len = chars.len();
                 for (i, ch) in chars.iter().enumerate() {
-                    obj.properties.insert(i.to_string(), ch.clone());
+                    let key = i.to_string();
+                    obj.properties.insert(key.clone(), ch.clone());
+                    obj.descriptors.insert(
+                        key,
+                        PropertyFlags {
+                            value: Some(ch.clone()),
+                            writable: false,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
                 }
                 obj.elements = chars;
-                obj.properties
-                    .insert("length".to_string(), Value::Number(len as f64));
+                let len_val = Value::Number(len as f64);
+                obj.properties.insert("length".to_string(), len_val.clone());
+                obj.descriptors.insert(
+                    "length".to_string(),
+                    PropertyFlags {
+                        value: Some(len_val),
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    },
+                );
                 obj
             }
             Value::Symbol(_) => {

@@ -86,8 +86,17 @@ impl Object {
         let mut obj = Object::new(ObjectKind::Array);
         let len = len.min(MAX_ARRAY_ELEMENTS);
         obj.elements = vec![Value::Undefined; len];
-        obj.properties
-            .insert("length".to_string(), Value::Number(len as f64));
+        let len_val = Value::Number(len as f64);
+        obj.properties.insert("length".to_string(), len_val.clone());
+        obj.descriptors.insert(
+            "length".to_string(),
+            helpers::PropertyFlags {
+                value: Some(len_val),
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            },
+        );
         if let Some(proto) = crate::builtins::get_array_prototype() {
             obj.prototype = Some(proto);
         }

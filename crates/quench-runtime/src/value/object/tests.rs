@@ -248,6 +248,52 @@ fn test_has_and_has_own() {
 }
 
 #[test]
+fn object_keys_includes_enumerable_length() {
+    let mut ctx = crate::Context::new().unwrap();
+    let keys = ctx.eval("Object.keys({length: 1})").unwrap();
+    let Value::Object(arr) = keys else {
+        panic!("Object.keys must return an array");
+    };
+    let arr = arr.borrow();
+    assert_eq!(arr.elements.len(), 1);
+    assert_eq!(arr.elements[0], Value::String("length".into()));
+}
+
+#[test]
+fn object_keys_skips_array_holes() {
+    let mut ctx = crate::Context::new().unwrap();
+    let keys = ctx.eval("Object.keys([1,,3])").unwrap();
+    let Value::Object(arr) = keys else {
+        panic!("Object.keys must return an array");
+    };
+    let arr = arr.borrow();
+    let got: Vec<_> = arr
+        .elements
+        .iter()
+        .filter(|v| !matches!(v, Value::Undefined))
+        .cloned()
+        .collect();
+    assert_eq!(
+        got,
+        vec![Value::String("0".into()), Value::String("2".into())]
+    );
+}
+
+#[test]
+fn define_own_property_defaults_attributes_false() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    let pd = PropertyDescriptor {
+        value: Some(Value::Number(1.0)),
+        ..Default::default()
+    };
+    assert!(obj.define_own_property("x", &pd));
+    let d = obj.get_descriptor("x").unwrap();
+    assert!(!d.writable);
+    assert!(!d.enumerable);
+    assert!(!d.configurable);
+}
+
+#[test]
 fn test_own_keys_vs_property_names() {
     let mut obj = Object::new(ObjectKind::Ordinary);
     obj.set("visible", Value::Number(1.0));
@@ -460,20 +506,21 @@ fn test_function_property_helpers_non_function() {
 
 #[test]
 fn test_symbol_properties() {
-    let sym = |d: &str| {
-        Value::Symbol(Rc::new(crate::value::Symbol {
-            desc: Some(Rc::from(d)),
-            global: false,
-        }))
-    };
+    let sym = |d: &str| Value::Symbol(Rc::new(crate::value::Symbol::new(Some(Rc::from(d)), false)));
     let mut obj = Object::new(ObjectKind::Ordinary);
-    obj.set_symbol("test", Value::Number(42.0));
-    assert!(obj.has_symbol(&sym("test")));
-    assert_eq!(obj.get_property(&sym("test")), Some(Value::Number(42.0)));
+    let key = sym("test");
+    let key_str = match &key {
+        Value::Symbol(s) => s.property_key(),
+        _ => unreachable!(),
+    };
+    obj.set_symbol(&key_str, Value::Number(42.0));
+    assert!(obj.has_symbol(&key));
+    assert_eq!(obj.get_property(&key), Some(Value::Number(42.0)));
     assert!(!obj.has_symbol(&sym("missing")));
     assert_eq!(obj.get_property(&sym("missing")), None);
-    obj.set_symbol_value(sym("sym"));
-    assert!(obj.has_symbol(&sym("sym")));
+    let sym_val = sym("sym");
+    obj.set_symbol_value(sym_val.clone());
+    assert!(obj.has_symbol(&sym_val));
 }
 
 #[test]
