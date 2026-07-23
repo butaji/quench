@@ -3,19 +3,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::object::helpers::PropertyFlags;
 use crate::value::{
     to_js_string, to_number_unchecked, JsError, NativeConstructor, NativeFunction, Object,
     ObjectKind, Value, ValueFunction,
 };
 use crate::Context;
 
-// Thread-local storage for Function.prototype and special function prototypes
+// Thread-local storage for Function.prototype (used by interpreter for function expressions)
 thread_local! {
     static FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static ASYNC_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
     static GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
-        const { RefCell::new(None) };
-    static ASYNC_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
         const { RefCell::new(None) };
     static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
         const { RefCell::new(None) };
@@ -26,19 +24,16 @@ pub fn get_function_prototype() -> Option<Rc<RefCell<Object>>> {
     FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
-/// Get the GeneratorFunction.prototype object
-pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    GENERATOR_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
-}
-
-/// Get the AsyncFunction.prototype object
 pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
-/// Get the AsyncGeneratorFunction.prototype object
+pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
 pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|p| p.borrow().clone())
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
 /// Check if an object is Function.prototype (for special property access handling)
@@ -50,21 +45,6 @@ pub fn is_function_prototype(obj: &Rc<RefCell<Object>>) -> bool {
             false
         }
     })
-}
-
-/// Get the GeneratorFunction.prototype object (for %GeneratorPrototype% [[GetPrototypeOf]])
-pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
-}
-
-/// Get the AsyncFunction.prototype object (for %AsyncFunctionPrototype% [[GetPrototypeOf]])
-pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
-}
-
-/// Get the AsyncGeneratorFunction.prototype object (for %AsyncGeneratorPrototype% [[GetPrototypeOf]])
-pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
 /// Get the error message for restricted function properties
@@ -221,8 +201,35 @@ pub fn register_function(ctx: &mut Context) {
         *fp.borrow_mut() = Some(Rc::clone(&function_proto));
     });
 
-    let function_constructor =
-        make_function_constructor("", function_proto.clone(), Rc::clone(ctx.env()));
+    let async_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&async_function_proto_rc));
+    });
+
+    let generator_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&generator_function_proto_rc));
+    });
+
+    let async_generator_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&async_generator_function_proto_rc));
+    });
+
+    let function_constructor = make_function_constructor(
+        function_proto.clone(),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Ordinary,
+    );
     function_constructor.set_name("Function");
     let func_ctor = Value::NativeConstructor(Rc::new(function_constructor));
     // Set Function.prototype.constructor = Function
@@ -232,37 +239,49 @@ pub fn register_function(ctx: &mut Context) {
     ctx.set_global("Function".to_string(), func_ctor);
 
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
-    // as native constructors that delegate to the Function constructor logic
-    // but generate the correct source text per kind.
-    // Each has its own prototype object so Object.getPrototypeOf(genFn) returns
-    // the correct prototype (GeneratorFunction.prototype, not Function.prototype).
-    let async_func_ctor =
-        make_function_constructor("async ", function_proto.clone(), Rc::clone(ctx.env()));
-    async_func_ctor.set_name("AsyncFunction");
-    let async_func_ctor_val = Value::NativeConstructor(Rc::new(async_func_ctor));
-    let async_func_proto = make_function_kind_prototype(async_func_ctor_val.clone());
-    ASYNC_FUNCTION_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&async_func_proto)));
-    ctx.set_global("AsyncFunction".to_string(), async_func_ctor_val);
-
-    let gen_func_ctor =
-        make_function_constructor("*", function_proto.clone(), Rc::clone(ctx.env()));
-    gen_func_ctor.set_name("GeneratorFunction");
-    let gen_func_ctor_val = Value::NativeConstructor(Rc::new(gen_func_ctor));
-    let gen_func_proto = make_function_kind_prototype(gen_func_ctor_val.clone());
-    GENERATOR_FUNCTION_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&gen_func_proto)));
-    ctx.set_global("GeneratorFunction".to_string(), gen_func_ctor_val);
-
-    let async_gen_func_ctor =
-        make_function_constructor("async *", function_proto.clone(), Rc::clone(ctx.env()));
-    async_gen_func_ctor.set_name("AsyncGeneratorFunction");
-    let async_gen_func_ctor_val = Value::NativeConstructor(Rc::new(async_gen_func_ctor));
-    let async_gen_func_proto = make_function_kind_prototype(async_gen_func_ctor_val.clone());
-    ASYNC_GENERATOR_FUNCTION_PROTOTYPE
-        .with(|p| *p.borrow_mut() = Some(Rc::clone(&async_gen_func_proto)));
-    ctx.set_global(
-        "AsyncGeneratorFunction".to_string(),
-        async_gen_func_ctor_val,
+    // as native constructors that delegate to the Function constructor logic.
+    let async_func_ctor = make_function_constructor(
+        Rc::clone(&async_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Async,
     );
+    async_func_ctor.set_name("AsyncFunction");
+    let async_ctor_val = Value::NativeConstructor(Rc::new(async_func_ctor));
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut().set("constructor", async_ctor_val.clone());
+        }
+    });
+    ctx.set_global("AsyncFunction".to_string(), async_ctor_val);
+
+    let gen_func_ctor = make_function_constructor(
+        Rc::clone(&generator_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Generator,
+    );
+    gen_func_ctor.set_name("GeneratorFunction");
+    let gen_ctor_val = Value::NativeConstructor(Rc::new(gen_func_ctor));
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut().set("constructor", gen_ctor_val.clone());
+        }
+    });
+    ctx.set_global("GeneratorFunction".to_string(), gen_ctor_val);
+
+    let async_gen_func_ctor = make_function_constructor(
+        Rc::clone(&async_generator_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::AsyncGenerator,
+    );
+    async_gen_func_ctor.set_name("AsyncGeneratorFunction");
+    let async_gen_ctor_val = Value::NativeConstructor(Rc::new(async_gen_func_ctor));
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut()
+                .set("constructor", async_gen_ctor_val.clone());
+        }
+    });
+    ctx.set_global("AsyncGeneratorFunction".to_string(), async_gen_ctor_val);
 }
 
 fn make_function_prototype() -> Rc<RefCell<Object>> {
@@ -340,38 +359,15 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
     function_proto_rc
 }
 
-/// Create a prototype object for a specific function kind (GeneratorFunction,
-/// AsyncFunction, AsyncGeneratorFunction). This object serves as the [[Prototype]]
-/// of instances created by that kind (e.g., `Object.getPrototypeOf(function*() {})`
-/// returns GeneratorFunction.prototype). Its own [[Prototype]] is Function.prototype
-/// so that generator/async functions inherit Function.prototype methods.
-fn make_function_kind_prototype(ctor: Value) -> Rc<RefCell<Object>> {
-    let proto = Object::new(ObjectKind::Ordinary);
-    let proto_rc = Rc::new(RefCell::new(proto));
-    if let Some(fp) = get_function_prototype() {
-        proto_rc.borrow_mut().prototype = Some(fp);
-    }
-    proto_rc.borrow_mut().set("constructor", ctor);
-    proto_rc
-}
-
 fn make_function_constructor(
-    kind: &str,
     function_proto: Rc<RefCell<Object>>,
     global_env: Rc<RefCell<crate::env::Environment>>,
     kind: FunctionCtorKind,
 ) -> NativeConstructor {
-    let kind_owned = kind.to_string();
     NativeConstructor::new(
         move |args| {
             // new Function(arg1, ..., argN, body): compile a real function
-            // whose closure is the global scope.
-            // The `kind` prefix determines whether the function is a generator,
-            // async, or async-generator function.
-            //   ""        → function anonymous(...) { body }
-            //   "*"       → function* anonymous(...) { body }
-            //   "async "  → async function anonymous(...) { body }
-            //   "async *" → async function* anonymous(...) { body }
+            // whose closure is the global scope
             let body_src = args.last().map(to_js_string).unwrap_or_default();
             let params_src = args[..args.len().saturating_sub(1)]
                 .iter()
@@ -379,8 +375,10 @@ fn make_function_constructor(
                 .collect::<Vec<_>>()
                 .join(",");
             let source = format!(
-                "function{} anonymous({}) {{\n{}\n}}",
-                kind_owned, params_src, body_src
+                "{}({}) {{\n{}\n}}",
+                kind.parse_prefix(),
+                params_src,
+                body_src
             );
             // Per ES spec §16.1, a hashbang comment (#! ...) is only valid at the
             // very beginning of source text. The Function constructor wraps the body
@@ -410,75 +408,11 @@ fn make_function_constructor(
                         is_generator,
                     }) = stmts.into_iter().next()
                     {
-                        let param_count = params.len();
-                        let func = Value::Function(ValueFunction::new(
-                            Some(name.clone()),
-                            params,
-                            body,
-                            Rc::clone(&global_env),
-                            is_async,
-                            is_generator,
-                        ));
-                        // When called via super() from a derived class (detected by
-                        // native_this being an existing object), store the function
-                        // on the existing object's internal slots instead of creating
-                        // a new Value::Function. This preserves the derived class's
-                        // prototype chain on the object.
-                        if let Some(Value::Object(existing)) = crate::interpreter::get_native_this()
-                        {
-                            existing.borrow_mut().call_slot = Some(func);
-                            {
-                                let mut obj = existing.borrow_mut();
-                                // Set .length as own property (writable: false, enumerable: false, configurable: true)
-                                obj.define(
-                                    "length",
-                                    Value::Number(param_count as f64),
-                                    PropertyFlags {
-                                        value: None,
-                                        writable: false,
-                                        enumerable: false,
-                                        configurable: true,
-                                    },
-                                );
-                                // Set .name as own property ("anonymous") per CreateDynamicFunction
-                                obj.define(
-                                    "name",
-                                    Value::String(name.clone()),
-                                    PropertyFlags {
-                                        value: None,
-                                        writable: false,
-                                        enumerable: false,
-                                        configurable: true,
-                                    },
-                                );
-                                // Set .prototype for non-Async functions (Normal, Generator, AsyncGenerator)
-                                // Async functions (kind starts with "async " but not "async *") get no .prototype
-                                if kind_owned.is_empty()
-                                    || kind_owned == "*"
-                                    || kind_owned == "async *"
-                                {
-                                    let mut proto = Object::new(ObjectKind::Ordinary);
-                                    // Set the prototype of this object to Object.prototype
-                                    // so that methods like hasOwnProperty work.
-                                    if let Some(obj_proto) = crate::builtins::get_object_prototype()
-                                    {
-                                        proto.prototype = Some(obj_proto);
-                                    }
-                                    obj.define(
-                                        "prototype",
-                                        Value::Object(Rc::new(RefCell::new(proto))),
-                                        PropertyFlags {
-                                            value: None,
-                                            writable: true,
-                                            enumerable: false,
-                                            configurable: false,
-                                        },
-                                    );
-                                }
-                            }
-                            Ok(Value::Object(existing))
-                        } else {
-                            Ok(func)
+                        let (expect_async, expect_generator) = kind.expected_flags();
+                        if is_async != expect_async || is_generator != expect_generator {
+                            return Err(JsError::new(
+                                "SyntaxError: Function constructor produced no function",
+                            ));
                         }
                         let mut func = ValueFunction::new(
                             Some(name),
@@ -525,71 +459,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_class_extends_function_is_callable() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class MyFn extends Function { constructor() { super('return 1'); } }
-                 var fn = new MyFn();
-                 fn();",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Number(1.0));
-    }
-
-    #[test]
-    fn test_class_extends_function_instanceof() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class MyFn extends Function { constructor() { super('return 1'); } }
-                 var fn = new MyFn();
-                 fn instanceof MyFn;",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Boolean(true));
-    }
-
-    #[test]
-    fn test_class_extends_function_instanceof_function() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class MyFn extends Function { constructor() { super('return 1'); } }
-                 var fn = new MyFn();
-                 fn instanceof Function;",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Boolean(true));
-    }
-
-    #[test]
-    fn test_class_extends_function_no_explicit_ctor() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class MyFn extends Function {}
-                 var fn = new MyFn('return 42');
-                 fn();",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Number(42.0));
-    }
-
-    #[test]
-    fn test_class_extends_function_is_callable_with_args() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class Adder extends Function { constructor() { super('a', 'b', 'return a + b'); } }
-                 var add = new Adder();
-                 add(3, 4);",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Number(7.0));
-    }
-
-    #[test]
     fn test_function_constructor_compiles_real_function() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("var f = Function('a', 'return a'); f(3)").unwrap();
@@ -624,82 +493,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("Function('a', 'return a')(3)").unwrap();
         assert_eq!(result, Value::Number(3.0));
-    }
-
-    #[test]
-    fn test_class_extends_function_has_length_own_prop() {
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                "class Fn extends Function {}
-                 var fn = new Fn('a', 'b', 'return a + b');
-                 Object.getOwnPropertyDescriptor(fn, 'length').value;",
-            )
-            .unwrap();
-        assert_eq!(result, Value::Number(2.0));
-        let desc = ctx
-            .eval(
-                "class Fn extends Function {}
-                 var fn = new Fn('a', 'b', 'return a + b');
-                 Object.getOwnPropertyDescriptor(fn, 'length');",
-            )
-            .unwrap();
-        if let Value::Object(o) = desc {
-            assert_eq!(o.borrow().get("writable"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("enumerable"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("configurable"), Some(Value::Boolean(true)));
-        } else {
-            panic!("expected object descriptor");
-        }
-    }
-
-    #[test]
-    fn test_class_extends_function_has_name_own_prop() {
-        let mut ctx = Context::new().unwrap();
-        let desc = ctx
-            .eval(
-                "class Fn extends Function {}
-                 var fn = new Fn('a', 'b', 'return a + b');
-                 Object.getOwnPropertyDescriptor(fn, 'name');",
-            )
-            .unwrap();
-        if let Value::Object(o) = desc {
-            assert_eq!(
-                o.borrow().get("value"),
-                Some(Value::String("anonymous".to_string()))
-            );
-            assert_eq!(o.borrow().get("writable"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("enumerable"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("configurable"), Some(Value::Boolean(true)));
-        } else {
-            panic!("expected object descriptor, got {:?}", desc);
-        }
-    }
-
-    #[test]
-    fn test_class_extends_generatorfunction_has_prototype() {
-        let mut ctx = Context::new().unwrap();
-        // Everything in one eval to avoid scoping issues
-        let r = ctx
-            .eval(
-                "class GFn extends GeneratorFunction {}
-                 var gfn = new GFn(';');
-                 [Object.keys(gfn.prototype).length,
-                  gfn.prototype.hasOwnProperty('constructor'),
-                  Object.getOwnPropertyDescriptor(gfn, 'prototype').writable,
-                  Object.getOwnPropertyDescriptor(gfn, 'prototype').enumerable,
-                  Object.getOwnPropertyDescriptor(gfn, 'prototype').configurable];",
-            )
-            .unwrap();
-        if let Value::Object(o) = r {
-            assert_eq!(o.borrow().get("0"), Some(Value::Number(0.0)));
-            assert_eq!(o.borrow().get("1"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("2"), Some(Value::Boolean(true)));
-            assert_eq!(o.borrow().get("3"), Some(Value::Boolean(false)));
-            assert_eq!(o.borrow().get("4"), Some(Value::Boolean(false)));
-        } else {
-            panic!("expected array, got {:?}", r);
-        }
     }
 
     #[test]

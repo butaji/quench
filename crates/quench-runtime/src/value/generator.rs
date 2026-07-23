@@ -18,8 +18,9 @@ pub struct ForOfSuspend {
     pub index: usize,
     pub item: Value,
     pub resume_body: bool,
-    pub body_stmt_resume: Option<usize>,
-    pub resume_at_yield_stmt: bool,
+    pub body_tail: Option<Vec<Statement>>,
+    pub resume_mid_delegate: bool,
+    pub resume_init: bool,
     pub variable: crate::ast::Expression,
     pub body: Statement,
     pub loop_binding: Option<crate::ast::VarKind>,
@@ -196,7 +197,8 @@ impl GeneratorObject {
                         if let Some(s) = crate::eval::iteration::take_pending_for_of_suspend() {
                             self.for_of_suspend = Some(s);
                         }
-                        if let Some(s) = crate::eval::iteration::take_pending_yield_delegate_suspend()
+                        if let Some(s) =
+                            crate::eval::iteration::take_pending_yield_delegate_suspend()
                         {
                             self.yield_delegate_suspend = Some(s);
                         }

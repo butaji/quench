@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::helpers::{
-    init_set_object, iterator_prop_key, make_live_index_iterator, map_update_size, native_fn,
-    set_has_value, set_populate, set_values, LiveIndexIteratorMode,
+    init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
+    set_populate, set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -68,15 +68,10 @@ fn set_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let Some(values) = set_values(&this) else {
-        return Err(JsError::from(
-            "TypeError: Set.prototype iterator called on non-Set",
-        ));
-    };
-    Ok(make_live_index_iterator(
-        values,
-        LiveIndexIteratorMode::Values,
-    ))
+    let items = set_values(&this)
+        .map(|v| v.borrow().elements.clone())
+        .unwrap_or_default();
+    Ok(make_iterator(items))
 }
 
 pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
@@ -93,31 +88,22 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
 
     let set_proto_for_ctor = Rc::clone(&set_proto);
     let set_constructor = native_fn(move |args| {
-        // Use native_this when called via super() (class extends Set)
-        let (set_obj, set) =
-            if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
-                existing.borrow_mut().kind = ObjectKind::Set;
-                let rc = Rc::clone(&existing);
-                let rc2 = Rc::clone(&existing);
-                (rc, rc2)
-            } else {
-                let obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
-                let rc = Rc::new(RefCell::new(obj));
-                let rc2 = Rc::clone(&rc);
-                (rc, rc2)
-            };
-        {
-            let mut s = set.borrow_mut();
-            let values = Object::new_array(0);
-            s.set("_values", Value::Object(Rc::new(RefCell::new(values))));
-            s.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let set = if let Value::Object(obj_rc) = this_val {
+            init_set_object(&obj_rc);
+            obj_rc
+        } else {
+            let set_obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
+            let set = Rc::new(RefCell::new(set_obj));
+            init_set_object(&set);
+            set
+        };
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 set_populate(&set, src)?;
             }
         }
-        Ok(Value::Object(set_obj))
+        Ok(Value::Object(set))
     });
 
     if let Value::NativeFunction(nf) = &set_constructor {

@@ -377,12 +377,7 @@ pub fn set_super_property(
 
     if let Some(setter_storage) = setter_clone {
         if let Value::Object(ref this_obj) = this_val {
-            crate::eval::object::call_setter(
-                this_obj,
-                &setter_storage,
-                value.clone(),
-                env,
-            )?;
+            crate::eval::object::call_setter(this_obj, &setter_storage, value.clone(), env)?;
         }
         return Ok(value);
     }

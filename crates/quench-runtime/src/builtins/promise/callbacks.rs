@@ -60,7 +60,7 @@ pub fn enqueue_promise_reactions(promise_rc: &Rc<RefCell<Object>>) {
             if data.state == PromiseState::Pending {
                 return;
             }
-            let mut callbacks: Vec<Value> = data.on_fulfilled_callbacks.drain(..).collect();
+            let mut callbacks = std::mem::take(&mut data.on_fulfilled_callbacks);
             callbacks.append(&mut data.on_rejected_callbacks);
             (data.state.clone(), data.result.clone(), callbacks)
         } else {
@@ -221,13 +221,13 @@ pub fn execute_callback(
                 } else if is_rejected {
                     data.reject(settled_value.clone());
                     // Drain callbacks while we still have the borrow
-                    let mut cb: Vec<Value> = data.on_fulfilled_callbacks.drain(..).collect();
+                    let mut cb = std::mem::take(&mut data.on_fulfilled_callbacks);
                     cb.append(&mut data.on_rejected_callbacks);
                     cb
                 } else {
                     data.fulfill(settled_value.clone());
                     // Drain callbacks while we still have the borrow
-                    let mut cb: Vec<Value> = data.on_fulfilled_callbacks.drain(..).collect();
+                    let mut cb = std::mem::take(&mut data.on_fulfilled_callbacks);
                     cb.append(&mut data.on_rejected_callbacks);
                     cb
                 }

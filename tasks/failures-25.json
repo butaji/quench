@@ -1,5 +1,5 @@
 {
-  "failed": 63,
+  "failed": 53,
   "groups": [
     {
       "count": 4,
@@ -88,16 +88,6 @@
       ]
     },
     {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/yield-star.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 0 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/yield-star.js"
-      ]
-    },
-    {
       "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
@@ -114,36 +104,9 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js"
       ],
-      "reason": "Test262Error: sameValue failed: 11 !== 1",
+      "reason": "Test262Error: sameValue failed: 13 !== 1",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js"
-      ]
-    },
-    {
-      "count": 11,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-star-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-star-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-star-from-try.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 2 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
       ]
     },
     {
@@ -157,20 +120,6 @@
       ]
     },
     {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-try.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 3 !== 2",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/yield-from-try.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/string-astral-truncated.js"
@@ -181,13 +130,23 @@
       ]
     },
     {
-      "count": 1,
+      "count": 6,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js"
       ]
     },
     {
@@ -325,7 +284,7 @@
       ]
     }
   ],
-  "passed": 688,
+  "passed": 698,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},

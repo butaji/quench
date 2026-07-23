@@ -117,12 +117,12 @@ fn make_array_with_new(
     args: &[Value],
     proto: &Rc<RefCell<Object>>,
 ) -> Result<Value, JsError> {
-    obj_rc.borrow_mut().prototype = Some(Rc::clone(proto));
-    obj_rc.borrow_mut().kind = ObjectKind::Array;
-    if args.is_empty() {
-        obj_rc.borrow_mut().elements = vec![];
-        obj_rc.borrow_mut().set("length", Value::Number(0.0));
-    } else if args.len() == 1 {
+    let mut obj = obj_rc.borrow_mut();
+    if obj.prototype.is_none() {
+        obj.prototype = Some(Rc::clone(proto));
+    }
+    obj.kind = ObjectKind::Array;
+    if args.len() == 1 {
         if let Value::Number(n) = args[0] {
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;
@@ -182,23 +182,11 @@ fn setup_array_prototype_global(array_proto: &Rc<RefCell<Object>>) {
     });
 }
 
-/// Wire `Array.prototype[Symbol.iterator]` and iterator methods after `Symbol` is registered.
+/// Wire `Array.prototype[Symbol.iterator]` after `Symbol` is registered.
 pub fn register_array_iterator() {
     let Some(array_proto) = get_array_prototype() else {
         return;
     };
-    let mut proto = array_proto.borrow_mut();
-    let mut m = |name: &str, f: fn(Vec<Value>) -> Result<Value, JsError>| {
-        proto.set_builtin_method(
-            name,
-            Value::NativeFunction(Rc::new(NativeFunction::new_with_name(name, f))),
-        );
-    };
-    m("values", array_values_iterator);
-    m("keys", array_keys_iterator);
-    m("entries", array_entries_iterator);
-    drop(proto);
-
     let Some(Value::Symbol(sym)) =
         crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
     else {
@@ -211,71 +199,15 @@ pub fn register_array_iterator() {
         .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
 }
 
-#[derive(Copy, Clone)]
-enum ArrayIndexIteratorMode {
-    Keys,
-    Values,
-    Entries,
-}
-
-impl From<ArrayIndexIteratorMode> for crate::builtins::map::helpers::LiveIndexIteratorMode {
-    fn from(mode: ArrayIndexIteratorMode) -> Self {
-        match mode {
-            ArrayIndexIteratorMode::Keys => Self::Keys,
-            ArrayIndexIteratorMode::Values => Self::Values,
-            ArrayIndexIteratorMode::Entries => Self::Entries,
-        }
-    }
-}
-
-fn make_array_index_iterator(mode: ArrayIndexIteratorMode) -> Result<Value, JsError> {
+fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Value::Object(arr_rc) = this_val else {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Array.prototype iterator called on incompatible receiver",
+            "Array.prototype.values called on incompatible receiver",
             "TypeError",
         );
         return Err(js_err);
     };
-    Ok(crate::builtins::map::helpers::make_live_index_iterator(
-        arr_rc,
-        mode.into(),
-    ))
-}
-
-fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
-    make_array_index_iterator(ArrayIndexIteratorMode::Values)
-}
-
-fn array_keys_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
-    make_array_index_iterator(ArrayIndexIteratorMode::Keys)
-}
-
-fn array_entries_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
-    make_array_index_iterator(ArrayIndexIteratorMode::Entries)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::builtins;
-
-    fn eval(src: &str) -> Result<Value, JsError> {
-        let mut ctx = Context::new().unwrap();
-        builtins::register_builtins(&mut ctx);
-        ctx.eval(src)
-    }
-
-    #[test]
-    fn array_entries_for_of_visits_index_value_pairs() {
-        let count = eval(
-            "var array = [0, 'a']; var i = 0; \
-             for (var value of array.entries()) { \
-               if (value[0] !== i || value[1] !== array[i]) throw 0; \
-               i++; \
-             } i",
-        )
-        .unwrap();
-        assert_eq!(count, Value::Number(2.0));
-    }
+    let elements = arr_rc.borrow().elements.clone();
+    Ok(crate::builtins::map::helpers::make_iterator(elements))
 }

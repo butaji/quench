@@ -131,8 +131,173 @@ pub fn commit_completed_yields(stored: &mut Vec<Value>) {
 pub fn count_yields_in_stmt(stmt: &Statement) -> usize {
     match stmt {
         Statement::Expression(expr) | Statement::Return(Some(expr)) => count_yields_in_expr(expr),
+        Statement::Block(stmts) => stmts.iter().map(count_yields_in_stmt).sum(),
+        Statement::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } => {
+            count_yields_in_stmt(body)
+                + handler
+                    .as_ref()
+                    .map(|s| count_yields_in_stmt(s))
+                    .unwrap_or(0)
+                + finalizer
+                    .as_ref()
+                    .map(|s| count_yields_in_stmt(s))
+                    .unwrap_or(0)
+        }
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            count_yields_in_stmt(consequent)
+                + alternate
+                    .as_ref()
+                    .map(|s| count_yields_in_stmt(s))
+                    .unwrap_or(0)
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::With { body, .. }
+        | Statement::Labeled { body, .. } => count_yields_in_stmt(body),
+        Statement::For { body, .. } => count_yields_in_stmt(body),
         _ => 0,
     }
+}
+
+/// Statements remaining in a for-of loop body after the first `yield` / `yield*`.
+pub fn body_tail_after_yield(body: &Statement, include_yield_stmt: bool) -> Option<Vec<Statement>> {
+    match body {
+        Statement::Block(stmts) => block_tail_after_first_yield(stmts, include_yield_stmt),
+        s if count_yields_in_stmt(s) > 0 => {
+            stmt_tail_fragment(s, include_yield_stmt).map(|s| vec![s])
+        }
+        _ => None,
+    }
+}
+
+fn block_tail_after_first_yield(
+    stmts: &[Statement],
+    include_yield: bool,
+) -> Option<Vec<Statement>> {
+    let mut result = Vec::new();
+    let mut past_yield = false;
+    for stmt in stmts {
+        if past_yield {
+            result.push(stmt.clone());
+            continue;
+        }
+        if count_yields_in_stmt(stmt) == 0 {
+            continue;
+        }
+        if let Some(frag) = stmt_tail_fragment(stmt, include_yield) {
+            result.push(frag);
+        }
+        past_yield = true;
+    }
+    past_yield.then_some(result)
+}
+
+fn stmt_tail_fragment(stmt: &Statement, include_yield: bool) -> Option<Statement> {
+    match stmt {
+        Statement::Block(stmts) => {
+            block_tail_after_first_yield(stmts, include_yield).map(Statement::Block)
+        }
+        Statement::Try {
+            body,
+            param,
+            handler,
+            finalizer,
+        } => try_tail_fragment(body, param, handler, finalizer, include_yield),
+        Statement::Labeled { label, body } => {
+            let inner = stmt_tail_fragment(body, include_yield)?;
+            Some(Statement::Labeled {
+                label: label.clone(),
+                body: Box::new(inner),
+            })
+        }
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            if count_yields_in_stmt(consequent) > 0 {
+                let inner = stmt_tail_fragment(consequent, include_yield)?;
+                Some(Statement::If {
+                    condition: condition.clone(),
+                    consequent: Box::new(inner),
+                    alternate: alternate.clone(),
+                })
+            } else if let Some(alt) = alternate {
+                let inner = stmt_tail_fragment(alt, include_yield)?;
+                Some(Statement::If {
+                    condition: condition.clone(),
+                    consequent: consequent.clone(),
+                    alternate: Some(Box::new(inner)),
+                })
+            } else {
+                None
+            }
+        }
+        Statement::While { condition, body } => {
+            let inner = stmt_tail_fragment(body, include_yield)?;
+            Some(Statement::While {
+                condition: condition.clone(),
+                body: Box::new(inner),
+            })
+        }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            let inner = stmt_tail_fragment(body, include_yield)?;
+            Some(Statement::For {
+                init: init.clone(),
+                condition: condition.clone(),
+                update: update.clone(),
+                body: Box::new(inner),
+            })
+        }
+        Statement::Expression(expr) if count_yields_in_expr(expr) > 0 && include_yield => {
+            Some(stmt.clone())
+        }
+        _ => None,
+    }
+}
+
+fn try_tail_fragment(
+    body: &Statement,
+    param: &Option<String>,
+    handler: &Option<Box<Statement>>,
+    finalizer: &Option<Box<Statement>>,
+    include_yield: bool,
+) -> Option<Statement> {
+    if count_yields_in_stmt(body) > 0 {
+        let inner = stmt_tail_fragment(body, include_yield)?;
+        return Some(Statement::Try {
+            body: Box::new(inner),
+            param: param.clone(),
+            handler: handler.clone(),
+            finalizer: finalizer.clone(),
+        });
+    }
+    if let Some(h) = handler {
+        if count_yields_in_stmt(h) > 0 {
+            return stmt_tail_fragment(h, include_yield);
+        }
+    }
+    if let Some(f) = finalizer {
+        if count_yields_in_stmt(f) > 0 {
+            return stmt_tail_fragment(f, include_yield);
+        }
+    }
+    None
 }
 
 pub fn count_yields_in_expr(expr: &Expression) -> usize {

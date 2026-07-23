@@ -22,7 +22,7 @@ pub use helpers::*;
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant, dead_code)]
 pub(crate) enum ControlFlow {
-    Break,
+    Break(Option<String>),
     Continue(Option<String>),
     Return(Value),
     Yield(Value),

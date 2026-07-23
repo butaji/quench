@@ -100,15 +100,10 @@ fn map_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn map_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let Some(entries) = map_entries(&this) else {
-        return Err(JsError::from(
-            "TypeError: Map.prototype iterator called on non-Map",
-        ));
-    };
-    Ok(self::helpers::make_live_index_iterator(
-        entries,
-        self::helpers::LiveIndexIteratorMode::Values,
-    ))
+    let items = map_entries(&this)
+        .map(|e| e.borrow().elements.clone())
+        .unwrap_or_default();
+    Ok(self::helpers::make_iterator(items))
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {
@@ -133,31 +128,22 @@ pub fn register_map_and_set(ctx: &mut Context) {
     }
     let map_proto_for_ctor = Rc::clone(&map_proto);
     let map_constructor = native_fn(move |args| {
-        // Use native_this when called via super() (class extends Map)
-        let (map_obj, map) =
-            if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
-                existing.borrow_mut().kind = ObjectKind::Map;
-                let rc = Rc::clone(&existing);
-                let rc2 = Rc::clone(&existing);
-                (rc, rc2)
-            } else {
-                let obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
-                let rc = Rc::new(RefCell::new(obj));
-                let rc2 = Rc::clone(&rc);
-                (rc, rc2)
-            };
-        {
-            let mut m = map.borrow_mut();
-            let entries = Object::new_array(0);
-            m.set("_entries", Value::Object(Rc::new(RefCell::new(entries))));
-            m.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let map = if let Value::Object(obj_rc) = this_val {
+            init_map_object(&obj_rc);
+            obj_rc
+        } else {
+            let map_obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
+            let map = Rc::new(RefCell::new(map_obj));
+            init_map_object(&map);
+            map
+        };
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 map_populate(&map, src)?;
             }
         }
-        Ok(Value::Object(map_obj))
+        Ok(Value::Object(map))
     });
     if let Value::NativeFunction(nf) = &map_constructor {
         let _ = nf.set_property("prototype", Value::Object(map_proto));

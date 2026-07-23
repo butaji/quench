@@ -106,7 +106,38 @@ enum ForOfIterResult {
     Done(Value),
     Break(Value),
     Step(Value),
-    Yield(Value),
+    Yield(Value, bool),
+}
+
+#[derive(Clone, Default)]
+struct ForOfResume {
+    body_only: bool,
+    body_tail: Option<Vec<Statement>>,
+    mid_delegate: bool,
+    init: bool,
+}
+
+type ForOfPending = Option<(Value, ForOfResume)>;
+
+struct ForOfStep<'a> {
+    variable: &'a Expression,
+    item: &'a Value,
+    body: &'a Statement,
+    loop_binding: Option<VarKind>,
+    env: &'a Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+    resume: ForOfResume,
+}
+
+struct ForOfIteratorRun<'a> {
+    iterator: Rc<RefCell<Object>>,
+    variable: &'a Expression,
+    body: &'a Statement,
+    loop_binding: Option<VarKind>,
+    env: &'a Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+    index: usize,
+    pending: ForOfPending,
 }
 
 pub(crate) fn stage_stored_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
@@ -152,9 +183,7 @@ pub fn eval_yield_delegate(
     }
     let iterable = eval_expression(expr, env, in_arrow_function)?;
     let iterator = match iterable {
-        Value::Generator(gen) => {
-            crate::value::generator::generator_as_iterator_object(gen)
-        }
+        Value::Generator(gen) => crate::value::generator::generator_as_iterator_object(gen),
         Value::Object(o) => obtain_iterator(&o)?,
         _ => {
             return Err(JsError(
@@ -172,93 +201,98 @@ fn continue_yield_delegate(
     mut state: crate::value::generator::YieldDelegateSuspend,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    loop {
-        let (value, done) = take_iterator_step(&state.iterator, &mut state.index, env)?;
-        if done {
-            return Ok(crate::interpreter::take_generator_resume_value());
-        }
-        if crate::interpreter::peek_generator_yield() {
-            return Ok(Value::Undefined);
-        }
-        let resume_val = crate::interpreter::take_generator_resume_value();
-        crate::interpreter::set_generator_yield(value);
-        crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
-        stage_yield_delegate_suspend(state);
-        return Ok(resume_val);
+    let (value, done) = take_iterator_step(&state.iterator, &mut state.index, env)?;
+    if done {
+        return Ok(crate::interpreter::take_generator_resume_value());
     }
-}
-
-fn stmt_index_of_first_yield(body: &Statement) -> Option<usize> {
-    let Statement::Block(stmts) = body else {
-        return None;
-    };
-    for (i, stmt) in stmts.iter().enumerate() {
-        if crate::value::generator_replay::count_yields_in_stmt(stmt) > 0 {
-            return Some(i);
-        }
+    if crate::interpreter::peek_generator_yield() {
+        return Ok(Value::Undefined);
     }
-    None
+    let resume_val = crate::interpreter::take_generator_resume_value();
+    crate::interpreter::set_generator_yield(value);
+    crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
+    stage_yield_delegate_suspend(state);
+    Ok(resume_val)
 }
 
-fn stmt_index_after_first_yield(body: &Statement) -> Option<usize> {
-    stmt_index_of_first_yield(body).map(|i| i + 1)
-}
-
-fn yield_delegate_pending() -> bool {
-    PENDING_YIELD_DELEGATE.with(|cell| cell.borrow().is_some())
-}
-
-fn eval_for_of_iterator(
-    iterator: Rc<RefCell<Object>>,
-    variable: &Expression,
-    body: &Statement,
-    loop_binding: Option<VarKind>,
+fn eval_for_of_body_tail(
+    tail: &[Statement],
+    resume_mid_delegate: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-    mut index: usize,
-    mut pending_resume: Option<(Value, bool, Option<usize>, bool)>,
 ) -> Result<Value, JsError> {
-    let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    if tail.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    if resume_mid_delegate {
+        let stmt_result = eval_statement(&tail[0], env, false, in_arrow_function)?;
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(stmt_result);
+        }
+        if tail.len() > 1 {
+            return crate::eval::statement::eval_statements(
+                &tail[1..],
+                env,
+                false,
+                in_arrow_function,
+            );
+        }
+        return Ok(stmt_result);
+    }
+    crate::eval::statement::eval_statements(tail, env, false, in_arrow_function)
+}
+
+fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError> {
+    let per_iteration = run
+        .loop_binding
+        .is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     let mut completion = Value::Undefined;
     loop {
-        let (item, body_only, body_stmt_resume, resume_at_yield_stmt) =
-            if let Some(resume) = pending_resume.take() {
-                resume
-            } else {
-                let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
-                if done {
-                    break;
-                }
-                (item, false, None, false)
-            };
-        match run_for_of_iteration(
-            variable,
-            &item,
-            body,
-            loop_binding,
-            per_iteration,
-            env,
-            in_arrow_function,
-        );
-        if let Err(e) = iteration {
-            return abrupt_close(&iterator, Err(e));
-        }
-        match take_control_flow() {
-            Some(ControlFlow::Break) => break,
-            Some(ControlFlow::Return(val))
-            | Some(ControlFlow::Yield(val))
-            | Some(ControlFlow::YieldDelegate(val)) => {
-                return abrupt_close(&iterator, {
-                    set_control_flow(ControlFlow::Return(val.clone()));
-                    Ok(val)
+        let (item, resume) = if let Some((item, resume)) = run.pending.take() {
+            (item, resume)
+        } else {
+            let (item, done) = take_iterator_step(&run.iterator, &mut run.index, run.env)?;
+            if done {
+                break;
+            }
+            (item, ForOfResume::default())
+        };
+        let step = ForOfStep {
+            variable: run.variable,
+            item: &item,
+            body: run.body,
+            loop_binding: run.loop_binding,
+            env: run.env,
+            in_arrow_function: run.in_arrow_function,
+            resume,
+        };
+        match run_for_of_iteration(step, per_iteration) {
+            Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
+            Ok(ForOfIterResult::Break(val)) => return abrupt_close(&run.iterator, Ok(val)),
+            Ok(ForOfIterResult::Yield(val, suspend_init)) => {
+                let body_tail = if suspend_init {
+                    None
+                } else {
+                    crate::value::generator_replay::body_tail_after_yield(run.body, true)
+                };
+                save_for_of_suspend(crate::value::generator::ForOfSuspend {
+                    iterator: Rc::clone(&run.iterator),
+                    index: run.index,
+                    item: item.clone(),
+                    resume_body: true,
+                    body_tail,
+                    resume_mid_delegate: !suspend_init,
+                    resume_init: suspend_init,
+                    variable: run.variable.clone(),
+                    body: run.body.clone(),
+                    loop_binding: run.loop_binding,
+                    per_iteration,
+                    in_arrow_function: run.in_arrow_function,
                 });
+                return Ok(val);
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
-            None => {}
+            Ok(ForOfIterResult::Step(body_val)) => completion = body_val,
+            Err(e) => return abrupt_close(&run.iterator, Err(e)),
         }
     }
     if let Some(ControlFlow::Return(val))
@@ -272,44 +306,49 @@ fn eval_for_of_iterator(
 }
 
 fn run_for_of_iteration(
-    variable: &Expression,
-    item: &Value,
-    body: &Statement,
-    loop_binding: Option<VarKind>,
+    step: ForOfStep<'_>,
     per_iteration: bool,
-    env: &Rc<RefCell<Environment>>,
-    in_arrow_function: bool,
-    body_only: bool,
-    body_stmt_resume: Option<usize>,
-    resume_at_yield_stmt: bool,
 ) -> Result<ForOfIterResult, JsError> {
+    let ForOfStep {
+        variable,
+        item,
+        body,
+        loop_binding,
+        env,
+        in_arrow_function,
+        resume,
+    } = step;
+    let ForOfResume {
+        body_only,
+        body_tail,
+        mid_delegate: resume_mid_delegate,
+        init: resume_init,
+    } = resume;
     if per_iteration && !body_only {
         env.borrow_mut().push_scope();
     }
+    let mut suspend_init = false;
     let result = (|| {
-        if !body_only {
-            if let Some(kind) = loop_binding {
-                declare_for_of_binding(variable, kind, env)?;
+        let need_init = !body_only || resume_init;
+        if need_init {
+            if !body_only {
+                if let Some(kind) = loop_binding {
+                    declare_for_of_binding(variable, kind, env)?;
+                }
             }
             if loop_binding.is_some() {
                 init_to(variable, item, env)?;
             } else {
                 assign_to(variable, item, env)?;
             }
+            if crate::interpreter::peek_generator_yield() {
+                suspend_init = true;
+                return Ok(Value::Undefined);
+            }
         }
-        if body_only {
-            if let (Some(start), Statement::Block(stmts)) = (body_stmt_resume, body) {
-                let slice = if resume_at_yield_stmt {
-                    &stmts[start..=start.min(stmts.len().saturating_sub(1))]
-                } else {
-                    &stmts[start..]
-                };
-                return crate::eval::statement::eval_statements(
-                    slice,
-                    env,
-                    false,
-                    in_arrow_function,
-                );
+        if body_only && !resume_init {
+            if let Some(tail) = body_tail {
+                return eval_for_of_body_tail(&tail, resume_mid_delegate, env, in_arrow_function);
             }
         }
         eval_statement(body, env, false, in_arrow_function)
@@ -321,7 +360,7 @@ fn run_for_of_iteration(
     match result {
         Ok(body_val) => {
             if yielding {
-                return Ok(ForOfIterResult::Yield(body_val));
+                return Ok(ForOfIterResult::Yield(body_val, suspend_init));
             }
             match take_control_flow() {
                 Some(cf @ ControlFlow::Break(_)) => {
@@ -385,16 +424,24 @@ pub fn eval_for_of(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     if let Some(suspend) = take_for_of_suspend() {
-        return eval_for_of_iterator(
-            suspend.iterator,
-            &suspend.variable,
-            &suspend.body,
-            suspend.loop_binding,
+        return eval_for_of_iterator(ForOfIteratorRun {
+            iterator: suspend.iterator,
+            variable: &suspend.variable,
+            body: &suspend.body,
+            loop_binding: suspend.loop_binding,
             env,
-            suspend.in_arrow_function,
-            suspend.index,
-            Some((suspend.item, true, suspend.body_stmt_resume, suspend.resume_at_yield_stmt)),
-        );
+            in_arrow_function: suspend.in_arrow_function,
+            index: suspend.index,
+            pending: Some((
+                suspend.item,
+                ForOfResume {
+                    body_only: true,
+                    body_tail: suspend.body_tail,
+                    mid_delegate: suspend.resume_mid_delegate,
+                    init: suspend.resume_init,
+                },
+            )),
+        });
     }
 
     let head_lexical = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
@@ -421,16 +468,16 @@ pub fn eval_for_of(
         Value::Object(o) => obtain_iterator(o)?,
         _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
     };
-    eval_for_of_iterator(
+    eval_for_of_iterator(ForOfIteratorRun {
         iterator,
         variable,
         body,
         loop_binding,
         env,
         in_arrow_function,
-        0,
-        None,
-    )
+        index: 0,
+        pending: None,
+    })
 }
 
 fn key_still_enumerable(value: &Value, key: &str) -> bool {
@@ -515,12 +562,58 @@ fn run_for_in_iteration(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 Ok(ForInIterResult::Done(val))
             }
-            Some(ControlFlow::Continue(None)) => {}
-            Some(cf @ ControlFlow::Continue(Some(_))) => {
-                set_control_flow(cf);
-                return Ok(Value::Undefined);
-            }
-            None => {}
+            None => Ok(ForInIterResult::Step(body_val)),
+        },
+        Err(e) => Err(e),
+    }
+}
+
+/// Evaluate a for-in loop
+pub fn eval_for_in(
+    variable: &Expression,
+    object: &Expression,
+    body: &Statement,
+    loop_binding: Option<VarKind>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let head_lexical = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    if head_lexical {
+        env.borrow_mut().push_scope();
+        declare_for_in_head_bindings(variable, loop_binding.unwrap(), env)?;
+    }
+
+    let obj_value = eval_expression(object, env, in_arrow_function)?;
+
+    if head_lexical {
+        env.borrow_mut().pop_scope();
+    }
+
+    let per_iteration = head_lexical;
+    let mut completion = Value::Undefined;
+    let key_queue = get_enumerable_keys(&obj_value)?;
+    let mut index = 0usize;
+
+    while index < key_queue.len() {
+        let key = key_queue[index].clone();
+        index += 1;
+        if !key_still_enumerable(&obj_value, &key) {
+            continue;
+        }
+
+        match run_for_in_iteration(
+            variable,
+            &key,
+            body,
+            loop_binding,
+            per_iteration,
+            env,
+            in_arrow_function,
+        ) {
+            Ok(ForInIterResult::Done(val)) => return Ok(val),
+            Ok(ForInIterResult::Break(val)) => return Ok(val),
+            Ok(ForInIterResult::Step(body_val)) => completion = body_val,
+            Err(e) => return Err(e),
         }
     }
 
@@ -1048,6 +1141,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_yield_star_runs_post_delegate_statements() {
+        let mut ctx = new_ctx();
+        let j = ctx
+            .eval(
+                "function* values() { yield 1; yield 1; } \
+                 var dataIterator = values(); \
+                 var controlIterator = (function*() { \
+                   for (var x of dataIterator) { \
+                     i++; \
+                     yield * values(); \
+                     j++; \
+                   } \
+                 })(); \
+                 var i = 0; var j = 0; \
+                 controlIterator.next(); \
+                 controlIterator.next(); \
+                 controlIterator.next(); \
+                 j",
+            )
+            .unwrap();
+        assert_eq!(j, Value::Number(1.0));
     }
 
     #[test]
