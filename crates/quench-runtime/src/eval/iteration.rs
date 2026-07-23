@@ -564,6 +564,44 @@ mod tests {
     }
 
     #[test]
+    fn for_of_break_closes_iterator() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "var returnCount = 0; var iterable = {}; \
+                 iterable[Symbol.iterator] = function() { \
+                   return { \
+                     next: function() { return { done: false, value: 1 }; }, \
+                     return: function() { returnCount += 1; return {}; } \
+                   }; \
+                 }; \
+                 for (var x of iterable) { break; } \
+                 returnCount",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_throw_closes_iterator() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "var returnCount = 0; var iterable = {}; \
+                 iterable[Symbol.iterator] = function() { \
+                   return { \
+                     next: function() { return { done: false, value: 1 }; }, \
+                     return: function() { returnCount += 1; return {}; } \
+                   }; \
+                 }; \
+                 try { for (var x of iterable) { throw 0; } } catch (e) {} \
+                 returnCount",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
     fn for_of_nested_generators() {
         let mut ctx = new_ctx();
         let result = ctx

@@ -182,11 +182,23 @@ fn setup_array_prototype_global(array_proto: &Rc<RefCell<Object>>) {
     });
 }
 
-/// Wire `Array.prototype[Symbol.iterator]` after `Symbol` is registered.
+/// Wire `Array.prototype[Symbol.iterator]` and iterator methods after `Symbol` is registered.
 pub fn register_array_iterator() {
     let Some(array_proto) = get_array_prototype() else {
         return;
     };
+    let mut proto = array_proto.borrow_mut();
+    let mut m = |name: &str, f: fn(Vec<Value>) -> Result<Value, JsError>| {
+        proto.set_builtin_method(
+            name,
+            Value::NativeFunction(Rc::new(NativeFunction::new_with_name(name, f))),
+        );
+    };
+    m("values", array_values_iterator);
+    m("keys", array_keys_iterator);
+    m("entries", array_entries_iterator);
+    drop(proto);
+
     let Some(Value::Symbol(sym)) =
         crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
     else {
@@ -199,15 +211,86 @@ pub fn register_array_iterator() {
         .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
 }
 
-fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+#[derive(Copy, Clone)]
+enum ArrayIndexIteratorMode {
+    Keys,
+    Values,
+    Entries,
+}
+
+fn make_array_index_iterator(mode: ArrayIndexIteratorMode) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Value::Object(arr_rc) = this_val else {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Array.prototype.values called on incompatible receiver",
+            "Array.prototype iterator called on incompatible receiver",
             "TypeError",
         );
         return Err(js_err);
     };
     let elements = arr_rc.borrow().elements.clone();
-    Ok(crate::builtins::map::helpers::make_iterator(elements))
+    let len = elements.len();
+    let index = Rc::new(RefCell::new(0usize));
+    let next_fn = NativeFunction::new(move |_args| {
+        let mut result = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        if *i < len {
+            let value = match mode {
+                ArrayIndexIteratorMode::Keys => Value::Number(*i as f64),
+                ArrayIndexIteratorMode::Values => elements[*i].clone(),
+                ArrayIndexIteratorMode::Entries => {
+                    Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
+                        Value::Number(*i as f64),
+                        elements[*i].clone(),
+                    ]))))
+                }
+            };
+            result.set("value", value);
+            result.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Ok(Value::Object(Rc::new(RefCell::new(iter))))
+}
+
+fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    make_array_index_iterator(ArrayIndexIteratorMode::Values)
+}
+
+fn array_keys_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    make_array_index_iterator(ArrayIndexIteratorMode::Keys)
+}
+
+fn array_entries_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    make_array_index_iterator(ArrayIndexIteratorMode::Entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins;
+
+    fn eval(src: &str) -> Result<Value, JsError> {
+        let mut ctx = Context::new().unwrap();
+        builtins::register_builtins(&mut ctx);
+        ctx.eval(src)
+    }
+
+    #[test]
+    fn array_entries_for_of_visits_index_value_pairs() {
+        let count = eval(
+            "var array = [0, 'a']; var i = 0; \
+             for (var value of array.entries()) { \
+               if (value[0] !== i || value[1] !== array[i]) throw 0; \
+               i++; \
+             } i",
+        )
+        .unwrap();
+        assert_eq!(count, Value::Number(2.0));
+    }
 }

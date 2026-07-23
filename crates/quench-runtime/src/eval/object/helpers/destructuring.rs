@@ -326,6 +326,23 @@ fn invoke_iterator_return(
     iterator: &Rc<RefCell<Object>>,
     iter_this: Value,
 ) -> IteratorReturnResult {
+    let saved_throw = crate::value::take_thrown_value();
+    let result = invoke_iterator_return_inner(iterator, iter_this);
+    match &result {
+        IteratorReturnResult::Throw(_) => result,
+        _ => {
+            if let Some(thrown) = saved_throw {
+                crate::value::set_thrown_value(thrown);
+            }
+            result
+        }
+    }
+}
+
+fn invoke_iterator_return_inner(
+    iterator: &Rc<RefCell<Object>>,
+    iter_this: Value,
+) -> IteratorReturnResult {
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
         let params: Vec<crate::ast::Param> = Vec::new();
@@ -389,9 +406,6 @@ fn invoke_iterator_return(
 }
 
 fn finish_iterator_return_call(result: Result<Value, JsError>) -> IteratorReturnResult {
-    if let Some(thrown) = crate::value::take_thrown_value() {
-        return IteratorReturnResult::Throw(JsError(crate::value::to_js_string(&thrown)));
-    }
     match result {
         Ok(val) => IteratorReturnResult::Value(val),
         Err(err) => IteratorReturnResult::Throw(err),
@@ -1240,6 +1254,29 @@ mod tests {
     fn assign_to_undeclared_strict_throws() {
         let r = eval("'use strict'; z = 1");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn stale_throw_does_not_block_iterator_return_invocation() {
+        use super::call_iterator_return;
+
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let iter_val = ctx
+            .eval(
+                "globalThis.__rc = 0; ({ \
+                   next: function(){ return {done:true}; }, \
+                   return: function(){ globalThis.__rc += 1; return {}; } \
+                 })",
+            )
+            .unwrap();
+        let Value::Object(iter) = iter_val else {
+            panic!("expected object iterator");
+        };
+        crate::value::set_thrown_value(Value::Number(0.0));
+        assert!(call_iterator_return(&iter).is_none());
+        let count = ctx.eval("globalThis.__rc").unwrap();
+        assert_eq!(count, Value::Number(1.0));
     }
 
     #[test]
