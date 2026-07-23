@@ -556,12 +556,24 @@ mod tests {
     #[test]
     fn for_of_head_tdz_before_iterable_expr() {
         let mut ctx = new_ctx();
-        let err = ctx
-            .eval("let x = 1; for (const x of [x]) {}")
-            .unwrap_err();
+        let err = ctx.eval("let x = 1; for (const x of [x]) {}").unwrap_err();
         assert!(
             err.to_string().contains("ReferenceError"),
             "expected ReferenceError, got {err}"
         );
+    }
+
+    #[test]
+    fn for_of_nested_generators() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "function* values() { yield 3; yield 7; } \
+                 var i = 0; for (var x of values()) { \
+                   if (x === 3) { i++; for (var y of values()) { if (y === 3) i++; } } \
+                 } i",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(2.0));
     }
 }

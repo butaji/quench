@@ -305,16 +305,34 @@ pub fn take_iterator_step(
     Ok((value, false))
 }
 
-/// Call iterator.return, returning an error if it throws.
+/// Call iterator.return, returning an error if it throws or returns a non-Object.
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
+    let return_call = invoke_iterator_return(iterator, iter_this);
+    match return_call {
+        IteratorReturnResult::Skipped => None,
+        IteratorReturnResult::Throw(err) => Some(err),
+        IteratorReturnResult::Value(val) => iterator_close_type_error(val),
+    }
+}
+
+enum IteratorReturnResult {
+    Skipped,
+    Throw(JsError),
+    Value(Value),
+}
+
+fn invoke_iterator_return(
+    iterator: &Rc<RefCell<Object>>,
+    iter_this: Value,
+) -> IteratorReturnResult {
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
         let params: Vec<crate::ast::Param> = Vec::new();
         let body: Vec<crate::ast::Statement> = (*getter.body).clone();
         let closure = getter.closure.clone();
         drop(binding);
-        let _ = crate::eval::function::call_value_with_this(
+        return finish_iterator_return_call(crate::eval::function::call_value_with_this(
             crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
                 params,
                 Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
@@ -322,11 +340,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             )),
             vec![],
             iter_this,
-        );
-        if let Some(thrown) = crate::value::take_thrown_value() {
-            return Some(JsError(crate::value::to_js_string(&thrown)));
-        }
-        return None;
+        ));
     }
     let return_value = binding.get("return");
     let callable = match return_value {
@@ -334,7 +348,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
         Some(Value::Function(_)) => true,
         Some(Value::NativeFunction(_)) => true,
         Some(Value::NativeConstructor(_)) => true,
-        Some(Value::Undefined) | None => return None,
+        Some(Value::Undefined) | None => return IteratorReturnResult::Skipped,
         _ => false,
     };
     drop(binding);
@@ -343,7 +357,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             "iterator.return is not a function",
             "TypeError",
         );
-        return Some(js_err);
+        return IteratorReturnResult::Throw(js_err);
     }
     let return_value = return_value.unwrap();
     let (body, closure) = {
@@ -354,30 +368,45 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             None => (None, None),
         }
     };
-    let (body, closure) = match (body, closure) {
-        (Some(body), Some(closure)) => (body, closure),
-        (_, _) => {
-            let _ = crate::eval::function::call_value_with_this(return_value, vec![], iter_this);
-            if let Some(thrown) = crate::value::take_thrown_value() {
-                return Some(JsError(crate::value::to_js_string(&thrown)));
-            }
-            return None;
+    match (body, closure) {
+        (Some(body), Some(closure)) => {
+            finish_iterator_return_call(crate::eval::function::call_value_with_this(
+                crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
+                    Vec::new(),
+                    Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
+                    closure,
+                )),
+                vec![],
+                iter_this,
+            ))
         }
-    };
-    let params: Vec<crate::ast::Param> = Vec::new();
-    let _ = crate::eval::function::call_value_with_this(
-        crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
-            params,
-            Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
-            closure,
+        (_, _) => finish_iterator_return_call(crate::eval::function::call_value_with_this(
+            return_value,
+            vec![],
+            iter_this,
         )),
-        vec![],
-        iter_this,
-    );
-    if let Some(thrown) = crate::value::take_thrown_value() {
-        return Some(JsError(crate::value::to_js_string(&thrown)));
     }
-    None
+}
+
+fn finish_iterator_return_call(result: Result<Value, JsError>) -> IteratorReturnResult {
+    if let Some(thrown) = crate::value::take_thrown_value() {
+        return IteratorReturnResult::Throw(JsError(crate::value::to_js_string(&thrown)));
+    }
+    match result {
+        Ok(val) => IteratorReturnResult::Value(val),
+        Err(err) => IteratorReturnResult::Throw(err),
+    }
+}
+
+fn iterator_close_type_error(val: Value) -> Option<JsError> {
+    if matches!(val, Value::Object(_)) {
+        return None;
+    }
+    let (_, js_err) = crate::value::error::create_js_error_with_type(
+        "Iterator result interface is not an object",
+        "TypeError",
+    );
+    Some(js_err)
 }
 
 /// Assign to an object destructuring pattern.
@@ -1211,6 +1240,25 @@ mod tests {
     fn assign_to_undeclared_strict_throws() {
         let r = eval("'use strict'; z = 1");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn iterator_close_non_object_return_throws_type_error() {
+        let err = eval(
+            "var iterable = {};
+             iterable[Symbol.iterator] = function() {
+               return {
+                 next: function() { return { done: true }; },
+                 return: function() { return null; }
+               };
+             };
+             for ([] of [iterable]) {}",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("TypeError"),
+            "expected TypeError, got {err}"
+        );
     }
 
     #[test]

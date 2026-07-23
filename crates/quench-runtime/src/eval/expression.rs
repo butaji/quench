@@ -15,6 +15,7 @@ use crate::eval::literal::{
 pub use crate::eval::literal::{eval_property_key, get_super_value};
 use crate::eval::operators::eval_binary_op;
 pub use crate::eval::statement::eval_statements;
+use crate::eval::statement::set_on_global_this;
 use crate::value::{to_bool, JsError, Value, ValueFunction};
 use num_bigint::BigInt;
 use std::cell::RefCell;
@@ -253,6 +254,12 @@ pub fn eval_expression(
                         return Err(error);
                     }
                     crate::eval::object::assign_to(left, &right_val, env)?;
+                }
+                if matches!(scope.borrow().get_kind(name), Some(VarKind::Var) | None)
+                    && scope.borrow().is_object_binding()
+                    && env.borrow().get_parent().is_none()
+                {
+                    set_on_global_this(env, name, right_val.clone());
                 }
                 return Ok(right_val);
             }

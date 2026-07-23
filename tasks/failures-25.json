@@ -1,5 +1,5 @@
 {
-  "failed": 158,
+  "failed": 147,
   "groups": [
     {
       "count": 4,
@@ -20,43 +20,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/nested.js"
-      ],
-      "reason": "ReferenceError: expectedOuter is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/nested.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-type.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-value-attr.js"
-      ],
-      "reason": "ReferenceError: firstIterResult is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-type.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-value-attr.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/typedarray-backed-by-resizable-buffer.js"
       ],
       "reason": "ReferenceError: rab is not defined",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/typedarray-backed-by-resizable-buffer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-to-property-with-setter.js"
-      ],
-      "reason": "ReferenceError: settedValue is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-to-property-with-setter.js"
       ]
     },
     {
@@ -142,27 +110,15 @@
       ]
     },
     {
-      "count": 8,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-nrml-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elision-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-empty-iter-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-object.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-nrml-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elision-iter-nrml-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-empty-iter-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-object.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js"
       ]
     },
     {
@@ -552,19 +508,17 @@
       ]
     },
     {
-      "count": 4,
+      "count": 3,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-assignment-missing.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-assignment-undef.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-order.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-simple-no-strict.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-order.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 1",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-assignment-missing.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-assignment-undef.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-order.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-simple-no-strict.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-order.js"
       ]
     },
     {
@@ -582,15 +536,13 @@
       ]
     },
     {
-      "count": 3,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-simple-no-strict.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-simple-no-strict.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-yield-ident-valid.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 3",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-simple-no-strict.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-simple-no-strict.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-yield-ident-valid.js"
       ]
@@ -605,16 +557,6 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-put-obj-literal-prop-ref-init-active.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-obj-literal-prop-ref-init-active.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-simple-no-strict.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 5",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-simple-no-strict.js"
       ]
     },
     {
@@ -662,13 +604,17 @@
       ]
     },
     {
-      "count": 1,
+      "count": 3,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js",
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js",
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-return.js"
       ],
       "reason": "TypeError: Iterator result interface is not an object",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js",
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js",
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-return.js"
       ]
     },
     {
@@ -724,7 +670,7 @@
       ]
     }
   ],
-  "passed": 593,
+  "passed": 604,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},

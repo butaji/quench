@@ -679,8 +679,7 @@ pub fn eval_statement(
 }
 
 /// Helper to set a property on globalThis if we're at the top level.
-/// Helper to set a property on globalThis if we're at the top level.
-fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
+pub(crate) fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
     // Only set on globalThis if this is the top-level environment
     let is_top_level = env.borrow().get_parent().is_none();
     if is_top_level {
@@ -754,6 +753,15 @@ fn eval_var_decl(
         set_on_global_this(env, name, value);
     }
     Ok(Value::Undefined)
+}
+
+fn env_is_declared_only(env: &Rc<RefCell<Environment>>, name: &str) -> bool {
+    for scope_rc in env.borrow().scopes.iter().rev() {
+        if scope_rc.borrow().has(name) {
+            return scope_rc.borrow().is_declared_only(name);
+        }
+    }
+    false
 }
 
 fn eval_func_decl(
