@@ -147,42 +147,48 @@ count × external dependencies. `impl` = primary implementation language.
 
 ### Hardest (difficulty 7–9, ~10 stages, ~19k tests)
 
-| Id | Path | Tests | Diff | Impl | Key challenge | Crate / approach |
-|---|---|---|---|---|---|---|
-| 120 | `built-ins/Temporal` | 4,603 | 9 | rust | Full Temporal API | `temporal_rs` + `zoneinfo_rs` |
-| 118 | `built-ins/ShadowRealm` | 64 | 9 | rust | Isolated global per spec | Rust-level; not WASM |
-| 115 | `built-ins/Proxy` | 311 | 8 | hybrid | 11 internal ops + invariants | Rust traps + JS invariants |
-| 44 | `language/expressions` | 11,101 | 8 | rust | Many eval nodes, early errors | `oxc_semantic` |
-| 16 | `statements/class` | 4,367 | 7 | rust | Object model, super, private | R5 object model fix |
-| 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
-| 38 | `statements/async-generator` | 301 | 7 | rust | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
-| 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | Same as above | S4 |
-| 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | Same as above | S4 |
-| 40 | `statements/for-await-of` | 1,234 | 7 | rust | Async iteration + await + R2 | S4 + R2 iterator protocol |
+> **LOC estimates:** `~Rust` = incremental Rust LOC to implement; `~JS` = JS builtins LOC after R0. JS builtins are ~1/3 the LOC of equivalent Rust per the architecture doc — high Rust LOC in this table = prime target for R0 self-hosting.
 
-### Medium-hard (difficulty 5–6, ~15 stages, ~12k tests)
+| Id | Path | Tests | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge | Crate / approach |
+|---|---|---|---|---|---|---|---|---|
+| 120 | `built-ins/Temporal` | 4,603 | 9 | rust | ~200 | ~1,200 | Full Temporal API | `temporal_rs` + `zoneinfo_rs` |
+| 118 | `built-ins/ShadowRealm` | 64 | 9 | rust | ~150 | ~400 | Isolated global per spec | Rust-level; not WASM |
+| 115 | `built-ins/Proxy` | 311 | 8 | hybrid | ~600 | ~200 | 11 internal ops + invariants | Rust traps + JS invariants |
+| 44 | `language/expressions` | 11,101 | 8 | rust | ~1,500 | 0 | Many eval nodes, early errors | `oxc_semantic` |
+| 16 | `statements/class` | 4,367 | 7 | rust | ~800 | 0 | Object model, super, private | R5 ✓ object model fix |
+| 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | ~300 | ~400 | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
+| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
+| 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
+| 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
+| 40 | `statements/for-await-of` | 1,234 | 7 | rust | ~300 | 0 | Async iteration + await + R2 | S4 + R2 iterator protocol |
 
-| Id | Path | Tests | Diff | Impl | Key challenge |
-|---|---|---|---|---|---|
-| 71 | `built-ins/Object` | 3,411 | 6 | js | R0 self-hosting |
-| 85 | `built-ins/Array` | 3,081 | 6 | js | R0 self-hosting |
-| 82 | `built-ins/String` | 1,223 | 6 | js | R0 self-hosting |
-| 102 | `TypedArray` | 1,446 | 6 | hybrid | Rust buffers + JS |
-| 103 | `TypedArrayConstructors` | 738 | 6 | hybrid | Rust buffers + JS |
-| 113 | `Promise` | 729 | 6 | hybrid | Rust job queue + JS |
-| 39 | `await-using` | 94 | 6 | hybrid | Using + async |
-| 41 | `using` | 78 | 6 | js | Disposable resource protocol |
-| 72 | `Function` | 509 | 5 | js | R0 |
-| 80 | `Math` | 327 | 5 | js | R0 |
-| 53 | `module-code` | 599 | 5 | hybrid | `url` crate + JS |
-| 83 | `Symbol` | 98 | 5 | js | R0 |
-| 99 | `AsyncFunction` | 18 | 5 | rust | S4 async→generator |
-| 100-101 | `ArrayBuffer`, `SharedArrayBuffer` | 325 | 5 | hybrid | Rust buffers |
-| 105 | `DataView` | 561 | 5 | hybrid | Rust buffers + JS |
-| 111 | `WeakRef` | 29 | 6 | hybrid | GC interaction |
-| 112 | `FinalizationRegistry` | 47 | 5 | js | R0 |
+> **LOC note:** Built-in stages marked `js` are prime R0 targets — Rust implementation would be ~3x more LOC than the JS version. Target the JS LOC as the cost; Rust LOC = 0 (JS wins).
+
+| Id | Path | Tests | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge |
+|---|---|---|---|---|---|---|---|
+| 71 | `built-ins/Object` | 3,411 | 6 | js | 0 | ~900 | R0 self-hosting |
+| 85 | `built-ins/Array` | 3,081 | 6 | js | 0 | ~600 | R0 self-hosting |
+| 82 | `built-ins/String` | 1,223 | 6 | js | 0 | ~400 | R0 self-hosting |
+| 102 | `TypedArray` | 1,446 | 6 | hybrid | ~500 | ~200 | Rust buffers + JS |
+| 103 | `TypedArrayConstructors` | 738 | 6 | hybrid | ~200 | ~100 | Rust buffers + JS |
+| 113 | `Promise` | 729 | 6 | hybrid | ~400 | ~300 | Rust job queue + JS |
+| 39 | `await-using` | 94 | 6 | hybrid | ~100 | ~50 | Using + async |
+| 41 | `using` | 78 | 6 | js | 0 | ~150 | Disposable resource protocol |
+| 72 | `Function` | 509 | 5 | js | 0 | ~350 | R0 |
+| 80 | `Math` | 327 | 5 | js | 0 | ~200 | R0 |
+| 53 | `module-code` | 599 | 5 | hybrid | ~100 | ~200 | `url` crate + JS |
+| 83 | `Symbol` | 98 | 5 | js | 0 | ~150 | R0 |
+| 99 | `AsyncFunction` | 18 | 5 | rust | ~100 | 0 | S4 async→generator |
+| 100-101 | `ArrayBuffer`, `SharedArrayBuffer` | 325 | 5 | hybrid | ~300 | ~50 | Rust buffers |
+| 105 | `DataView` | 561 | 5 | hybrid | ~200 | ~100 | Rust buffers + JS |
+| 111 | `WeakRef` | 29 | 6 | hybrid | ~150 | ~100 | GC interaction |
+| 112 | `FinalizationRegistry` | 47 | 5 | js | 0 | ~150 | R0 |
 
 ### Easy (difficulty 1–4, ~68 stages, ~17k tests)
+
+> LOC estimates for easy stages vary: language stages (break, const, for-in, etc.) are
+> pure Rust eval nodes (~50–300 LOC each); R0-builtins (Error, Number, Boolean, Map,
+> Set, JSON, Reflect) are ~100–250 JS LOC each. Most are sub-200 LOC.
 
 Most language stages (break, const, continue, debugger, do-while, for,
 for-in, if, let, return, switch, try, variable, while, with, etc.) are
@@ -236,6 +242,140 @@ iterations per development session.
 Confirmed by the [Rust Performance Book](https://nnethercote.github.io/perf-book/build-configuration.html):
 "Compared to opt-level = 'z', it allows slightly more inlining and also the
 vectorization of loops." Source: `nnethercote.github.io/perf-book`.
+
+## S10 — `bumpalo` arena allocation *(high, Phase B, ~300 LOC)*
+
+Most `JsValue` objects and eval frames are short-lived and freed in LIFO
+order. `bumpalo` (244M+ downloads, Rust-native) allocates from a
+pre-reserved arena — a single bump pointer with no per-allocation
+bookkeeping. `bump_scope` (crate, ~2x faster in micro-benchmarks) uses
+scope-based lifetime for arena resets; both are viable.
+
+Key constraint: **no `Drop` on freed objects.** Types that need finalizers
+(e.g. closing file handles) must use `bumpalo::boxed::Box` which runs Drop
+on scope exit; heap allocation is acceptable for those. Most JS value
+types (`Object`, `Array`, `String`) have no Drop impl.
+
+Usage in Quench:
+- Parsing: `Arena` lives for the parse phase; all `NodeId`s / AST nodes
+  allocated from it; freed in one shot when the arena drops.
+- Eval frames: `Bump` in `Context`; eval loop allocates Value slots from
+  it; each top-level eval call resets with `Bump::new`.
+- NaN-boxed `JsValue` layout (S11): inline scalar types in 64 bits,
+  heap allocations only for objects/strings that overflow the NaN payload.
+
+Boa historically used individual heap allocation; switching to arena
+allocation (when paired with S11 NaN boxing) is a measurable memory and
+throughput win. Boa v0.21 benchmarks on microbenchmarks show significant
+improvement with NaN boxing alone; arena allocation compounds this.
+
+- [ ] `bumpalo = "3"` or `bump_scope` in `Cargo.toml`.
+- [ ] `DEPENDENCIES.md` row.
+- [ ] `#[test]`: no Drop impls on freed arena objects.
+- [ ] Migration: eval frames first, then parser, then Value constructors.
+
+## S11 — NaN-boxed `JsValue` *(high, Phase B, ~600 LOC)*
+
+JS values are either 31-bit integers, quiet NaN payloads (strings,
+symbols, objects, undefined, null, booleans), or 64-bit IEEE754 numbers.
+Rust's `enum JsValue` with inline/`Box`/Rc variants costs 2 words per
+Value + heap traffic for every object. NaN boxing stores everything in a
+single `u64`: integers in the top 33 bits, pointers in the low 49 bits
+of a quiet NaN, with a tag field to distinguish pointer-slot from
+integer-slot from raw number.
+
+**Confirmed (2026-07-23):**
+- Boa v0.21 switched from enum to NaN-boxed `JsValue` (October 2025).
+- Boa v0.21 achieves 94.12% test262 conformance.
+- SpiderMonkey and JSC use NaN boxing; V8 uses tagged pointers.
+- No dedicated Rust crate — implement with `unsafe` in `value/` module.
+- Quiet NaN (qNaN) only — signaling NaN never appears in IEEE754 JS
+  values.
+
+Bit layout (leaves room for 2^16 object types in the tag space):
+
+```
+63       49     48     32     31     0
+[unused][tag ][integer payload    ] — integer slot (tag = 0xFFFF)
+63       49     48     32     31     0
+[unused][tag =0][pointer payload          ] — pointer slot (tag = 0x0000)
+```
+
+Tag values: `0xFFFF` → Integer, `0x0000` → Pointer, `0x7FFC` → Double.
+Pointer encoding uses 2^49 offset to distinguish from canonical NaN
+(`0x7FFC000000000000`). `JsValue` becomes a newtype `u64` with accessor
+methods; `JsValue::new_integer(i32)`, `JsValue::new_object(*mut Object)`,
+`JsValue::new_double(f64)`, `JsValue::unbox()`.
+
+Migration order: implement alongside `bumpalo` (S10), as NaN boxing reduces
+heap pressure that arena allocation handles. Do **not** migrate before R5
+(object model correctness) — NaN boxing must pair with the correct property
+store, not the current buggy one.
+
+- [ ] `value/value_nan.rs` — `JsValue` newtype + all accessor methods.
+- [ ] `#[test]`: integer round-trip, object round-trip, double round-trip,
+      `undefined`, `null`, `true`, `false`, `NaN`, `Infinity`.
+- [ ] `#[test]`: NaN-boxed value survives a bumpalo round-trip.
+- [ ] `#[test]`: `Object.is` / `SameValue` on NaN-boxed values.
+
+## S12 — String interning / atom table *(medium-high, Phase B, ~400 LOC)*
+
+JavaScript string comparisons are pervasive: property key lookup, `===`
+comparison, `Map`/`Set` hashing. Un-interned `String` objects do O(n)
+byte-by-byte comparison on every `==`; an atom table deduplicates strings
+so pointer comparison (`==`) is O(1).
+
+**Confirmed (2026-07-23):**
+- `string_interner` crate: widely used, thread-safe variant available,
+  O(1) get/create.
+- `fnv = "2"`: Fast HashMap with good distribution for small keys;
+  standard `HashMap` is fine for the atom table scale.
+- QuickJS uses a global atom table in `JSRuntime` with ~50k atom slots.
+- `string_cache` (Servo): unmaintained since ~2020.
+- `rustc-hash`: fastest overall but lower-quality hash; fine for atom
+  table where attack resistance is not a concern.
+
+Usage:
+- Property keys (string and Symbol): interned key lookup for `Object`
+  property map; `Key = InternedKey(KeyId)` from `string_interner`.
+- String literals: intern at parse time; string comparison in eval uses
+  `KeyId::eq` (pointer compare).
+- String values: stored as `Rc<str>` or interned StringId; comparison
+  via `StringId::eq`.
+
+Implementation: `string_interner::StringInterner` in `Context`; every
+`Value::String(s)` wraps a `StringId`. `#[test]`: "abc" == "abc" pointer
+compare; `Map` with 10k string keys (performance regression test).
+
+- [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
+- [ ] `DEPENDENCIES.md` row.
+- [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId`
+      type wrapping `string_interner::DefaultSymbol`.
+- [ ] `#[test]`: interned string pointer equality.
+- [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
+
+### Total work remaining (approximate)
+
+| Category | Rust LOC | JS LOC | Notes |
+|---|---|---|---|
+| R5 object model (partial ✓) | ~300 remaining | — | eval nodes + property store |
+| R0 self-hosting (0 started) | 0 | ~8,000 | Object→TypedArray; 3x smaller than Rust equivalent |
+| R17 oxc_semantic early errors | ~500 | — | ES2015+ static semantics |
+| S4 async→generator | ~400 | — | swc or hand-rolled |
+| R2/R3 iterator + Date | ~100 | ~100 | |
+| R18 RegExp Unicode | ~300 | ~400 | `regex` crate |
+| S10 bumpalo | ~300 | — | arena allocation |
+| S11 NaN boxing | ~600 | — | Value newtype |
+| S12 string interning | ~400 | — | string_interner |
+| Hardest stages (Temporal, Proxy, etc.) | ~1,500 | ~2,000 | Temporal via `temporal_rs` |
+| Medium-hard stages | ~2,500 | ~2,500 | TypedArray, Promise, buffers, R0 |
+| Easy stages (~68) | ~4,000 | ~4,000 | Language eval nodes + R0 builtins |
+| **Total (rounded)** | **~11,000** | **~17,000** | ~28k combined |
+| **Target (aspirational, 100%)** | **~8–12k** | **~19k** | Per Boa ~25k Rust → 94% |
+
+Current: ~57k Rust + ~14k builtins Rust = ~71k production Rust. Strategy
+brings Rust down to ~20–28k + JS up to ~17k = ~37–45k total, a ~35–50%
+reduction, with the heavy spec logic moved to self-hosted JS.
 
 ## CI regression gate
 

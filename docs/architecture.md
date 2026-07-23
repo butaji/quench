@@ -103,6 +103,139 @@ Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
 Hand-rolled copies — including `chrono_*` helpers that never import
 `chrono` — are forbidden.
 
+## Value representation — NaN boxing *(R11 target)*
+
+JS values (`JsValue`) fit in a single `u64` via NaN boxing — the same
+technique used by QuickJS (C), JSC, V8, and Boa v0.21+.
+
+```
+u64 bits:
+  [sign:1][exp:11][mantissa:52]
+NaN payload (all exp=1, mantissa≠0 for quiet NaN):
+  [1][11111111111][tag:16][payload:36]
+  tag=0xFFFF  →  Integer(i32)  (mantissa low 32 bits)
+  tag=0x0000  →  Pointer to heap Value
+  tag=0x0001  →  Undefined
+  tag=0x0002  →  Null
+  tag=0x0003  →  Boolean
+  tag=0x0004  →  BigInt
+Special doubles pass through untouched (infinity, -0.0).
+```
+
+Boa v0.21 (October 2025) switched to NaN boxing and reports measurable
+runtime and memory improvements over their older enum approach. Reference:
+<https://boajs.dev/blog/2025/10/22/boa-release-21>.
+
+**Do NOT start this until R0 is complete.** The Value representation
+change touches every call site; R0 gives us a clean JS-layer boundary to
+verify correctness afterward. Boa did the same: NaN boxing was added as a
+feature-flagged feature alongside the existing enum (`jsvalue-enum`).
+
+Rust `unsafe` is confined to the `value/` module. No unsafe leaks into
+`eval/` or `builtins/`.
+
+## Memory — bumpalo arena allocation *(R10 target)*
+
+`bumpalo` (244M+ crate downloads) is the standard arena allocator for Rust
+JS engines. It provides fast short-lived allocations without per-object
+overhead:
+
+- **Parsing** (oxc → internal AST): nodes die after lowering — arena
+  perfect fit.
+- **Eval frames** (per-expression allocations): short-lived, high volume.
+- **No Drop calls** on freed objects — `bumpalo` does not run destructors.
+  Use `bumpalo::boxed::Box` for types that need Drop.
+
+```toml
+# Cargo.toml
+bumpalo = "3"
+```
+
+See <https://nickb.dev/blog/the-serde-optimization-gauntlet-wasm-and-arenas/>
+for benchmarks. `bumpalo` is battle-tested (Boa, many WASM engines);
+`bump-scope` benches ~2x faster but is less proven. Land `bumpalo` first,
+optimize later.
+
+Add `DEPENDENCIES.md` row in the same diff as the first arena use.
+
+## Strings — atom table interning *(R12 target)*
+
+Identifier strings, keywords, property names, and spec-intrinsic strings are
+interned: stored once, compared by pointer equality. The `fnv` crate
+provides a high-quality FnvHashMap for the atom table.
+
+```toml
+# Cargo.toml
+fnv = "2"
+```
+
+- `string_interner` crate is an alternative (handles arbitrary strings,
+  not just identifiers).
+- `rustc-hash` (FxHashMap) is the fastest but lower-quality hash — use
+  only for hot-path property lookups where collision risk is acceptable.
+- `stringcache` crate is unmaintained; do not use.
+
+String interning is especially valuable during parsing (oxc produces
+interned identifier strings) and in `eval/ops.rs` (all spec op names are
+static atoms). A single atom table means `ToPropertyKey` on an identifier
+string is O(1) pointer comparison, not O(n) string compare.
+
+Add `DEPENDENCIES.md` row in the same diff.
+
+## Profiling on macOS
+
+Throughput-sensitive workloads (test262 runner) benefit from profiling.
+Tools confirmed working on macOS (Darwin):
+
+### cargo-flamegraph
+
+```bash
+brew install dtrace         # required on macOS
+cargo install cargo-flamegraph
+cargo flamegraph --bin run-test -- tests/test262/.../test.js
+```
+
+On macOS, `cargo-flamegraph` uses `xctrace` (Apple Instruments CLI) under
+the hood. Output is a `.perfetto` file viewable in Chrome
+(`chrome://tracing`) or `xctrace` viewer.
+
+Reference: <https://docs.rs/crate/flamegraph/latest>
+
+### samply (better macOS support)
+
+```bash
+cargo install samply
+samply record -- ./target/release/quench test.js
+samply record -- samples "cargo test -p quench-runtime --test test262"
+```
+
+`samply` uses the macOS `timed` backend (superior to `dtrace` on Darwin).
+
+Reference: <https://github.com/mstange/samply>
+
+### xctrace (Apple Instruments CLI)
+
+Apple's native profiling tool, available via Xcode:
+
+```bash
+xctrace record --template 'Time Profiler' --output trace.trace \
+  --launch -- /path/to/quench -- test.js
+# View:
+xctrace show trace.trace
+```
+
+### Which to use
+
+| Tool | macOS support | Best for |
+|---|---|---|
+| `cargo-flamegraph` | ✅ (xctrace) | Flame graphs, CI regression |
+| `samply` | ✅ (native) | CPU hotspots, wall-clock time |
+| `xctrace` | ✅ (native) | Deep Apple tooling, Instruments users |
+
+Profile **before** adding NaN boxing or bumpalo to measure baseline, then
+measure after to confirm the optimization actually helps. Premature
+optimization is a trap — let the profiler guide the changes.
+
 ## Bootstrap order
 
 `Context::new` builds the Rust realm (intrinsic prototypes +
