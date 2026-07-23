@@ -322,10 +322,33 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
         ast::ForStatementLeft::TSNonNullExpression(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::TSTypeAssertion(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::TSInstantiationExpression(e) => lower_expr(&e.expression).ok(),
-        // Member expression variants on for-statement left side — not bindings, return None
-        ast::ForStatementLeft::ComputedMemberExpression(_) => None,
-        ast::ForStatementLeft::StaticMemberExpression(_) => None,
-        ast::ForStatementLeft::PrivateFieldExpression(_) => None,
+        ast::ForStatementLeft::StaticMemberExpression(sm) => {
+            let obj = lower_expr(&sm.object).ok()?;
+            Some(Expression::Member {
+                object: Box::new(obj),
+                property: PropertyKey::Ident(sm.property.name.as_str().to_string()),
+                computed: false,
+            })
+        }
+        ast::ForStatementLeft::ComputedMemberExpression(cm) => {
+            let obj = lower_expr(&cm.object).ok()?;
+            let prop = lower_expr(&cm.expression).ok()?;
+            Some(Expression::Member {
+                object: Box::new(obj),
+                property: PropertyKey::Computed(Box::new(prop)),
+                computed: true,
+            })
+        }
+        ast::ForStatementLeft::PrivateFieldExpression(pf) => {
+            let obj = lower_expr(&pf.object).ok()?;
+            Some(Expression::Member {
+                object: Box::new(obj),
+                property: PropertyKey::Ident(crate::value::private_name_key(
+                    pf.field.name.as_str(),
+                )),
+                computed: false,
+            })
+        }
     }
 }
 
