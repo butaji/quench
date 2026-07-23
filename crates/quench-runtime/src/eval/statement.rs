@@ -374,6 +374,11 @@ pub fn eval_statement(
         Statement::VarDeclaration { kind, name, init } => {
             eval_var_decl(kind, name, init, env, in_arrow_function)
         }
+        Statement::PatternDeclaration {
+            kind,
+            pattern,
+            init,
+        } => eval_pattern_decl(kind, pattern, init, env, in_arrow_function),
         Statement::FunctionDeclaration {
             name,
             params,
@@ -573,6 +578,7 @@ pub fn eval_statement(
 }
 
 /// Helper to set a property on globalThis if we're at the top level.
+/// Helper to set a property on globalThis if we're at the top level.
 fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
     // Only set on globalThis if this is the top-level environment
     let is_top_level = env.borrow().get_parent().is_none();
@@ -583,6 +589,31 @@ fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) 
             global_obj.borrow_mut().set(name, value);
         }
     }
+}
+
+fn eval_pattern_decl(
+    kind: &VarKind,
+    pattern: &BindingElement,
+    init: &Option<Expression>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    crate::eval::object::declare_pattern_bindings_with_kind(pattern, *kind, env);
+    let value = if let Some(expr) = init {
+        eval_expression(expr, env, in_arrow_function)?
+    } else {
+        Value::Undefined
+    };
+    let target = crate::eval::object::binding_pattern_expression(pattern.clone());
+    crate::eval::object::assign_to(&target, &value, env)?;
+    if *kind == VarKind::Var {
+        for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
+            if let Some(bound) = env.borrow().get(&name) {
+                set_on_global_this(env, &name, bound);
+            }
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 fn eval_var_decl(

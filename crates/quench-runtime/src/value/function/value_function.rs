@@ -525,6 +525,17 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     None => format!("{} {}", k, name),
                 }
             }
+            Statement::PatternDeclaration { kind, init, .. } => {
+                let k = match kind {
+                    crate::ast::VarKind::Var => "var",
+                    crate::ast::VarKind::Let => "let",
+                    crate::ast::VarKind::Const => "const",
+                };
+                match init {
+                    Some(i) => format!("{} [...] = {}", k, expr_to_string(i)),
+                    None => format!("{} [...]", k),
+                }
+            }
             Statement::FunctionDeclaration {
                 name,
                 params,

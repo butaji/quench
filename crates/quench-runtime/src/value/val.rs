@@ -190,6 +190,8 @@ pub struct ClassValue {
     pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     /// Whether new private static fields may be added (Object.preventExtensions).
     pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
+    /// Shared private method/accessor values installed on every instance.
+    pub(crate) private_element_cache: std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>,
 }
 
 impl ClassValue {
@@ -256,6 +258,7 @@ impl ClassValue {
             static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
+            private_element_cache: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
         }
     }
 
@@ -279,6 +282,10 @@ impl ClassValue {
     pub fn set_class_def_env(&self, env: Rc<RefCell<Environment>>) {
         let mut cell = self.class_def_env_cell.borrow_mut();
         *cell = Some(env);
+    }
+
+    pub fn class_id(&self) -> usize {
+        self.id
     }
 
     /// Get the class definition environment
