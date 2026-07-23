@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
-**Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4364 pass / 3 fail (99.93%)** as of 2026-07-23.
+**Status:** done · **Path:** `test/language/statements/class` ·
+**4,367 tests** · **4367 pass / 0 fail (100%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -52,14 +52,19 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4355** | **12** | **99.7%** | GeneratorFunction ctor (function* parse, empty prototype); extends-null constructorParent; class expr binding scope; symbol field storage; inside_super_call guard |
 | 2026-07-23 | **4362** | **5** | **99.9%** | SuperProperty GetThisBinding order; destructuring target before getter; ToPrimitive→Symbol property keys; Uint8 indexed coercion; verifyProperty Symbol hasOwn |
 | 2026-07-23 | **4364** | **3** | **99.93%** | TypedArray @@toStringTag prototype walk; indirect eval uses global env (not class-field env); defer incomplete class prototype on generator yield |
+| 2026-07-23 | **4367** | **0** | **100%** | Base ctor Promise completion keeps `this`; single-eval member keys (no double-yield); destructure LHS private-name scoping |
 
-## Top remaining clusters (3)
+## Final fixes (4367/4367)
 
-| Count | File | Fix direction |
-|------:|------|---------------|
-| 1 | `prod-private-async-method.js` | Async private method call in ctor clears `#m` slot before post-ctor getter |
-| 1 | `accessor-name-inst-computed-yield-expr.js` | Instance accessor computed `[yield]` in generator — class binding undefined on resume |
-| 1 | `privatefieldset-evaluation-order-3.js` | Destructuring assign to private field after `new C(this)` super-return branding |
+| File | Fix |
+|------|-----|
+| `prod-private-async-method.js` | `finish_ctor_result`: base class without explicit `return` keeps `this` even when body completion is an object (Promise) |
+| `accessor-name-inst-computed-yield-expr.js` | `member_key_and_function_name`: evaluate computed accessor keys once (was double-eval via SetFunctionName → extra yields) |
+| `privatefieldset-evaluation-order-3.js` | `scope_expression`: walk `ObjectPattern`/`ArrayPattern` destructuring assignment LHS for private-name scoping |
+
+## Top remaining clusters (0)
+
+Stage complete — advance to stage 17 (`test/language/statements/const`, 136 tests).
 
 ## How to clear this stage (ASAP × min LOC)
 

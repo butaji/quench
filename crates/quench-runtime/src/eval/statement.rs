@@ -764,9 +764,7 @@ fn eval_class_decl(
     if crate::value::generator_replay::yield_pending() {
         return Ok(Value::Undefined);
     }
-    if matches!(class_val, Value::Class(_)) {
-        env.borrow_mut().define(name.to_owned(), class_val);
-    }
+    env.borrow_mut().define(name.to_owned(), class_val);
     Ok(Value::Undefined)
 }
 

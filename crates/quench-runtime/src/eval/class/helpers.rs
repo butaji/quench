@@ -77,7 +77,11 @@ fn finish_ctor_result(
         Value::Object(_)
         | Value::Function(_)
         | Value::NativeFunction(_)
-        | Value::NativeConstructor(_) => Ok(result),
+        | Value::NativeConstructor(_)
+            if explicit_return || class.super_class.is_some() =>
+        {
+            Ok(result)
+        }
         _ => {
             if class.super_class.is_some() {
                 if explicit_return && !matches!(result, Value::Undefined) {
@@ -699,15 +703,13 @@ pub fn create_class_prototype_helper_with_env(
     let member_closure = capture_env_for_closure(&closure);
 
     for (name, params, body, is_async, is_generator) in &class.methods {
-        let key_str = prop_key_to_string(name, &closure, false)?;
-        if crate::value::is_private_element_key(&key_str) {
+        let (storage_key, fn_name) = member_key_and_function_name(name, &closure, false)?;
+        if crate::value::is_private_element_key(&storage_key) {
             continue;
         }
-        let storage_key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
-        let fn_name = method_function_name(name, &key_str, &closure)?;
         let mut func = ValueFunction::new(
             Some(fn_name),
             params.clone(),
@@ -732,15 +734,13 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, body) in &class.getters {
-        let key_str = prop_key_to_string(name, &closure, false)?;
-        if crate::value::is_private_element_key(&key_str) {
+        let (key, fn_name) = member_key_and_function_name(name, &closure, false)?;
+        if crate::value::is_private_element_key(&key) {
             continue;
         }
-        let key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
-        let fn_name = accessor_function_name(name, &key_str, &closure, "get")?;
         proto.set_getter(
             &key,
             Rc::new(body.clone()),
@@ -751,15 +751,13 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, param, body) in &class.setters {
-        let key_str = prop_key_to_string(name, &closure, false)?;
-        if crate::value::is_private_element_key(&key_str) {
+        let (key, fn_name) = member_key_and_function_name(name, &closure, false)?;
+        if crate::value::is_private_element_key(&key) {
             continue;
         }
-        let key = storage_key_for_property(name, &key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
-        let fn_name = accessor_function_name(name, &key_str, &closure, "set")?;
         proto.set_setter(
             &key,
             param.clone(),
@@ -890,6 +888,48 @@ pub fn set_function_name_for_field_initializer(
     }
 }
 
+fn computed_property_key_strings(val: &Value) -> Result<(String, String), JsError> {
+    match val {
+        Value::Symbol(s) => Ok((s.property_key(), s.display_name())),
+        _ => {
+            let prim = crate::value::to_primitive(val, Some("string"))?;
+            match &prim {
+                Value::Symbol(s) => Ok((s.property_key(), s.display_name())),
+                _ => {
+                    let s = crate::value::to_js_string(&prim);
+                    Ok((s.clone(), s))
+                }
+            }
+        }
+    }
+}
+
+/// Evaluate a member key once: `(storage_key, function_name)` for SetFunctionName.
+pub fn member_key_and_function_name(
+    key: &crate::ast::PropertyKey,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow: bool,
+) -> Result<(String, String), JsError> {
+    match key {
+        crate::ast::PropertyKey::Computed(expr) => {
+            let val = eval_expression(expr, env, in_arrow)?;
+            if crate::value::generator_replay::yield_pending() {
+                return Ok((String::new(), String::new()));
+            }
+            let (storage, fn_name) = computed_property_key_strings(&val)?;
+            Ok((storage_key_for_property(key, &storage), fn_name))
+        }
+        _ => {
+            let storage = prop_key_to_string(key, env, in_arrow)?;
+            if crate::value::generator_replay::yield_pending() {
+                return Ok((String::new(), String::new()));
+            }
+            let fn_name = method_function_name(key, &storage, env)?;
+            Ok((storage_key_for_property(key, &storage), fn_name))
+        }
+    }
+}
+
 /// Helper to convert PropertyKey to string, evaluating computed expressions
 pub fn prop_key_to_string(
     key: &crate::ast::PropertyKey,
@@ -905,16 +945,7 @@ pub fn prop_key_to_string(
             if crate::value::generator_replay::yield_pending() {
                 return Ok(String::new());
             }
-            match &val {
-                Value::Symbol(s) => Ok(s.property_key()),
-                _ => {
-                    let prim = crate::value::to_primitive(&val, Some("string"))?;
-                    match &prim {
-                        Value::Symbol(s) => Ok(s.property_key()),
-                        _ => Ok(crate::value::to_js_string(&prim)),
-                    }
-                }
-            }
+            Ok(computed_property_key_strings(&val)?.0)
         }
     }
 }
@@ -1305,19 +1336,37 @@ mod tests {
     }
 
     #[test]
+    fn class_ctor_expression_statement_promise_does_not_replace_this() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "class C { \
+                   async #m() { return 42; } \
+                   constructor() { this.#m().then(function() {}); } \
+                 } \
+                 new C() instanceof C",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn prod_private_async_method_ref_lost_after_ctor_promise() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
-        ctx.eval(
-            "class C { \
-               async #m() { return 42; } \
-               get ref() { return this.#m; } \
-               constructor() { this.#m().then(function() {}); } \
-             } \
-             var c = new C(); \
-             c.ref.name;",
-        )
-        .unwrap();
+        let r = ctx
+            .eval(
+                "class C { \
+                   async #m() { return 42; } \
+                   get ref() { return this.#m; } \
+                   constructor() { this.#m().then(function() {}); } \
+                 } \
+                 var c = new C(); \
+                 c.ref.name;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::String("#m".into()));
     }
 
     #[test]
