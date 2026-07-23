@@ -179,3 +179,33 @@ fn setup_array_prototype_global(array_proto: &Rc<RefCell<Object>>) {
         *ap.borrow_mut() = Some(Rc::clone(array_proto));
     });
 }
+
+/// Wire `Array.prototype[Symbol.iterator]` after `Symbol` is registered.
+pub fn register_array_iterator() {
+    let Some(array_proto) = get_array_prototype() else {
+        return;
+    };
+    let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    else {
+        return;
+    };
+    let key = sym.property_key();
+    let iter_fn = NativeFunction::new(array_values_iterator);
+    array_proto
+        .borrow_mut()
+        .set(&key, Value::NativeFunction(Rc::new(iter_fn)));
+}
+
+fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let Value::Object(arr_rc) = this_val else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Array.prototype.values called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    let elements = arr_rc.borrow().elements.clone();
+    Ok(crate::builtins::map::helpers::make_iterator(elements))
+}

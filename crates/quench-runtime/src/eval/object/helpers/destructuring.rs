@@ -81,7 +81,8 @@ pub fn assign_array_destructuring(
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
-        return assign_array_with_iterator(bindings, arr_rc, env);
+        let iter = obtain_iterator(arr_rc)?;
+        return assign_array_with_iterator(bindings, &iter, env);
     }
     let iter = obtain_iterator(arr_rc)?;
     assign_array_with_iterator(bindings, &iter, env)
@@ -92,14 +93,8 @@ fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsErr
     if o.borrow().get("next").is_some() {
         return Ok(Rc::clone(o));
     }
-    let Some(iter_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") else {
-        return Err(JsError("Cannot destructure non-iterable value".to_string()));
-    };
-    let iter_method = symbol_keyed_property(o, &iter_sym)
-        .filter(|m| matches!(m, Value::Function(_) | Value::NativeFunction(_)));
-    let Some(iter_method) = iter_method else {
-        return Err(JsError("Cannot destructure non-iterable value".to_string()));
-    };
+    let env = Rc::new(RefCell::new(Environment::new()));
+    let iter_method = resolve_iterator_method(o, &env)?;
     let result = crate::eval::function::call_value_with_this(
         iter_method,
         vec![],
@@ -107,19 +102,40 @@ fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsErr
     )?;
     match result {
         Value::Object(obj) => Ok(obj),
-        _ => Err(JsError("Cannot destructure non-iterable value".to_string())),
+        _ => Err(non_iterable_type_error()),
     }
 }
 
-/// Read a Symbol-keyed own property (assignment may store in `properties` or `symbol_properties`).
-fn symbol_keyed_property(o: &Rc<RefCell<Object>>, key: &Value) -> Option<Value> {
-    let Value::Symbol(sym) = key else {
-        return None;
-    };
-    let prop_key = sym.property_key();
-    let obj = o.borrow();
-    obj.get_own_value(&prop_key)
-        .or_else(|| obj.symbol_properties.get(&prop_key).cloned())
+/// Get @@iterator method from own or inherited properties (both storage key forms).
+fn resolve_iterator_method(
+    o: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let mut keys = Vec::new();
+    if let Some(key) = crate::builtins::map::helpers::iterator_prop_key() {
+        keys.push(key);
+    }
+    if let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let sym_key = sym.property_key();
+        if !keys.iter().any(|k| k == &sym_key) {
+            keys.push(sym_key);
+        }
+    }
+    for key in keys {
+        let method = crate::eval::member::eval_object_member(o, &key, Some(env))?;
+        if matches!(method, Value::Function(_) | Value::NativeFunction(_)) {
+            return Ok(method);
+        }
+    }
+    Err(non_iterable_type_error())
+}
+
+fn non_iterable_type_error() -> JsError {
+    let (_, js_err) =
+        crate::value::error::create_js_error_with_type("undefined is not iterable", "TypeError");
+    js_err
 }
 
 /// Assign destructuring bindings using an iterator.
@@ -321,17 +337,11 @@ pub fn assign_object_destructuring(
     for (key, binding) in props {
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
-            let prop_value = {
-                let obj_ref = obj.borrow();
-                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
-            };
+            let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             crate::eval::object::assign_to(target, &prop_value, env)?;
         } else {
             let key_str = extract_destructure_key(key, env)?;
-            let prop_value = {
-                let obj_ref = obj.borrow();
-                obj_ref.get(&key_str).unwrap_or(Value::Undefined)
-            };
+            let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             assign_binding_elem(binding, &prop_value, env)?;
         }
     }
@@ -506,7 +516,9 @@ mod tests {
     use std::rc::Rc;
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
-        Context::new().unwrap().eval(src)
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(src)
     }
 
     // ─── box_primitive_for_set: Number ────────────────────────────────────────
@@ -546,6 +558,35 @@ mod tests {
     fn destructure_default_array_literal() {
         let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
         assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn array_destructure_without_symbol_iterator_throws_type_error() {
+        let err = eval(
+            "try { \
+               delete Array.prototype[Symbol.iterator]; \
+               (function([a, b]) {})([1, 2]); \
+               'no throw'; \
+             } catch (e) { e.name }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn async_gen_object_destructure_getter_throws() {
+        let err = eval(
+            "try { \
+               var poisonedProperty = Object.defineProperty({}, 'poisoned', { \
+                 get: function() { throw new Error('getter'); } \
+               }); \
+               class C { async *method({ poisoned } = poisonedProperty) {} } \
+               C.prototype.method(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("getter".into()));
     }
 
     #[test]
