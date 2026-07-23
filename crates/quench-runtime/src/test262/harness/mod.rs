@@ -39,6 +39,13 @@ impl HarnessLoader {
         }
     }
 
+    /// test262 root directory (parent of `harness/`).
+    pub fn root_dir(&self) -> &str {
+        self.harness_dir
+            .strip_suffix("/harness")
+            .unwrap_or(self.harness_dir.as_str())
+    }
+
     /// Load a named harness file, caching results. Strips frontmatter.
     pub fn load(&self, name: &str) -> Option<String> {
         if let Some(cached) = self.cache.borrow().get(name) {
