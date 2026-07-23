@@ -2618,6 +2618,33 @@ mod tests {
     }
 
     #[test]
+    fn class_bind_returns_callable_constructor() {
+        let r = eval(
+            "class Base { constructor(x,y) { this.x=x; this.y=y; } } \
+             class Sub extends Base { constructor(x,y) { super(x,y); } } \
+             typeof Sub.bind",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".to_string()));
+    }
+
+    #[test]
+    fn class_bind_new_ignores_bound_this() {
+        let r = eval(
+            "class Base { constructor(x,y) { this.x=x; this.y=y; } } \
+             class Sub extends Base { constructor(x,y) { super(x,y); } } \
+             var f = Sub.bind({}); var s = new f(1, 2); [s.x, s.y]",
+        )
+        .unwrap();
+        let Value::Object(o) = r else {
+            panic!("expected array")
+        };
+        let obj = o.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(1.0)));
+        assert_eq!(obj.get("1"), Some(Value::Number(2.0)));
+    }
+
+    #[test]
     fn static_private_field_eval_brand_check_on_foreign_class() {
         let err = eval(
             "class C { static #m = 44; static getWithEval() { return eval(\"this.#m\"); } } \
