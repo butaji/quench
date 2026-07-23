@@ -181,6 +181,54 @@ pub fn eval_class_expr(
                     ));
                 }
             }
+            _ => {}
+        }
+    }
+
+    static_field_idx = 0;
+    for member in &new_value.ordered_members {
+        match member {
+            crate::ast::ClassMember::StaticField { .. } => {
+                let Some((name, value_expr)) = extracted_static_fields.get(static_field_idx) else {
+                    continue;
+                };
+                let child_env: Rc<RefCell<Environment>> = Rc::new(RefCell::new(
+                    Environment::with_parent(Rc::clone(&class_scope)),
+                ));
+                child_env
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(class_value.clone());
+                let mut field_value = {
+                    crate::interpreter::set_eval_in_class_field(true);
+                    let v = eval_expression(value_expr, &child_env, false)?;
+                    crate::interpreter::set_eval_in_class_field(false);
+                    v
+                };
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
+                let key_str = match new_value.static_field_key(static_field_idx) {
+                    Some(k) => k,
+                    None => prop_key_to_string(name, &child_env, true)?,
+                };
+                crate::eval::class::helpers::set_function_name_for_field_initializer(
+                    &mut field_value,
+                    name,
+                    &key_str,
+                    value_expr,
+                );
+                let storage_key = if crate::value::is_private_name_key(&key_str) {
+                    key_str
+                } else if key_str.starts_with('#') {
+                    crate::value::private_name_key(&key_str)
+                } else {
+                    key_str
+                };
+                new_value.set_static_field(&storage_key, field_value)?;
+                static_field_idx += 1;
+            }
             crate::ast::ClassMember::StaticBlock { body } => {
                 let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
                     &class_scope,
@@ -201,52 +249,6 @@ pub fn eval_class_expr(
             }
             _ => {}
         }
-    }
-
-    static_field_idx = 0;
-    for member in &new_value.ordered_members {
-        let crate::ast::ClassMember::StaticField { .. } = member else {
-            continue;
-        };
-        let Some((name, value_expr)) = extracted_static_fields.get(static_field_idx) else {
-            continue;
-        };
-        let child_env: Rc<RefCell<Environment>> = Rc::new(RefCell::new(Environment::with_parent(
-            Rc::clone(&class_scope),
-        )));
-        child_env
-            .borrow_mut()
-            .current_scope()
-            .borrow_mut()
-            .set_this(class_value.clone());
-        let mut field_value = {
-            crate::interpreter::set_eval_in_class_field(true);
-            let v = eval_expression(value_expr, &child_env, false)?;
-            crate::interpreter::set_eval_in_class_field(false);
-            v
-        };
-        if crate::value::generator_replay::yield_pending() {
-            return Ok(Value::Undefined);
-        }
-        let key_str = match new_value.static_field_key(static_field_idx) {
-            Some(k) => k,
-            None => prop_key_to_string(name, &child_env, true)?,
-        };
-        crate::eval::class::helpers::set_function_name_for_field_initializer(
-            &mut field_value,
-            name,
-            &key_str,
-            value_expr,
-        );
-        let storage_key = if crate::value::is_private_name_key(&key_str) {
-            key_str
-        } else if key_str.starts_with('#') {
-            crate::value::private_name_key(&key_str)
-        } else {
-            key_str
-        };
-        new_value.set_static_field(&storage_key, field_value)?;
-        static_field_idx += 1;
     }
 
     Ok(Value::Class(Box::new(new_value)))

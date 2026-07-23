@@ -89,7 +89,7 @@ pub fn assign_array_destructuring(
 }
 
 /// Obtain an iterator object from an iterable per ES GetIterator.
-fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
+pub fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
     if o.borrow().get("next").is_some() {
         return Ok(Rc::clone(o));
     }
@@ -222,7 +222,7 @@ pub fn take_iterator_value(
 }
 
 /// Take the next iterator step, returning `(value, done)`.
-fn take_iterator_step(
+pub fn take_iterator_step(
     iterator: &Rc<RefCell<Object>>,
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
