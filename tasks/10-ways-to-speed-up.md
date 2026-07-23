@@ -2,9 +2,10 @@
 
 Data-driven (per-stage counts live in `tasks/index.json`):
 
-- **48,581 tests** across 122 stages: language 23,711 · built-ins
+- **42,892 tests** across 122 stages: language 23,711 · built-ins
   23,668 · annexB 1,086 · harness 116.
-- Done: ~2,154 (4%). In progress: stage 16 `class` — 4,367.
+- **27,323 passed (63.7%)** as of 2026-07-23 full digest. In progress:
+  stage 16 `class` — 4,367.
 - Largest remaining: `expressions` 11,101 · `Temporal` 4,603 ·
   `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
   `TypedArray` 1,446 · `for-await-of` 1,234 · `String` 1,223 ·
@@ -222,6 +223,19 @@ No Darwin-specific code needed for any remaining stage:
   escapes; see R18 and `DEPENDENCIES.md`.
 - *wasmtime for ShadowRealm* — ShadowRealm is a JS-level isolated
   global, not a WASM sandbox.
+
+## S9 — Release `opt-level = 3` *(done 2026-07-23, 1 line)*
+
+`.cargo/config.toml`: `opt-level = "z"` → `opt-level = 3`.
+
+Compared to `"z"`, opt-level 3 allows more inlining and vectorization of
+loops, trading ~5–15% binary size for measurable runtime speedup. The
+test262 runner is throughput-sensitive; a faster binary unlocks more
+iterations per development session.
+
+Confirmed by the [Rust Performance Book](https://nnethercote.github.io/perf-book/build-configuration.html):
+"Compared to opt-level = 'z', it allows slightly more inlining and also the
+vectorization of loops." Source: `nnethercote.github.io/perf-book`.
 
 ## CI regression gate
 

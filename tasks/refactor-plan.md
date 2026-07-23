@@ -23,7 +23,7 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
-| Current stage | 16 `class` (4,367 tests) |
+| Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
 | Crate strategy | `DEPENDENCIES.md` — verified 2026-07-23 |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
