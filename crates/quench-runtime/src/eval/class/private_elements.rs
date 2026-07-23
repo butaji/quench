@@ -401,6 +401,7 @@ fn property_value_check(
 ) -> bool {
     match val {
         crate::ast::PropertyValue::Value(expr) => expr_check(expr),
+        crate::ast::PropertyValue::Spread(expr) => expr_check(expr),
         crate::ast::PropertyValue::Getter { body, .. }
         | crate::ast::PropertyValue::Setter { body, .. } => body.iter().any(stmt_check),
     }

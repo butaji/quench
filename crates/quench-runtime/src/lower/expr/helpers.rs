@@ -106,7 +106,12 @@ fn lower_object_expr(obj: &ast::ObjectExpression) -> Result<Expression, LowerErr
                 let (lowered_key, lowered_val) = lower_object_prop(prop)?;
                 result.push((lowered_key, lowered_val));
             }
-            ast::ObjectPropertyKind::SpreadProperty(_) => {}
+            ast::ObjectPropertyKind::SpreadProperty(spread) => {
+                result.push((
+                    PropertyKey::Ident(String::new()),
+                    PropertyValue::Spread(lower_expr(&spread.argument)?),
+                ));
+            }
         }
     }
 
