@@ -23,6 +23,9 @@ Every harness change must shorten that loop or make cluster choice more accurate
 | QUICK sample (`TEST262_QUICK=1`) | **done** | Triage new stage |
 | Process isolation (`TEST262_ISOLATED=1`) | **done** | Survives SIGABRT |
 | Prebuilt `run-test` (not `cargo run` per test) | **done** | Isolation 10–100× |
+| Digest subprocess-by-default (`TEST262_INPROCESS=1` to opt out) | **done** | Survives stack overflow |
+| 16MB test thread stack (`TEST262_INPROCESS` digest) | **done** | Deeper in-process runs |
+| Crash files run isolated + `NOSKIP` in digest (not skipped) | **done** | Toward zero skips |
 | `run-test` = `run_single_test` (strict/module/negative) | **done** | Debug matches harness |
 | Better error normalization (strict prefix, Test262Error) | **done** | Sharper clusters |
 | Crash-file path skips (10 files) | **debt** | Goal: zero skips |
@@ -72,7 +75,7 @@ cargo run -p run-test -- tests/test262/test/language/statements/class/…/test.j
 | `TEST262_SERIAL` | off | Force serial |
 | `TEST262_ISOLATED` | off | Subprocess per test |
 | `TEST262_NOSKIP` | off | Run crash-list files |
-| `RUN_TEST_BIN` | `target/debug/run-test` | Isolation binary |
+| `TEST262_INPROCESS` | off | Opt into fast in-process digest (unsafe on class stage) |
 | `ALL_STAGES` | off | Digest/run all stages |
 
 ## Next harness priorities
