@@ -211,6 +211,13 @@ pub fn eval_class_member(
                     prop_key_to_string(name, &eval_env, false)?
                 };
                 if key_str == prop_name {
+                    if crate::value::is_private_name_key(prop_name) {
+                        let (_, js_err) = create_js_error_with_type(
+                            "Private accessor has no getter",
+                            "TypeError",
+                        );
+                        return Err(js_err);
+                    }
                     // Return a function that wraps the setter call.
                     let param_name = param.clone();
                     let setter_body = body.clone();

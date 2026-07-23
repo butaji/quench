@@ -291,7 +291,8 @@ impl Environment {
     }
 
     pub fn is_tdz(&self, name: &str) -> bool {
-        if let Some(scope) = self.current_scope_ref() {
+        for scope_rc in self.scopes.iter().rev() {
+            let scope = scope_rc.borrow();
             if scope.has(name) {
                 return scope.is_tdz(name);
             }
