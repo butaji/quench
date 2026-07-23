@@ -302,12 +302,20 @@ fn maybe_write_json(out: &DigestOutput<'_>) {
     });
     let text = serde_json::to_string_pretty(&json).unwrap_or_default();
     println!("{}", text);
-    let path = format!("tasks/failures-{}.json", out.stage);
+    let path = workspace_tasks_path(out.stage);
     if let Err(e) = std::fs::write(&path, &text) {
-        eprintln!("warn: could not write {}: {}", path, e);
+        eprintln!("warn: could not write {}: {}", path.display(), e);
     } else if !out.flags.quick {
-        println!("Wrote {}", path);
+        println!("Wrote {}", path.display());
     }
+}
+
+fn workspace_tasks_path(stage: usize) -> std::path::PathBuf {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest
+        .join("../../tasks")
+        .join(format!("failures-{stage}.json"));
+    path.canonicalize().unwrap_or(path)
 }
 
 #[cfg(test)]
