@@ -347,7 +347,9 @@ fn try_handle_tail_call(
             Value::Undefined,
         ),
     };
-    let function = resolve_callee_to_function(callee_val)?;
+    let Value::Function(function) = callee_val else {
+        return Ok(false);
+    };
     if function.is_async || function.is_generator {
         return Ok(false);
     }
@@ -396,37 +398,6 @@ fn handle_tail_call_in_block(
 
     // No tail-call found; caller will evaluate the block normally.
     Ok(None)
-}
-
-/// Resolve a Value to a ValueFunction, used for tail-call resolution.
-fn resolve_callee_to_function(callee_val: Value) -> Result<ValueFunction, JsError> {
-    match callee_val {
-        Value::Function(f) => Ok(f),
-        Value::Symbol(_) => Err(JsError("Symbol is not a function".into())),
-        _ => Err(JsError(format!(
-            "{} is not a function",
-            value_type_name(&callee_val)
-        ))),
-    }
-}
-
-/// Return a human-readable type name for a Value.
-fn value_type_name(v: &Value) -> &str {
-    match v {
-        Value::Undefined => "undefined",
-        Value::Null => "null",
-        Value::Boolean(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::BigInt(_) => "bigint",
-        Value::String(_) => "string",
-        Value::Symbol(_) => "symbol",
-        Value::Object(_)
-        | Value::Function(_)
-        | Value::NativeFunction(_)
-        | Value::NativeConstructor(_)
-        | Value::Class(_)
-        | Value::Generator(_) => "object",
-    }
 }
 
 /// Evaluate a single statement

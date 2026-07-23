@@ -49,6 +49,7 @@ pub fn eval_identifier(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     if name == "this" {
+        crate::eval::class::helpers::check_this_access_allowed(env)?;
         return Ok(crate::interpreter::get_this_binding(env));
     }
     if name == "super" {
