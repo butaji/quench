@@ -88,8 +88,15 @@ fn test_error_to_string_non_string_message() {
 #[test]
 fn test_error_constructor_no_args() {
     let mut ctx = crate::Context::new().unwrap();
-    let result = ctx.eval("new Error().message").unwrap();
-    assert_eq!(to_js_string(&result), "");
+    let result = ctx
+        .eval("[new Error().hasOwnProperty('message'), new Error().message]")
+        .unwrap();
+    let crate::Value::Object(arr) = result else {
+        panic!("expected array")
+    };
+    let elems = arr.borrow().elements.clone();
+    assert_eq!(elems[0], crate::Value::Boolean(false));
+    assert_eq!(elems[1], crate::Value::Undefined);
 }
 
 #[test]
@@ -107,6 +114,25 @@ fn test_error_name_property() {
 }
 
 // ── Error subclasses ───────────────────────────────────────────────────────────
+
+#[test]
+fn error_subclass_no_arg_inherits_prototype_message() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "class Err extends Error {} \
+             Err.prototype.message = 'custom-error'; \
+             var err2 = new Err(); \
+             [!err2.hasOwnProperty('message'), err2.message]",
+        )
+        .unwrap();
+    let crate::Value::Object(arr) = result else {
+        panic!("expected array")
+    };
+    let elems = arr.borrow().elements.clone();
+    assert_eq!(elems[0], crate::Value::Boolean(true));
+    assert_eq!(elems[1], crate::Value::String("custom-error".to_string()));
+}
 
 #[test]
 fn test_type_error_name() {

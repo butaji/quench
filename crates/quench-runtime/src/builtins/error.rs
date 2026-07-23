@@ -89,27 +89,29 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
     let name_str = name.to_string();
     let constructor = NativeConstructor::new(
         move |args| {
-            let message = args
-                .first()
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
+            let name_str = name_str.clone();
+            let set_message = |obj: &mut Object| {
+                if let Some(msg_arg) = args.first() {
+                    if !matches!(msg_arg, Value::Undefined) {
+                        obj.set("message", Value::String(to_js_string(msg_arg)));
+                    }
+                }
+            };
             if let Some(Value::Object(error_rc)) = get_native_this() {
                 let mut obj = error_rc.borrow_mut();
                 if obj.prototype.is_none() {
                     obj.prototype = Some(Rc::clone(&proto_for_closure));
                 }
-                obj.set("message", message);
-                obj.set("name", Value::String(name_str.clone()));
+                set_message(&mut obj);
+                obj.set("name", Value::String(name_str));
                 drop(obj);
                 return Ok(Value::Object(error_rc));
             }
             let error_obj =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
             let error_rc = Rc::new(RefCell::new(error_obj));
-            error_rc.borrow_mut().set("message", message);
-            error_rc
-                .borrow_mut()
-                .set("name", Value::String(name_str.clone()));
+            set_message(&mut error_rc.borrow_mut());
+            error_rc.borrow_mut().set("name", Value::String(name_str));
             Ok(Value::Object(error_rc))
         },
         Rc::clone(proto),
