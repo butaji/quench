@@ -367,7 +367,15 @@ pub fn eval_expression(
             variable,
             iterable,
             body,
-        } => eval_for_of(variable, iterable, body, env, in_arrow_function),
+            loop_binding,
+        } => eval_for_of(
+            variable,
+            iterable,
+            body,
+            *loop_binding,
+            env,
+            in_arrow_function,
+        ),
         Expression::ForIn {
             variable,
             object,
