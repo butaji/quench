@@ -1,5 +1,5 @@
 {
-  "failed": 126,
+  "failed": 119,
   "groups": [
     {
       "count": 1,
@@ -270,8 +270,9 @@
       ]
     },
     {
-      "count": 5,
+      "count": 6,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldadd-typeerror.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
@@ -280,6 +281,7 @@
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldadd-typeerror.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
@@ -428,16 +430,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 3 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js"
       ],
       "reason": "Test262Error: sameValue failed: NaN !== undefined",
@@ -544,13 +536,15 @@
       ]
     },
     {
-      "count": 2,
+      "count": 3,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
       ]
@@ -605,16 +599,6 @@
       "reason": "Test262Error: sameValue failed: undefined !== 2",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 42",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
       ]
     },
     {
@@ -712,51 +696,33 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
       ],
       "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
       ]
     },
     {
-      "count": 12,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatemethods-on-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/binding.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/default-constructor-2.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
       ],
       "reason": "TypeError: Value is not a function, got undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatemethods-on-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/binding.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
-      ],
-      "reason": "TypeError: superclass must be a constructor",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
       ]
     },
     {
@@ -770,7 +736,7 @@
       ]
     }
   ],
-  "passed": 4241,
+  "passed": 4248,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
