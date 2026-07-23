@@ -43,128 +43,109 @@ fn var_names(stmts: &[Statement]) -> Vec<String> {
         .collect()
 }
 
+fn find_pattern_decl(stmts: &[Statement]) -> Option<&Statement> {
+    stmts
+        .iter()
+        .find(|s| matches!(s, Statement::PatternDeclaration { .. }))
+}
+
 // ─── Array Destructuring ─────────────────────────────────────────────────
 
 #[test]
 fn lower_array_destructure_basic() {
     let stmts = parse_statements("let [a, b] = arr;");
-    assert_eq!(var_names(&stmts), &["__arr_src_0", "a", "b"]);
-
-    let src = find_var(&stmts, "__arr_src_0").unwrap();
-    if let Statement::VarDeclaration {
-        init: Some(expr), ..
-    } = src
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration {
+        kind: VarKind::Let,
+        init: Some(expr),
+        pattern,
+    } = decl
     {
         assert!(matches!(expr, Expression::Identifier(i) if i == "arr"));
-    } else {
-        panic!("expected VarDeclaration with init");
-    }
-
-    let a_stmt = find_var(&stmts, "a").unwrap();
-    if let Statement::VarDeclaration {
-        init: Some(expr),
-        kind: VarKind::Let,
-        ..
-    } = a_stmt
-    {
-        if let Expression::Member {
-            property: PropertyKey::String(k),
-            computed: false,
-            ..
-        } = expr
-        {
-            assert_eq!(k, "0");
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert_eq!(elems.len(), 2);
+            assert!(matches!(&elems[0], BindingElement::Identifier(n) if n == "a"));
+            assert!(matches!(&elems[1], BindingElement::Identifier(n) if n == "b"));
         } else {
-            panic!("expected Member with string key '0', got {:?}", expr);
+            panic!("expected ArrayPattern");
         }
     } else {
-        panic!("expected VarDeclaration(let) for 'a' with init");
-    }
-
-    let b_stmt = find_var(&stmts, "b").unwrap();
-    if let Statement::VarDeclaration {
-        init: Some(expr),
-        kind: VarKind::Let,
-        ..
-    } = b_stmt
-    {
-        if let Expression::Member {
-            property: PropertyKey::String(k),
-            computed: false,
-            ..
-        } = expr
-        {
-            assert_eq!(k, "1");
-        } else {
-            panic!("expected Member with string key '1'");
-        }
-    } else {
-        panic!("expected VarDeclaration for 'b'");
+        panic!("expected PatternDeclaration(let)");
     }
 }
 
 #[test]
 fn lower_array_destructure_with_hole() {
     let stmts = parse_statements("let [, b] = arr;");
-    assert_eq!(var_names(&stmts), &["__arr_src_0", "b"]);
-    let b_stmt = find_var(&stmts, "b").unwrap();
-    if let Statement::VarDeclaration {
-        init:
-            Some(Expression::Member {
-                property: PropertyKey::String(k),
-                ..
-            }),
-        ..
-    } = b_stmt
-    {
-        assert_eq!(k, "1", "hole at index 0 means b is at index 1");
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration { pattern, .. } = decl {
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert!(matches!(&elems[0], BindingElement::Identifier(n) if n == "__hole"));
+            assert!(matches!(&elems[1], BindingElement::Identifier(n) if n == "b"));
+        } else {
+            panic!("expected ArrayPattern");
+        }
     }
 }
 
 #[test]
 fn lower_array_destructure_rest() {
     let stmts = parse_statements("let [a, ...rest] = arr;");
-    assert!(var_names(&stmts).contains(&"a".to_string()));
-    assert!(var_names(&stmts).contains(&"rest".to_string()));
-    assert!(var_names(&stmts).contains(&"__arr_src_0".to_string()));
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration { pattern, .. } = decl {
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert!(matches!(&elems[0], BindingElement::Identifier(n) if n == "a"));
+            assert!(matches!(&elems[1], BindingElement::Rest(_)));
+        } else {
+            panic!("expected ArrayPattern");
+        }
+    }
 }
 
 #[test]
 fn lower_array_destructure_nested() {
     let stmts = parse_statements("let [[a]] = nested;");
-    let names = var_names(&stmts);
-    assert!(names.contains(&"__arr_src_0".to_string()), "need src temp");
-    assert!(names.contains(&"a".to_string()), "need 'a' declaration");
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration {
+        init: Some(expr),
+        pattern,
+        ..
+    } = decl
+    {
+        assert!(matches!(expr, Expression::Identifier(i) if i == "nested"));
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert!(matches!(&elems[0], BindingElement::ArrayPattern(_)));
+        } else {
+            panic!("expected outer ArrayPattern");
+        }
+    }
 }
 
 #[test]
 fn lower_array_destructure_default() {
     let stmts = parse_statements("let [a = 1] = maybe;");
-    let a_stmt = find_var(&stmts, "a").unwrap();
-    if let Statement::VarDeclaration {
-        init: Some(expr), ..
-    } = a_stmt
-    {
-        assert!(
-            matches!(
-                expr,
-                Expression::Binary {
-                    op: crate::ast::BinaryOp::NullishCoalescing,
-                    ..
-                }
-            ),
-            "expected NullishCoalescing for default, got {:?}",
-            expr
-        );
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration { pattern, .. } = decl {
+        assert!(matches!(pattern, BindingElement::ArrayPattern(_)));
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert!(matches!(&elems[0], BindingElement::Default(_, _)));
+        }
     } else {
-        panic!("expected VarDeclaration for 'a'");
+        panic!("expected PatternDeclaration");
     }
 }
 
 #[test]
 fn lower_array_destructure_empty() {
     let stmts = parse_statements("let [] = arr;");
-    assert_eq!(var_names(&stmts), &["__arr_src_0"]);
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
+    if let Statement::PatternDeclaration { pattern, .. } = decl {
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert!(elems.is_empty());
+        } else {
+            panic!("expected empty ArrayPattern");
+        }
+    }
 }
 
 // ─── Object Destructuring ────────────────────────────────────────────────
@@ -266,11 +247,10 @@ fn lower_object_destructure_empty() {
 #[test]
 fn lower_const_array_destructure() {
     let stmts = parse_statements("const [a] = arr;");
-    assert_eq!(var_names(&stmts), &["__arr_src_0", "a"]);
-    let a_stmt = find_var(&stmts, "a").unwrap();
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
     assert!(matches!(
-        a_stmt,
-        Statement::VarDeclaration {
+        decl,
+        Statement::PatternDeclaration {
             kind: VarKind::Const,
             ..
         }
@@ -280,11 +260,10 @@ fn lower_const_array_destructure() {
 #[test]
 fn lower_var_array_destructure() {
     let stmts = parse_statements("var [a] = arr;");
-    assert_eq!(var_names(&stmts), &["__arr_src_0", "a"]);
-    let a_stmt = find_var(&stmts, "a").unwrap();
+    let decl = find_pattern_decl(&stmts).expect("expected PatternDeclaration");
     assert!(matches!(
-        a_stmt,
-        Statement::VarDeclaration {
+        decl,
+        Statement::PatternDeclaration {
             kind: VarKind::Var,
             ..
         }
@@ -353,6 +332,25 @@ fn lower_param_object_destructure() {
             "object destructuring param should have pattern set"
         );
     }
+}
+
+#[test]
+fn lower_param_object_destructure_computed_key() {
+    let stmts = parse_statements("function f({ [k()]: x }) {}");
+    assert_eq!(stmts.len(), 1);
+    let Statement::FunctionDeclaration { params, .. } = &stmts[0] else {
+        panic!("expected FunctionDeclaration");
+    };
+    let pattern = params[0].pattern.as_ref().expect("expected pattern");
+    let BindingElement::ObjectPattern(props) = pattern else {
+        panic!("expected ObjectPattern, got {:?}", pattern);
+    };
+    assert_eq!(props.len(), 1);
+    assert!(
+        matches!(&props[0].0, PropertyKey::Computed(_)),
+        "computed key should be preserved, got {:?}",
+        props[0].0
+    );
 }
 
 #[test]

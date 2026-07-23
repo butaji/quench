@@ -2,7 +2,8 @@
 //!
 //! Implementation of hasOwnProperty, isPrototypeOf, propertyIsEnumerable.
 
-use crate::value::{JsError, Value};
+use crate::value::{JsError, Value, ValueFunction};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Object.prototype.hasOwnProperty - checks if property exists directly on object
@@ -118,4 +119,67 @@ pub fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value
         }
     }
     Ok(Value::Boolean(false))
+}
+
+fn lookup_accessor_on_chain(
+    this_val: &Value,
+    key: &str,
+    want_getter: bool,
+) -> Result<Value, JsError> {
+    let Value::Object(start) = this_val else {
+        return Ok(Value::Undefined);
+    };
+    let mut current: Option<Rc<RefCell<crate::value::Object>>> = Some(Rc::clone(start));
+    while let Some(obj_rc) = current {
+        if want_getter {
+            let acc = obj_rc.borrow().get_getter(key).cloned();
+            if let Some(storage) = acc {
+                if let Some(ref f) = storage.func {
+                    return Ok(f.clone());
+                }
+                if !storage.body.is_empty() {
+                    let mut func = ValueFunction::new(
+                        None,
+                        vec![],
+                        storage.body.to_vec(),
+                        Rc::clone(&storage.closure),
+                        false,
+                        false,
+                    );
+                    func.strict = storage.strict;
+                    return Ok(Value::Function(func));
+                }
+            }
+        } else if let Some(storage) = obj_rc.borrow().get_setter(key).cloned() {
+            if let Some(ref f) = storage.func {
+                return Ok(f.clone());
+            }
+        }
+        current = obj_rc.borrow().prototype.clone();
+    }
+    Ok(Value::Undefined)
+}
+
+/// Object.prototype.__lookupGetter__
+pub fn object_prototype_lookup_getter(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let Some(key_val) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) else {
+        return Ok(Value::Undefined);
+    };
+    lookup_accessor_on_chain(&this_val, &key, true)
+}
+
+/// Object.prototype.__lookupSetter__
+pub fn object_prototype_lookup_setter(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let Some(key_val) = args.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) else {
+        return Ok(Value::Undefined);
+    };
+    lookup_accessor_on_chain(&this_val, &key, false)
 }

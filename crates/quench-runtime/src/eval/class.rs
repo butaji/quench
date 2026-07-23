@@ -29,7 +29,8 @@ pub fn eval_class_expr(
     env: &Rc<RefCell<Environment>>,
     inferred_name: Option<&str>,
 ) -> Result<Value, JsError> {
-    let mut new_value = ClassValue::from_ast(class);
+    let parent_class_id = env.borrow().private_class_id();
+    let mut new_value = ClassValue::from_ast(class, parent_class_id);
     if let Some(name) = inferred_name {
         new_value.set_name(name);
     }
@@ -43,40 +44,50 @@ pub fn eval_class_expr(
             .current_scope()
             .borrow_mut()
             .declare_var(name.to_string(), VarKind::Const);
-        let class_val = Value::Class(Box::new(new_value.clone()));
-        scope_env
-            .borrow_mut()
-            .current_scope()
-            .borrow_mut()
-            .initialize_declared(name, class_val);
-        // Also initialize in env (parent scope) so static blocks can access
-        // the class name before eval_class_decl calls env.define().
-        env.borrow_mut()
-            .define(name.to_string(), Value::Class(Box::new(new_value.clone())));
         scope_env
     } else {
-        Rc::clone(env)
+        // Anonymous class (e.g. field initializer): use a child env so
+        // set_private_class_context below does not clobber the enclosing
+        // class id on `env` (needed for sibling nested classes).
+        Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))))
     };
 
     // Set super_class on class_scope so static method closures capture it.
     // Must happen BEFORE get_or_create_class_prototype (which evaluates the class body).
     // Evaluate the superclass expression ONCE and cache for reuse.
+    // Class name binding stays in TDZ until heritage evaluation completes (ES §15.7.14).
+    class_scope.borrow_mut().set_private_class_context(
+        new_value.class_id(),
+        new_value.declared_private_names.clone(),
+    );
     let cached_super_class_val = if let Some(ref super_class_expr) = new_value.super_class {
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
         let val = eval_expression(super_class_expr, &class_scope, false)?;
+        crate::interpreter::set_strict_mode(prev_strict);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Value::Undefined);
         }
         class_scope.borrow_mut().set_super_class(val.clone());
         Some(val)
     } else {
-        // For base classes (no extends), set super_class to the class itself.
-        // This must happen BEFORE get_or_create_class_prototype so that
-        // captured closures for methods can resolve `super` through the
-        // prototype chain (class.prototype -> Object.prototype -> ...).
-        let self_val = Value::Class(Box::new(new_value.clone()));
-        class_scope.borrow_mut().set_super_class(self_val);
+        if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+            class_scope
+                .borrow_mut()
+                .set_super_class(Value::Object(obj_proto));
+        }
         None
     };
+
+    if let Some(name) = class_name {
+        let class_val = Value::Class(Box::new(new_value.clone()));
+        class_scope
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .initialize_declared(name, class_val.clone());
+        env.borrow_mut().define(name.to_string(), class_val);
+    }
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
     if crate::value::generator_replay::yield_pending() {
@@ -135,11 +146,10 @@ pub fn eval_class_expr(
                     if crate::value::generator_replay::yield_pending() {
                         return Ok(Value::Undefined);
                     }
-                    if key_str == "prototype" || key_str == "constructor" {
-                        return Err(JsError(format!(
-                            "TypeError: static class field may not be named '{}'",
-                            key_str
-                        )));
+                    if key_str == "prototype" {
+                        return Err(JsError(
+                            "TypeError: static class field may not be named 'prototype'".into(),
+                        ));
                     }
                     let storage_key = if crate::value::is_private_name_key(&key_str) {
                         key_str
@@ -157,11 +167,10 @@ pub fn eval_class_expr(
                 if crate::value::generator_replay::yield_pending() {
                     return Ok(Value::Undefined);
                 }
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticGetter { name, .. } => {
@@ -170,11 +179,10 @@ pub fn eval_class_expr(
                     return Ok(Value::Undefined);
                 }
                 new_value.push_static_getter_key(key_str.clone());
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticSetter { name, .. } => {
@@ -183,31 +191,25 @@ pub fn eval_class_expr(
                     return Ok(Value::Undefined);
                 }
                 new_value.push_static_setter_key(key_str.clone());
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticBlock { body } => {
-                let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+                let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
+                    &class_scope,
+                ))));
                 block_env
                     .borrow_mut()
                     .current_scope()
                     .borrow_mut()
                     .set_this(class_value.clone());
-                // Copy super_class from class_scope so super.property in the static
-                // init block can resolve through the correct superclass value.
-                if let Some(super_val) = class_scope.borrow().get_super_class() {
-                    block_env.borrow_mut().set_super_class(super_val);
-                }
-                // Static init blocks are static class bodies — super accesses the
-                // superclass constructor's own properties (not the prototype chain).
-                block_env.borrow_mut().set_static_class_body();
                 let prev_strict = crate::interpreter::is_strict_mode();
                 crate::interpreter::set_strict_mode(true);
                 let _ = crate::eval::statement::eval_function_body(body, &block_env, false)?;
+                let _ = crate::interpreter::take_control_flow();
                 if crate::value::generator_replay::yield_pending() {
                     return Ok(Value::Undefined);
                 }
@@ -266,37 +268,26 @@ pub fn call_super_constructor(
 ) -> Result<Value, JsError> {
     let _proto_rc = get_or_create_class_prototype(&class, env)?;
 
-    let _params = class.constructor_params.clone();
     let body = class.constructor_body.clone();
-
-    let mut call_env = Environment::with_parent(Rc::clone(env));
-    call_env
-        .current_scope()
-        .borrow_mut()
-        .set_this_value(this_val.clone());
-
-    if let Some(ref sc) = class.super_class {
-        let sv = crate::eval::expression::eval_expression(sc, env, false)?;
-        call_env.set_super_class(sv);
-    }
-
-    for (i, param) in _params.iter().enumerate() {
-        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
-    }
-
-    let args_obj = create_arguments_object_simple(args);
-    call_env.define("arguments".to_string(), args_obj);
-
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        &class, &args, &this_val, env,
+    )?));
 
     if body.is_empty() {
-        Ok(this_val)
-    } else {
-        crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
-        let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
-        finish_constructor(result, &this_val)
+        if let Value::Object(o) = &this_val {
+            let field_obj = crate::eval::object::private_field_object(o);
+            if !class.instance_fields.is_empty() {
+                init_instance_fields(&class, &field_obj, &call_env)?;
+            }
+            install_instance_private_elements(&class, &field_obj, env)?;
+        }
+        return Ok(this_val);
     }
+
+    crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
+    let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
+    let _ = crate::interpreter::take_control_flow();
+    finish_constructor(result, &this_val)
 }
 
 /// Get or create the prototype for a class, caching it in the ClassValue

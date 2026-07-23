@@ -7,7 +7,8 @@ use crate::eval::expression::eval_expression;
 use crate::eval::statement::{eval_function_body, take_tail_call_signal};
 use crate::interpreter::{check_depth, predeclare_let_const, predeclare_var, release_depth};
 use crate::value::{
-    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value, ValueFunction,
+    create_js_error_with_type, JsError, NativeConstructor, NativeFunction, Object, ObjectKind,
+    Value, ValueFunction,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -61,7 +62,7 @@ pub(crate) fn call_value_impl(
                 // We evaluate params in a throwaway environment just to catch errors.
                 let eval_env = Environment::with_parent(Rc::clone(&f.closure));
                 let eval_env_rc = Rc::new(RefCell::new(eval_env));
-                bind_params(&f, &f.params, &args, &eval_env_rc, true)?;
+                bind_params(&f, &f.params, &args, &eval_env_rc)?;
 
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
@@ -76,9 +77,27 @@ pub(crate) fn call_value_impl(
             } else if f.is_generator {
                 // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
                 // runs synchronously at [[Call]] before returning the generator object.
-                let eval_env = Environment::with_parent(Rc::clone(&f.closure));
-                let eval_env_rc = Rc::new(RefCell::new(eval_env));
-                bind_params(&f, &f.params, &args, &eval_env_rc, false)?;
+                let call_env = Environment::with_parent(Rc::clone(&f.closure));
+                if !f.is_arrow {
+                    call_env
+                        .current_scope()
+                        .borrow_mut()
+                        .set_this(this_val.clone());
+                }
+                let call_env_rc = Rc::new(RefCell::new(call_env));
+                if !f.is_arrow {
+                    let args_obj =
+                        crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+                    call_env_rc
+                        .borrow_mut()
+                        .define("arguments".to_string(), args_obj);
+                }
+                bind_params(&f, &f.params, &args, &call_env_rc)?;
+
+                let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
+                body_env_rc.borrow_mut().push_scope();
+                predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
+                predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
 
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
@@ -87,6 +106,7 @@ pub(crate) fn call_value_impl(
                     f.strict,
                 );
                 gen_obj.args = Some(args);
+                gen_obj.call_env = Some(body_env_rc);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
@@ -96,31 +116,28 @@ pub(crate) fn call_value_impl(
         }
         Value::NativeFunction(nf) => call_native_function(nf, args, this_val),
         Value::NativeConstructor(nc) => call_native_constructor(nc, args, this_val),
-        Value::Object(o) => {
-            // Check if this object has an internal [[Call]] slot (set by the
-            // Function constructor when called via super() from a class that
-            // extends Function). If so, call the stored function directly.
-            let call_slot = o.borrow().call_slot.clone();
-            if let Some(f) = call_slot {
-                return call_value_impl(f, args, this_val, force_strict);
-            }
-            call_object_as_constructor(o, args, this_val)
-        }
+        Value::Object(o) => call_object_as_constructor(o, args, this_val),
         Value::Class(class) => {
             if this_val != Value::Undefined {
-                crate::eval::class::call_super_constructor(
-                    *class,
-                    args,
-                    this_val,
-                    &Rc::new(RefCell::new(Environment::new())),
-                )
-            } else {
+                if crate::eval::class::helpers::constructing_class_for_super().is_some() {
+                    return crate::eval::class::call_super_constructor(
+                        *class,
+                        args,
+                        this_val,
+                        &Rc::new(RefCell::new(Environment::new())),
+                    );
+                }
                 let (_, js_err) = crate::value::error::create_js_error_with_type(
                     "Class constructor cannot be invoked without 'new'",
                     "TypeError",
                 );
-                Err(js_err)
+                return Err(js_err);
             }
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Class constructor cannot be invoked without 'new'",
+                "TypeError",
+            );
+            Err(js_err)
         }
         _ => {
             let msg = format!("Value is not a function, got {:?}", func);
@@ -221,20 +238,21 @@ pub(crate) fn call_js_function_impl_with_strict(
                 .define("arguments".to_string(), args_obj);
         }
 
-        bind_params(&f, &params, &args, &call_env_rc, false)?;
+        bind_params(&f, &params, &args, &call_env_rc)?;
 
-        call_env_rc.borrow_mut().push_scope();
-        predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
-        predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
+        let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &params);
+        body_env_rc.borrow_mut().push_scope();
+        predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
+        predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(in_strict);
         let previous_eval_env = crate::interpreter::get_current_eval_env();
-        crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(&body_env_rc)));
         let result = if f.is_arrow {
-            call_arrow_body(&f, &call_env_rc)
+            call_arrow_body(&f, &body_env_rc)
         } else {
-            eval_function_body(&f.body, &call_env_rc, false)
+            eval_function_body(&f.body, &body_env_rc, false)
         };
         crate::interpreter::set_current_eval_env(previous_eval_env);
         crate::interpreter::set_strict_mode(prev_strict);
@@ -270,16 +288,43 @@ pub(crate) fn call_js_function_impl_with_strict(
     }
 }
 
+/// True when formal parameters need a separate body environment (ES
+/// `hasParameterExpressions`: defaults, destructuring, or rest).
+pub(crate) fn has_parameter_expressions(params: &[crate::ast::Param]) -> bool {
+    params
+        .iter()
+        .any(|p| p.default.is_some() || p.pattern.is_some() || p.rest)
+}
+
+/// Body lexical environment: child param record when parameter expressions
+/// exist, otherwise the same environment used for parameter binding.
+pub(crate) fn function_body_env(
+    param_env_rc: &Rc<RefCell<Environment>>,
+    f: &ValueFunction,
+    this_val: &Value,
+    params: &[crate::ast::Param],
+) -> Rc<RefCell<Environment>> {
+    if !has_parameter_expressions(params) {
+        return Rc::clone(param_env_rc);
+    }
+    let body_env = Environment::with_parent(Rc::clone(param_env_rc));
+    if !f.is_arrow {
+        body_env
+            .current_scope()
+            .borrow_mut()
+            .set_this(this_val.clone());
+    }
+    Rc::new(RefCell::new(body_env))
+}
+
 /// Bind parameters from `args` into the call environment.
-/// When `use_tdz` is true, each param is first declared in TDZ (Temporal Dead Zone)
-/// before evaluating its default expression. This ensures that self-referencing
-/// defaults like `f(x = x)` throw a ReferenceError rather than silently succeeding.
+/// Params with default expressions are declared in TDZ before evaluating the
+/// default so self-references like `f(x = x)` throw ReferenceError.
 pub(crate) fn bind_params(
     f: &ValueFunction,
     params: &[crate::ast::Param],
     args: &[Value],
     call_env_rc: &Rc<RefCell<Environment>>,
-    use_tdz: bool,
 ) -> Result<(), JsError> {
     let mut found_rest = false;
     for (i, param) in params.iter().enumerate() {
@@ -306,9 +351,8 @@ pub(crate) fn bind_params(
             }
         } else {
             let arg = args.get(i).cloned();
-            // When use_tdz is true (async generators), declare the param in TDZ first.
-            // This ensures self-referencing defaults throw ReferenceError.
-            if use_tdz && param.default.is_some() {
+            // Declare params with defaults in TDZ before evaluating default expressions.
+            if param.default.is_some() {
                 call_env_rc
                     .borrow_mut()
                     .declare_var(param.name.clone(), crate::ast::VarKind::Let);
@@ -325,8 +369,7 @@ pub(crate) fn bind_params(
                 None => Value::Undefined,
             };
 
-            // If we used TDZ, initialize the declared binding or destructure the default.
-            if use_tdz && param.default.is_some() {
+            if param.default.is_some() {
                 if let Some(pattern) = &param.pattern {
                     declare_pattern_bindings(pattern, call_env_rc);
                     let target = binding_pattern_expression(pattern.clone());
@@ -422,12 +465,14 @@ fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: boo
 
     // Set callee property
     if strict_mode {
-        // In strict mode, arguments.callee throws TypeError per ESMA-262 10.2.9
-        // Throw a string error directly - to_js_string will preserve it as-is
-        let throw_body = vec![Statement::Throw(Box::new(Expression::String(
-            "TypeError: 'caller' and 'callee' are not allowed in strict mode".to_string(),
-        )))];
-        obj.set_getter("callee", Rc::new(throw_body), f.closure.clone(), false);
+        let nf = NativeFunction::new(|_| {
+            let (_, js_err) = create_js_error_with_type(
+                "'caller' and 'callee' are not allowed in strict mode",
+                "TypeError",
+            );
+            Err(js_err)
+        });
+        obj.set_getter_func("callee", Value::NativeFunction(Rc::new(nf)));
     } else {
         // In non-strict mode, callee is the function itself
         obj.set("callee", Value::Function(f.clone()));

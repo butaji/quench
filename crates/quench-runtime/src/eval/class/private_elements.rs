@@ -10,18 +10,36 @@ use crate::value::{ClassValue, JsError, Object, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn private_element_exists(obj: &Object, key: &str) -> bool {
-    obj.properties.contains_key(key)
-        || obj.getters.contains_key(key)
-        || obj.setters.contains_key(key)
+fn private_element_conflicts(obj: &Object, key: &str, kind: PrivateInstallKind) -> bool {
+    if obj.properties.contains_key(key) {
+        return true;
+    }
+    match kind {
+        PrivateInstallKind::Method => {
+            obj.getters.contains_key(key) || obj.setters.contains_key(key)
+        }
+        PrivateInstallKind::Getter => obj.getters.contains_key(key),
+        PrivateInstallKind::Setter => obj.setters.contains_key(key),
+    }
 }
 
-fn ensure_private_add(obj: &Rc<RefCell<Object>>, key: &str) -> Result<(), JsError> {
+#[derive(Copy, Clone)]
+enum PrivateInstallKind {
+    Method,
+    Getter,
+    Setter,
+}
+
+fn ensure_private_add(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    kind: PrivateInstallKind,
+) -> Result<(), JsError> {
     if !crate::value::is_private_name_key(key) {
         return Ok(());
     }
     let o = obj.borrow();
-    if private_element_exists(&o, key) {
+    if private_element_conflicts(&o, key, kind) {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "Private method or accessor already defined",
             "TypeError",
@@ -53,18 +71,28 @@ pub fn install_instance_private_elements(
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);
-        ensure_private_add(instance, &storage_key)?;
-        let mut func = ValueFunction::new(
-            Some(key_str.clone()),
-            params.clone(),
-            body.clone(),
-            Rc::clone(&member_closure),
-            *is_async,
-            *is_generator,
-        );
-        func.strict = true;
-        func.is_method = true;
-        private_field_add(instance, &storage_key, Value::Function(func))?;
+        ensure_private_add(instance, &storage_key, PrivateInstallKind::Method)?;
+        let func_val = {
+            let mut cache = class.private_element_cache.borrow_mut();
+            if let Some(cached) = cache.get(&storage_key) {
+                cached.clone()
+            } else {
+                let mut func = ValueFunction::new(
+                    Some(crate::value::private_method_display_name(&key_str)),
+                    params.clone(),
+                    body.clone(),
+                    Rc::clone(&member_closure),
+                    *is_async,
+                    *is_generator,
+                );
+                func.strict = true;
+                func.is_method = true;
+                let val = Value::Function(func);
+                cache.insert(storage_key.clone(), val.clone());
+                val
+            }
+        };
+        private_field_add(instance, &storage_key, func_val)?;
     }
 
     for (name, body) in &class.getters {
@@ -73,7 +101,7 @@ pub fn install_instance_private_elements(
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);
-        ensure_private_add(instance, &storage_key)?;
+        ensure_private_add(instance, &storage_key, PrivateInstallKind::Getter)?;
         instance.borrow_mut().set_getter(
             &storage_key,
             Rc::new(body.clone()),
@@ -88,7 +116,7 @@ pub fn install_instance_private_elements(
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);
-        ensure_private_add(instance, &storage_key)?;
+        ensure_private_add(instance, &storage_key, PrivateInstallKind::Setter)?;
         instance.borrow_mut().set_setter(
             &storage_key,
             param.clone(),
@@ -373,6 +401,7 @@ fn property_value_check(
 ) -> bool {
     match val {
         crate::ast::PropertyValue::Value(expr) => expr_check(expr),
+        crate::ast::PropertyValue::Spread(expr) => expr_check(expr),
         crate::ast::PropertyValue::Getter { body, .. }
         | crate::ast::PropertyValue::Setter { body, .. } => body.iter().any(stmt_check),
     }
@@ -408,6 +437,19 @@ mod tests {
 
     fn is_syntax_error(err: &JsError) -> bool {
         err.0.contains("SyntaxError")
+    }
+
+    #[test]
+    fn undeclared_private_in_field_eval_throws_syntax_error() {
+        let err =
+            eval("class C { y = eval(\"executed = true; this.#x;\"); } new C();").unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
+    }
+
+    #[test]
+    fn undeclared_private_in_top_level_eval_throws_syntax_error() {
+        let err = eval("class C { #x; } eval(\"new C().#x\");").unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
     }
 
     #[test]
@@ -461,5 +503,35 @@ mod tests {
         let program = Context::new().unwrap().parse("() => super();").unwrap();
         let Program::Script(body) = program;
         assert!(program_contains_super_call(&body));
+    }
+
+    #[test]
+    fn private_getter_setter_pair_on_same_name() {
+        let src = "var s; class C { get #x() { return 'get'; } set #x(v) { s = v; } \
+                   getRef() { return this.#x; } setRef(v) { this.#x = v; } } \
+                   var c = new C(); c.getRef() === 'get' && (c.setRef('set'), s === 'set')";
+        let r = eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn subclass_and_superclass_same_private_bare_name() {
+        let src = "class S { #m() { return 'super'; } superAccess() { return this.#m(); } } \
+                   class C extends S { #m() { return 'sub'; } access() { return this.#m(); } } \
+                   var c = new C(); c.access() === 'sub' && c.superAccess() === 'super'";
+        let r = eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn private_accessor_double_install_on_same_object_throws() {
+        let err = eval(
+            "class Base { constructor(o) { return o; } } \
+             class C extends Base { get #p() {} set #p(x) {} } \
+             var obj = {}; new C(obj); \
+             try { new C(obj); 'ok'; } catch (e) { e.constructor.name; }",
+        )
+        .unwrap();
+        assert_eq!(err, crate::value::Value::String("TypeError".into()));
     }
 }

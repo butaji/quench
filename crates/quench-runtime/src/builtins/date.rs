@@ -296,6 +296,37 @@ fn days_in_month(year: i32, month: i32) -> i64 {
     }
 }
 
+fn date_timestamp(this_val: &Value) -> f64 {
+    if let Value::Object(obj_rc) = this_val {
+        if let Some(Value::Number(n)) = obj_rc.borrow().get("_timestamp") {
+            return n;
+        }
+    }
+    chrono_now() as f64
+}
+
+fn date_parts_from_timestamp(ms: f64) -> (i32, i32, i32) {
+    use chrono::{Datelike, TimeZone, Utc};
+    let secs = (ms / 1000.0).trunc() as i64;
+    let nsecs = ((ms.fract() * 1_000_000_000.0).max(0.0) as u32).min(999_999_999);
+    let dt = Utc
+        .timestamp_opt(secs, nsecs)
+        .single()
+        .unwrap_or_else(|| Utc.timestamp_opt(0, 0).single().unwrap());
+    (dt.year(), dt.month() as i32 - 1, dt.day() as i32)
+}
+
+fn install_date_getter(proto: &Rc<RefCell<Object>>, name: &str, component: fn(f64) -> i32) {
+    proto.borrow_mut().set(
+        name,
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let ms = date_timestamp(&this_val);
+            Ok(Value::Number(component(ms) as f64))
+        }))),
+    );
+}
+
 pub fn register_date(ctx: &mut Context) {
     let date_proto = Object::new(ObjectKind::Date);
     let date_proto_rc = Rc::new(RefCell::new(date_proto));
@@ -326,14 +357,27 @@ pub fn register_date(ctx: &mut Context) {
         "getTime",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            if let Value::Object(obj_rc) = this_val {
-                if let Some(ts) = obj_rc.borrow().get("_timestamp") {
-                    return Ok(ts);
-                }
-            }
-            Ok(Value::Number(chrono_now() as f64))
+            Ok(Value::Number(date_timestamp(&this_val)))
         }))),
     );
+    install_date_getter(&date_proto_rc, "getFullYear", |ms| {
+        date_parts_from_timestamp(ms).0
+    });
+    install_date_getter(&date_proto_rc, "getMonth", |ms| {
+        date_parts_from_timestamp(ms).1
+    });
+    install_date_getter(&date_proto_rc, "getDate", |ms| {
+        date_parts_from_timestamp(ms).2
+    });
+    install_date_getter(&date_proto_rc, "getUTCFullYear", |ms| {
+        date_parts_from_timestamp(ms).0
+    });
+    install_date_getter(&date_proto_rc, "getUTCMonth", |ms| {
+        date_parts_from_timestamp(ms).1
+    });
+    install_date_getter(&date_proto_rc, "getUTCDate", |ms| {
+        date_parts_from_timestamp(ms).2
+    });
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         date_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
@@ -457,6 +501,43 @@ mod tests {
             Value::Number(n) => n,
             other => panic!("expected Number from {:?}, got {:?}", src, other),
         }
+    }
+
+    #[test]
+    fn test_date_get_full_year_month_date() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("new Date(1859, 10, 24).getFullYear()").unwrap(),
+            Value::Number(1859.0)
+        );
+        assert_eq!(
+            ctx.eval("new Date(1859, 10, 24).getMonth()").unwrap(),
+            Value::Number(10.0)
+        );
+        assert_eq!(
+            ctx.eval("new Date(1859, 10, 24).getDate()").unwrap(),
+            Value::Number(24.0)
+        );
+    }
+
+    #[test]
+    fn test_date_subclass_regular_subclassing() {
+        use crate::Context;
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("class D extends Date {}").unwrap();
+        assert_eq!(
+            ctx.eval("new D(1859, 10, 24).getFullYear()").unwrap(),
+            Value::Number(1859.0)
+        );
+        assert_eq!(
+            ctx.eval("new D(1859, 10, 24).getMonth()").unwrap(),
+            Value::Number(10.0)
+        );
+        assert_eq!(
+            ctx.eval("new D(1859, 10, 24).getDate()").unwrap(),
+            Value::Number(24.0)
+        );
     }
 
     #[test]
