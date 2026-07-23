@@ -122,7 +122,15 @@ fn symbol_key_for_impl(sym: Value) -> Result<Value, crate::JsError> {
 pub fn register_symbol(ctx: &mut Context) {
     // Symbol is callable (`Symbol('desc')`), so the global must be a function
     // (deepEqual.js and others check `typeof Symbol === 'function'`).
-    let symbol_constructor = NativeFunction::new(move |args| {
+    let symbol_constructor = NativeFunction::new_named("Symbol", move |args| {
+        if !matches!(
+            crate::interpreter::get_new_target(),
+            None | Some(Value::Undefined)
+        ) {
+            return Err(crate::JsError::new(
+                "TypeError: Symbol is not a constructor",
+            ));
+        }
         // Symbol() with no arg should have empty description
         let desc = if args.is_empty() {
             String::new()
