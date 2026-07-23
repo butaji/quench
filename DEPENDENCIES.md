@@ -48,6 +48,7 @@ run before landing.
 
 | Crate | Stage | Difficulty | Why | Risk |
 |---|---|---|---|---|
+| `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. 244.6M+ downloads, stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. 2–4× speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
 | `url` | 53 `modules` | 5 | Supersedes `urlencoding` for URL Standard compliance. Covers `import "https://..."`, bare specifier resolution, and `data:` URLs. | Low. Drop-in upgrade. |
 | `oxc_semantic` | R17 | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
 | `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa (94.12% test262), Kiesel, and **V8/Chrome 144**. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
