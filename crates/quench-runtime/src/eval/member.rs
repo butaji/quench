@@ -168,21 +168,31 @@ pub fn eval_class_member(
             }
             // Check static methods
             for (name, params, body, is_async, is_generator) in &class.static_methods {
-                if prop_key_matches(name, prop_name) {
-                    // Use class definition env so static methods have access to super_class.
-                    let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                    let mut func = crate::value::ValueFunction::new(
-                        Some(prop_name.to_string()),
-                        params.clone(),
-                        body.clone(),
-                        closure_env,
-                        *is_async,
-                        *is_generator,
-                    );
-                    // Class bodies are always strict mode (ES spec 15.7).
-                    func.strict = true;
-                    return Ok(Value::Function(func));
-                }
+                let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+                let key_str = if prop_key_matches(name, prop_name) {
+                    prop_name.to_string()
+                } else {
+                    match prop_key_to_string(name, &closure_env, false) {
+                        Ok(k) if k == prop_name => k,
+                        _ => continue,
+                    }
+                };
+                let fn_name = crate::eval::class::helpers::method_function_name(
+                    name,
+                    &key_str,
+                    &closure_env,
+                )?;
+                let mut func = crate::value::ValueFunction::new(
+                    Some(fn_name),
+                    params.clone(),
+                    body.clone(),
+                    closure_env,
+                    *is_async,
+                    *is_generator,
+                );
+                func.strict = true;
+                func.is_method = true;
+                return Ok(Value::Function(func));
             }
             // Check static getters
             for (i, (name, body)) in class.static_getters.iter().enumerate() {
