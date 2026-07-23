@@ -6,7 +6,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use crate::test262::harness::HarnessLoader;
 use crate::test262::host::TestOutcome;
-use crate::test262::runner::execute::{run_isolated, run_single_test, TEST_TIMEOUT_SECS};
+use crate::test262::runner::execute::{run_isolated, run_single_test};
 use crate::test262::runner::flags::RunnerFlags;
 use crate::test262::runner::RunSummary;
 
@@ -30,10 +30,13 @@ pub fn run_stage_digest(
         );
     }
 
-    let outcomes = if flags.parallel && !flags.isolated {
-        run_parallel(harness, tests, flags)
+    // In-process stack overflow aborts the entire digest; default digest to subprocess.
+    let use_isolated = flags.isolated || (flags.digest && !inprocess_digest());
+
+    let outcomes = if flags.parallel {
+        run_parallel(harness, tests, flags, use_isolated)
     } else {
-        run_serial(harness, tests, flags)
+        run_serial(harness, tests, flags, use_isolated)
     };
 
     let mut passed = 0usize;
@@ -77,10 +80,18 @@ pub fn run_stage_digest(
     }
 }
 
+fn inprocess_digest() -> bool {
+    std::env::var("TEST262_INPROCESS")
+        .ok()
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 fn run_serial(
     harness: &HarnessLoader,
     tests: &[PathBuf],
     flags: &RunnerFlags,
+    use_isolated: bool,
 ) -> Vec<(String, TestOutcome)> {
     let mut out = Vec::with_capacity(tests.len());
     let mut unique_fails = 0usize;
@@ -89,7 +100,7 @@ fn run_serial(
         if !flags.quick && ((i + 1) % 50 == 0 || i == 0) {
             println!("  [{}/{}] ...", i + 1, tests.len());
         }
-        let outcome = one_test(harness, path, flags.isolated);
+        let outcome = one_test(harness, path, use_isolated);
         if let TestOutcome::Fail { ref reason } = outcome {
             let key = normalize_reason(reason);
             if seen.insert(key) {
@@ -108,6 +119,7 @@ fn run_parallel(
     harness: &HarnessLoader,
     tests: &[PathBuf],
     flags: &RunnerFlags,
+    use_isolated: bool,
 ) -> Vec<(String, TestOutcome)> {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -117,7 +129,7 @@ fn run_parallel(
     let next = Arc::new(Mutex::new(0usize));
     let tests = tests.to_vec();
     let harness_root = harness.root_dir().to_string();
-    let isolated = flags.isolated;
+    let isolated = use_isolated;
     let mut handles = Vec::new();
     for _ in 0..workers {
         let tx = tx.clone();
@@ -170,16 +182,16 @@ fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
 
 fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome {
     if isolated {
-        if let Some(reason) = path
-            .to_str()
-            .and_then(crate::test262::skip::should_skip_path)
-        {
-            return TestOutcome::Skip { reason };
-        }
+        return run_isolated(path);
+    }
+    if path
+        .to_str()
+        .and_then(crate::test262::skip::should_skip_path)
+        .is_some()
+    {
         return run_isolated(path);
     }
     let mut host = crate::test262::host::QuenchHost::new();
-    let _ = TEST_TIMEOUT_SECS;
     run_single_test(&mut host, harness, path)
 }
 
