@@ -17,7 +17,7 @@ pub use string_member::eval_string_member;
 
 use crate::env::Environment;
 use crate::eval::class::helpers::{method_function_name, prop_key_to_string};
-use crate::value::{ClassValue, create_js_error_with_type, JsError, Object, ObjectKind, Value};
+use crate::value::{create_js_error_with_type, ClassValue, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -355,9 +355,7 @@ fn eval_class_private_member_get(
     if let Some(val) = class.get_static_field(prop_name) {
         return Ok(val);
     }
-    let eval_env = class
-        .get_class_def_env()
-        .unwrap_or_else(|| Rc::clone(env));
+    let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
     for (name, params, body, is_async, is_generator) in &class.static_methods {
         if static_member_storage_key(name, &eval_env).as_deref() != Some(prop_name) {
             continue;

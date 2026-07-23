@@ -391,6 +391,10 @@ pub fn eval_expression(
 
 /// Build the environment captured by a closure.
 pub fn capture_env_for_closure(env: &Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-    let captured = env.borrow().capture_env();
+    let mut captured = env.borrow().capture_env();
+    if crate::interpreter::is_eval_in_class_field() || env.borrow().is_in_class_field_initializer()
+    {
+        captured.set_in_class_field_initializer(true);
+    }
     Rc::new(RefCell::new(captured))
 }
