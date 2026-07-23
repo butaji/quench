@@ -268,6 +268,8 @@ fn lower_arrow_expr(arrow: &ast::ArrowFunctionExpression) -> Result<Expression, 
     Ok(Expression::ArrowFunction {
         params,
         body: Box::new(body),
+        is_async: arrow.r#async,
+        is_generator: false,
     })
 }
 

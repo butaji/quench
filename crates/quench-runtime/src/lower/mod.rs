@@ -17,7 +17,7 @@ pub use stmt::{lower_module, lower_program, lower_script, lower_stmt};
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{Expression, Program, Statement};
+    use crate::ast::{ClassMember, Expression, Program, Statement};
     use crate::lower::{lower_module, lower_script};
     use oxc::allocator::Allocator;
     use oxc::parser::Parser;
@@ -513,6 +513,40 @@ mod tests {
     fn test_lower_class_with_field() {
         let stmt = first_stmt("class Foo { x = 1; }");
         assert!(matches!(stmt, Statement::ClassDeclaration { .. }));
+    }
+
+    #[test]
+    fn test_lower_class_field_async_arrow() {
+        let Statement::ClassDeclaration { class, .. } =
+            first_stmt("class Foo { x = async () => 1; }")
+        else {
+            panic!("expected ClassDeclaration");
+        };
+        let field = class
+            .body
+            .iter()
+            .find_map(|m| match m {
+                ClassMember::Field { name: _, value } => Some(value),
+                _ => None,
+            })
+            .expect("field");
+        assert!(
+            matches!(field, Expression::ArrowFunction { is_async: true, .. }),
+            "expected async ArrowFunction, got {:?}",
+            field
+        );
+    }
+
+    #[test]
+    fn test_lower_async_arrow_expr() {
+        let stmt = first_stmt("async () => 1");
+        let Statement::Expression(expr) = stmt else {
+            panic!("expected Expression statement");
+        };
+        assert!(matches!(
+            expr.as_ref(),
+            Expression::ArrowFunction { is_async: true, .. }
+        ));
     }
 
     // ===== Literals =====
