@@ -1,5 +1,5 @@
 {
-  "failed": 101,
+  "failed": 93,
   "groups": [
     {
       "count": 1,
@@ -144,7 +144,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
       ],
-      "reason": "Test262Error: Actual [] and expected [f, 3, null, g, Test262, null] should have the same contents. \")",
+      "reason": "Test262Error: Actual [] and expected [f, 3, [Function], g, Test262, [Function]] should have the same contents. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
       ]
@@ -192,19 +192,13 @@
       ]
     },
     {
-      "count": 4,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
       ],
       "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
+        "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js"
       ]
     },
     {
@@ -220,18 +214,14 @@
       ]
     },
     {
-      "count": 5,
+      "count": 3,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-primitive-receiver.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldput-primitive-receiver.js",
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-primitive-receiver.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldput-primitive-receiver.js",
         "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/elements/super-fielddefinition-initializer-abrupt-completion.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of.js"
@@ -252,23 +242,13 @@
       ]
     },
     {
-      "count": 6,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldadd-typeerror.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
-        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
-        "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js"
+        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldadd-typeerror.js",
-        "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
-        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
-        "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js"
+        "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
       ]
     },
     {
@@ -502,17 +482,15 @@
       ]
     },
     {
-      "count": 3,
+      "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js"
       ]
     },
     {
@@ -523,6 +501,16 @@
       "reason": "Test262Error: sameValue failed: null !== [object]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-null-proto.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
+      ],
+      "reason": "Test262Error: sameValue failed: undefined !== 0",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
       ]
     },
     {
@@ -543,6 +531,16 @@
       "reason": "Test262Error: sameValue failed: undefined !== 2",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/regular-subclassing.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
+      ],
+      "reason": "Test262Error: sameValue failed: undefined !== 42",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
       ]
     },
     {
@@ -576,8 +574,9 @@
       ]
     },
     {
-      "count": 5,
+      "count": 6,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
@@ -586,21 +585,12 @@
       ],
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js"
-      ],
-      "reason": "TypeError: Cannot read property '\\0private:3:m\\0' of null",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js"
       ]
     },
     {
@@ -640,29 +630,31 @@
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ],
       "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ]
     },
     {
-      "count": 3,
+      "count": 5,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/definition/side-effects-in-property-define.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-prototype-setter-method-override.js"
       ],
       "reason": "TypeError: Value is not a function, got undefined",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/definition/side-effects-in-property-define.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-prototype-setter-method-override.js"
       ]
     },
     {
@@ -676,7 +668,7 @@
       ]
     }
   ],
-  "passed": 4266,
+  "passed": 4274,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
