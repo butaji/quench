@@ -197,7 +197,10 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
 fn isolated_message(stderr: &[u8], stdout: &[u8]) -> String {
     let err = String::from_utf8_lossy(stderr);
     let out = String::from_utf8_lossy(stdout);
-    if let Some(line) = out.lines().find(|l| l.contains("Reason:") || l.contains("FAILED")) {
+    if let Some(line) = out
+        .lines()
+        .find(|l| l.contains("Reason:") || l.contains("FAILED"))
+    {
         return line.trim().to_string();
     }
     if let Some(line) = err.lines().find(|l| !l.is_empty()) {
