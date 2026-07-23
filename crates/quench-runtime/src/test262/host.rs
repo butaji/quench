@@ -91,6 +91,20 @@ mod tests {
     }
 
     #[test]
+    fn quench_host_cptn_decl_class_completion() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            "assert.sameValue(eval('class C {}'), undefined);\n\
+             assert.sameValue(eval('1; class C {}'), 1);",
+        );
+        assert!(
+            result.is_ok(),
+            "cptn-decl class completion via eval: {:?}",
+            result
+        );
+    }
+
+    #[test]
     fn quench_host_runs_and_throws() {
         let mut host = QuenchHost::new();
         assert!(host.run_script("var x = 1 + 1;").is_ok());
