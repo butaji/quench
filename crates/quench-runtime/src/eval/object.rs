@@ -23,15 +23,51 @@ pub fn assign_to(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    binding_to(target, value, env, false)
+}
+
+/// Initialize a for-of/for-in lexical binding target (may exit TDZ).
+pub fn init_to(
+    target: &Expression,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    binding_to(target, value, env, true)
+}
+
+fn binding_to(
+    target: &Expression,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     match target {
-        Expression::Identifier(name) => assign_to_identifier(name, value, env, None),
+        Expression::Identifier(name) => {
+            if init {
+                init_to_identifier(name, value, env, None)
+            } else {
+                assign_to_identifier(name, value, env, None)
+            }
+        }
         Expression::Member {
             object,
             property,
             computed,
         } => assign_to_member(object, property, *computed, value, env),
-        Expression::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
-        Expression::ObjectPattern(props) => assign_object_destructuring(props, value, env),
+        Expression::ArrayPattern(bindings) => {
+            if init {
+                init_array_destructuring(bindings, value, env)
+            } else {
+                assign_array_destructuring(bindings, value, env)
+            }
+        }
+        Expression::ObjectPattern(props) => {
+            if init {
+                init_object_destructuring(props, value, env)
+            } else {
+                assign_object_destructuring(props, value, env)
+            }
+        }
         _ => Err(JsError("Invalid assignment target".to_string())),
     }
 }

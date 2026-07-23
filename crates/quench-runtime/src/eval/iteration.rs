@@ -7,7 +7,7 @@ use crate::ast::{Expression, Statement, VarKind};
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::object::{
-    assign_to, call_iterator_return, declare_pattern_bindings_with_kind, obtain_iterator,
+    assign_to, call_iterator_return, declare_pattern_bindings_with_kind, init_to, obtain_iterator,
     take_iterator_step,
 };
 use crate::eval::statement::eval_statement;
@@ -170,7 +170,11 @@ fn run_for_of_iteration(
         if let Some(kind) = loop_binding {
             declare_for_of_binding(variable, kind, env)?;
         }
-        assign_to(variable, item, env)?;
+        if loop_binding.is_some() {
+            init_to(variable, item, env)?;
+        } else {
+            assign_to(variable, item, env)?;
+        }
         eval_statement(body, env, false, in_arrow_function)
     })();
     if per_iteration {
@@ -323,7 +327,11 @@ fn run_for_in_iteration(
         if let Some(kind) = loop_binding {
             declare_for_of_binding(variable, kind, env)?;
         }
-        assign_to(variable, &Value::String(key.to_string()), env)?;
+        if loop_binding.is_some() {
+            init_to(variable, &Value::String(key.to_string()), env)?;
+        } else {
+            assign_to(variable, &Value::String(key.to_string()), env)?;
+        }
         eval_statement(body, env, false, in_arrow_function)
     })();
     if per_iteration {

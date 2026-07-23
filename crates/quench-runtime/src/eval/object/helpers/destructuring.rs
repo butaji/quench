@@ -64,6 +64,24 @@ pub fn assign_array_destructuring(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    array_destructuring_impl(bindings, value, env, false)
+}
+
+/// Initialize for-of/for-in lexical array destructuring bindings.
+pub fn init_array_destructuring(
+    bindings: &[BindingElement],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    array_destructuring_impl(bindings, value, env, true)
+}
+
+fn array_destructuring_impl(
+    bindings: &[BindingElement],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     if let Value::String(s) = value {
         let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
         let len = chars.len();
@@ -71,21 +89,21 @@ pub fn assign_array_destructuring(
         arr.elements = chars;
         arr.properties
             .insert("length".to_string(), Value::Number(len as f64));
-        return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
+        return array_with_iterator_impl(bindings, &Rc::new(RefCell::new(arr)), env, init);
     }
     let Value::Object(arr_rc) = value else {
         if let Value::Generator(gen) = value {
             let iter = crate::value::generator::generator_as_iterator_object(Rc::clone(gen));
-            return assign_array_with_iterator(bindings, &iter, env);
+            return array_with_iterator_impl(bindings, &iter, env, init);
         }
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
         let iter = obtain_iterator(arr_rc)?;
-        return assign_array_with_iterator(bindings, &iter, env);
+        return array_with_iterator_impl(bindings, &iter, env, init);
     }
     let iter = obtain_iterator(arr_rc)?;
-    assign_array_with_iterator(bindings, &iter, env)
+    array_with_iterator_impl(bindings, &iter, env, init)
 }
 
 /// Obtain an iterator object from an iterable per ES GetIterator.
@@ -145,12 +163,28 @@ pub fn assign_array_with_iterator(
     iterator: &Rc<RefCell<Object>>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    array_with_iterator_impl(bindings, iterator, env, false)
+}
+
+fn array_with_iterator_impl(
+    bindings: &[BindingElement],
+    iterator: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     let mut index = 0;
     let mut iterator_done = false;
+    let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
+        if init {
+            init_binding_elem(binding, val, env)
+        } else {
+            assign_binding_elem(binding, val, env)
+        }
+    };
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
-            if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
+            if let Err(error) = apply(inner, &rest_array) {
                 call_iterator_return(iterator);
                 return Err(error);
             }
@@ -158,7 +192,7 @@ pub fn assign_array_with_iterator(
         }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
         iterator_done = done;
-        if let Err(error) = assign_binding_elem(binding, &elem_value, env) {
+        if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
             let close_throw = call_iterator_return(iterator);
             if original.is_some() {
@@ -348,6 +382,24 @@ pub fn assign_object_destructuring(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    object_destructuring_impl(props, value, env, false)
+}
+
+/// Initialize for-of/for-in lexical object destructuring bindings.
+pub fn init_object_destructuring(
+    props: &[(PropertyKey, BindingElement)],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    object_destructuring_impl(props, value, env, true)
+}
+
+fn object_destructuring_impl(
+    props: &[(PropertyKey, BindingElement)],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     let obj = match value {
         Value::Null | Value::Undefined => {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -366,6 +418,13 @@ pub fn assign_object_destructuring(
     };
     let mut excluded = std::collections::HashSet::new();
     let mut rest_binding: Option<&BindingElement> = None;
+    let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
+        if init {
+            init_binding_elem(binding, val, env)
+        } else {
+            assign_binding_elem(binding, val, env)
+        }
+    };
 
     for (key, binding) in props {
         if is_object_rest_key(key) {
@@ -377,18 +436,22 @@ pub fn assign_object_destructuring(
             excluded.insert(key_str.clone());
             crate::eval::object::touch_assignment_target(target, env)?;
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
-            crate::eval::object::assign_to(target, &prop_value, env)?;
+            if init {
+                crate::eval::object::init_to(target, &prop_value, env)?;
+            } else {
+                crate::eval::object::assign_to(target, &prop_value, env)?;
+            }
         } else {
             let key_str = extract_destructure_key(key, env)?;
             excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
-            assign_binding_elem(binding, &prop_value, env)?;
+            apply(binding, &prop_value)?;
         }
     }
 
     if let Some(binding) = rest_binding {
         let rest_val = copy_enumerable_own_properties(&obj, &excluded, env)?;
-        assign_binding_elem(binding, &rest_val, env)?;
+        apply(binding, &rest_val)?;
     }
     Ok(())
 }
@@ -488,7 +551,16 @@ pub fn assign_binding_elem(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    assign_binding_elem_with_default(binding, value, env, None)
+    assign_binding_elem_with_default(binding, value, env, None, false)
+}
+
+/// Initialize a declared binding element (for-of/for-in lexical head).
+pub fn init_binding_elem(
+    binding: &BindingElement,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    assign_binding_elem_with_default(binding, value, env, None, true)
 }
 
 fn assign_binding_elem_with_default(
@@ -496,12 +568,31 @@ fn assign_binding_elem_with_default(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
     default_expr: Option<&Expression>,
+    init: bool,
 ) -> Result<(), JsError> {
     match binding {
         BindingElement::Identifier(name) if name == "__hole" => Ok(()),
-        BindingElement::Identifier(name) => assign_to_identifier(name, value, env, default_expr),
-        BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
-        BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
+        BindingElement::Identifier(name) => {
+            if init {
+                init_to_identifier(name, value, env, default_expr)
+            } else {
+                assign_to_identifier(name, value, env, default_expr)
+            }
+        }
+        BindingElement::ArrayPattern(bindings) => {
+            if init {
+                init_array_destructuring(bindings, value, env)
+            } else {
+                assign_array_destructuring(bindings, value, env)
+            }
+        }
+        BindingElement::ObjectPattern(props) => {
+            if init {
+                init_object_destructuring(props, value, env)
+            } else {
+                assign_object_destructuring(props, value, env)
+            }
+        }
         BindingElement::Default(binding, default) => {
             let (value, name_default) = if matches!(value, Value::Undefined) {
                 (
@@ -511,11 +602,15 @@ fn assign_binding_elem_with_default(
             } else {
                 (value.clone(), None)
             };
-            assign_binding_elem_with_default(binding, &value, env, name_default)
+            assign_binding_elem_with_default(binding, &value, env, name_default, init)
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
-            crate::eval::object::assign_to(target, value, env)
+            if init {
+                crate::eval::object::init_to(target, value, env)
+            } else {
+                crate::eval::object::assign_to(target, value, env)
+            }
         }
     }
 }
@@ -556,8 +651,14 @@ pub fn assign_to_identifier(
     };
 
     if env.borrow().is_tdz(name) {
-        env.borrow_mut().initialize_declared(name, value);
-        return Ok(());
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            &format!(
+                "ReferenceError: Cannot access '{}' before initialization",
+                name
+            ),
+            "ReferenceError",
+        );
+        return Err(js_err);
     }
 
     if env.borrow().has(name) {
@@ -583,7 +684,13 @@ pub fn assign_to_identifier(
                 }
             }
         }
-        env.borrow_mut().set(name, value);
+        if !env.borrow_mut().set(name, value) && crate::interpreter::is_strict_mode() {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                &format!("{} is not defined", name),
+                "ReferenceError",
+            );
+            return Err(js_err);
+        }
     } else {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -602,6 +709,20 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+/// Initialize a declared binding (for-of/for-in lexical head), including TDZ slots.
+pub fn init_to_identifier(
+    name: &str,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
+    if env.borrow().is_tdz(name) {
+        env.borrow_mut().initialize_declared(name, value.clone());
+        return Ok(());
+    }
+    assign_to_identifier(name, value, env, default_expr)
 }
 
 /// Declare destructuring pattern bindings with the given declaration kind.

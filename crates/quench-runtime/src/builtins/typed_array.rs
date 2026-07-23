@@ -268,8 +268,6 @@ fn construct_typed_array(
     Ok(Value::Object(object_rc))
 }
 
-// ─── TypedArray prototype methods ───────────────────────────────────────────────
-
 fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let Value::Object(obj_rc) = this else {
@@ -287,6 +285,40 @@ fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     Ok(Value::Undefined)
+}
+
+fn typed_array_values(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
+    let Value::Object(obj_rc) = this else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "TypedArray.prototype.values called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    let elements = obj_rc.borrow().elements.clone();
+    Ok(crate::builtins::map::helpers::make_iterator(elements))
+}
+
+/// Wire `%TypedArray%.prototype[Symbol.iterator]` after `Symbol` is registered.
+pub fn register_typed_array_iterator() {
+    let Some(typed_array_proto) = get_typed_array_prototype() else {
+        return;
+    };
+    let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    else {
+        return;
+    };
+    let key = sym.property_key();
+    typed_array_proto.borrow_mut().set_builtin_method(
+        &key,
+        Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
+    );
+    typed_array_proto.borrow_mut().set_builtin_method(
+        "values",
+        Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
+    );
 }
 
 #[cfg(test)]
@@ -418,6 +450,20 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Number(250.0));
+    }
+
+    #[test]
+    fn typed_array_for_of_iterates_elements() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let len = ctx
+            .eval(
+                "var ta = new Uint8Array([1,2,3]); var n = 0; \
+                 for (var x of ta) { n += 1; } n",
+            )
+            .unwrap();
+        assert_eq!(len, Value::Number(3.0));
     }
 
     #[test]
