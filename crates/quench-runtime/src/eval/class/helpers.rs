@@ -195,6 +195,12 @@ pub fn private_field_add(
             );
             return Err(js_err);
         }
+    } else if !obj.borrow().extensible {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot add property to non-extensible object",
+            "TypeError",
+        );
+        return Err(js_err);
     }
     obj.borrow_mut().set(key, value);
     Ok(())
@@ -3546,6 +3552,25 @@ mod tests {
     fn derived_subclass_string_trim() {
         let r = eval("class S extends String {} new S(' test262 ').trim()").unwrap();
         assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn instance_field_on_frozen_object_throws() {
+        let r = eval(
+            "class Test { f = Object.freeze(this); g = 'Test262'; } \
+             (function(){ try { new Test(); return false; } catch(e) { return e instanceof TypeError; } })()",
+        );
+        assert_eq!(r.unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn derived_subclass_string_length_non_enumerable() {
+        let r = eval(
+            "class S extends String {} \
+             Object.getOwnPropertyDescriptor(new S('test262'), 'length').enumerable",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(false));
     }
 
     #[test]

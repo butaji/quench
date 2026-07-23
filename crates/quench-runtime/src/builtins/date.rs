@@ -110,10 +110,19 @@ fn create_string_constructor_fn(string_proto_clone: Rc<RefCell<Object>>) -> Valu
             let s = args.first().map(to_js_string).unwrap_or_default();
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
-                this_obj.borrow_mut().set("0", Value::String(s.clone()));
-                this_obj
-                    .borrow_mut()
-                    .set("length", Value::Number(s.len() as f64));
+                this_obj.borrow_mut().define(
+                    "length",
+                    Value::Number(s.len() as f64),
+                    crate::value::PropertyFlags {
+                        value: Some(Value::Number(s.len() as f64)),
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                    },
+                );
+                if !s.is_empty() {
+                    this_obj.borrow_mut().set("0", Value::String(s.clone()));
+                }
                 crate::builtins::object::set_boxed_value(
                     &mut this_obj.borrow_mut(),
                     Value::String(s.clone()),
