@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::helpers::{
-    iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value, set_populate,
-    set_values,
+    init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
+    set_populate, set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;

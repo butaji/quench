@@ -419,7 +419,6 @@ pub fn register_date(ctx: &mut Context) {
 
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(obj_rc) = this_val {
-                obj_rc.borrow_mut().prototype = Some(Rc::clone(&date_proto_clone));
                 obj_rc.borrow_mut().kind = ObjectKind::Date;
                 obj_rc
                     .borrow_mut()

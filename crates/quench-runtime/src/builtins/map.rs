@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use self::helpers::{
-    iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size, native_fn,
-    set_values,
+    init_map_object, iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size,
+    native_fn, set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -487,5 +487,15 @@ mod tests {
         assert!(result.is_ok(), "new Map() should work: {:?}", result);
         let result = ctx.eval("Map()");
         assert!(result.is_ok(), "Map() should work: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_subclass_populate_object_entry() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("class M extends Map {} var map = new M([{ 'foo': 'bar' }]);")
+            .unwrap();
+        assert_eq!(ctx.eval("map.size").unwrap(), Value::Number(1.0));
+        ctx.eval("map.set('bar', 'baz');").unwrap();
+        assert_eq!(ctx.eval("map.size").unwrap(), Value::Number(2.0));
     }
 }

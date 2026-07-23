@@ -163,11 +163,15 @@ fn eval_super_call(
     // Private fields live on the original instance even when super() returns a Proxy.
     let pending = env.borrow_mut().take_pending_fields();
     if let Some(fields) = pending {
-        for (prop_key, expr) in fields {
+        let class = crate::eval::class::helpers::constructing_class_for_super();
+        for (i, (prop_key, expr)) in fields.into_iter().enumerate() {
             crate::interpreter::set_eval_in_class_field(true);
             let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
             crate::interpreter::set_eval_in_class_field(false);
-            let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
+            let key_str = match class.as_ref().and_then(|c| c.instance_field_key(i)) {
+                Some(k) => k,
+                None => eval_property_key(&prop_key, env, in_arrow_function)?,
+            };
             crate::eval::class::helpers::private_field_add(
                 &field_target,
                 &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),

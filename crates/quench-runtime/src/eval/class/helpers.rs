@@ -216,11 +216,14 @@ pub(crate) fn init_instance_fields(
     instance_rc: &Rc<RefCell<Object>>,
     call_env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    for (name, value_expr) in &class.instance_fields {
+    for (i, (name, value_expr)) in class.instance_fields.iter().enumerate() {
         crate::interpreter::set_eval_in_class_field(true);
         let mut field_val = eval_expression(value_expr, call_env, false)?;
         crate::interpreter::set_eval_in_class_field(false);
-        let key_str = prop_key_to_string(name, call_env, false)?;
+        let key_str = match class.instance_field_key(i) {
+            Some(k) => k,
+            None => prop_key_to_string(name, call_env, false)?,
+        };
         set_function_name_for_field_initializer(&mut field_val, name, &key_str, value_expr);
         private_field_add(
             instance_rc,
@@ -483,7 +486,14 @@ pub fn call_super_or_default(
             } else {
                 Ok(this_val.clone())
             }
-        }
+            Some(Value::NativeConstructor(nc)) => {
+                call_super_callable(Value::NativeConstructor(nc.clone()), args, this_val)
+            }
+            Some(Value::NativeFunction(nf)) => {
+                call_super_callable(Value::NativeFunction(nf.clone()), args, this_val)
+            }
+            _ => Ok(this_val.clone()),
+        },
         Value::NativeConstructor(nc) => {
             crate::eval::function::call_value_with_this(
                 Value::NativeConstructor(nc.clone()),
@@ -3628,5 +3638,104 @@ mod tests {
     fn derived_subclass_array_buffer_auto_super() {
         let r = eval("class AB extends ArrayBuffer {} new AB(4).byteLength").unwrap();
         assert_eq!(r, Value::Number(4.0));
+    }
+
+    #[test]
+    fn derived_subclass_map_auto_super() {
+        let r = eval("class M extends Map {} new M([[1, 2]]).size").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn derived_subclass_set_auto_super() {
+        let r = eval("class S extends Set {} new S([1, 2]).size").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn derived_subclass_map_instanceof() {
+        let r = eval(
+            "class M extends Map {} const m = new M(); \
+             [m instanceof M, m instanceof Map]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Boolean(true)));
+        assert_eq!(obj.get("1"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn derived_subclass_date_instanceof() {
+        let r = eval(
+            "class D extends Date {} const d = new D(0); \
+             [d instanceof D, d instanceof Date]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Boolean(true)));
+        assert_eq!(obj.get("1"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn instance_field_computed_key_at_class_definition() {
+        let r = eval(
+            "var x = 1; class C { [x++] = x++; [x++] = x++; } \
+             var c1 = new C(); var c2 = new C(); [c1['1'], c1['2'], c2['1'], c2['2']]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(3.0)));
+        assert_eq!(obj.get("1"), Some(Value::Number(4.0)));
+        assert_eq!(obj.get("2"), Some(Value::Number(5.0)));
+        assert_eq!(obj.get("3"), Some(Value::Number(6.0)));
+    }
+
+    #[test]
+    fn instance_field_computed_key_x_counter() {
+        let r = eval(
+            "var x = 1; class C { [x++] = x++; [x++] = x++; } \
+             var afterClass = x; var c = new C(); \
+             [afterClass, x, c['1'], c['2']]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(3.0)), "after class");
+        assert_eq!(obj.get("1"), Some(Value::Number(5.0)), "after new");
+        assert_eq!(obj.get("2"), Some(Value::Number(3.0)), "c['1']");
+        assert_eq!(obj.get("3"), Some(Value::Number(4.0)), "c['2']");
+    }
+
+    #[test]
+    fn intercalated_static_instance_computed_fields() {
+        let r = eval(
+            "let i = 0; class C { [i++] = i++; static [i++] = i++; [i++] = i++; } \
+             let c = new C(); \
+             [c['0'], c['1'], c['2'], C['0'], C['1'], C['2'], i, c.hasOwnProperty('1')]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(4.0)), "c['0']");
+        assert_eq!(obj.get("1"), Some(Value::Undefined), "c['1']");
+        assert_eq!(obj.get("2"), Some(Value::Number(5.0)), "c['2']");
+        assert_eq!(obj.get("3"), Some(Value::Undefined), "C['0']");
+        assert_eq!(obj.get("4"), Some(Value::Number(3.0)), "C['1']");
+        assert_eq!(obj.get("5"), Some(Value::Undefined), "C['2']");
+        assert_eq!(obj.get("6"), Some(Value::Number(6.0)), "i");
+        assert_eq!(obj.get("7"), Some(Value::Boolean(false)), "hasOwn 1");
     }
 }
