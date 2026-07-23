@@ -9,9 +9,12 @@ use crate::value::{
 };
 use crate::Context;
 
-// Thread-local storage for Function.prototype (used by interpreter for function expressions)
+// Thread-local storage for Function.prototype and special function prototypes
 thread_local! {
     static FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static ASYNC_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
 }
 
 /// Get the Function.prototype object (for use by interpreter)
@@ -28,6 +31,21 @@ pub fn is_function_prototype(obj: &Rc<RefCell<Object>>) -> bool {
             false
         }
     })
+}
+
+/// Get the GeneratorFunction.prototype object (for %GeneratorPrototype% [[GetPrototypeOf]])
+pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+/// Get the AsyncFunction.prototype object (for %AsyncFunctionPrototype% [[GetPrototypeOf]])
+pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+/// Get the AsyncGeneratorFunction.prototype object (for %AsyncGeneratorPrototype% [[GetPrototypeOf]])
+pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
 /// Get the error message for restricted function properties

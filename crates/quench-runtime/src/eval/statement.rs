@@ -177,7 +177,7 @@ pub fn eval_statements(
                 return Ok(val);
             }
             // Propagate break/continue so enclosing loops can observe them.
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+            Some(cf @ (ControlFlow::Break | ControlFlow::Continue(_))) => {
                 set_control_flow(cf);
                 return Ok(last_val);
             }
@@ -290,7 +290,7 @@ fn eval_function_body_impl(
             }
             Some(
                 cf @ (ControlFlow::Break
-                | ControlFlow::Continue
+                | ControlFlow::Continue(_)
                 | ControlFlow::Yield(_)
                 | ControlFlow::YieldDelegate(_)),
             ) => {
@@ -534,7 +534,7 @@ pub fn eval_statement(
                     return Err(js_err);
                 }
             }
-            set_control_flow(ControlFlow::Continue);
+            set_control_flow(ControlFlow::Continue(None));
             Ok(Value::Undefined)
         }
         Statement::Try {
@@ -765,7 +765,7 @@ fn eval_while(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(_)) => {}
             None => {}
         }
     }
@@ -808,7 +808,7 @@ fn eval_do_while_impl(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(_)) => {}
             None => {}
         }
         // Check condition; if false, return the body completion value
@@ -863,7 +863,7 @@ fn eval_for(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(_)) => {}
             None => {}
         }
         if let Some(update) = update {
@@ -1103,7 +1103,7 @@ fn eval_for_in_stmt(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
+            Some(ControlFlow::Continue(_)) => {}
             None => {}
         }
     }

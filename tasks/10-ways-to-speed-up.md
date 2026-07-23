@@ -138,6 +138,67 @@ scheme parsing, path normalization, `data:` URLs, bare specifier resolution.
 Small diff: replace `urlencoding` dep with `url`; update `builtins/core/uri.rs`.
 Do before stage 53 (`modules`).
 
+## Stage difficulty matrix
+
+Based on research across Boa (94.12%), Kiesel (94.2%), QuickJS (83%), and
+Quench's own codebase (2026-07-23). Difficulty = spec complexity × test
+count × external dependencies. `impl` = primary implementation language.
+
+### Hardest (difficulty 7–9, ~10 stages, ~19k tests)
+
+| Id | Path | Tests | Diff | Impl | Key challenge | Crate / approach |
+|---|---|---|---|---|---|---|
+| 120 | `built-ins/Temporal` | 4,603 | 9 | rust | Full Temporal API | `temporal_rs` + `zoneinfo_rs` |
+| 118 | `built-ins/ShadowRealm` | 64 | 9 | rust | Isolated global per spec | Rust-level; not WASM |
+| 115 | `built-ins/Proxy` | 311 | 8 | hybrid | 11 internal ops + invariants | Rust traps + JS invariants |
+| 44 | `language/expressions` | 11,101 | 8 | rust | Many eval nodes, early errors | `oxc_semantic` |
+| 16 | `statements/class` | 4,367 | 7 | rust | Object model, super, private | R5 object model fix |
+| 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
+| 38 | `statements/async-generator` | 301 | 7 | rust | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
+| 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | Same as above | S4 |
+| 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | Same as above | S4 |
+| 40 | `statements/for-await-of` | 1,234 | 7 | rust | Async iteration + await + R2 | S4 + R2 iterator protocol |
+
+### Medium-hard (difficulty 5–6, ~15 stages, ~12k tests)
+
+| Id | Path | Tests | Diff | Impl | Key challenge |
+|---|---|---|---|---|---|
+| 71 | `built-ins/Object` | 3,411 | 6 | js | R0 self-hosting |
+| 85 | `built-ins/Array` | 3,081 | 6 | js | R0 self-hosting |
+| 82 | `built-ins/String` | 1,223 | 6 | js | R0 self-hosting |
+| 102 | `TypedArray` | 1,446 | 6 | hybrid | Rust buffers + JS |
+| 103 | `TypedArrayConstructors` | 738 | 6 | hybrid | Rust buffers + JS |
+| 113 | `Promise` | 729 | 6 | hybrid | Rust job queue + JS |
+| 39 | `await-using` | 94 | 6 | hybrid | Using + async |
+| 41 | `using` | 78 | 6 | js | Disposable resource protocol |
+| 72 | `Function` | 509 | 5 | js | R0 |
+| 80 | `Math` | 327 | 5 | js | R0 |
+| 53 | `module-code` | 599 | 5 | hybrid | `url` crate + JS |
+| 83 | `Symbol` | 98 | 5 | js | R0 |
+| 99 | `AsyncFunction` | 18 | 5 | rust | S4 async→generator |
+| 100-101 | `ArrayBuffer`, `SharedArrayBuffer` | 325 | 5 | hybrid | Rust buffers |
+| 105 | `DataView` | 561 | 5 | hybrid | Rust buffers + JS |
+| 111 | `WeakRef` | 29 | 6 | hybrid | GC interaction |
+| 112 | `FinalizationRegistry` | 47 | 5 | js | R0 |
+
+### Easy (difficulty 1–4, ~68 stages, ~17k tests)
+
+Most language stages (break, const, continue, debugger, do-while, for,
+for-in, if, let, return, switch, try, variable, while, with, etc.) are
+difficulty 1–3 and primarily Rust eval nodes. Builtins like `Number`,
+`Error`, `Boolean`, `JSON`, `Map`, `Set`, `Reflect` are difficulty 3–4
+and become trivial once R0 self-hosting is in place.
+
+### macOS / Darwin notes
+
+No Darwin-specific code needed for any remaining stage:
+- **Atomics** (stage 106): `std::sync::atomic` works on macOS natively.
+- **Date/Temporal**: `chrono`/`temporal_rs` handle timezones portably; no
+  Darwin APIs needed.
+- **SharedArrayBuffer**: requires cross-origin isolation headers; test262
+  skips these tests when headers are absent — no OS-level work.
+- All file I/O is in the harness (`tools/run-each.sh`), not the runtime.
+
 ## Rejected / low value
 
 - *Full R0 before finishing language stages* — delays the current gate;
