@@ -377,7 +377,7 @@ fn make_function_constructor(
                         // prototype chain on the object.
                         if let Some(Value::Object(existing)) = crate::interpreter::get_native_this()
                         {
-                            existing.borrow_mut().slots.insert("[[Call]]", func);
+                            existing.borrow_mut().call_slot = Some(func);
                             {
                                 let mut obj = existing.borrow_mut();
                                 // Set .length as own property (writable: false, enumerable: false, configurable: true)
