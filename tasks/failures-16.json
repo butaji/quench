@@ -1,5 +1,5 @@
 {
-  "failed": 257,
+  "failed": 248,
   "groups": [
     {
       "count": 1,
@@ -494,14 +494,12 @@
       ]
     },
     {
-      "count": 13,
+      "count": 11,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Array.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Number.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-RangeError.js",
@@ -512,14 +510,14 @@
       ],
       "reason": "Test262Error: Expected true but got false\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Array.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Number.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-RangeError.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-ReferenceError.js"
       ]
     },
     {
@@ -696,11 +694,8 @@
       ]
     },
     {
-      "count": 7,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
@@ -708,9 +703,6 @@
       ],
       "reason": "Test262Error: sameValue failed: \\\"\\0private:3:method\\0\\\" !== \\\"#method\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-generator-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-async-method-name.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-method-name.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-generator-method-name.js",
@@ -931,6 +923,16 @@
       ]
     },
     {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
+      ],
+      "reason": "TypeError: Cannot read property 'name' of undefined",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
+      ]
+    },
+    {
       "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-obj.js",
@@ -988,16 +990,11 @@
       ]
     },
     {
-      "count": 19,
+      "count": 14,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
@@ -1015,11 +1012,11 @@
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatemethods-on-proxy.js",
+        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js"
       ]
     },
     {
@@ -1130,7 +1127,7 @@
       ]
     }
   ],
-  "passed": 4110,
+  "passed": 4119,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
