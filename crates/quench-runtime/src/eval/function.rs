@@ -107,7 +107,7 @@ pub(crate) fn call_value_impl(
             // Check if this object has an internal [[Call]] slot (set by the
             // Function constructor when called via super() from a class that
             // extends Function). If so, call the stored function directly.
-            let call_slot = o.borrow().slots.get("[[Call]]").cloned();
+            let call_slot = o.borrow().call_slot.clone();
             if let Some(f) = call_slot {
                 return call_value_impl(f, args, this_val, force_strict);
             }
