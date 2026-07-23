@@ -160,6 +160,8 @@ pub fn register_builtins(ctx: &mut Context) {
     typed_array::register_typed_arrays(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
+    // Array.prototype[Symbol.iterator] requires Symbol to be registered first.
+    array::register_array_iterator();
 }
 
 use crate::value::{Object, ObjectKind, Value};
