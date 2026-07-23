@@ -243,6 +243,16 @@ pub fn assign_to_member(
 
     let obj_val = eval_expression(object, env, false)?;
 
+    if crate::value::is_private_name_key(&prop_name)
+        && !matches!(obj_val, Value::Object(_) | Value::Class(_))
+    {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot write private member to an object whose class did not declare it",
+            "TypeError",
+        );
+        return Err(js_err);
+    }
+
     match obj_val {
         // Box primitives per ES §10.2.9 [[Set]] (ToObject coercion).
         Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::String(_) => {

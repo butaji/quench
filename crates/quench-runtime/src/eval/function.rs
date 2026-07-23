@@ -7,7 +7,8 @@ use crate::eval::expression::eval_expression;
 use crate::eval::statement::{eval_function_body, take_tail_call_signal};
 use crate::interpreter::{check_depth, predeclare_let_const, predeclare_var, release_depth};
 use crate::value::{
-    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value, ValueFunction,
+    create_js_error_with_type, JsError, NativeConstructor, NativeFunction, Object, ObjectKind,
+    Value, ValueFunction,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -464,12 +465,14 @@ fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: boo
 
     // Set callee property
     if strict_mode {
-        // In strict mode, arguments.callee throws TypeError per ESMA-262 10.2.9
-        // Throw a string error directly - to_js_string will preserve it as-is
-        let throw_body = vec![Statement::Throw(Box::new(Expression::String(
-            "TypeError: 'caller' and 'callee' are not allowed in strict mode".to_string(),
-        )))];
-        obj.set_getter("callee", Rc::new(throw_body), f.closure.clone(), false);
+        let nf = NativeFunction::new(|_| {
+            let (_, js_err) = create_js_error_with_type(
+                "'caller' and 'callee' are not allowed in strict mode",
+                "TypeError",
+            );
+            Err(js_err)
+        });
+        obj.set_getter_func("callee", Value::NativeFunction(Rc::new(nf)));
     } else {
         // In non-strict mode, callee is the function itself
         obj.set("callee", Value::Function(f.clone()));
