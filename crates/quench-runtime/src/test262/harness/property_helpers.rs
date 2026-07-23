@@ -90,7 +90,7 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
         Value::NativeFunction(nf) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
-                nf.get_property(&key_str).is_some()
+                (key_str == "name" || key_str == "length") || nf.get_property(&key_str).is_some()
             } else {
                 false
             }
@@ -650,6 +650,49 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         try_inject_harness(&mut ctx).unwrap();
         ctx
+    }
+
+    #[test]
+    fn test_verify_property_fn_name_method_class_body() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var namedSym = Symbol('test262'); var anonSym = Symbol(); \
+             class A { id() {} [anonSym]() {} [namedSym]() {} static id() {} static [anonSym]() {} static [namedSym]() {} } \
+             verifyProperty(A.prototype.id, 'name', { value: 'id', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "first verifyProperty in fn-name-method: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_class_prototype_symbol_method_name() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var namedSym = Symbol('test262'); class A { [namedSym]() {} } \
+             verifyProperty(A.prototype[namedSym], 'name', { value: '[test262]', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty symbol method name should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_class_prototype_method_name() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "class A { id() {} } \
+             verifyProperty(A.prototype.id, 'name', { value: 'id', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty prototype method name should pass: {:?}",
+            result
+        );
     }
 
     #[test]

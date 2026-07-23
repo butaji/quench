@@ -543,8 +543,9 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = method_function_name(name, &key_str, &closure)?;
         let mut func = ValueFunction::new(
-            Some(key_str.clone()),
+            Some(fn_name),
             params.clone(),
             body.clone(),
             Rc::clone(&member_closure),
@@ -575,11 +576,13 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = accessor_function_name(name, &key_str, &closure, "get")?;
         proto.set_getter(
             &key,
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
 
@@ -592,12 +595,14 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = accessor_function_name(name, &key_str, &closure, "set")?;
         proto.set_setter(
             &key,
             param.clone(),
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
 
@@ -635,6 +640,38 @@ pub fn class_member_storage_key(key: &str) -> String {
     } else {
         key.to_string()
     }
+}
+
+/// SetFunctionName for a class method from its key and evaluated storage key.
+pub fn method_function_name(
+    key: &crate::ast::PropertyKey,
+    key_str: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<String, JsError> {
+    match key {
+        crate::ast::PropertyKey::Computed(expr) => {
+            let val = eval_expression(expr, env, false)?;
+            if crate::value::generator_replay::yield_pending() {
+                return Ok(String::new());
+            }
+            match val {
+                Value::Symbol(s) => Ok(s.display_name()),
+                _ => Ok(key_str.to_string()),
+            }
+        }
+        _ => Ok(key_str.to_string()),
+    }
+}
+
+/// SetFunctionName for getter/setter with `"get "` / `"set "` prefix.
+pub fn accessor_function_name(
+    key: &crate::ast::PropertyKey,
+    key_str: &str,
+    env: &Rc<RefCell<Environment>>,
+    prefix: &str,
+) -> Result<String, JsError> {
+    let base = method_function_name(key, key_str, env)?;
+    Ok(format!("{prefix} {base}"))
 }
 
 /// Helper to convert PropertyKey to string, evaluating computed expressions
@@ -1341,6 +1378,79 @@ mod tests {
     }
 
     // ─── create_class_prototype_helper_with_env ─────────────────────────────
+
+    #[test]
+    fn class_static_get_own_property_names_includes_static_method() {
+        let names = eval(
+            "class A { static method() {} static name() {} } \
+             Object.getOwnPropertyNames(A).join(',')",
+        )
+        .unwrap();
+        assert_eq!(names, Value::String("length,name,prototype,method".into()));
+    }
+
+    #[test]
+    fn class_method_symbol_key_has_display_name_own_property() {
+        let has_own = eval(
+            "var anonSym = Symbol(); class A { [anonSym]() {} } \
+             Object.prototype.hasOwnProperty.call(A.prototype[anonSym], 'name')",
+        )
+        .unwrap();
+        assert_eq!(has_own, Value::Boolean(true), "hasOwn name");
+        let empty =
+            eval("var anonSym = Symbol(); class A { [anonSym]() {} } A.prototype[anonSym].name")
+                .unwrap();
+        assert_eq!(empty, Value::String("".into()), "anon name");
+        let named = eval(
+            "var namedSym = Symbol('test262'); class A { [namedSym]() {} } \
+             A.prototype[namedSym].name",
+        )
+        .unwrap();
+        assert_eq!(named, Value::String("[test262]".into()), "named sym");
+    }
+
+    #[test]
+    fn class_getter_has_own_name_property_with_get_prefix() {
+        let ok = eval(
+            "class A { get id() {} } \
+             var g = Object.getOwnPropertyDescriptor(A.prototype, 'id').get; \
+             Object.prototype.hasOwnProperty.call(g, 'name') && g.name === 'get id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_setter_has_own_name_property_with_set_prefix() {
+        let ok = eval(
+            "class A { set id(v) {} } \
+             var s = Object.getOwnPropertyDescriptor(A.prototype, 'id').set; \
+             Object.prototype.hasOwnProperty.call(s, 'name') && s.name === 'set id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_static_getter_has_own_name_property_with_get_prefix() {
+        let ok = eval(
+            "class A { static get id() {} } \
+             var g = Object.getOwnPropertyDescriptor(A, 'id').get; \
+             Object.prototype.hasOwnProperty.call(g, 'name') && g.name === 'get id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_static_method_has_own_name_property() {
+        let ok = eval(
+            "class A { static id() {} } \
+             Object.prototype.hasOwnProperty.call(A.id, 'name') && A.id.name === 'id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
 
     #[test]
     fn class_prototype_has_method() {
