@@ -141,6 +141,13 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
             } => {
                 names.push(name.clone());
             }
+            Statement::PatternDeclaration {
+                kind: VarKind::Var,
+                pattern,
+                ..
+            } => {
+                names.extend(crate::lower::pattern::collect_pattern_identifiers(pattern));
+            }
             Statement::Block(inner_stmts) => collect_var_names_recursive(inner_stmts, names),
             Statement::If {
                 consequent,
@@ -230,6 +237,24 @@ pub fn collect_let_const_recursive(stmts: &[Statement], decls: &mut Vec<(String,
                 ..
             } => {
                 decls.push((name.clone(), VarKind::Const));
+            }
+            Statement::PatternDeclaration {
+                kind: VarKind::Let,
+                pattern,
+                ..
+            } => {
+                for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
+                    decls.push((name, VarKind::Let));
+                }
+            }
+            Statement::PatternDeclaration {
+                kind: VarKind::Const,
+                pattern,
+                ..
+            } => {
+                for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
+                    decls.push((name, VarKind::Const));
+                }
             }
             Statement::SequenceDecls(inner) => collect_let_const_recursive(inner, decls),
             _ => {}

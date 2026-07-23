@@ -12,6 +12,10 @@ pub fn scope_class_private_names(class: &mut Class, class_id: usize) {
     }
 }
 
+pub fn scope_script_private_names(body: &mut [Statement], class_id: usize) {
+    scope_statements(body, class_id);
+}
+
 fn scope_class_member(member: &mut ClassMember, class_id: usize) {
     match member {
         ClassMember::Constructor { body, .. } => scope_statements(body, class_id),

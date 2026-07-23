@@ -374,7 +374,7 @@ pub fn assign_object_destructuring(
     }
 
     if let Some(binding) = rest_binding {
-        let rest_val = copy_enumerable_own_properties(&obj, &excluded)?;
+        let rest_val = copy_enumerable_own_properties(&obj, &excluded, env)?;
         assign_binding_elem(binding, &rest_val, env)?;
     }
     Ok(())
@@ -384,12 +384,28 @@ fn is_object_rest_key(key: &PropertyKey) -> bool {
     matches!(key, PropertyKey::Ident(s) if s == "...")
 }
 
+fn copy_enumerable_value(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    src: &Object,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(getter) = src.get_getter(key) {
+        return crate::eval::object::call_getter(obj, getter, env);
+    }
+    if let Some(idx) = crate::value::object::helpers::as_array_index(key) {
+        if idx < src.elements.len() && !src.holes.contains(&idx) {
+            return Ok(src.elements[idx].clone());
+        }
+    }
+    Ok(src.properties.get(key).cloned().unwrap_or(Value::Undefined))
+}
+
 fn copy_enumerable_own_properties(
     obj: &Rc<RefCell<Object>>,
     excluded: &std::collections::HashSet<String>,
+    env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    use crate::value::object::helpers::as_array_index;
-
     let mut rest = Object::new(ObjectKind::Ordinary);
     let src = obj.borrow();
     for i in 0..src.elements.len() {
@@ -400,16 +416,24 @@ fn copy_enumerable_own_properties(
         if excluded.contains(&key) || !src.is_enumerable(&key) {
             continue;
         }
-        rest.set(&key, src.elements[i].clone());
+        let val = copy_enumerable_value(obj, &key, &src, env)?;
+        rest.set(&key, val);
     }
-    for (key, val) in src.properties.iter() {
-        if excluded.contains(key) || !src.is_enumerable(key) {
+    let mut keys: Vec<String> = src
+        .properties
+        .keys()
+        .chain(src.getters.keys())
+        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
+        .cloned()
+        .collect();
+    keys.sort();
+    keys.dedup();
+    for key in keys {
+        if excluded.contains(&key) || !src.is_enumerable(&key) {
             continue;
         }
-        if as_array_index(key).is_some() {
-            continue;
-        }
-        rest.set(key, val.clone());
+        let val = copy_enumerable_value(obj, &key, &src, env)?;
+        rest.set(&key, val);
     }
     Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
@@ -546,6 +570,11 @@ pub fn assign_to_identifier(
         _ => value.clone(),
     };
 
+    if env.borrow().is_tdz(name) {
+        env.borrow_mut().initialize_declared(name, value);
+        return Ok(());
+    }
+
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
@@ -586,6 +615,50 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+/// Declare destructuring pattern bindings with the given declaration kind.
+pub fn declare_pattern_bindings_with_kind(
+    pattern: &BindingElement,
+    kind: VarKind,
+    env: &Rc<RefCell<Environment>>,
+) {
+    match pattern {
+        BindingElement::Identifier(name) => {
+            if name != "__hole" && !env.borrow().current_scope().borrow().has(name) {
+                env.borrow_mut().declare_var(name.clone(), kind);
+            }
+        }
+        BindingElement::ArrayPattern(elements) => {
+            for element in elements {
+                declare_pattern_bindings_with_kind(element, kind, env);
+            }
+        }
+        BindingElement::ObjectPattern(properties) => {
+            for (_, binding) in properties {
+                declare_pattern_bindings_with_kind(binding, kind, env);
+            }
+        }
+        BindingElement::Default(binding, _) => {
+            declare_pattern_bindings_with_kind(binding, kind, env);
+        }
+        BindingElement::Rest(binding) => {
+            declare_pattern_bindings_with_kind(binding, kind, env);
+        }
+        BindingElement::AssignmentTarget(_) => {}
+    }
+}
+
+/// Convert a binding pattern to an assignment target expression.
+pub fn binding_pattern_expression(pattern: BindingElement) -> Expression {
+    match pattern {
+        BindingElement::Identifier(name) => Expression::Identifier(name),
+        BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
+        BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
+        BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+        BindingElement::Rest(binding) => binding_pattern_expression(*binding),
+        BindingElement::AssignmentTarget(expr) => expr,
+    }
 }
 
 fn is_anonymous_function_definition(expr: &Expression) -> bool {
@@ -969,15 +1042,21 @@ mod tests {
     }
 
     #[test]
-    fn object_rest_param_skips_non_enumerable() {
+    fn object_literal_rest_invokes_getter() {
+        let r = eval("var o = { get v() { return 2; } }; var {...rest} = o; rest.v").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn object_rest_param_invokes_getter() {
         let r = eval(
-            "class C { method({...rest}) { return rest.a + rest.b; } } \
-             var o = {a: 3, b: 4}; \
-             Object.defineProperty(o, 'x', { value: 4, enumerable: false }); \
-             new C().method(o);",
+            "class C { method({...rest}) { return rest.v; } } \
+             var count = 0; \
+             var o = { get v() { count++; return 2; } }; \
+             new C().method(o) + count",
         )
         .unwrap();
-        assert_eq!(r, Value::Number(7.0));
+        assert_eq!(r, Value::Number(3.0));
     }
 
     // ─── compute_property_key ────────────────────────────────────────────────
