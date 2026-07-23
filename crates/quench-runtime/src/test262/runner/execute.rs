@@ -170,6 +170,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let output = std::process::Command::new(&bin)
         .arg(&path)
         .env("TEST262_NOSKIP", "1")
+        .env("TEST262_DIR", crate::test262::runner::default_test262_dir())
         .env("RUST_MIN_STACK", "33554432")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -247,6 +248,22 @@ fn run_test_binary() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn isolated_run_finds_property_helper_from_any_cwd() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join("tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js");
+        let outcome = run_isolated(&path);
+        assert!(
+            !matches!(outcome, TestOutcome::Fail { ref reason } if reason.contains("propertyHelper.js")),
+            "isolated run should resolve harness includes: {:?}",
+            outcome
+        );
+    }
 
     #[test]
     fn isolated_message_extracts_reason_line() {
