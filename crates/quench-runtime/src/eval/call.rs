@@ -109,6 +109,16 @@ fn eval_super_call(
         Value::NativeConstructor(nc) => {
             call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
         }
+        Value::NativeFunction(nf) => {
+            let nf_val = Value::NativeFunction(nf.clone());
+            if crate::eval::class::helpers::is_constructor_value(&nf_val) {
+                call_value_with_this(nf_val, args, this_val)
+            } else {
+                let (_, js_err) =
+                    create_js_error_with_type("super is not a constructor", "TypeError");
+                Err(js_err)
+            }
+        }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
             return Err(js_err);
