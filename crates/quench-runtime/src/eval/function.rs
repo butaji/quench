@@ -243,18 +243,19 @@ pub(crate) fn call_js_function_impl_with_strict(
 
         bind_params(&f, &params, &args, &call_env_rc)?;
 
-        call_env_rc.borrow_mut().push_scope();
-        predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
-        predeclare_let_const(&f.body, &mut call_env_rc.borrow_mut());
+        let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &params);
+        body_env_rc.borrow_mut().push_scope();
+        predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
+        predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(in_strict);
         let previous_eval_env = crate::interpreter::get_current_eval_env();
-        crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env_rc)));
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(&body_env_rc)));
         let result = if f.is_arrow {
-            call_arrow_body(&f, &call_env_rc)
+            call_arrow_body(&f, &body_env_rc)
         } else {
-            eval_function_body(&f.body, &call_env_rc, false)
+            eval_function_body(&f.body, &body_env_rc, false)
         };
         crate::interpreter::set_current_eval_env(previous_eval_env);
         crate::interpreter::set_strict_mode(prev_strict);
@@ -288,6 +289,35 @@ pub(crate) fn call_js_function_impl_with_strict(
         force_strict = next_force_strict;
         args = tail.arguments;
     }
+}
+
+/// True when formal parameters need a separate body environment (ES
+/// `hasParameterExpressions`: defaults, destructuring, or rest).
+pub(crate) fn has_parameter_expressions(params: &[crate::ast::Param]) -> bool {
+    params
+        .iter()
+        .any(|p| p.default.is_some() || p.pattern.is_some() || p.rest)
+}
+
+/// Body lexical environment: child param record when parameter expressions
+/// exist, otherwise the same environment used for parameter binding.
+pub(crate) fn function_body_env(
+    param_env_rc: &Rc<RefCell<Environment>>,
+    f: &ValueFunction,
+    this_val: &Value,
+    params: &[crate::ast::Param],
+) -> Rc<RefCell<Environment>> {
+    if !has_parameter_expressions(params) {
+        return Rc::clone(param_env_rc);
+    }
+    let body_env = Environment::with_parent(Rc::clone(param_env_rc));
+    if !f.is_arrow {
+        body_env
+            .current_scope()
+            .borrow_mut()
+            .set_this(this_val.clone());
+    }
+    Rc::new(RefCell::new(body_env))
 }
 
 /// Bind parameters from `args` into the call environment.

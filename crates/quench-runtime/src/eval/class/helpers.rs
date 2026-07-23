@@ -2869,6 +2869,30 @@ mod tests {
         assert_eq!(r, Value::Number(42.0));
     }
 
+    /// Reproducer: setter default params + separate body var scope (test262 scope-setter-*).
+    #[test]
+    fn class_setter_default_param_separate_body_scope() {
+        let r = eval_with_builtins(
+            "var x = 'outside'; \
+             var probeParams, probeBody; \
+             class C { \
+               set a(_ = probeParams = function() { return x; }) { \
+                 var x = 'inside'; \
+                 probeBody = function() { return x; }; \
+               } \
+             } \
+             C.prototype.a = undefined; \
+             [probeParams(), probeBody()]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let elems = arr.borrow().elements.clone();
+        assert_eq!(elems[0], Value::String("outside".to_string()));
+        assert_eq!(elems[1], Value::String("inside".to_string()));
+    }
+
     /// Reproducer: multi-statement Proxy get traps after super-returned Proxy.
     #[test]
     fn proxy_get_trap_multi_stmt_returns_function() {
