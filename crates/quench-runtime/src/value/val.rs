@@ -53,6 +53,17 @@ pub fn is_unscoped_private_name_key(key: &str) -> bool {
     !inner.contains(':')
 }
 
+/// Class id embedded in a scoped [`scoped_private_name_key`], if any.
+pub fn private_name_declaring_class_id(key: &str) -> Option<usize> {
+    if !is_private_name_key(key) {
+        return None;
+    }
+    let inner = &key[9..key.len() - 1];
+    inner
+        .split_once(':')
+        .and_then(|(id_str, _)| id_str.parse().ok())
+}
+
 /// Source-visible name for a private method (`#m`) from storage or scoped key.
 pub fn private_method_display_name(key: &str) -> String {
     if let Some(rest) = key.strip_prefix('#') {
@@ -104,6 +115,14 @@ impl Symbol {
     /// Canonical property-key form: `desc\0id` (AGENTS.md).
     pub fn property_key(&self) -> String {
         format!("{}\0{}", self.desc.as_deref().unwrap_or(""), self.id)
+    }
+
+    /// SetFunctionName display form: `[desc]` or `` for anonymous symbols.
+    pub fn display_name(&self) -> String {
+        match self.desc.as_deref() {
+            Some(d) => format!("[{d}]"),
+            None => String::new(),
+        }
     }
 }
 
@@ -201,6 +220,10 @@ pub struct ClassValue {
     /// Keys resolved during class definition for static getters/setters (by index).
     pub(crate) static_getter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Instance field keys resolved during class definition (computed names).
+    pub(crate) instance_field_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Static field keys resolved during class definition (before value init).
+    pub(crate) static_field_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     /// Whether new private static fields may be added (Object.preventExtensions).
     pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
     /// Shared private method/accessor values installed on every instance.
@@ -279,6 +302,8 @@ impl ClassValue {
             class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            instance_field_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            static_field_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
             private_element_cache: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
             declared_private_names,
@@ -301,6 +326,22 @@ impl ClassValue {
         self.static_setter_keys_cell.borrow().get(index).cloned()
     }
 
+    pub fn push_instance_field_key(&self, key: String) {
+        self.instance_field_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn instance_field_key(&self, index: usize) -> Option<String> {
+        self.instance_field_keys_cell.borrow().get(index).cloned()
+    }
+
+    pub fn push_static_field_key(&self, key: String) {
+        self.static_field_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn static_field_key(&self, index: usize) -> Option<String> {
+        self.static_field_keys_cell.borrow().get(index).cloned()
+    }
+
     /// Set the class definition environment (used for evaluating computed property keys in static accessors)
     pub fn set_class_def_env(&self, env: Rc<RefCell<Environment>>) {
         let mut cell = self.class_def_env_cell.borrow_mut();
@@ -309,6 +350,15 @@ impl ClassValue {
 
     pub fn class_id(&self) -> usize {
         self.id
+    }
+
+    /// Whether this class constructor carries the brand for `prop_name`.
+    pub fn private_brand_matches(&self, prop_name: &str) -> bool {
+        if let Some(decl_id) = private_name_declaring_class_id(prop_name) {
+            decl_id == self.id
+        } else {
+            self.declared_private_names.contains(prop_name)
+        }
     }
 
     /// Get the class definition environment
@@ -383,7 +433,7 @@ impl ClassValue {
         if self.deleted_properties.borrow().contains(name) {
             return false;
         }
-        if name == "name" || name == "prototype" {
+        if name == "length" || name == "name" || name == "prototype" {
             return true;
         }
         if self.get_static_field(name).is_some() {
@@ -423,6 +473,13 @@ impl ClassValue {
         value: Value,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<(), JsError> {
+        if crate::value::is_private_name_key(name) && !self.private_brand_matches(name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot write private member to an object whose class did not declare it",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         // Check if there's a static setter
         let eval_env = self.class_def_env_cell.borrow();
         let env = eval_env

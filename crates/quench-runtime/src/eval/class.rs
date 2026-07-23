@@ -85,8 +85,7 @@ pub fn eval_class_expr(
             .borrow_mut()
             .current_scope()
             .borrow_mut()
-            .initialize_declared(name, class_val.clone());
-        env.borrow_mut().define(name.to_string(), class_val);
+            .initialize_declared(name, class_val);
     }
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
@@ -121,28 +120,19 @@ pub fn eval_class_expr(
     // Per ES spec, elements are evaluated sequentially — if one throws,
     // subsequent elements are skipped.
     let extracted_static_fields = std::mem::take(&mut new_value.static_fields);
-    let mut field_idx = 0usize;
+    let mut static_field_idx = 0usize;
     for member in &new_value.ordered_members {
         match member {
+            crate::ast::ClassMember::Field { name, .. } => {
+                let key_str = prop_key_to_string(name, &class_scope, true)?;
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
+                new_value.push_instance_field_key(key_str);
+            }
             crate::ast::ClassMember::StaticField { .. } => {
-                if let Some((name, value_expr)) = extracted_static_fields.get(field_idx) {
-                    let child_env: Rc<RefCell<Environment>> =
-                        Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
-                    child_env
-                        .borrow_mut()
-                        .current_scope()
-                        .borrow_mut()
-                        .set_this(class_value.clone());
-                    let field_value = {
-                        crate::interpreter::set_eval_in_class_field(true);
-                        let v = eval_expression(value_expr, &child_env, false)?;
-                        crate::interpreter::set_eval_in_class_field(false);
-                        v
-                    };
-                    if crate::value::generator_replay::yield_pending() {
-                        return Ok(Value::Undefined);
-                    }
-                    let key_str = prop_key_to_string(name, &child_env, true)?;
+                if let Some((name, _)) = extracted_static_fields.get(static_field_idx) {
+                    let key_str = prop_key_to_string(name, &class_scope, true)?;
                     if crate::value::generator_replay::yield_pending() {
                         return Ok(Value::Undefined);
                     }
@@ -151,15 +141,8 @@ pub fn eval_class_expr(
                             "TypeError: static class field may not be named 'prototype'".into(),
                         ));
                     }
-                    let storage_key = if crate::value::is_private_name_key(&key_str) {
-                        key_str
-                    } else if key_str.starts_with('#') {
-                        crate::value::private_name_key(&key_str)
-                    } else {
-                        key_str
-                    };
-                    new_value.set_static_field(&storage_key, field_value)?;
-                    field_idx += 1;
+                    new_value.push_static_field_key(key_str);
+                    static_field_idx += 1;
                 }
             }
             crate::ast::ClassMember::StaticMethod { name, .. } => {
@@ -197,6 +180,54 @@ pub fn eval_class_expr(
                     ));
                 }
             }
+            _ => {}
+        }
+    }
+
+    static_field_idx = 0;
+    for member in &new_value.ordered_members {
+        match member {
+            crate::ast::ClassMember::StaticField { .. } => {
+                let Some((name, value_expr)) = extracted_static_fields.get(static_field_idx) else {
+                    continue;
+                };
+                let child_env: Rc<RefCell<Environment>> = Rc::new(RefCell::new(
+                    Environment::with_parent(Rc::clone(&class_scope)),
+                ));
+                child_env
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(class_value.clone());
+                let mut field_value = {
+                    crate::interpreter::set_eval_in_class_field(true);
+                    let v = eval_expression(value_expr, &child_env, false)?;
+                    crate::interpreter::set_eval_in_class_field(false);
+                    v
+                };
+                if crate::value::generator_replay::yield_pending() {
+                    return Ok(Value::Undefined);
+                }
+                let key_str = match new_value.static_field_key(static_field_idx) {
+                    Some(k) => k,
+                    None => prop_key_to_string(name, &child_env, true)?,
+                };
+                crate::eval::class::helpers::set_function_name_for_field_initializer(
+                    &mut field_value,
+                    name,
+                    &key_str,
+                    value_expr,
+                );
+                let storage_key = if crate::value::is_private_name_key(&key_str) {
+                    key_str
+                } else if key_str.starts_with('#') {
+                    crate::value::private_name_key(&key_str)
+                } else {
+                    key_str
+                };
+                new_value.set_static_field(&storage_key, field_value)?;
+                static_field_idx += 1;
+            }
             crate::ast::ClassMember::StaticBlock { body } => {
                 let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
                     &class_scope,
@@ -216,18 +247,6 @@ pub fn eval_class_expr(
                 crate::interpreter::set_strict_mode(prev_strict);
             }
             _ => {}
-        }
-    }
-
-    // Eagerly evaluate instance field property keys during class definition.
-    // Per ES §15.7.14 (ClassDefinitionEvaluation), ClassElementEvaluation
-    // is performed for each element, and property key evaluation can throw.
-    // If a computed key throws, the class declaration must throw.
-    // Instance accessor keys are evaluated in create_class_prototype_helper_with_env.
-    for (name, _value) in &new_value.instance_fields {
-        let _key_str = prop_key_to_string(name, &class_scope, true)?;
-        if crate::value::generator_replay::yield_pending() {
-            return Ok(Value::Undefined);
         }
     }
 
@@ -273,19 +292,22 @@ pub fn call_super_constructor(
         &class, &args, &this_val, env,
     )?));
 
-    if body.is_empty() {
+    crate::interpreter::push_inside_super_call();
+    let result = if body.is_empty() {
         if let Value::Object(o) = &this_val {
-            let field_obj = crate::eval::object::private_field_object(o);
             if !class.instance_fields.is_empty() {
-                init_instance_fields(&class, &field_obj, &call_env)?;
+                init_instance_fields(&class, o, &call_env)?;
             }
+            let field_obj = crate::eval::object::private_field_object(o);
             install_instance_private_elements(&class, &field_obj, env)?;
         }
-        return Ok(this_val);
-    }
-
-    crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
-    let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
+        Ok(this_val.clone())
+    } else {
+        crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
+        crate::eval::statement::eval_function_body(&body, &call_env, false)
+    };
+    crate::interpreter::pop_inside_super_call();
+    let result = result?;
     let _ = crate::interpreter::take_control_flow();
     finish_constructor(result, &this_val)
 }

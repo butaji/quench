@@ -3,32 +3,19 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::this_js_string;
 use crate::value::{NativeFunction, Object, Value};
 
 fn install_trim_method(proto: &Rc<RefCell<Object>>, name: &str, trim_fn: fn(&str) -> &str) {
     proto.borrow_mut().set(
         name,
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
-            let s = get_string_this_val();
-            match s {
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |_| match this_js_string() {
                 Some(s) => Ok(Value::String(trim_fn(&s).to_string())),
-                _ => Ok(Value::Undefined),
-            }
-        }))),
+                None => Ok(Value::Undefined),
+            },
+        ))),
     );
-}
-
-/// Extract the string value from `get_native_this()`, handling both
-/// bare `Value::String` and boxed string objects (stored as `_value`).
-fn get_string_this_val() -> Option<String> {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Object(obj)) => match obj.borrow().get("_value") {
-            Some(Value::String(s)) => Some(s),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 /// Install trim methods (trim, trimStart, trimLeft, trimEnd, trimRight)

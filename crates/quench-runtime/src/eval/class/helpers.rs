@@ -1,7 +1,7 @@
 //! Private helper functions for class operations.
 //! All functions here are internal helpers; public API lives in the parent `class.rs`.
 
-use crate::ast::Statement;
+use crate::ast::{Expression, PropertyKey, Statement};
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
@@ -43,6 +43,28 @@ fn throw_uninitialized_this() -> Result<Value, JsError> {
     Err(js_err)
 }
 
+/// ReferenceError when derived ctor reads `this` before `super()`.
+pub(crate) fn throw_this_before_super() -> Result<Value, JsError> {
+    let (thrown_val, js_err) = crate::value::error::create_js_error_with_type(
+        "Must call super constructor in derived class before accessing 'this'",
+        "ReferenceError",
+    );
+    crate::value::error::set_thrown_value(thrown_val);
+    Err(js_err)
+}
+
+pub(crate) fn check_this_access_allowed(env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+    if crate::interpreter::is_inside_super_call() {
+        return Ok(());
+    }
+    if let Some(class) = constructing_class_for_super() {
+        if class.super_class.is_some() && !crate::interpreter::is_this_binding_initialized(env) {
+            throw_this_before_super()?;
+        }
+    }
+    Ok(())
+}
+
 /// Finish a constructor: object returns win; derived + uninitialized this → ReferenceError.
 fn finish_ctor_result(
     result: Value,
@@ -58,15 +80,15 @@ fn finish_ctor_result(
         | Value::NativeConstructor(_) => Ok(result),
         _ => {
             if class.super_class.is_some() {
-                if !crate::interpreter::is_this_binding_initialized(call_env) {
-                    return throw_uninitialized_this();
-                }
                 if explicit_return && !matches!(result, Value::Undefined) {
                     let (_, js_err) = crate::value::error::create_js_error_with_type(
                         "Derived constructors may only return object or undefined",
                         "TypeError",
                     );
                     return Err(js_err);
+                }
+                if !crate::interpreter::is_this_binding_initialized(call_env) {
+                    return throw_uninitialized_this();
                 }
             }
             Ok(crate::interpreter::get_this_binding(call_env))
@@ -124,9 +146,10 @@ pub fn instantiate_simple(
     if should_auto_super(class) {
         let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args.clone(), &this_val, env)?;
+        crate::interpreter::mark_this_binding_initialized(&call_env);
         if let Value::Object(o) = &effective_this {
+            init_instance_fields(class, o, &call_env)?;
             let field_obj = crate::eval::object::private_field_object(o);
-            init_instance_fields(class, &field_obj, &call_env)?;
             install_privates_on_object(class, &field_obj, env)?;
         }
         return finalize_instance(effective_this);
@@ -153,19 +176,29 @@ pub fn instantiate_simple(
 
 pub(crate) fn init_instance_fields(
     class: &ClassValue,
-    instance_rc: &Rc<RefCell<Object>>,
+    receiver_rc: &Rc<RefCell<Object>>,
     call_env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    for (name, value_expr) in &class.instance_fields {
+    let private_target = crate::eval::object::private_field_object(receiver_rc);
+    for (i, (name, value_expr)) in class.instance_fields.iter().enumerate() {
         crate::interpreter::set_eval_in_class_field(true);
-        let field_val = eval_expression(value_expr, call_env, false)?;
+        let mut field_val = eval_expression(value_expr, call_env, false)?;
         crate::interpreter::set_eval_in_class_field(false);
-        let key_str = prop_key_to_string(name, call_env, false)?;
-        private_field_add(
-            instance_rc,
-            &storage_key_for_property(name, &key_str),
-            field_val,
-        )?;
+        let key_str = match class.instance_field_key(i) {
+            Some(k) => k,
+            None => prop_key_to_string(name, call_env, false)?,
+        };
+        set_function_name_for_field_initializer(&mut field_val, name, &key_str, value_expr);
+        let storage_key = storage_key_for_property(name, &key_str);
+        if crate::value::is_private_name_key(&storage_key) {
+            private_field_add(&private_target, &storage_key, field_val)?;
+        } else {
+            crate::eval::object::create_data_property_or_throw(
+                receiver_rc,
+                &storage_key,
+                field_val,
+            )?;
+        }
     }
     Ok(())
 }
@@ -191,6 +224,12 @@ pub fn private_field_add(
             );
             return Err(js_err);
         }
+    } else if !obj.borrow().extensible {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot add property to non-extensible object",
+            "TypeError",
+        );
+        return Err(js_err);
     }
     obj.borrow_mut().set(key, value);
     Ok(())
@@ -230,9 +269,10 @@ pub fn instantiate_with_fields(
     if should_auto_super(class) {
         let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
+        crate::interpreter::mark_this_binding_initialized(&call_env);
         if let Value::Object(o) = &effective_this {
+            init_instance_fields(class, o, &call_env)?;
             let field_obj = crate::eval::object::private_field_object(o);
-            init_instance_fields(class, &field_obj, &call_env)?;
             install_privates_on_object(class, &field_obj, env)?;
         }
         return finalize_instance(effective_this);
@@ -337,8 +377,10 @@ pub fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsEr
 }
 
 fn call_super_callable(func: Value, args: Vec<Value>, this_val: &Value) -> Result<Value, JsError> {
-    let result = crate::eval::function::call_value_with_this(func, args, this_val.clone())?;
-    finish_constructor(result, this_val)
+    crate::interpreter::push_inside_super_call();
+    let result = crate::eval::function::call_value_with_this(func, args, this_val.clone());
+    crate::interpreter::pop_inside_super_call();
+    finish_constructor(result?, this_val)
 }
 
 /// Call the super constructor or use default behavior; returns effective `this`.
@@ -355,24 +397,22 @@ pub fn call_super_or_default(
             this_val.clone(),
             env,
         ),
-        Value::Object(o) => {
-            if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
+        Value::Object(o) => match o.borrow().get("constructor") {
+            Some(Value::Function(constructor)) => {
                 call_super_callable(Value::Function(constructor.clone()), args, this_val)
-            } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
-                call_super_callable(Value::NativeConstructor(nc.clone()), args, this_val)
-            } else {
-                Ok(this_val.clone())
             }
-        }
+            Some(Value::NativeConstructor(nc)) => {
+                call_super_callable(Value::NativeConstructor(nc.clone()), args, this_val)
+            }
+            Some(Value::NativeFunction(nf)) => {
+                call_super_callable(Value::NativeFunction(nf.clone()), args, this_val)
+            }
+            _ => Ok(this_val.clone()),
+        },
         Value::NativeConstructor(nc) => {
             call_super_callable(Value::NativeConstructor(nc.clone()), args, this_val)
         }
-        Value::NativeFunction(nf)
-            if matches!(
-                nf.name.as_str(),
-                "Symbol" | "ArrayBuffer" | "DataView" | "SharedArrayBuffer"
-            ) =>
-        {
+        Value::NativeFunction(nf) if nf.prototype.borrow().is_some() => {
             call_super_callable(Value::NativeFunction(nf.clone()), args, this_val)
         }
         Value::Function(f) => call_super_callable(Value::Function(f.clone()), args, this_val),
@@ -449,13 +489,11 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
-/// Get the superclass constructor's own `[[Prototype]]` (for Object.getPrototypeOf(class)).
-/// Returns:
-/// - None if class extends null (so Object.getPrototypeOf(C) === null)
-/// - The superclass constructor VALUE otherwise (for `extends Base`, returns `Value::Class(Base)`)
+/// Get the class constructor's own `[[Prototype]]` (for Object.getPrototypeOf(class)).
+/// For `extends null`, returns %FunctionPrototype%; for `extends Base`, returns `Base`.
 pub fn get_super_class_own_proto(super_class_val: &Value) -> Option<Value> {
     match super_class_val {
-        Value::Null => None,
+        Value::Null => builtins::get_function_prototype().map(Value::Object),
         // For `class Derived extends Base`, the superclass VALUE IS the class itself.
         // Object.getPrototypeOf(Derived) should return `Base` as a Value.
         Value::Class(class) => Some(Value::Class(class.clone())),
@@ -494,11 +532,9 @@ pub fn create_class_prototype_helper_with_env(
             ));
         }
 
-        // For NativeFunction (e.g. bound functions), use proper member access
-        // to get the .prototype property (handles Object.defineProperty accessors).
-        // Per ES spec §15.2.4 step 5f: if Get(ctor, "prototype") is not Object/Null, throw TypeError
-        // Per ES §26.2.1: Proxy is not subclassable (no valid .prototype for extends).
-        if let Value::NativeFunction(nf) = &super_class_val {
+        if matches!(&super_class_val, Value::Null) {
+            None
+        } else if let Value::NativeFunction(nf) = &super_class_val {
             if nf.name == "Proxy" {
                 return Err(JsError(
                     "TypeError: superclass constructor prototype is not an object or null"
@@ -543,8 +579,9 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = method_function_name(name, &key_str, &closure)?;
         let mut func = ValueFunction::new(
-            Some(key_str.clone()),
+            Some(fn_name),
             params.clone(),
             body.clone(),
             Rc::clone(&member_closure),
@@ -575,11 +612,13 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = accessor_function_name(name, &key_str, &closure, "get")?;
         proto.set_getter(
             &key,
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
 
@@ -592,12 +631,14 @@ pub fn create_class_prototype_helper_with_env(
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
+        let fn_name = accessor_function_name(name, &key_str, &closure, "set")?;
         proto.set_setter(
             &key,
             param.clone(),
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
 
@@ -637,6 +678,90 @@ pub fn class_member_storage_key(key: &str) -> String {
     }
 }
 
+/// SetFunctionName for a class method from its key and evaluated storage key.
+pub fn method_function_name(
+    key: &crate::ast::PropertyKey,
+    key_str: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<String, JsError> {
+    if crate::value::is_private_element_key(key_str) {
+        return Ok(crate::value::private_method_display_name(key_str));
+    }
+    if let crate::ast::PropertyKey::Ident(s) = key {
+        if s.starts_with('#') {
+            return Ok(crate::value::private_method_display_name(s));
+        }
+    }
+    match key {
+        crate::ast::PropertyKey::Computed(expr) => {
+            let val = eval_expression(expr, env, false)?;
+            if crate::value::generator_replay::yield_pending() {
+                return Ok(String::new());
+            }
+            match val {
+                Value::Symbol(s) => Ok(s.display_name()),
+                _ => Ok(key_str.to_string()),
+            }
+        }
+        _ => Ok(key_str.to_string()),
+    }
+}
+
+/// SetFunctionName for getter/setter with `"get "` / `"set "` prefix.
+pub fn accessor_function_name(
+    key: &crate::ast::PropertyKey,
+    key_str: &str,
+    env: &Rc<RefCell<Environment>>,
+    prefix: &str,
+) -> Result<String, JsError> {
+    let base = method_function_name(key, key_str, env)?;
+    Ok(format!("{prefix} {base}"))
+}
+
+fn is_anonymous_function_definition(expr: &Expression) -> bool {
+    match expr {
+        Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
+            true
+        }
+        Expression::Sequence(exprs) if exprs.len() == 1 => {
+            is_anonymous_function_definition(&exprs[0])
+        }
+        _ => false,
+    }
+}
+
+/// Display name for SetFunctionName on a class field key (incl. private `#m`).
+pub fn field_display_name(key: &PropertyKey, key_str: &str) -> String {
+    if crate::value::is_private_element_key(key_str) {
+        return crate::value::private_method_display_name(key_str);
+    }
+    if let PropertyKey::Ident(s) = key {
+        if s.starts_with('#') {
+            return crate::value::private_method_display_name(s);
+        }
+    }
+    key_str.to_string()
+}
+
+/// Apply SetFunctionName when a field initializer is an anonymous function definition.
+pub fn set_function_name_for_field_initializer(
+    value: &mut Value,
+    key: &PropertyKey,
+    key_str: &str,
+    init_expr: &Expression,
+) {
+    if !is_anonymous_function_definition(init_expr) {
+        return;
+    }
+    let name = field_display_name(key, key_str);
+    if let Value::Function(f) = value {
+        if f.get_property("name").is_none() {
+            f.name = Some(name.clone());
+            let _ = f.set_property("name", Value::String(name));
+        }
+    }
+}
+
 /// Helper to convert PropertyKey to string, evaluating computed expressions
 pub fn prop_key_to_string(
     key: &crate::ast::PropertyKey,
@@ -656,7 +781,10 @@ pub fn prop_key_to_string(
                 Value::Symbol(s) => Ok(s.property_key()),
                 _ => {
                     let prim = crate::value::to_primitive(&val, Some("string"))?;
-                    Ok(crate::value::to_js_string(&prim))
+                    match &prim {
+                        Value::Symbol(s) => Ok(s.property_key()),
+                        _ => Ok(crate::value::to_js_string(&prim)),
+                    }
                 }
             }
         }
@@ -803,9 +931,89 @@ mod tests {
     }
 
     #[test]
-    fn class_extends_null() {
-        let r = eval("class C extends null {} Object.getPrototypeOf(C)").unwrap();
+    fn super_bracket_super_call_throws_reference_error_before_evaluating_key() {
+        let r = eval(
+            "class Derived extends Object { constructor() { super[super()]; throw new Error('fail'); } } new Derived()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError, got {msg}"
+        );
+    }
+
+    #[test]
+    fn super_member_before_super_throws_reference_error() {
+        let r = eval(
+            "class Base {} class C extends Base { constructor() { super.method(); } } new C()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError, got {msg}"
+        );
+    }
+
+    #[test]
+    fn private_method_before_super_returns_in_field_initializer() {
+        let r = eval(
+            "class C { f = this.g(); } class D extends C { g() { this.#m(); } #m() { return 42; } } new D()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("TypeError"),
+            "expected TypeError for private method before super returns, got {msg}"
+        );
+    }
+
+    #[test]
+    fn symbol_toprimitive_computed_field_is_own_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var s = Symbol(); var obj = { [Symbol.toPrimitive]: function(){ return s; } }; \
+                 class C { [obj] = 42; } var c = new C(); \
+                 Object.prototype.hasOwnProperty.call(c, s)",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn symbol_computed_instance_field_is_own_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var s = Symbol(); class C { [s] = 42; } var c = new C(); \
+                 Object.prototype.hasOwnProperty.call(c, s)",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_extends_null_prototype_has_null_proto_with_builtins() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("class Foo extends null {} Object.getPrototypeOf(Foo.prototype)")
+            .unwrap();
         assert_eq!(r, Value::Null);
+    }
+
+    #[test]
+    fn class_extends_null() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("class C extends null {} Object.getPrototypeOf(C) === Function.prototype")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 
     // ─── Private fields ─────────────────────────────────────────────────────
@@ -1341,6 +1549,114 @@ mod tests {
     }
 
     // ─── create_class_prototype_helper_with_env ─────────────────────────────
+
+    #[test]
+    fn class_static_get_own_property_names_includes_static_method() {
+        let names = eval(
+            "class A { static method() {} static name() {} } \
+             Object.getOwnPropertyNames(A).join(',')",
+        )
+        .unwrap();
+        assert_eq!(names, Value::String("length,name,prototype,method".into()));
+    }
+
+    #[test]
+    fn class_method_symbol_key_has_display_name_own_property() {
+        let has_own = eval(
+            "var anonSym = Symbol(); class A { [anonSym]() {} } \
+             Object.prototype.hasOwnProperty.call(A.prototype[anonSym], 'name')",
+        )
+        .unwrap();
+        assert_eq!(has_own, Value::Boolean(true), "hasOwn name");
+        let empty =
+            eval("var anonSym = Symbol(); class A { [anonSym]() {} } A.prototype[anonSym].name")
+                .unwrap();
+        assert_eq!(empty, Value::String("".into()), "anon name");
+        let named = eval(
+            "var namedSym = Symbol('test262'); class A { [namedSym]() {} } \
+             A.prototype[namedSym].name",
+        )
+        .unwrap();
+        assert_eq!(named, Value::String("[test262]".into()), "named sym");
+    }
+
+    #[test]
+    fn class_getter_has_own_name_property_with_get_prefix() {
+        let ok = eval(
+            "class A { get id() {} } \
+             var g = Object.getOwnPropertyDescriptor(A.prototype, 'id').get; \
+             Object.prototype.hasOwnProperty.call(g, 'name') && g.name === 'get id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_setter_has_own_name_property_with_set_prefix() {
+        let ok = eval(
+            "class A { set id(v) {} } \
+             var s = Object.getOwnPropertyDescriptor(A.prototype, 'id').set; \
+             Object.prototype.hasOwnProperty.call(s, 'name') && s.name === 'set id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_static_getter_has_own_name_property_with_get_prefix() {
+        let ok = eval(
+            "class A { static get id() {} } \
+             var g = Object.getOwnPropertyDescriptor(A, 'id').get; \
+             Object.prototype.hasOwnProperty.call(g, 'name') && g.name === 'get id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn static_private_field_anonymous_arrow_gets_hash_field_name() {
+        let name = eval(
+            "class C { static #field = () => 'Test262'; \
+             static accessPrivateField() { return this.#field; } } \
+             C.accessPrivateField().name",
+        )
+        .unwrap();
+        assert_eq!(name, Value::String("#field".into()));
+    }
+
+    #[test]
+    fn static_field_anonymous_function_gets_field_name() {
+        let name =
+            eval("class C { static field = function() { return 42; }; } C.field.name").unwrap();
+        assert_eq!(name, Value::String("field".into()));
+    }
+
+    #[test]
+    fn static_private_method_function_name_is_hash_method() {
+        let name = eval(
+            "class C { static #method() { return 'Test262'; } \
+             static getPrivateMethod() { return this.#method; } } \
+             C.getPrivateMethod().name",
+        )
+        .unwrap();
+        assert_eq!(name, Value::String("#method".into()));
+    }
+
+    #[test]
+    fn static_name_method_shadows_constructor_name_string() {
+        let ty = eval("class A { static name() {} } typeof A.name").unwrap();
+        assert_eq!(ty, Value::String("function".into()));
+    }
+
+    #[test]
+    fn class_static_method_has_own_name_property() {
+        let ok = eval(
+            "class A { static id() {} } \
+             Object.prototype.hasOwnProperty.call(A.id, 'name') && A.id.name === 'id'",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
 
     #[test]
     fn class_prototype_has_method() {
@@ -2553,6 +2869,23 @@ mod tests {
     }
 
     #[test]
+    fn derived_constructor_return_primitive_before_super_throws_type_error() {
+        let err = eval(
+            "class C extends class {} { constructor() { try { return 0; } catch(e) { super(); } } } \
+             new C()",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn derived_extends_object_return_number_throws_type_error() {
+        let err = eval("class Obj extends Object { constructor() { return 42; } } new Obj()")
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
     fn derived_constructor_return_boolean_throws_type_error() {
         let err = eval(
             "class Base {} class Derived extends Base { constructor() { super(); return true; } } \
@@ -3033,6 +3366,29 @@ mod tests {
     }
 
     #[test]
+    fn this_access_before_super_in_super_args_throws_reference_error() {
+        let err = eval(
+            "class Base {} class C extends Base { constructor() { super(this.x); } } new C();",
+        );
+        assert!(err.is_err(), "expected ReferenceError, got {:?}", err);
+        assert!(
+            err.unwrap_err().0.contains("ReferenceError"),
+            "expected ReferenceError message"
+        );
+    }
+
+    #[test]
+    fn super_prototype_property_in_derived_constructor() {
+        let r = eval(
+            "class B {} B.prototype.x = 42; \
+             var v; class C extends B { constructor() { super(); v = super.x; } } \
+             new C(); v",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn static_block_super_property_access() {
         let r = eval(
             "function Parent() {} Parent.test262 = 'test262'; var value; \
@@ -3224,5 +3580,152 @@ mod tests {
     fn derived_subclass_array_buffer_auto_super() {
         let r = eval("class AB extends ArrayBuffer {} new AB(4).byteLength").unwrap();
         assert_eq!(r, Value::Number(4.0));
+    }
+
+    #[test]
+    fn derived_subclass_map_auto_super() {
+        let r = eval("class M extends Map {} new M([[1, 2]]).size").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn derived_subclass_set_auto_super() {
+        let r = eval("class S extends Set {} new S([1, 2]).size").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn derived_subclass_map_instanceof() {
+        let r = eval(
+            "class M extends Map {} const m = new M(); \
+             [m instanceof M, m instanceof Map]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Boolean(true)));
+        assert_eq!(obj.get("1"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn derived_subclass_date_instanceof() {
+        let r = eval(
+            "class D extends Date {} const d = new D(0); \
+             [d instanceof D, d instanceof Date]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Boolean(true)));
+        assert_eq!(obj.get("1"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn instance_field_computed_key_at_class_definition() {
+        let r = eval(
+            "var x = 1; class C { [x++] = x++; [x++] = x++; } \
+             var c1 = new C(); var c2 = new C(); [c1['1'], c1['2'], c2['1'], c2['2']]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(3.0)));
+        assert_eq!(obj.get("1"), Some(Value::Number(4.0)));
+        assert_eq!(obj.get("2"), Some(Value::Number(5.0)));
+        assert_eq!(obj.get("3"), Some(Value::Number(6.0)));
+    }
+
+    #[test]
+    fn instance_field_computed_key_x_counter() {
+        let r = eval(
+            "var x = 1; class C { [x++] = x++; [x++] = x++; } \
+             var afterClass = x; var c = new C(); \
+             [afterClass, x, c['1'], c['2']]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(3.0)), "after class");
+        assert_eq!(obj.get("1"), Some(Value::Number(5.0)), "after new");
+        assert_eq!(obj.get("2"), Some(Value::Number(3.0)), "c['1']");
+        assert_eq!(obj.get("3"), Some(Value::Number(4.0)), "c['2']");
+    }
+
+    #[test]
+    fn static_init_block_field_sequence() {
+        let r = eval(
+            "var sequence = []; \
+             class C { \
+               static x = sequence.push('first field'); \
+               static { sequence.push('first block'); } \
+               static x = sequence.push('second field'); \
+               static { sequence.push('second block'); } \
+             } \
+             sequence",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::String("first field".into())));
+        assert_eq!(obj.get("1"), Some(Value::String("first block".into())));
+        assert_eq!(obj.get("2"), Some(Value::String("second field".into())));
+        assert_eq!(obj.get("3"), Some(Value::String("second block".into())));
+    }
+
+    #[test]
+    fn derived_subclass_string_trim() {
+        let r = eval("class S extends String {} new S(' test262 ').trim()").unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn instance_field_on_frozen_object_throws() {
+        let r = eval(
+            "class Test { f = Object.freeze(this); g = 'Test262'; } \
+             (function(){ try { new Test(); return false; } catch(e) { return e instanceof TypeError; } })()",
+        );
+        assert_eq!(r.unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn derived_subclass_string_length_non_enumerable() {
+        let r = eval(
+            "class S extends String {} \
+             Object.getOwnPropertyDescriptor(new S('test262'), 'length').enumerable",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn intercalated_static_instance_computed_fields() {
+        let r = eval(
+            "let i = 0; class C { [i++] = i++; static [i++] = i++; [i++] = i++; } \
+             let c = new C(); \
+             [c['0'], c['1'], c['2'], C['0'], C['1'], C['2'], i, c.hasOwnProperty('1')]",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::Number(4.0)), "c['0']");
+        assert_eq!(obj.get("1"), Some(Value::Undefined), "c['1']");
+        assert_eq!(obj.get("2"), Some(Value::Number(5.0)), "c['2']");
+        assert_eq!(obj.get("3"), Some(Value::Undefined), "C['0']");
+        assert_eq!(obj.get("4"), Some(Value::Number(3.0)), "C['1']");
+        assert_eq!(obj.get("5"), Some(Value::Undefined), "C['2']");
+        assert_eq!(obj.get("6"), Some(Value::Number(6.0)), "i");
+        assert_eq!(obj.get("7"), Some(Value::Boolean(false)), "hasOwn 1");
     }
 }

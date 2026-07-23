@@ -139,7 +139,7 @@ impl GeneratorObject {
         crate::interpreter::set_strict_mode(self.strict);
 
         let start = self.pending_stmt.unwrap_or(0);
-        let mut last_val = Value::Undefined;
+        let mut completion = Value::Undefined;
         for (i, stmt) in self.body.iter().enumerate().skip(start) {
             crate::value::generator_replay::set_resuming_pending_yield(
                 self.pending_stmt.is_some_and(|p| p == i),
@@ -149,8 +149,7 @@ impl GeneratorObject {
                 &self.stored_resumes,
             );
             match crate::eval::eval_statement(stmt, &call_env, false, false) {
-                Ok(val) => {
-                    last_val = val;
+                Ok(_val) => {
                     if let Some(yield_val) = crate::interpreter::take_generator_yield() {
                         crate::value::generator_replay::commit_suspend(&mut self.stored_resumes);
                         self.yields_to_replay = self.stored_resumes.len();
@@ -168,7 +167,7 @@ impl GeneratorObject {
                     if let Some(crate::interpreter::ControlFlow::Return(ret)) =
                         crate::interpreter::take_control_flow()
                     {
-                        last_val = ret;
+                        completion = ret;
                         break;
                     }
                     crate::value::generator_replay::commit_completed_yields(
@@ -178,7 +177,7 @@ impl GeneratorObject {
                     self.yields_to_replay = 0;
                     self.stored_resumes.clear();
                     if let Some(return_val) = crate::interpreter::take_generator_return() {
-                        last_val = return_val;
+                        completion = return_val;
                         break;
                     }
                 }
@@ -199,7 +198,7 @@ impl GeneratorObject {
         crate::value::generator_replay::set_resuming_pending_yield(false);
         crate::interpreter::set_strict_mode(prev_strict);
         Ok(IteratorResult {
-            value: last_val,
+            value: completion,
             done: true,
         })
     }

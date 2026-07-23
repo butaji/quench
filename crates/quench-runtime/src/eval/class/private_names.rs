@@ -562,6 +562,32 @@ mod tests {
     }
 
     #[test]
+    fn nested_class_static_private_field_on_outer_class() {
+        let src = "class C { static #m = 'outer class'; \
+                   static B = class { static fieldAccess(o) { return o.#m; } }; } \
+                   C.B.fieldAccess(C)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("outer class".into()));
+    }
+
+    #[test]
+    fn nested_class_static_private_setter_wrong_brand_throws() {
+        let src = "class C { static set #f(v) { this._v = v; } \
+                   static Inner = class { static access(o) { o.#f = 'Test262'; } }; } \
+                   C.Inner.access(C.Inner)";
+        let err = Context::new().unwrap().eval(src).unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn nested_class_shadowed_private_setter_wrong_brand_throws() {
+        let src = "class C { static #m = 'outer'; static B = class { set #m(v) { this._v = v; } \
+                   static access(o) { o.#m = 'inner'; } }; } C.B.access(C)";
+        let err = Context::new().unwrap().eval(src).unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
     fn nested_class_with_own_private_reads_outer_private_on_parameter() {
         let src = "class C { #outer = 'test262'; \
                    B = class { #inner = 42; method(o) { return o.#outer; } }; } \

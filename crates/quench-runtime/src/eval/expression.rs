@@ -132,7 +132,6 @@ pub fn eval_expression(
             func.strict = crate::interpreter::is_strict_mode();
             func.is_async = *is_async;
             func.is_generator = *is_generator;
-            let _ = func.set_property("name", Value::String(String::new()));
             Ok(Value::Function(func))
         }
         Expression::Binary { op, left, right } => {
@@ -392,6 +391,10 @@ pub fn eval_expression(
 
 /// Build the environment captured by a closure.
 pub fn capture_env_for_closure(env: &Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-    let captured = env.borrow().capture_env();
+    let mut captured = env.borrow().capture_env();
+    if crate::interpreter::is_eval_in_class_field() || env.borrow().is_in_class_field_initializer()
+    {
+        captured.set_in_class_field_initializer(true);
+    }
     Rc::new(RefCell::new(captured))
 }
