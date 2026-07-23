@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::ast::{Expression, Statement};
+use crate::ast::Statement;
 use crate::env::Environment;
 use crate::value::{Object, ObjectKind, Value};
 use crate::JsError;
@@ -35,6 +35,12 @@ pub struct GeneratorObject {
     /// Pre-evaluated arguments for async generators.
     /// When set, params are bound eagerly before the generator is returned.
     pub args: Option<Vec<Value>>,
+    /// Statement index suspended mid-evaluation (nested yields in class, etc.)
+    pub pending_stmt: Option<usize>,
+    /// Yields in `pending_stmt` already completed across prior `.next()` calls.
+    pub yields_to_replay: usize,
+    /// Resume values for completed yields in the pending statement.
+    pub stored_resumes: Vec<Value>,
 }
 
 impl GeneratorObject {
@@ -56,6 +62,9 @@ impl GeneratorObject {
             is_async: false,
             prototype: None,
             args: None,
+            pending_stmt: None,
+            yields_to_replay: 0,
+            stored_resumes: Vec::new(),
         }
     }
 
@@ -118,33 +127,39 @@ impl GeneratorObject {
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
 
-        let mut yield_count = 0;
+        let start = self.pending_stmt.unwrap_or(0);
         let mut last_val = Value::Undefined;
-        for stmt in self.body.iter() {
-            if yield_count < self.yield_index {
-                // Skip past yield points we've already passed
-                let ys = count_yields_in_stmt(stmt);
-                yield_count += ys;
-                if yield_count <= self.yield_index {
-                    continue;
-                }
-            }
-
+        for (i, stmt) in self.body.iter().enumerate().skip(start) {
+            crate::value::generator_replay::set_resuming_pending_yield(
+                self.pending_stmt.is_some_and(|p| p == i),
+            );
+            crate::value::generator_replay::begin_stmt_run(
+                self.yields_to_replay,
+                &self.stored_resumes,
+            );
             match crate::eval::eval_statement(stmt, &call_env, false, false) {
                 Ok(val) => {
                     last_val = val;
-                    // Check for yield
                     if let Some(yield_val) = crate::interpreter::take_generator_yield() {
+                        crate::value::generator_replay::commit_suspend(&mut self.stored_resumes);
+                        self.yields_to_replay = self.stored_resumes.len();
+                        self.pending_stmt = Some(i);
                         self.yielded_value = yield_val;
-                        self.yield_index = yield_count + 1;
+                        self.yield_index += 1;
                         self.state = GeneratorState::Suspended;
+                        crate::value::generator_replay::set_resuming_pending_yield(false);
                         crate::interpreter::set_strict_mode(prev_strict);
                         return Ok(IteratorResult {
                             value: self.yielded_value.clone(),
                             done: false,
                         });
                     }
-                    // Check for return
+                    crate::value::generator_replay::commit_completed_yields(
+                        &mut self.stored_resumes,
+                    );
+                    self.pending_stmt = None;
+                    self.yields_to_replay = 0;
+                    self.stored_resumes.clear();
                     if let Some(return_val) = crate::interpreter::take_generator_return() {
                         last_val = return_val;
                         break;
@@ -156,31 +171,18 @@ impl GeneratorObject {
                     return Err(e);
                 }
             }
-            yield_count += count_yields_in_stmt(stmt);
         }
 
         self.state = GeneratorState::Completed;
+        self.pending_stmt = None;
+        self.yields_to_replay = 0;
+        self.stored_resumes.clear();
+        crate::value::generator_replay::set_resuming_pending_yield(false);
         crate::interpreter::set_strict_mode(prev_strict);
         Ok(IteratorResult {
             value: last_val,
             done: true,
         })
-    }
-}
-
-fn count_yields_in_stmt(stmt: &Statement) -> usize {
-    match stmt {
-        Statement::Expression(expr) => count_yields_in_expr(expr),
-        Statement::Return(Some(expr)) => count_yields_in_expr(expr),
-        _ => 0,
-    }
-}
-
-fn count_yields_in_expr(expr: &Expression) -> usize {
-    match expr {
-        Expression::Yield(_) => 1,
-        Expression::YieldDelegate(_) => 1,
-        _ => 0,
     }
 }
 
@@ -420,6 +422,7 @@ mod tests {
 
     #[test]
     fn test_count_yields_in_expr() {
+        use crate::value::generator_replay::count_yields_in_expr;
         assert_eq!(count_yields_in_expr(&Expression::Yield(None)), 1);
         assert_eq!(
             count_yields_in_expr(&Expression::Yield(Some(Box::new(Expression::Number(1.0))))),
@@ -437,6 +440,7 @@ mod tests {
 
     #[test]
     fn test_count_yields_in_stmt() {
+        use crate::value::generator_replay::count_yields_in_stmt;
         assert_eq!(
             count_yields_in_stmt(&Statement::Expression(Box::new(Expression::Yield(None)))),
             1,
