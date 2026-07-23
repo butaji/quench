@@ -133,7 +133,7 @@ pub fn eval_class_expr(
                         .current_scope()
                         .borrow_mut()
                         .set_this(class_value.clone());
-                    let field_value = {
+                    let mut field_value = {
                         crate::interpreter::set_eval_in_class_field(true);
                         let v = eval_expression(value_expr, &child_env, false)?;
                         crate::interpreter::set_eval_in_class_field(false);
@@ -146,6 +146,12 @@ pub fn eval_class_expr(
                     if crate::value::generator_replay::yield_pending() {
                         return Ok(Value::Undefined);
                     }
+                    crate::eval::class::helpers::set_function_name_for_field_initializer(
+                        &mut field_value,
+                        name,
+                        &key_str,
+                        value_expr,
+                    );
                     if key_str == "prototype" {
                         return Err(JsError(
                             "TypeError: static class field may not be named 'prototype'".into(),
