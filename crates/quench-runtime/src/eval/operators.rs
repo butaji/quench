@@ -177,29 +177,40 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
     }
 }
 
-fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
-    // Walk prototype chain - check if target prototype is in the chain
-    fn has_prototype_in_chain(
-        obj: &crate::value::Object,
-        target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
-    ) -> bool {
-        // Check if this object's prototype is the target
-        if let Some(ref proto_rc) = obj.prototype {
-            // Use pointer comparison first (fast path for matching Rc clones)
-            let proto_ptr: *const std::cell::RefCell<crate::value::Object> = &**proto_rc;
-            let target_ptr: *const std::cell::RefCell<crate::value::Object> = &**target_proto;
-            if proto_ptr == target_ptr {
-                return true;
-            }
-            // Walk up the prototype chain
-            let proto_borrowed = proto_rc.borrow();
-            if has_prototype_in_chain(&proto_borrowed, target_proto) {
-                return true;
-            }
+fn has_prototype_in_chain(
+    obj: &crate::value::Object,
+    target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
+) -> bool {
+    if let Some(ref proto_rc) = obj.prototype {
+        let proto_ptr: *const std::cell::RefCell<crate::value::Object> = &**proto_rc;
+        let target_ptr: *const std::cell::RefCell<crate::value::Object> = &**target_proto;
+        if proto_ptr == target_ptr {
+            return true;
         }
-        false
+        let proto_borrowed = proto_rc.borrow();
+        if has_prototype_in_chain(&proto_borrowed, target_proto) {
+            return true;
+        }
     }
+    false
+}
 
+fn function_instanceof(
+    func: &crate::value::ValueFunction,
+    target_proto: &std::rc::Rc<std::cell::RefCell<crate::value::Object>>,
+) -> bool {
+    if let Some(ip) = func.instance_proto() {
+        if std::rc::Rc::ptr_eq(&ip, target_proto) {
+            return true;
+        }
+        return has_prototype_in_chain(&ip.borrow(), target_proto);
+    }
+    let func_proto = func.get_prototype();
+    let func_proto_ref = func_proto.borrow();
+    has_prototype_in_chain(&func_proto_ref, target_proto)
+}
+
+fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
     match (left, right) {
         (_, Value::Undefined) | (_, Value::Null) => Ok(Value::Boolean(false)),
         (Value::Object(obj), Value::Function(ctor)) => {
@@ -220,8 +231,7 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
             }
         }
         (Value::Function(func), Value::NativeConstructor(ctor)) => {
-            let func_proto = func.get_prototype();
-            let result = has_prototype_in_chain(&func_proto.borrow(), &ctor.prototype);
+            let result = function_instanceof(func, &ctor.prototype);
             Ok(Value::Boolean(result))
         }
         (Value::Object(obj), Value::Object(ctor)) => {
@@ -238,6 +248,11 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         (Value::Object(obj), Value::Class(class)) => {
             let class_proto = get_class_prototype_for_instanceof(class)?;
             let result = has_prototype_in_chain(&obj.borrow(), &class_proto);
+            Ok(Value::Boolean(result))
+        }
+        (Value::Function(func), Value::Class(class)) => {
+            let class_proto = get_class_prototype_for_instanceof(class)?;
+            let result = function_instanceof(func, &class_proto);
             Ok(Value::Boolean(result))
         }
         _ => Ok(Value::Boolean(false)),

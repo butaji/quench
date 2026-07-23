@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::set_boxed_value;
+use crate::builtins::get_native_this;
 use crate::value::{kind::ExoticKind, JsError, Object, ObjectKind, PropertyFlags, Value};
 
 /// Resolve a global constructor's `prototype` object via the current context.
@@ -42,79 +43,81 @@ fn boxed_object(constructor_name: &str) -> Object {
 
 /// Create an object from the argument to Object()
 pub fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
-    let obj = if args.is_empty() {
+    if args.is_empty() {
+        if let Some(Value::Object(obj_rc)) = get_native_this() {
+            return Ok(Value::Object(obj_rc));
+        }
         let mut obj = Object::new(ObjectKind::Ordinary);
         if let Some(proto) = crate::builtins::get_object_prototype() {
             obj.prototype = Some(proto);
         }
-        obj
-    } else {
-        match &args[0] {
-            Value::Undefined | Value::Null => Object::new(ObjectKind::Ordinary),
-            Value::Boolean(b) => {
-                let mut obj = boxed_object("Boolean");
-                obj.exotic_kind = Some(ExoticKind::Boolean);
-                set_boxed_value(&mut obj, Value::Boolean(*b));
-                obj
-            }
-            Value::Number(n) => {
-                let mut obj = boxed_object("Number");
-                obj.exotic_kind = Some(ExoticKind::Number);
-                set_boxed_value(&mut obj, Value::Number(*n));
-                obj
-            }
-            Value::String(s) => {
-                let mut obj = boxed_object("String");
-                obj.exotic_kind = Some(ExoticKind::String);
-                set_boxed_value(&mut obj, Value::String(s.clone()));
-                // String exotic object: one indexed property per character plus length
-                let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-                let len = chars.len();
-                for (i, ch) in chars.iter().enumerate() {
-                    let key = i.to_string();
-                    obj.properties.insert(key.clone(), ch.clone());
-                    obj.descriptors.insert(
-                        key,
-                        PropertyFlags {
-                            value: Some(ch.clone()),
-                            writable: false,
-                            enumerable: true,
-                            configurable: false,
-                        },
-                    );
-                }
-                obj.elements = chars;
-                let len_val = Value::Number(len as f64);
-                obj.properties.insert("length".to_string(), len_val.clone());
+        return Ok(Value::Object(Rc::new(RefCell::new(obj))));
+    }
+    let obj = match &args[0] {
+        Value::Undefined | Value::Null => Object::new(ObjectKind::Ordinary),
+        Value::Boolean(b) => {
+            let mut obj = boxed_object("Boolean");
+            obj.exotic_kind = Some(ExoticKind::Boolean);
+            set_boxed_value(&mut obj, Value::Boolean(*b));
+            obj
+        }
+        Value::Number(n) => {
+            let mut obj = boxed_object("Number");
+            obj.exotic_kind = Some(ExoticKind::Number);
+            set_boxed_value(&mut obj, Value::Number(*n));
+            obj
+        }
+        Value::String(s) => {
+            let mut obj = boxed_object("String");
+            obj.exotic_kind = Some(ExoticKind::String);
+            set_boxed_value(&mut obj, Value::String(s.clone()));
+            // String exotic object: one indexed property per character plus length
+            let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+            let len = chars.len();
+            for (i, ch) in chars.iter().enumerate() {
+                let key = i.to_string();
+                obj.properties.insert(key.clone(), ch.clone());
                 obj.descriptors.insert(
-                    "length".to_string(),
+                    key,
                     PropertyFlags {
-                        value: Some(len_val),
+                        value: Some(ch.clone()),
                         writable: false,
-                        enumerable: false,
+                        enumerable: true,
                         configurable: false,
                     },
                 );
-                obj
             }
-            Value::Symbol(_) => {
-                let mut obj = boxed_object("Symbol");
-                set_boxed_value(&mut obj, args[0].clone());
-                obj
-            }
-            Value::BigInt(_) => {
-                let mut obj = boxed_object("BigInt");
-                set_boxed_value(&mut obj, args[0].clone());
-                obj
-            }
-            Value::Object(_)
-            | Value::Function(_)
-            | Value::NativeFunction(_)
-            | Value::NativeConstructor(_)
-            | Value::Generator(_)
-            | Value::Class(_) => {
-                return Ok(args[0].clone());
-            }
+            obj.elements = chars;
+            let len_val = Value::Number(len as f64);
+            obj.properties.insert("length".to_string(), len_val.clone());
+            obj.descriptors.insert(
+                "length".to_string(),
+                PropertyFlags {
+                    value: Some(len_val),
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                },
+            );
+            obj
+        }
+        Value::Symbol(_) => {
+            let mut obj = boxed_object("Symbol");
+            set_boxed_value(&mut obj, args[0].clone());
+            obj
+        }
+        Value::BigInt(_) => {
+            let mut obj = boxed_object("BigInt");
+            set_boxed_value(&mut obj, args[0].clone());
+            obj
+        }
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Generator(_)
+        | Value::Class(_) => {
+            return Ok(args[0].clone());
         }
     };
     Ok(Value::Object(Rc::new(RefCell::new(obj))))

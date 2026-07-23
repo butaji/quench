@@ -302,14 +302,24 @@ fn make_function_constructor(
                         is_generator,
                     }) = stmts.into_iter().next()
                     {
-                        Ok(Value::Function(ValueFunction::new(
-                            Some(name),
-                            params,
-                            body,
-                            Rc::clone(&global_env),
-                            is_async,
-                            is_generator,
-                        )))
+                        {
+                            let mut func = ValueFunction::new(
+                                Some(name),
+                                params,
+                                body,
+                                Rc::clone(&global_env),
+                                is_async,
+                                is_generator,
+                            );
+                            if let Some(Value::Object(this_obj)) =
+                                crate::builtins::get_native_this()
+                            {
+                                if let Some(sub_proto) = this_obj.borrow().prototype.clone() {
+                                    func.set_instance_proto(sub_proto);
+                                }
+                            }
+                            Ok(Value::Function(func))
+                        }
                     } else {
                         Err(JsError::new(
                             "SyntaxError: Function constructor produced no function",
