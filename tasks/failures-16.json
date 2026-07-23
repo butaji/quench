@@ -1,5 +1,5 @@
 {
-  "failed": 67,
+  "failed": 62,
   "groups": [
     {
       "count": 1,
@@ -49,18 +49,6 @@
       "reason": "Test262Error: Actual [] and expected [f, 3, [Function], g, Test262, [Function]] should have the same contents. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-length-static-precedence-order.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-static-precedence-order.js"
-      ],
-      "reason": "Test262Error: Actual [] and expected [length, name, prototype, method] should have the same contents. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-length-static-precedence-order.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-static-precedence-order.js"
       ]
     },
     {
@@ -231,22 +219,6 @@
       "reason": "Test262Error: length should be an own property\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js"
-      ]
-    },
-    {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-accessor-get.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-accessor-set.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-gen-method.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-method.js"
-      ],
-      "reason": "Test262Error: name should be an own property\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-accessor-get.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-accessor-set.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-gen-method.js",
-        "/workspace/tests/test262/test/language/statements/class/definition/fn-name-method.js"
       ]
     },
     {
@@ -502,6 +474,16 @@
     {
       "count": 1,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/accessor-name-inst-computed-yield-expr.js"
+      ],
+      "reason": "TypeError: Cannot read property 'prototype' of undefined",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/accessor-name-inst-computed-yield-expr.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ],
       "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
@@ -520,7 +502,7 @@
       ]
     }
   ],
-  "passed": 4300,
+  "passed": 4305,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

@@ -386,6 +386,102 @@ pub fn get_class_property_descriptor(
     if c.deleted_properties.borrow().contains(prop) {
         return Ok(Value::Undefined);
     }
+    if prop != "prototype" {
+        let eval_env = c
+            .get_class_def_env()
+            .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+
+        if let Some(val) = c.get_static_field(prop) {
+            let mut desc = Object::new(ObjectKind::Ordinary);
+            desc.set("value", val);
+            desc.set("writable", Value::Boolean(true));
+            desc.set("enumerable", Value::Boolean(false));
+            desc.set("configurable", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(desc))));
+        }
+
+        for (name, params, body, is_async, is_generator) in &c.static_methods {
+            let matches = match name {
+                PropertyKey::Ident(s) => s == prop,
+                PropertyKey::String(s) => s == prop,
+                PropertyKey::Number(n) => n.to_string() == prop,
+                PropertyKey::Computed(_) => {
+                    prop_key_to_string(name, &eval_env, false).is_ok_and(|k| k == prop)
+                }
+            };
+            if matches {
+                let fn_name = method_function_name(name, prop, &eval_env)?;
+                let mut func = ValueFunction::new(
+                    Some(fn_name),
+                    params.clone(),
+                    body.clone(),
+                    Rc::clone(&eval_env),
+                    *is_async,
+                    *is_generator,
+                );
+                func.strict = true;
+                func.is_method = true;
+                let mut desc = Object::new(ObjectKind::Ordinary);
+                desc.set("value", Value::Function(func));
+                desc.set("writable", Value::Boolean(true));
+                desc.set("enumerable", Value::Boolean(false));
+                desc.set("configurable", Value::Boolean(true));
+                return Ok(Value::Object(Rc::new(RefCell::new(desc))));
+            }
+        }
+
+        let static_getter_info = c.static_getters.iter().find_map(|(k, body)| {
+            prop_key_to_string(k, &eval_env, false)
+                .ok()
+                .filter(|k_str| k_str == prop)
+                .map(|_| (k.clone(), body.clone()))
+        });
+
+        let static_setter_info = c.static_setters.iter().find_map(|(k, param, body)| {
+            prop_key_to_string(k, &eval_env, false)
+                .ok()
+                .filter(|k_str| k_str == prop)
+                .map(|_| (k.clone(), param.clone(), body.clone()))
+        });
+
+        if static_getter_info.is_some() || static_setter_info.is_some() {
+            let mut desc = Object::new(ObjectKind::Ordinary);
+
+            if let Some((key, body)) = static_getter_info {
+                let fn_name = accessor_function_name(&key, prop, &eval_env, "get")?;
+                let mut func = ValueFunction::new(
+                    Some(fn_name),
+                    vec![],
+                    body,
+                    Rc::clone(&eval_env),
+                    false,
+                    false,
+                );
+                func.strict = true;
+                func.is_method = true;
+                desc.set("get", Value::Function(func));
+            }
+
+            if let Some((key, param, body)) = static_setter_info {
+                let fn_name = accessor_function_name(&key, prop, &eval_env, "set")?;
+                let mut func = ValueFunction::new(
+                    Some(fn_name),
+                    vec![param.clone()],
+                    body,
+                    Rc::clone(&eval_env),
+                    false,
+                    false,
+                );
+                func.strict = true;
+                func.is_method = true;
+                desc.set("set", Value::Function(func));
+            }
+
+            desc.set("enumerable", Value::Boolean(false));
+            desc.set("configurable", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(desc))));
+        }
+    }
     match prop {
         "length" => {
             make_property_descriptor_number(c.constructor_params.len() as f64, false, false, true)
@@ -410,112 +506,7 @@ pub fn get_class_property_descriptor(
                 .insert("configurable".to_string(), Value::Boolean(false));
             Ok(Value::Object(Rc::new(RefCell::new(desc))))
         }
-        _ => {
-            // Check static accessors (instance accessors live on C.prototype)
-            let eval_env = c
-                .get_class_def_env()
-                .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
-
-            // Check static getters - need to evaluate key to match computed props
-            let static_getter_info = c.static_getters.iter().find_map(|(k, body)| {
-                prop_key_to_string(k, &eval_env, false)
-                    .ok()
-                    .filter(|k_str| k_str == prop)
-                    .map(|_| (k.clone(), body.clone()))
-            });
-
-            let static_setter_info = c.static_setters.iter().find_map(|(k, param, body)| {
-                prop_key_to_string(k, &eval_env, false)
-                    .ok()
-                    .filter(|k_str| k_str == prop)
-                    .map(|_| (k.clone(), param.clone(), body.clone()))
-            });
-
-            if static_getter_info.is_some() || static_setter_info.is_some() {
-                let mut desc = Object::new(ObjectKind::Ordinary);
-
-                if let Some((key, body)) = static_getter_info {
-                    let fn_name = accessor_function_name(&key, prop, &eval_env, "get")?;
-                    let mut func = ValueFunction::new(
-                        Some(fn_name),
-                        vec![],
-                        body,
-                        Rc::clone(&eval_env),
-                        false,
-                        false,
-                    );
-                    func.strict = true;
-                    func.is_method = true;
-                    desc.set("get", Value::Function(func));
-                }
-
-                if let Some((key, param, body)) = static_setter_info {
-                    let fn_name = accessor_function_name(&key, prop, &eval_env, "set")?;
-                    let mut func = ValueFunction::new(
-                        Some(fn_name),
-                        vec![param.clone()],
-                        body,
-                        Rc::clone(&eval_env),
-                        false,
-                        false,
-                    );
-                    func.strict = true;
-                    func.is_method = true;
-                    desc.set("set", Value::Function(func));
-                }
-
-                // Per ES spec §10.1.6.3, class accessors are non-enumerable and configurable.
-                desc.set("enumerable", Value::Boolean(false));
-                desc.set("configurable", Value::Boolean(true));
-                return Ok(Value::Object(Rc::new(RefCell::new(desc))));
-            }
-
-            // Check static methods
-            for (name, params, body, is_async, is_generator) in &c.static_methods {
-                let matches = match name {
-                    PropertyKey::Ident(s) => s == prop,
-                    PropertyKey::String(s) => s == prop,
-                    PropertyKey::Number(n) => n.to_string() == prop,
-                    PropertyKey::Computed(_) => false,
-                };
-                if matches {
-                    let fn_name = method_function_name(name, prop, &eval_env)?;
-                    let mut func = ValueFunction::new(
-                        Some(fn_name),
-                        params.clone(),
-                        body.clone(),
-                        Rc::clone(&eval_env),
-                        *is_async,
-                        *is_generator,
-                    );
-                    func.strict = true;
-                    func.is_method = true;
-                    let mut desc = Object::new(ObjectKind::Ordinary);
-                    desc.set("value", Value::Function(func));
-                    desc.set("writable", Value::Boolean(true));
-                    desc.set("enumerable", Value::Boolean(false));
-                    desc.set("configurable", Value::Boolean(true));
-                    return Ok(Value::Object(Rc::new(RefCell::new(desc))));
-                }
-            }
-
-            // Check static fields
-            if let Some(expr) = c.static_fields.iter().find(|(k, _)| {
-                prop_key_to_string(k, &eval_env, false)
-                    .map(|k_str| k_str == prop)
-                    .unwrap_or(false)
-            }) {
-                let val = crate::eval::expression::eval_expression(&expr.1, &eval_env, false)?;
-                let mut desc = Object::new(ObjectKind::Ordinary);
-                desc.set("value", val);
-                desc.set("writable", Value::Boolean(true));
-                desc.set("enumerable", Value::Boolean(false));
-                desc.set("configurable", Value::Boolean(true));
-                return Ok(Value::Object(Rc::new(RefCell::new(desc))));
-            }
-
-            Ok(Value::Undefined)
-        }
+        _ => Ok(Value::Undefined),
     }
 }
 
