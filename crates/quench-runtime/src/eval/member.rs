@@ -16,8 +16,8 @@ pub use object_member::eval_object_member;
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;
-use crate::eval::class::helpers::prop_key_to_string;
-use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
+use crate::eval::class::helpers::{method_function_name, prop_key_to_string};
+use crate::value::{ClassValue, create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -309,6 +309,92 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
+fn private_member_type_error() -> JsError {
+    let (_, js_err) = create_js_error_with_type(
+        "Cannot read private member from an object whose class did not declare it",
+        "TypeError",
+    );
+    js_err
+}
+
+fn class_private_brand_matches(class: &ClassValue, prop_name: &str) -> bool {
+    if let Some(decl_id) = crate::value::private_name_declaring_class_id(prop_name) {
+        decl_id == class.class_id()
+    } else {
+        class.declared_private_names.contains(prop_name)
+    }
+}
+
+fn static_member_storage_key(
+    name: &crate::ast::PropertyKey,
+    env: &Rc<RefCell<Environment>>,
+) -> Option<String> {
+    match name {
+        crate::ast::PropertyKey::Ident(s) if crate::value::is_private_name_key(s) => {
+            Some(s.clone())
+        }
+        crate::ast::PropertyKey::Ident(s) if s.starts_with('#') => {
+            Some(crate::value::private_name_key(s))
+        }
+        _ => prop_key_to_string(name, env, false).ok(),
+    }
+}
+
+fn eval_class_private_member_get(
+    class: &ClassValue,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if !class_private_brand_matches(class, prop_name) {
+        return Err(private_member_type_error());
+    }
+    if let Some(val) = class.get_static_field(prop_name) {
+        return Ok(val);
+    }
+    let eval_env = class
+        .get_class_def_env()
+        .unwrap_or_else(|| Rc::clone(env));
+    for (name, params, body, is_async, is_generator) in &class.static_methods {
+        if static_member_storage_key(name, &eval_env).as_deref() != Some(prop_name) {
+            continue;
+        }
+        let key_str = crate::value::private_method_display_name(prop_name);
+        let fn_name = method_function_name(name, &key_str, &eval_env)?;
+        let mut func = crate::value::ValueFunction::new(
+            Some(fn_name),
+            params.clone(),
+            body.clone(),
+            Rc::clone(&eval_env),
+            *is_async,
+            *is_generator,
+        );
+        func.strict = true;
+        func.is_method = true;
+        return Ok(Value::Function(func));
+    }
+    for (i, (name, body)) in class.static_getters.iter().enumerate() {
+        let key_str = class
+            .static_getter_key(i)
+            .or_else(|| static_member_storage_key(name, &eval_env))
+            .filter(|k| k == prop_name);
+        let Some(_) = key_str else {
+            continue;
+        };
+        let class_val = Value::Class(Box::new(class.clone()));
+        let mut call_env = crate::env::Environment::with_parent(Rc::clone(&eval_env));
+        call_env.push_scope();
+        call_env.current_scope().borrow_mut().set_this(class_val);
+        let call_env = Rc::new(RefCell::new(call_env));
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
+        let result = crate::eval::statement::eval_function_body(body, &call_env, false);
+        crate::interpreter::set_strict_mode(prev_strict);
+        let _ = crate::interpreter::take_control_flow();
+        return result;
+    }
+    Err(private_member_type_error())
+}
+
 fn eval_private_member_get(
     obj_val: &Value,
     prop_name: &str,
@@ -316,14 +402,8 @@ fn eval_private_member_get(
 ) -> Result<Value, JsError> {
     match obj_val {
         Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
-        Value::Class(class) => eval_class_member(class, prop_name, env),
-        _ => {
-            let (_, js_err) = create_js_error_with_type(
-                "Cannot read private member from an object whose class did not declare it",
-                "TypeError",
-            );
-            Err(js_err)
-        }
+        Value::Class(class) => eval_class_private_member_get(class, prop_name, env),
+        _ => Err(private_member_type_error()),
     }
 }
 
