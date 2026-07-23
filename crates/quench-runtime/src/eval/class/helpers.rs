@@ -184,8 +184,27 @@ fn init_instance_fields(
     for (name, value_expr) in &class.instance_fields {
         let field_val = eval_expression(value_expr, call_env, false)?;
         let key_str = prop_key_to_string(name, call_env, false)?;
-        instance_rc.borrow_mut().set(&key_str, field_val);
+        private_field_add(instance_rc, &key_str, field_val)?;
     }
+    Ok(())
+}
+
+pub fn private_field_add(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    value: Value,
+) -> Result<(), JsError> {
+    if crate::value::is_private_name_key(key) {
+        let o = obj.borrow();
+        if !o.extensible && !o.properties.contains_key(key) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot add private field to non-extensible object",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+    }
+    obj.borrow_mut().set(key, value);
     Ok(())
 }
 
@@ -859,6 +878,26 @@ mod tests {
     fn static_getter_returns_value() {
         let r = eval("class C { static get method() { return 42; } } C.method").unwrap();
         assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn private_field_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { #val; constructor(seal) { super(seal); this.#val = 42; } } \
+             (function() { try { new C(true); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn static_private_field_on_nonextensible_class_throws_type_error() {
+        let r = eval(
+            "(function() { try { class C { static #g = (Object.preventExtensions(C), 'Test262'); } return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
     }
 
     #[test]

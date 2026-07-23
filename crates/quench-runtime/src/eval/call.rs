@@ -168,7 +168,7 @@ fn eval_super_call(
             for (prop_key, expr) in fields {
                 let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
                 let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
-                obj_rc.borrow_mut().set(&key_str, val);
+                crate::eval::class::helpers::private_field_add(obj_rc, &key_str, val)?;
             }
         }
     }

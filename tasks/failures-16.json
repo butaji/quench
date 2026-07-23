@@ -1,5 +1,5 @@
 {
-  "failed": 624,
+  "failed": 567,
   "groups": [
     {
       "count": 1,
@@ -965,59 +965,35 @@
       ]
     },
     {
-      "count": 40,
+      "count": 16,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-ary-ptrn-rest-ary-elision.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-ary-ptrn-rest-ary-elision.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-elision.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-ary-ptrn-rest-ary-elision.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-obj-ptrn-rest-getter.js"
       ],
       "reason": "Test262Error: sameValue failed: 0 !== 1",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-getter.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-init-iter-close.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-init-iter-close.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-rest-getter.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-getter.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-rest-getter.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-rest-getter.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-rest-getter.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-rest-getter.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-rest-getter.js"
       ]
     },
     {
@@ -1031,22 +1007,6 @@
       ]
     },
     {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-elision.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 1 !== 0",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-elision.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-newline.js"
@@ -1054,46 +1014,6 @@
       "reason": "Test262Error: sameValue failed: 1 !== undefined",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-newline.js"
-      ]
-    },
-    {
-      "count": 24,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-ptrn-rest-ary-elision.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 2 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-rest-ary-elision.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-elision-init.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-empty-init.js"
       ]
     },
     {
@@ -1109,21 +1029,21 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 4 !== 3",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-is-not-clobbered-by-computed-property.js"
       ],
       "reason": "Test262Error: sameValue failed: NaN !== 4",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-is-not-clobbered-by-computed-property.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js"
+      ],
+      "reason": "Test262Error: sameValue failed: NaN !== undefined",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-generator-method-binding-identifier.js"
       ]
     },
     {
@@ -1318,9 +1238,8 @@
       ]
     },
     {
-      "count": 30,
+      "count": 29,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js",
@@ -1353,14 +1272,14 @@
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 1",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer-alt.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer-alt.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer.js"
       ]
     },
     {
@@ -1754,7 +1673,7 @@
       ]
     },
     {
-      "count": 22,
+      "count": 18,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-2.js",
@@ -1767,10 +1686,6 @@
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/forbidden-ext/b1/cls-decl-gen-meth-forbidden-ext-direct-access-prop-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/forbidden-ext/b1/cls-decl-gen-meth-forbidden-ext-direct-access-prop-caller.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/forbidden-ext/b1/cls-decl-gen-meth-static-forbidden-ext-direct-access-prop-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/forbidden-ext/b1/cls-decl-gen-meth-static-forbidden-ext-direct-access-prop-caller.js",
         "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/binding.js",
@@ -1999,7 +1914,7 @@
       ]
     }
   ],
-  "passed": 3743,
+  "passed": 3800,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

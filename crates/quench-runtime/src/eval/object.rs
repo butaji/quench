@@ -418,6 +418,17 @@ pub(crate) fn assign_to_object(
         }
     }
 
+    if crate::value::is_private_name_key(prop_name) {
+        let obj_ref = o.borrow();
+        if !obj_ref.extensible && !obj_ref.properties.contains_key(prop_name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot add private field to non-extensible object",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+    }
+
     o.borrow_mut().set(prop_name, value.clone());
 
     // Mirror writes on globalThis into the global binding.

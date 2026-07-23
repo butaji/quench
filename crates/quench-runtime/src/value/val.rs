@@ -24,6 +24,11 @@ pub fn private_name_key(name: &str) -> String {
     format!("\0private:{bare}\0")
 }
 
+/// Whether `key` is a [`private_name_key`] storage slot.
+pub fn is_private_name_key(key: &str) -> bool {
+    key.starts_with("\0private:") && key.ends_with('\0')
+}
+
 /// A class method: (name, params, body, is_async, is_generator)
 pub type ClassMethod = (
     PropertyKey,
@@ -159,6 +164,8 @@ pub struct ClassValue {
     /// Keys resolved during class definition for static getters/setters (by index).
     pub(crate) static_getter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Whether new private static fields may be added (Object.preventExtensions).
+    pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
 }
 
 impl ClassValue {
@@ -220,6 +227,7 @@ impl ClassValue {
             class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
         }
     }
 
@@ -265,10 +273,26 @@ impl ClassValue {
     }
 
     /// Set a static field value on this class
-    pub fn set_static_field(&self, name: &str, value: Value) {
+    pub fn set_static_field(&self, name: &str, value: Value) -> Result<(), JsError> {
+        if is_private_name_key(name) && !*self.extensible_cell.borrow() {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot add private field to non-extensible object",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         self.static_properties_cell
             .borrow_mut()
             .insert(name.to_string(), value);
+        Ok(())
+    }
+
+    pub fn set_extensible(&self, extensible: bool) {
+        *self.extensible_cell.borrow_mut() = extensible;
+    }
+
+    pub fn is_extensible(&self) -> bool {
+        *self.extensible_cell.borrow()
     }
 
     /// Get a static field value from this class
@@ -376,7 +400,7 @@ impl ClassValue {
         }
 
         // No setter found, set the static field directly
-        self.set_static_field(name, value);
+        self.set_static_field(name, value)?;
         Ok(())
     }
 
