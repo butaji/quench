@@ -3,10 +3,62 @@
 use crate::context::CURRENT_CONTEXT;
 use crate::env::Environment;
 use crate::eval::object::call_getter;
+use crate::eval::object::{private_field_object, proxy_handler_and_target};
 use crate::value::object::as_array_index;
 use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+fn handler_get_trap(handler: &Rc<RefCell<Object>>) -> Option<Value> {
+    let h = handler.borrow();
+    h.get_own_value("get")
+        .or_else(|| h.get_getter("get").and_then(|g| g.func.clone()))
+}
+
+fn proxy_get_property(
+    proxy: &Rc<RefCell<Object>>,
+    handler: &Rc<RefCell<Object>>,
+    target: &Value,
+    prop_name: &str,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
+    let trap_val = handler_get_trap(handler);
+    let Some(trap_val) = trap_val else {
+        let Value::Object(target_obj) = target else {
+            return Ok(Value::Undefined);
+        };
+        return eval_object_member_inner(target_obj, prop_name, env);
+    };
+    let trap = match trap_val {
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_) => trap_val,
+        Value::Undefined => {
+            let Value::Object(target_obj) = target else {
+                return Ok(Value::Undefined);
+            };
+            return eval_object_member_inner(target_obj, prop_name, env);
+        }
+        _ => {
+            let (_, js_err) = create_js_error_with_type("get trap is not callable", "TypeError");
+            return Err(js_err);
+        }
+    };
+    crate::eval::function::call_value_with_this(
+        trap,
+        vec![
+            target.clone(),
+            Value::String(prop_name.to_string()),
+            Value::Object(Rc::clone(proxy)),
+        ],
+        Value::Object(Rc::clone(handler)),
+    )
+    .map(|v| {
+        let _ = crate::interpreter::take_control_flow();
+        v
+    })
+}
 
 /// Evaluate member access on an object. If `env` is provided, global object
 /// lookups fall back to the environment's globalThis binding for properties
@@ -24,8 +76,19 @@ pub fn eval_object_member(
         ));
     }
     if crate::value::is_private_name_key(prop_name) {
-        return eval_private_name_get(o, prop_name);
+        return eval_private_name_get(&private_field_object(o), prop_name);
     }
+    if let Some((handler, target)) = proxy_handler_and_target(o) {
+        return proxy_get_property(o, &handler, &target, prop_name, env);
+    }
+    eval_object_member_inner(o, prop_name, env)
+}
+
+fn eval_object_member_inner(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
     {
         let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
         while let Some(obj_rc) = current {
