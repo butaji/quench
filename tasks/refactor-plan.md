@@ -31,8 +31,8 @@ audit: `tasks/review-2026-07-22-object-model.md`.
 
 ```
 Phase A — language (now)
-  R4 → R5 → stage-16 S2 digest → R17 → remaining language stages
-  R1 grows only for ops touched by those fixes
+  R4 ✓ → R5 ✓ → stage-16 S2 digest → R17 → remaining language stages
+  S5 harness active · R1 grows only for ops touched by fixes
 
 Phase B — immediately before built-ins stages
   Finish R1 (ops own impls) → R0 (Object first) → R2
@@ -49,23 +49,23 @@ Priority legend used below:
 
 ---
 
-## R4 — Delete speculative `TComp` infra  *(NOW, no blockers)*
+## R4 — Delete speculative `TComp` infra  *(DONE 2026-07-23)*
 
 Re-audit 2026-07-22 (`tasks/review-2026-07-22-object-model.md`): the
-layer lives in `value/object/vtable.rs` (274 LOC),
+layer lived in `value/object/vtable.rs` (274 LOC),
 `value/object/array.rs` (91), `Key`/`Desc`/`VTable`/`Slots`/`ThisMode`
 in `value/object/helpers.rs` (~80), plus `props`/`slots`/`vtable` on
 `Object`. Grep-verified: zero callers outside `src/value/object/` —
 `.vtable` written 3×, read 0×; `.props` write-only; `slots` never read.
 Dead copy disagrees with live store on attribute defaults.
 
-- [ ] `#[test]`: array assign + defineOwnProperty survives (refactor pin).
-- [ ] Delete the lot, including re-exports and `props` sync writes in
+- [x] `#[test]`: array assign + defineOwnProperty survives (refactor pin).
+- [x] Delete the lot, including re-exports and `props` sync writes in
       `new_array`.
 
-~470 LOC saved. Do first.
+~470 LOC saved. Commit `9822e375`.
 
-## R5 — Collapse `Object` property storage + fix spec semantics  *(NOW)*
+## R5 — Collapse `Object` property storage + fix spec semantics  *(partial DONE 2026-07-23)*
 
 Highest language-stage lever. Parallel maps in
 `value/object/helpers.rs` plus hand-rolled walk in
@@ -82,13 +82,13 @@ reproducer `#[test]` first):
 - Seal/freeze uncomputable; `get_own_property` lies about elements;
   `to_object("ab")` wrong.
 
-- [ ] `#[test]`: two `Symbol("x")` keys on one object don't collide.
-- [ ] `#[test]`: `Object.keys({length:1})` → `["length"]`; symbols in
+- [x] `#[test]`: two `Symbol("x")` keys on one object don't collide.
+- [x] `#[test]`: `Object.keys({length:1})` → `["length"]`; symbols in
       `ownPropertyKeys` after string keys; holes skipped.
-- [ ] `#[test]`: strict write to non-writable throws TypeError;
+- [x] `#[test]`: strict write to non-writable throws TypeError;
       `Object.defineProperty(o,"x",{value:1})` yields
       non-writable/non-enumerable/non-configurable.
-- [ ] Give `Symbol` a unique id (`desc\0id`); key by identity.
+- [x] Give `Symbol` a unique id (`desc\0id`); key by identity.
 - [ ] Collapse to `own_props: IndexMap<Key, Prop>` where
       `Prop = Value | Accessor{get,set}` + `PropertyAttributes`;
       `Key::Sym(Rc<Symbol>)`. Array as `Vec<Option<Value>>` with
@@ -96,10 +96,8 @@ reproducer `#[test]` first):
 - [ ] Route eval member access through the collapsed store; delete the
       hand-rolled walk in `object_member.rs`.
 
-~170 LOC saved + correctness that unblocks `class` and later `Object`.
-Do **not** wait for R0 — language stages need this now. Prefer landing
-spec-bug fixes even if the full IndexMap collapse follows in a second
-PR, as long as there is one canonical lookup path afterward.
+Spec-bug fixes landed (commit `28bc28b7`); full IndexMap collapse deferred.
+Do **not** wait for R0 — language stages need this now.
 
 ## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A)*
 
@@ -261,8 +259,9 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 ## Sequencing (summary)
 
 ```
-NOW:     R4 → R5 → stage 16 (S2) → R17 → language stages
+NOW:     R4 ✓ → R5 ✓ → stage 16 (S2) → R17 → language stages
          R1 incremental on every op touch
+         S5 harness (parallel digest, failed-only rerun) — active
 PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js)
 LATER:   R6 R8 R9 R10 R11 R14 R16 as stages/digests demand
          R15 on every touch; repo-wide sweep after R0/R5

@@ -181,7 +181,15 @@ diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 - `TEST262_DIGEST=1` — collect all failures, don't stop at first
 - `TEST262_QUICK=1` — minimal output, just counts
 - `TEST262_JSON=1` — machine-readable JSON output
+- `TEST262_FAILED_JSON=tasks/failures-N.json` — rerun only prior failures
+- `TEST262_ISOLATED=1` — subprocess per test (build `run-test` first)
+- `TEST262_PARALLEL=1` — parallel in-stage (default on)
+- `TEST262_SERIAL=1` — force serial execution
+- `TEST262_NOSKIP=1` — run crash-list files
+- `RUN_TEST_BIN` — path to prebuilt `run-test` binary
 - `RUST_BACKTRACE=1` — stack traces on panics
+
+See also `tasks/harness-roadmap.md` for the full harness speed roadmap.
 
 ## Improving the Tools
 

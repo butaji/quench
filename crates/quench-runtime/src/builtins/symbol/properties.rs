@@ -38,7 +38,10 @@ fn get_symbol_property_from_object(obj: &Object, symbol: &Value) -> Option<Value
         if let Some(v) = props_has_symbol_key(&obj.properties, &sym_key) {
             return Some(v);
         }
-        if let Some(g) = obj.get_getter(&wrapped).or_else(|| obj.get_getter(&sym_key)) {
+        if let Some(g) = obj
+            .get_getter(&wrapped)
+            .or_else(|| obj.get_getter(&sym_key))
+        {
             if let Some(f) = g.func.clone() {
                 return Some(f);
             }
@@ -72,8 +75,7 @@ fn get_symbol_property_from_function(func: ValueFunction, symbol: &Value) -> Opt
 fn get_symbol_property_from_native_constructor(nc: &NativeConstructor) -> Option<Value> {
     let proto = nc.prototype.borrow();
     for name in ["toPrimitive", "hasInstance"] {
-        if let Some(Value::Symbol(s)) =
-            crate::builtins::symbol::get_well_known_symbol_no_ctx(name)
+        if let Some(Value::Symbol(s)) = crate::builtins::symbol::get_well_known_symbol_no_ctx(name)
         {
             if let Some(v) = proto.get(&s.property_key()) {
                 return Some(v);
