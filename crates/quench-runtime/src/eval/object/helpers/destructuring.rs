@@ -1133,4 +1133,15 @@ mod tests {
         .unwrap();
         assert_eq!(err, Value::String("GEN_PARAM_ERR".into()));
     }
+
+    #[test]
+    fn object_destructure_param_computed_key_evaluated_at_call() {
+        let err = eval(
+            "function thrower() { throw new Error('COMPUTED_KEY_ERR'); } \
+             function f({ [thrower()]: x }) {} \
+             try { f({}); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("COMPUTED_KEY_ERR".into()));
+    }
 }
