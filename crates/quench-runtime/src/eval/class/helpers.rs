@@ -13,6 +13,72 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Synthetic derived constructor: auto-call `super(...args)` only when
+/// the class had no explicit `constructor` member.
+fn should_auto_super(class: &ClassValue) -> bool {
+    class.super_class.is_some() && !class.has_explicit_constructor
+}
+
+fn throw_uninitialized_this() -> Result<Value, JsError> {
+    let (thrown_val, js_err) = crate::value::error::create_js_error_with_type(
+        "Must call super constructor in derived class before returning",
+        "ReferenceError",
+    );
+    crate::value::error::set_thrown_value(thrown_val);
+    Err(js_err)
+}
+
+/// Finish a constructor: object returns win; derived + uninitialized this → ReferenceError.
+fn finish_ctor_result(
+    result: Value,
+    this_val: &Value,
+    class: &ClassValue,
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match result {
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_) => Ok(result),
+        _ => {
+            if class.super_class.is_some()
+                && !call_env
+                    .borrow()
+                    .current_scope()
+                    .borrow()
+                    .is_this_initialized()
+            {
+                return throw_uninitialized_this();
+            }
+            Ok(this_val.clone())
+        }
+    }
+}
+
+fn new_instance(class: &ClassValue, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
+    let mut instance = Object::new(ObjectKind::Ordinary);
+    instance.prototype = Some(Rc::clone(&proto_rc));
+    let instance_rc = Rc::new(RefCell::new(instance));
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+    instance_rc
+        .borrow_mut()
+        .set("constructor", Value::Class(Box::new(class.clone())));
+    Ok(this_val)
+}
+
+fn run_ctor_body(
+    body: &[Statement],
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let prev_strict = is_strict_mode();
+    set_strict_mode(true);
+    predeclare_let_const(body, &mut call_env.borrow_mut());
+    let result = eval_function_body(body, call_env, false)?;
+    set_strict_mode(prev_strict);
+    Ok(result)
+}
+
 /// Instantiate without instance fields (fast path)
 pub fn instantiate_simple(
     class: &ClassValue,
@@ -20,47 +86,38 @@ pub fn instantiate_simple(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
-    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
-
-    let mut instance = Object::new(ObjectKind::Ordinary);
-    instance.prototype = Some(Rc::clone(&proto_rc));
-    let instance_rc = Rc::new(RefCell::new(instance));
-
-    let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
-
+    let this_val = new_instance(class, env)?;
     let body = class.constructor_body.clone();
-    let call_env = build_constructor_env(class, &args, &this_val, env)?;
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        class, &args, &this_val, env,
+    )?));
 
-    if body.is_empty() {
-        if let Some(ref sc) = class.super_class {
-            let sv = eval_expression(sc, env, false)?;
-            call_super_or_default(&sv, args, &this_val, env)?;
-        }
-        Ok(this_val)
-    } else {
-        let first_is_super = check_first_is_super_call(&body);
-        let body_calls_super = first_is_super || body_calls_super_call(&body);
-        // Class constructors are always strict mode per ES spec.
-        let prev_strict = is_strict_mode();
-        set_strict_mode(true);
-        let result = if body_calls_super {
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?
-        } else {
-            if let Some(ref sc) = class.super_class {
-                let sv = eval_expression(sc, env, false)?;
-                call_super_or_default(&sv, args, &this_val, env)?;
-            }
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?
-        };
-        set_strict_mode(prev_strict);
-        finish_constructor(result, &this_val)
+    if should_auto_super(class) {
+        let sc = class.super_class.as_ref().unwrap();
+        let sv = eval_expression(sc, env, false)?;
+        call_super_or_default(&sv, args, &this_val, env)?;
+        return Ok(this_val);
     }
+
+    let result = if body.is_empty() {
+        Value::Undefined
+    } else {
+        run_ctor_body(&body, &call_env)?
+    };
+    finish_ctor_result(result, &this_val, class, &call_env)
+}
+
+fn init_instance_fields(
+    class: &ClassValue,
+    instance_rc: &Rc<RefCell<Object>>,
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    for (name, value_expr) in &class.instance_fields {
+        let field_val = eval_expression(value_expr, call_env, false)?;
+        let key_str = prop_key_to_string(name, call_env, false)?;
+        instance_rc.borrow_mut().set(&key_str, field_val);
+    }
+    Ok(())
 }
 
 /// Instantiate with instance fields: fields init after super(), before body
@@ -70,65 +127,41 @@ pub fn instantiate_with_fields(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
-    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
-
-    let mut instance = Object::new(ObjectKind::Ordinary);
-    instance.prototype = Some(Rc::clone(&proto_rc));
-    let instance_rc = Rc::new(RefCell::new(instance));
-
-    let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
-
-    let body = class.constructor_body.clone();
-    let call_env = build_constructor_env(class, &args, &this_val, env)?;
-    let call_env = Rc::new(RefCell::new(call_env));
-
-    let has_super = class.super_class.is_some();
-    let body_calls_super = !body.is_empty() && body_calls_super_call(&body);
-
-    let init_fields = || -> Result<(), JsError> {
-        for (name, value_expr) in &class.instance_fields {
-            let field_val = eval_expression(value_expr, &call_env, false)?;
-            let key_str = prop_key_to_string(name, &call_env, false)?;
-            instance_rc.borrow_mut().set(&key_str, field_val);
-        }
-        Ok(())
+    let this_val = new_instance(class, env)?;
+    let instance_rc = match &this_val {
+        Value::Object(o) => Rc::clone(o),
+        _ => unreachable!(),
     };
+    let body = class.constructor_body.clone();
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        class, &args, &this_val, env,
+    )?));
 
-    // Class constructors are always strict mode per ES spec.
-    let prev_strict = is_strict_mode();
-    set_strict_mode(true);
-
-    if has_super {
-        if body_calls_super {
-            call_env
-                .borrow_mut()
-                .set_pending_fields(class.instance_fields.clone());
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
-        } else if body.is_empty() {
-            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
-            call_super_or_default(&sv, args, &this_val, env)?;
-            init_fields()?;
-        } else {
-            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
-            call_super_or_default(&sv, args.clone(), &this_val, env)?;
-            init_fields()?;
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
-        }
-    } else {
-        init_fields()?;
-        if !body.is_empty() {
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            eval_function_body(&body, &call_env, false)?;
-        }
+    if should_auto_super(class) {
+        let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+        call_super_or_default(&sv, args, &this_val, env)?;
+        init_instance_fields(class, &instance_rc, &call_env)?;
+        return Ok(this_val);
     }
 
-    set_strict_mode(prev_strict);
-    Ok(this_val)
+    let body_calls_super = !body.is_empty() && body_calls_super_call(&body);
+    if class.super_class.is_some() && body_calls_super {
+        call_env
+            .borrow_mut()
+            .set_pending_fields(class.instance_fields.clone());
+        let result = run_ctor_body(&body, &call_env)?;
+        return finish_ctor_result(result, &this_val, class, &call_env);
+    }
+
+    if class.super_class.is_none() {
+        init_instance_fields(class, &instance_rc, &call_env)?;
+    }
+    let result = if body.is_empty() {
+        Value::Undefined
+    } else {
+        run_ctor_body(&body, &call_env)?
+    };
+    finish_ctor_result(result, &this_val, class, &call_env)
 }
 
 /// Build constructor environment (params, arguments, super reference)
@@ -212,18 +245,6 @@ pub fn call_super_or_default(
         _ => {}
     }
     Ok(())
-}
-
-/// Check if the first statement in a constructor body is an explicit super() call
-pub fn check_first_is_super_call(body: &[Statement]) -> bool {
-    if let Some(Statement::Expression(expr)) = body.first() {
-        if let Expression::Call { callee, .. } = expr.as_ref() {
-            if let Expression::Identifier(id) = callee.as_ref() {
-                return id == "super";
-            }
-        }
-    }
-    false
 }
 
 /// Check if the constructor body contains a super() call anywhere
@@ -612,15 +633,6 @@ mod tests {
         assert_eq!(r, Value::String("object".into()));
     }
 
-    // ─── check_first_is_super_call ───────────────────────────────────────────
-
-    #[test]
-    fn constructor_first_is_super_call() {
-        // This tests the helper indirectly via new class with extends
-        let r = eval("class Base { constructor(x) { this.x = x; } } class Derived extends Base { constructor(x) { super(x); } } new Derived(42).x").unwrap();
-        assert_eq!(r, Value::Number(42.0));
-    }
-
     // ─── is_constructor_value ────────────────────────────────────────────────
 
     #[test]
@@ -799,6 +811,36 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+    #[test]
+    fn derived_explicit_empty_constructor_throws_reference_error() {
+        // Explicit constructor that never calls super → uninitialized this → ReferenceError
+        let r = eval("new (class extends Object { constructor() {} })()");
+        assert!(r.is_err(), "expected ReferenceError, got Ok({:?})", r);
+        let msg = r.unwrap_err().0;
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError, got {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn derived_explicit_empty_constructor_extends_array_throws() {
+        let r = eval("class A extends Array { constructor() {} }; new A()");
+        assert!(r.is_err(), "expected ReferenceError, got Ok({:?})", r);
+        assert!(
+            r.unwrap_err().0.contains("ReferenceError"),
+            "expected ReferenceError"
+        );
+    }
+
+    #[test]
+    fn derived_missing_constructor_auto_super() {
+        // Synthetic constructor must call super(...args)
+        let r = eval("class C extends Object {} new C()").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
     // ─── instantiate_simple: method on prototype ───────────────────────────
 
     #[test]
@@ -974,7 +1016,7 @@ mod tests {
         assert_eq!(r, Value::Number(20.0));
     }
 
-    // ─── check_first_is_super_call and body_calls_super_call ───────────────
+    // ─── body_calls_super_call ─────────────────────────────────────────────
 
     #[test]
     fn super_call_not_first() {
@@ -998,9 +1040,9 @@ mod tests {
 
     #[test]
     fn super_reference_in_closure() {
-        // super reference captured in closure called from constructor
+        // After super(), `this` is initialized and methods resolve via the prototype chain
         let r = eval(
-            "class Base { getX() { return 42; } } class Derived extends Base { constructor() { var self = this; this.result = self.getX(); } } new Derived().result",
+            "class Base { getX() { return 42; } } class Derived extends Base { constructor() { super(); var self = this; this.result = self.getX(); } } new Derived().result",
         )
         .unwrap();
         assert_eq!(r, Value::Number(42.0));

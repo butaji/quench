@@ -103,6 +103,10 @@ pub struct ClassValue {
     pub constructor_params: Vec<String>,
     /// Constructor body statements
     pub constructor_body: Vec<crate::ast::Statement>,
+    /// True when the class AST had an explicit `constructor` member.
+    /// Missing constructor on a derived class gets a synthetic
+    /// `constructor(...args){ super(...args); }` — only then may we auto-call super.
+    pub has_explicit_constructor: bool,
     /// Instance methods
     pub methods: Vec<ClassMethod>,
     /// Static methods
@@ -154,6 +158,7 @@ impl ClassValue {
     pub fn from_ast(class: &Class) -> Self {
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
+        let mut has_explicit_constructor = false;
         let mut methods = Vec::new();
         let mut static_methods = Vec::new();
         let mut getters = Vec::new();
@@ -168,6 +173,7 @@ impl ClassValue {
             &class.body,
             &mut constructor_params,
             &mut constructor_body,
+            &mut has_explicit_constructor,
             &mut methods,
             &mut static_methods,
             &mut getters,
@@ -184,6 +190,7 @@ impl ClassValue {
             name: class.name.clone(),
             constructor_params,
             constructor_body,
+            has_explicit_constructor,
             methods,
             static_methods,
             getters,
@@ -314,6 +321,7 @@ fn fill_members_from_ast(
     members: &[ClassMember],
     constructor_params: &mut Vec<String>,
     constructor_body: &mut Vec<crate::ast::Statement>,
+    has_explicit_constructor: &mut bool,
     methods: &mut Vec<ClassMethod>,
     static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
@@ -329,6 +337,7 @@ fn fill_members_from_ast(
             ClassMember::Constructor { params, body } => {
                 *constructor_params = params.clone();
                 *constructor_body = body.clone();
+                *has_explicit_constructor = true;
             }
             ClassMember::Method {
                 name,
