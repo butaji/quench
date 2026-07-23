@@ -439,6 +439,19 @@ mod tests {
     }
 
     #[test]
+    fn undeclared_private_in_field_eval_throws_syntax_error() {
+        let err =
+            eval("class C { y = eval(\"executed = true; this.#x;\"); } new C();").unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
+    }
+
+    #[test]
+    fn undeclared_private_in_top_level_eval_throws_syntax_error() {
+        let err = eval("class C { #x; } eval(\"new C().#x\");").unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
+    }
+
+    #[test]
     fn direct_eval_super_property_allowed_in_derived_field() {
         eval("class A {} class C extends A { x = eval('super.x'); } new C();").unwrap();
     }

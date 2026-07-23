@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4248 pass / 119 fail (97.3%)** as of 2026-07-23.
+**4,367 tests** · **4259 pass / 108 fail (97.5%)** as of 2026-07-23 (post-digest).
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -33,8 +33,9 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4211** | **156** | **96.4%** | Lexical this-binding for super() in finally; try/catch CF restore |
 | 2026-07-23 | **4241** | **126** | **97.1%** | Private eval (scoped names, ctor env, static brand); yield-spread; gen args; Array length; class bind |
 | 2026-07-23 | **4248** | **119** | **97.3%** | Proxy get traps; ctor ControlFlow::Return leak; private fields on proxy target; __lookupGetter__ |
+| 2026-07-23 | **4259** | **108** | **97.5%** | hasParameterExpressions body env; setter Param defaults; eval undeclared-private SyntaxError |
 
-## Top remaining clusters (~119)
+## Top remaining clusters (~108)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|

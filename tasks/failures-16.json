@@ -1,5 +1,5 @@
 {
-  "failed": 112,
+  "failed": 108,
   "groups": [
     {
       "count": 1,
@@ -500,19 +500,15 @@
       ]
     },
     {
-      "count": 4,
+      "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-meth-paramsbody-var-open.js"
+        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js"
       ],
       "reason": "Test262Error: sameValue failed: \\\"inside\\\" !== \\\"outside\\\"",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-meth-paramsbody-var-open.js"
+        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js"
       ]
     },
     {
@@ -686,18 +682,14 @@
       ]
     },
     {
-      "count": 5,
+      "count": 3,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
       ],
       "reason": "TypeError: Value is not a function, got undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js"
@@ -714,7 +706,7 @@
       ]
     }
   ],
-  "passed": 4255,
+  "passed": 4259,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
