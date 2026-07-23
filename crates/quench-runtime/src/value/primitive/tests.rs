@@ -35,10 +35,7 @@ fn obj() -> Value {
 }
 
 fn sym(desc: &str) -> Value {
-    Value::Symbol(Rc::new(Symbol {
-        desc: Some(desc.into()),
-        global: false,
-    }))
+    Value::Symbol(Rc::new(Symbol::new(Some(desc.into()), false)))
 }
 
 fn big(n: i64) -> Value {
@@ -392,10 +389,7 @@ fn test_to_js_string_primitives() {
 #[test]
 fn test_to_js_string_symbols() {
     assert_eq!(to_js_string(&sym("mySym")), "Symbol(mySym)");
-    let no_desc = Value::Symbol(Rc::new(Symbol {
-        desc: None,
-        global: false,
-    }));
+    let no_desc = Value::Symbol(Rc::new(Symbol::new(None, false)));
     assert_eq!(to_js_string(&no_desc), "Symbol()");
 }
 

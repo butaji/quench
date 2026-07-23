@@ -3,6 +3,7 @@
 use crate::context::CURRENT_CONTEXT;
 use crate::env::Environment;
 use crate::eval::object::call_getter;
+use crate::value::object::as_array_index;
 use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -43,8 +44,8 @@ pub fn eval_object_member(
                 if let Some(val) = obj.symbol_properties.get(prop_name) {
                     return Ok(val.clone());
                 }
-                if let Ok(idx) = prop_name.parse::<usize>() {
-                    if idx < obj.elements.len() {
+                if let Some(idx) = as_array_index(prop_name) {
+                    if idx < obj.elements.len() && !obj.holes.contains(&idx) {
                         return Ok(obj.elements[idx].clone());
                     }
                 }
@@ -85,4 +86,17 @@ pub fn eval_object_member(
         }
     }
     Ok(Value::Undefined)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::value::Value;
+    use crate::Context;
+
+    #[test]
+    fn non_canonical_numeric_member_does_not_alias_element() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("var a = [10, 20]; a['01']").unwrap();
+        assert_eq!(result, Value::Undefined);
+    }
 }
