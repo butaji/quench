@@ -169,7 +169,7 @@ pub struct GetterStorage {
 
 #[derive(Debug, Clone)]
 pub struct SetterStorage {
-    pub param: String,
+    pub param: crate::ast::Param,
     pub body: std::rc::Rc<Vec<crate::ast::Statement>>,
     pub closure: std::rc::Rc<RefCell<Environment>>,
     pub func: Option<Value>,

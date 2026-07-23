@@ -226,12 +226,12 @@ pub fn eval_class_member(
                         return Err(js_err);
                     }
                     // Return a function that wraps the setter call.
-                    let param_name = param.clone();
+                    let param = param.clone();
                     let setter_body = body.clone();
                     let setter_closure = Rc::clone(&eval_env);
                     let mut setter_func = crate::value::ValueFunction::new(
                         Some(key_str),
-                        vec![crate::ast::Param::new(&param_name)],
+                        vec![param],
                         setter_body,
                         setter_closure,
                         false,

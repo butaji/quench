@@ -575,17 +575,39 @@ pub fn call_setter(
     let closure = Rc::clone(&setter_storage.closure);
     let body = setter_storage.body.clone();
     let param = setter_storage.param.clone();
-    let mut call_env = Environment::with_parent(Rc::clone(&closure));
-    call_env.current_scope().borrow_mut().set_this(this_val);
-    call_env.define(param, value);
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Environment::with_parent(Rc::clone(&closure));
+    call_env
+        .current_scope()
+        .borrow_mut()
+        .set_this(this_val.clone());
+    let call_env_rc = Rc::new(RefCell::new(call_env));
+    let mut setter_fn = crate::value::ValueFunction::new(
+        None,
+        vec![param.clone()],
+        (*body).clone(),
+        Rc::clone(&setter_storage.closure),
+        false,
+        false,
+    );
+    setter_fn.strict = setter_storage.strict;
+    crate::eval::function::bind_params(&setter_fn, &setter_fn.params, &[value], &call_env_rc)?;
     if body.is_empty() {
         Ok(Value::Undefined)
     } else {
+        let body_env_rc = crate::eval::function::function_body_env(
+            &call_env_rc,
+            &setter_fn,
+            &this_val,
+            std::slice::from_ref(&param),
+        );
+        body_env_rc.borrow_mut().push_scope();
+        crate::interpreter::predeclare_var(&body, &mut body_env_rc.borrow_mut());
+        crate::interpreter::predeclare_let_const(&body, &mut body_env_rc.borrow_mut());
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(setter_storage.strict);
-        let result = eval_function_body(&body, &call_env, false);
+        let result = eval_function_body(&body, &body_env_rc, false);
         crate::interpreter::set_strict_mode(prev_strict);
+        let _ = crate::interpreter::take_control_flow();
         result
     }
 }

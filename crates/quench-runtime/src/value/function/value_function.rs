@@ -372,7 +372,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     .map(stmt_to_string)
                     .collect::<Vec<_>>()
                     .join("; ");
-                format!("set {}({}) {{{}}}", name_str, param, body_str)
+                format!("set {}({}) {{{}}}", name_str, param.name, body_str)
             }
             crate::ast::ClassMember::StaticMethod {
                 name,
@@ -425,7 +425,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     .map(stmt_to_string)
                     .collect::<Vec<_>>()
                     .join("; ");
-                format!("static set {}({}) {{{}}}", name_str, param, body_str)
+                format!("static set {}({}) {{{}}}", name_str, param.name, body_str)
             }
             crate::ast::ClassMember::StaticBlock { body } => {
                 let body_str = body
