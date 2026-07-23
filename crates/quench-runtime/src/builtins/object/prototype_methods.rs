@@ -62,15 +62,8 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
             }
         } else if let Value::Class(c) = &this_val {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
-                // Check if this configurable property was deleted
-                if c.deleted_properties.borrow().contains(&key_str) {
-                    return Ok(Value::Boolean(false));
-                }
-                if key_str == "name" {
+                if c.has_static_own_property(&key_str) {
                     return Ok(Value::Boolean(true));
-                }
-                if key_str == "prototype" {
-                    return Ok(Value::Boolean(true)); // classes always have prototype
                 }
             }
         }
