@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use quench_runtime::test262::metadata::Test262Metadata;
+use quench_runtime::test262::runner::default_test262_dir;
 use quench_runtime::test262::runner::run_single_test;
 use quench_runtime::test262::{HarnessLoader, QuenchHost, TestOutcome};
 
@@ -28,7 +29,7 @@ fn main() -> ExitCode {
 
     print_header(&path, &source);
 
-    let test262_dir = std::env::var("TEST262_DIR").unwrap_or_else(|_| "tests/test262".to_string());
+    let test262_dir = default_test262_dir();
     let harness = HarnessLoader::new(&test262_dir);
     let mut host = QuenchHost::new();
     match run_single_test(&mut host, &harness, &path) {
