@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4351 pass / 16 fail (99.6%)** as of 2026-07-23.
+**4,367 tests** · **4355 pass / 12 fail (99.7%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -49,13 +49,14 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4338** | **29** | **99.3%** | Builtin subclass auto-super; field key cache + intercalated ordering; sparse numeric keys; WeakMap/WeakSet subclass |
 | 2026-07-23 | **4346** | **21** | **99.5%** | For-of IteratorClose; static block/field sequencing; String subclass trim/length; frozen field TypeError |
 | 2026-07-23 | **4351** | **16** | **99.6%** | Proxy field defineProperty traps; super.x in ctor; RegExp lastIndex; TCO skip native callees; this-before-super ReferenceError |
+| 2026-07-23 | **4355** | **12** | **99.7%** | GeneratorFunction ctor (function* parse, empty prototype); extends-null constructorParent; class expr binding scope; symbol field storage; inside_super_call guard |
 
-## Top remaining clusters (~16)
+## Top remaining clusters (~12)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 2 | GeneratorFunction subclassing | Parse/yield in Function constructor |
-| ~14 | Single-test edge cases | See `tasks/failures-16.json` |
+| ~3 | this-before-super / private field order | Refine ReferenceError vs TypeError; super-in-super-args |
+| ~9 | Single-test edge cases | See `tasks/failures-16.json` |
 
 ## How to clear this stage (ASAP × min LOC)
 

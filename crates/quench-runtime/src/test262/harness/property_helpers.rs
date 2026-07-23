@@ -83,7 +83,11 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         Value::Class(class_ref) => class_ref.has_static_own_property(&name_str),
         Value::Function(f) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
-                f.get_property(&key_str).is_some()
+                if key_str == "prototype" {
+                    f.get_property("prototype").is_some() || f.has_prototype()
+                } else {
+                    f.get_property(&key_str).is_some()
+                }
             } else {
                 false
             }

@@ -82,6 +82,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn class_definition_null_proto_test262_case() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/subclass/class-definition-null-proto.js");
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &path);
+        assert_eq!(outcome, TestOutcome::Pass, "{:?}", outcome);
+    }
+
+    #[test]
+    fn class_extends_null_proto_via_quench_host() {
+        let mut host = QuenchHost::new();
+        let r = host.run_script(
+            "class Foo extends null {} \
+             assert.sameValue(Object.getPrototypeOf(Foo.prototype), null);",
+        );
+        assert!(r.is_ok(), "{:?}", r);
+    }
+
+    #[test]
     fn outcome_skip_is_not_pass() {
         let s = TestOutcome::Skip {
             reason: "known crash".into(),
