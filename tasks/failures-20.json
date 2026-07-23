@@ -1,62 +1,7 @@
 {
-  "failed": 7,
-  "groups": [
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T2.js",
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T3.js",
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T4.js"
-      ],
-      "reason": "ReferenceError: __in__do__IN__after__break is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T2.js",
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T3.js",
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A4_T4.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A8.js"
-      ],
-      "reason": "Test262Error: #1: __odds === 5. Actual:  __odds ===0\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A8.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A5.js"
-      ],
-      "reason": "Test262Error: #3: __evaluated === 1. Actual:  __evaluated ===undefined\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/do-while/S12.6.1_A5.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/do-while/cptn-abrupt-empty.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 3",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/do-while/cptn-abrupt-empty.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/do-while/tco-body.js"
-      ],
-      "reason": "isolated exit -1: thread '<unknown>' (2078774) has overflowed its stack",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/do-while/tco-body.js"
-      ]
-    }
-  ],
-  "passed": 29,
+  "failed": 0,
+  "groups": [],
+  "passed": 36,
   "path": "test/language/statements/do-while",
   "skipped": 0,
   "skips": {},

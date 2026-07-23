@@ -339,6 +339,13 @@ pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
         if let Some(regex) = get_separator_regex(&separator) {
             return Ok(split_by_regex(&string, &regex, limit));
         }
+        let sep = to_js_string(&separator);
+        let parts: Vec<Value> = string
+            .split(&sep)
+            .take(limit)
+            .map(|p| Value::String(p.to_string()))
+            .collect();
+        return Ok(make_value_array(parts));
     }
     Ok(make_value_array(vec![Value::String(string)]))
 }
@@ -346,14 +353,7 @@ pub(crate) fn string_split_impl(args: Vec<Value>) -> Result<Value, JsError> {
 fn get_separator_regex(separator: &Value) -> Option<Regex> {
     match separator {
         Value::Object(ref obj) => obj.borrow().internal_regex.clone(),
-        _ => {
-            let sep_str = to_js_string(separator);
-            if sep_str.is_empty() {
-                None
-            } else {
-                Regex::new(&sep_str).ok()
-            }
-        }
+        _ => None,
     }
 }
 

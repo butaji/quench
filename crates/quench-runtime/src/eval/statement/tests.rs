@@ -1615,6 +1615,160 @@ mod do_while_statement {
             Value::Number(1.0)
         );
     }
+
+    #[test]
+    fn do_while_break_returns_block_completion() {
+        assert_eq!(
+            eval("eval('2; do { 3; break; } while (false)')").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn direct_eval_do_while_continue_loops() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("var x = 0; eval(\"do { x++; continue; } while (x < 3)\"); x")
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn direct_eval_do_while_increments_outer_var() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("var x = 0; eval(\"do { x++; } while (x < 3)\"); x")
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn direct_eval_do_while_continue_with_if_skips_body() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var c = 0, o = 0; \
+                 eval(\"do { c++; if (c % 2 === 1) continue; o++; } while (c < 6)\"); \
+                 o",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn string_split_on_decimal_detection() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let s = ctx.eval("(''+1/2)").unwrap();
+        assert_eq!(s, Value::String("0.5".into()));
+        let r = ctx.eval("('0.5').split('.').length").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+        let r = ctx.eval("(''+1/2).split('.').length").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+        let r2 = ctx.eval("(''+2/2).split('.').length").unwrap();
+        assert_eq!(r2, Value::Number(1.0));
+    }
+
+    #[test]
+    fn direct_eval_do_while_split_decimal_continue() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var c = 0, o = 0; \
+                 eval(\"do { c++; if (((''+c/2).split('.')).length>1) continue; o++; } while (c < 6)\"); \
+                 o",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn do_while_continue_in_direct_eval_updates_outer_bindings() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var __condition = 0, __odds = 0; \
+                 eval(\"do { __condition++; if (((''+__condition/2).split('.')).length>1) continue; __odds++;} while(__condition < 10)\"); \
+                 __odds",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+    #[test]
+    fn for_init_object_destructure_binds_pattern() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var iterCount = 0; \
+                 for (let { x: y } = { x: 23 }; iterCount < 1; ) { iterCount++; } \
+                 iterCount",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_var_in_init_is_hoisted_before_loop() {
+        let r = eval(
+            "var ok = true; \
+             try { index = index; } catch (e) { ok = false; } \
+             for (var index = 0; index < 1; index++) {} \
+             ok",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn for_var_in_init_visible_after_loop() {
+        let r = eval("for (var i = 0; i < 10; i++) {} i").unwrap();
+        assert_eq!(r, Value::Number(10.0));
+    }
+
+    #[test]
+    fn for_completion_value_from_body() {
+        let r = eval("eval('for (var run = true; run; run = false) { 3; }')").unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
+    fn for_let_body_per_iteration_closure() {
+        let r = eval(
+            "var probeFirst; \
+             var probeSecond = null; \
+             for (let x = 'first'; probeSecond === null; x = 'second') \
+               if (!probeFirst) probeFirst = function() { return x; }; \
+               else probeSecond = function() { return x; }; \
+             probeFirst() + '|' + probeSecond()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("first|second".into()));
+    }
+
+    #[test]
+    fn for_head_multi_decl_init() {
+        let r = eval(
+            "var probeDecl; \
+             for (let x = 'inside', _ = (probeDecl = function() { return x; }); false; ) {} \
+             probeDecl()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("inside".into()));
+    }
+
+    #[test]
+    fn for_init_null_destructure_throws_when_for_is_last_stmt() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx.eval("(function() { for (let {} = null; ; ) { return; } })()");
+        assert!(r.is_err());
+    }
 }
 
 mod labeled_statement {

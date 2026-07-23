@@ -526,6 +526,12 @@ fn generate_source_text(f: &ValueFunction) -> String {
                             None => format!("{} {}", k, name),
                         }
                     }
+                    Some(crate::ast::ForInit::PatternDeclaration { .. }) => {
+                        "[PatternDeclaration]".to_string()
+                    }
+                    Some(crate::ast::ForInit::DeclarationList { .. }) => {
+                        "[DeclarationList]".to_string()
+                    }
                     None => String::new(),
                 };
                 let cond_str = condition

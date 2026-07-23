@@ -4,9 +4,10 @@ use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::interpreter::{
-    add_label, collect_var_names_recursive, has_label, loop_handles_break, loop_handles_continue,
-    pop_label_scope, predeclare_let_const, push_label_scope, set_control_flow, take_control_flow,
-    ControlFlow,
+    add_label, collect_for_head_lexical_names, collect_var_names_recursive, has_label,
+    loop_handles_break, loop_handles_continue, pop_label_scope, predeclare_let_const,
+    predeclare_var, push_label_scope, push_lexical_scope_with_values, set_control_flow,
+    snapshot_lexical_bindings, take_control_flow, ControlFlow,
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
@@ -247,14 +248,38 @@ fn eval_function_body_impl(
             return Ok(val);
         }
 
-        // Check for tail-call return inside a block at the last position.
-        // Per ES §14.2.1, the block's body is in tail position.
+        // Check for tail-call return inside a block or do-while at the last position.
         if is_last_stmt {
             if let Statement::Block(inner_stmts) = stmt {
                 if acc_stack_len() > 0
-                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function)?.is_some()
+                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
+                        .is_some()
                 {
                     // Tail call was set; break to let trampoline run.
+                    break;
+                }
+            } else if let Statement::DoWhile { body, .. } = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(
+                        std::slice::from_ref(body.as_ref()),
+                        env,
+                        in_arrow_function,
+                        true,
+                    )?
+                    .is_some()
+                {
+                    break;
+                }
+            } else if let Statement::For { body, .. } = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(
+                        std::slice::from_ref(body.as_ref()),
+                        env,
+                        in_arrow_function,
+                        true,
+                    )?
+                    .is_some()
+                {
                     break;
                 }
             }
@@ -354,10 +379,12 @@ fn try_handle_tail_call(
 /// Recursively find a tail-call return inside a block at the last position.
 /// Returns `Ok(Some(()))` when a tail call was set (caller should break).
 /// Returns `Ok(None)` when no tail-call return was found (caller evaluates normally).
+/// When `tail_calls_only` is true, plain `return` expressions are not handled here.
 fn handle_tail_call_in_block(
     stmts: &[Statement],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
+    tail_calls_only: bool,
 ) -> Result<Option<()>, JsError> {
     if stmts.is_empty() {
         return Ok(None);
@@ -371,6 +398,9 @@ fn handle_tail_call_in_block(
         {
             return Ok(Some(()));
         }
+        if tail_calls_only {
+            return Ok(None);
+        }
         // Non-tail return inside block: evaluate it and propagate via control flow.
         let val = match expr.as_ref() {
             Some(e) => eval_expression(e, env, in_arrow_function)?,
@@ -382,7 +412,7 @@ fn handle_tail_call_in_block(
 
     // Last statement is a nested Block → recurse.
     if let Statement::Block(inner_stmts) = last_stmt {
-        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function);
+        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
     }
 
     // No tail-call found; caller will evaluate the block normally.
@@ -806,21 +836,22 @@ fn eval_do_while_impl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    predeclare_var(std::slice::from_ref(body), &mut env.borrow_mut());
     loop {
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, loop_labels) {
-                    break;
+                    return Ok(body_val);
                 }
                 set_control_flow(cf);
-                break;
+                return Ok(body_val);
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, loop_labels) {
                     set_control_flow(cf);
-                    break;
+                    return Ok(body_val);
                 }
             }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
@@ -833,12 +864,74 @@ fn eval_do_while_impl(
             }
             None => {}
         }
-        // Check condition; if false, return the body completion value
         if !to_bool(&eval_expression(condition, env, in_arrow_function)?) {
             return Ok(body_val);
         }
     }
-    Ok(Value::Undefined)
+}
+
+fn eval_for_init_decl(
+    kind: &VarKind,
+    name: &str,
+    init: &Option<Expression>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<(), JsError> {
+    eval_var_decl(kind, name, init, env, in_arrow_function)?;
+    Ok(())
+}
+
+fn eval_for_init(
+    for_init: &ForInit,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<(), JsError> {
+    match for_init {
+        ForInit::Expression(expr) => {
+            let _ = eval_expression(expr, env, in_arrow_function)?;
+        }
+        ForInit::VarDeclaration { kind, name, init } => {
+            eval_for_init_decl(kind, name, init, env, in_arrow_function)?;
+        }
+        ForInit::PatternDeclaration {
+            kind,
+            pattern,
+            init,
+        } => {
+            eval_pattern_decl(kind, pattern, init, env, in_arrow_function)?;
+        }
+        ForInit::DeclarationList { kind, decls } => {
+            for decl in decls {
+                if let Some(name) = &decl.name {
+                    eval_for_init_decl(kind, name, &decl.init, env, in_arrow_function)?;
+                } else if let Some(pattern) = &decl.pattern {
+                    eval_pattern_decl(kind, pattern, &decl.init, env, in_arrow_function)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn eval_for_loop_condition(
+    condition: &Option<Box<Expression>>,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<bool, JsError> {
+    if let Some(c) = condition.as_ref() {
+        Ok(to_bool(&eval_expression(c, env, in_arrow_function)?))
+    } else {
+        Ok(true)
+    }
+}
+
+fn eval_for_pop_head_scopes(env: &Rc<RefCell<Environment>>, head_lexical: bool, per_iter: bool) {
+    if per_iter {
+        env.borrow_mut().pop_scope();
+    }
+    if head_lexical {
+        env.borrow_mut().pop_scope();
+    }
 }
 
 fn eval_for(
@@ -850,71 +943,65 @@ fn eval_for(
     in_arrow_function: bool,
     loop_labels: Vec<String>,
 ) -> Result<Value, JsError> {
-    let loop_scope = matches!(
-        init,
-        Some(ForInit::VarDeclaration { kind, .. })
-            if matches!(kind, VarKind::Let | VarKind::Const)
-    );
-    if loop_scope {
+    let per_iter_names = collect_for_head_lexical_names(init.as_ref());
+    let head_lexical = !per_iter_names.is_empty();
+    if head_lexical {
         env.borrow_mut().push_scope();
     }
     if let Some(for_init) = init {
-        match for_init {
-            ForInit::Expression(expr) => {
-                let _ = eval_expression(expr, env, in_arrow_function)?;
-            }
-            ForInit::VarDeclaration { kind, name, init } => {
-                env.borrow_mut().declare_var(name.to_string(), *kind);
-                let value = init
-                    .as_ref()
-                    .map(|e| eval_expression(e, env, in_arrow_function))
-                    .unwrap_or(Ok(Value::Undefined))?;
-                env.borrow_mut().initialize_declared(name, value);
-            }
-        }
+        eval_for_init(for_init, env, in_arrow_function)?;
     }
-    let check_condition = || -> Result<bool, JsError> {
-        if let Some(c) = condition.as_ref() {
-            Ok(to_bool(&eval_expression(c, env, in_arrow_function)?))
-        } else {
-            Ok(true)
-        }
+    let mut iter_binding_values = if head_lexical {
+        snapshot_lexical_bindings(&env.borrow(), &per_iter_names)
+    } else {
+        Vec::new()
     };
-    while check_condition()? {
+    let mut completion = Value::Undefined;
+    loop {
+        let mut in_per_iter = false;
+        if head_lexical {
+            push_lexical_scope_with_values(&mut env.borrow_mut(), &iter_binding_values);
+            in_per_iter = true;
+        }
+        if !eval_for_loop_condition(condition, env, in_arrow_function)? {
+            eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+            break;
+        }
         take_control_flow();
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
+        let body_val = if head_lexical {
+            let body_copies = snapshot_lexical_bindings(&env.borrow(), &per_iter_names);
+            push_lexical_scope_with_values(&mut env.borrow_mut(), &body_copies);
+            let val = eval_statement(body, env, false, in_arrow_function)?;
+            env.borrow_mut().pop_scope();
+            val
+        } else {
+            eval_statement(body, env, false, in_arrow_function)?
+        };
+        completion = body_val.clone();
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
-                    break;
+                    eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                    return Ok(body_val);
                 }
-                if loop_scope {
-                    env.borrow_mut().pop_scope();
-                }
+                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
                 set_control_flow(cf);
                 return Ok(Value::Undefined);
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
-                    if loop_scope {
-                        env.borrow_mut().pop_scope();
-                    }
+                    eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
                     set_control_flow(cf);
                     return Ok(Value::Undefined);
                 }
             }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
-                if loop_scope {
-                    env.borrow_mut().pop_scope();
-                }
+                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            // YieldDelegate: also propagate as Return (the generator handles it)
             Some(ControlFlow::YieldDelegate(val)) => {
-                if loop_scope {
-                    env.borrow_mut().pop_scope();
-                }
+                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
@@ -923,11 +1010,15 @@ fn eval_for(
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
         }
+        if head_lexical {
+            iter_binding_values = snapshot_lexical_bindings(&env.borrow(), &per_iter_names);
+            env.borrow_mut().pop_scope();
+        }
     }
-    if loop_scope {
+    if head_lexical {
         env.borrow_mut().pop_scope();
     }
-    Ok(Value::Undefined)
+    Ok(completion)
 }
 
 fn eval_block(
