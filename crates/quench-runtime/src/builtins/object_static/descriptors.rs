@@ -12,12 +12,12 @@ use crate::{Object, ObjectKind};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Convert a value to a property key. Symbols keep their raw payload so
-/// symbol-keyed properties match computed member access (obj[sym]).
+/// Convert a value to a property key. Symbols use `desc\0id` so equal
+/// descriptions never collide (AGENTS.md / R5).
 pub fn to_property_key(v: &Value) -> Result<String, JsError> {
     let prim = to_primitive(v, Some("string"))?;
     match prim {
-        Value::Symbol(s) => Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default()),
+        Value::Symbol(s) => Ok(s.property_key()),
         _ => Ok(to_js_string(&prim)),
     }
 }

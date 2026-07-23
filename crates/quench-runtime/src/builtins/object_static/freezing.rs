@@ -42,6 +42,7 @@ pub fn object_freeze(args: Vec<Value>) -> Result<Value, JsError> {
                 .collect()
         };
         let mut obj_mut = o.borrow_mut();
+        obj_mut.extensible = false;
         for (k, v, enumerable) in snapshot {
             obj_mut.define(
                 &k,
@@ -200,6 +201,18 @@ mod tests {
             .unwrap();
         assert_eq!(ctx.eval("o.a").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("o.b").unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn strict_write_to_frozen_property_throws() {
+        let mut ctx = Context::new().unwrap();
+        let err = ctx
+            .eval("\"use strict\"; var o = Object.freeze({a: 1}); o.a = 2;")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("TypeError"),
+            "expected TypeError, got {err}"
+        );
     }
 
     #[test]

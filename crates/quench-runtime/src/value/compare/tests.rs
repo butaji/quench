@@ -10,10 +10,7 @@ fn make_env() -> Rc<RefCell<crate::env::Environment>> {
 }
 
 fn make_sym(desc: &str) -> Value {
-    Value::Symbol(Rc::new(Symbol {
-        desc: Some(desc.into()),
-        global: false,
-    }))
+    Value::Symbol(Rc::new(Symbol::new(Some(desc.into()), false)))
 }
 
 // ─── same_value_numbers ───────────────────────────────────────────────────────
