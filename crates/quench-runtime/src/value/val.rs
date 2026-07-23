@@ -18,6 +18,12 @@ use crate::eval;
 use crate::value::function::{NativeConstructor, NativeFunction, ValueFunction};
 use crate::value::object::Object;
 
+/// Internal object key for a private name — distinct from public `"#name"` string keys.
+pub fn private_name_key(name: &str) -> String {
+    let bare = name.strip_prefix('#').unwrap_or(name);
+    format!("\0private:{bare}\0")
+}
+
 /// A class method: (name, params, body, is_async, is_generator)
 pub type ClassMethod = (
     PropertyKey,
