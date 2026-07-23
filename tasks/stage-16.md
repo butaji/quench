@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4355 pass / 12 fail (99.7%)** as of 2026-07-23.
+**4,367 tests** · **4362 pass / 5 fail (99.9%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -50,6 +50,7 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4346** | **21** | **99.5%** | For-of IteratorClose; static block/field sequencing; String subclass trim/length; frozen field TypeError |
 | 2026-07-23 | **4351** | **16** | **99.6%** | Proxy field defineProperty traps; super.x in ctor; RegExp lastIndex; TCO skip native callees; this-before-super ReferenceError |
 | 2026-07-23 | **4355** | **12** | **99.7%** | GeneratorFunction ctor (function* parse, empty prototype); extends-null constructorParent; class expr binding scope; symbol field storage; inside_super_call guard |
+| 2026-07-23 | **4362** | **5** | **99.9%** | SuperProperty GetThisBinding order; destructuring target before getter; ToPrimitive→Symbol property keys; Uint8 indexed coercion; verifyProperty Symbol hasOwn |
 
 ## Top remaining clusters (~12)
 

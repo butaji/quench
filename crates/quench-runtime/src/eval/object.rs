@@ -79,6 +79,21 @@ pub fn eval_callee_with_this(
             property,
             computed,
         } => {
+            if let Expression::Identifier(id) = object.as_ref() {
+                if id == "super" {
+                    crate::eval::class::helpers::check_this_access_allowed(env)?;
+                    let super_val =
+                        crate::eval::literal::get_super_value(env).ok_or_else(|| {
+                            JsError(
+                                "ReferenceError: super is only valid in class methods".to_string(),
+                            )
+                        })?;
+                    let prop_name = extract_property_name(property, *computed, env, false)?;
+                    let func = get_member_function(&super_val, &prop_name, env)?;
+                    let this_val = crate::interpreter::get_this_binding(env);
+                    return Ok((func, this_val, false));
+                }
+            }
             let obj_val = eval_expression(object, env, false)?;
             let prop_name = extract_property_name(property, *computed, env, false)?;
             let func = get_member_function(&obj_val, &prop_name, env)?;
@@ -183,6 +198,50 @@ pub fn call_getter(
         acc_stack_pop_to(starting_depth);
         let _ = crate::interpreter::take_control_flow();
         return Ok(acc_result);
+    }
+}
+
+/// Evaluate an assignment target's base reference before reading the RHS value.
+/// Per ES KeyedDestructuringAssignmentEvaluation step 1.
+pub(crate) fn touch_assignment_target(
+    target: &Expression,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    match target {
+        Expression::Identifier(name) if name == "this" => {
+            crate::eval::class::helpers::check_this_access_allowed(env)?;
+            Ok(())
+        }
+        Expression::Member {
+            object,
+            property,
+            computed,
+        } => {
+            touch_assignment_target(object, env)?;
+            if *computed {
+                if let PropertyKey::Computed(e) = property {
+                    let _ = eval_expression(e, env, false)?;
+                }
+            }
+            Ok(())
+        }
+        Expression::ArrayPattern(bindings) => {
+            for binding in bindings {
+                if let BindingElement::AssignmentTarget(target) = binding {
+                    touch_assignment_target(target, env)?;
+                }
+            }
+            Ok(())
+        }
+        Expression::ObjectPattern(props) => {
+            for (_, binding) in props {
+                if let BindingElement::AssignmentTarget(target) = binding {
+                    touch_assignment_target(target, env)?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

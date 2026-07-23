@@ -404,4 +404,19 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn extended_uint8_array_element_assignment_coerces_to_uint8() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let r = ctx
+            .eval(
+                "class ExtendedUint8Array extends Uint8Array { \
+                 constructor() { super(10); this[1] = 0xFFA; } } \
+                 new ExtendedUint8Array()[1]",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(250.0));
+    }
 }
