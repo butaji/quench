@@ -197,6 +197,9 @@ pub struct Object {
     pub holes: HashSet<usize>,
     pub extensible: bool,
     pub data: ObjData,
+    /// Internal [[Call]] slot: set when Function constructor is called via
+    /// super() from a derived class, so we can invoke the stored function.
+    pub call_slot: Option<Value>,
 }
 
 impl fmt::Debug for Object {
