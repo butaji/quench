@@ -203,20 +203,28 @@ pub fn eval_object_literal(
                         obj.set(&key_str, val);
                     }
                     PropertyValue::Getter { params: _, body } => {
+                        let fn_name = crate::eval::class::helpers::accessor_function_name(
+                            key, &key_str, env, "get",
+                        )?;
                         obj.set_getter(
                             &key_str,
                             Rc::new(body.clone()),
                             crate::eval::expression::capture_env_for_closure(env),
                             false,
+                            Some(fn_name),
                         );
                     }
                     PropertyValue::Setter { param, body } => {
+                        let fn_name = crate::eval::class::helpers::accessor_function_name(
+                            key, &key_str, env, "set",
+                        )?;
                         obj.set_setter(
                             &key_str,
                             crate::ast::Param::new(param),
                             Rc::new(body.clone()),
                             crate::eval::expression::capture_env_for_closure(env),
                             false,
+                            Some(fn_name),
                         );
                     }
                     PropertyValue::Spread(_) => unreachable!(),

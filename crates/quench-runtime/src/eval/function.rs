@@ -202,7 +202,7 @@ pub(crate) fn call_js_function_impl_with_strict(
     // g() pushes/pops its own placeholder; f() then pops its own.
     loop {
         let starting_depth = crate::eval::statement::acc_stack_len();
-        crate::eval::statement::acc_stack_push(create_symbol("TCO_PLACEHOLDER"));
+        crate::eval::statement::acc_stack_push(create_symbol(Some("TCO_PLACEHOLDER")));
 
         let closure = Rc::clone(&f.closure);
         let params = f.params.clone();

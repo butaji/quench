@@ -3,7 +3,9 @@
 
 use crate::ast::PropertyKey;
 use crate::env::Environment;
-use crate::eval::class::helpers::prop_key_to_string;
+use crate::eval::class::helpers::{
+    accessor_function_name, method_function_name, prop_key_to_string,
+};
 use crate::value::{
     to_bool, to_js_string, to_primitive, JsError, PropertyFlags, Value, ValueFunction,
 };
@@ -385,6 +387,9 @@ pub fn get_class_property_descriptor(
         return Ok(Value::Undefined);
     }
     match prop {
+        "length" => {
+            make_property_descriptor_number(c.constructor_params.len() as f64, false, false, true)
+        }
         "name" => {
             make_property_descriptor_string(&c.name.clone().unwrap_or_default(), false, false, true)
         }
@@ -412,40 +417,42 @@ pub fn get_class_property_descriptor(
                 .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
 
             // Check static getters - need to evaluate key to match computed props
-            let static_getter_body = c
-                .static_getters
-                .iter()
-                .find(|(k, _)| {
-                    prop_key_to_string(k, &eval_env, false)
-                        .map(|k_str| k_str == prop)
-                        .unwrap_or(false)
-                })
-                .map(|(_, body)| body.clone());
+            let static_getter_info = c.static_getters.iter().find_map(|(k, body)| {
+                prop_key_to_string(k, &eval_env, false)
+                    .ok()
+                    .filter(|k_str| k_str == prop)
+                    .map(|_| (k.clone(), body.clone()))
+            });
 
-            let static_setter_info = c
-                .static_setters
-                .iter()
-                .find(|(k, _, _)| {
-                    prop_key_to_string(k, &eval_env, false)
-                        .map(|k_str| k_str == prop)
-                        .unwrap_or(false)
-                })
-                .map(|(_, param, body)| (param.clone(), body.clone()));
+            let static_setter_info = c.static_setters.iter().find_map(|(k, param, body)| {
+                prop_key_to_string(k, &eval_env, false)
+                    .ok()
+                    .filter(|k_str| k_str == prop)
+                    .map(|_| (k.clone(), param.clone(), body.clone()))
+            });
 
-            if static_getter_body.is_some() || static_setter_info.is_some() {
+            if static_getter_info.is_some() || static_setter_info.is_some() {
                 let mut desc = Object::new(ObjectKind::Ordinary);
 
-                if let Some(body) = static_getter_body {
-                    let mut func =
-                        ValueFunction::new(None, vec![], body, Rc::clone(&eval_env), false, false);
+                if let Some((key, body)) = static_getter_info {
+                    let fn_name = accessor_function_name(&key, prop, &eval_env, "get")?;
+                    let mut func = ValueFunction::new(
+                        Some(fn_name),
+                        vec![],
+                        body,
+                        Rc::clone(&eval_env),
+                        false,
+                        false,
+                    );
                     func.strict = true;
                     func.is_method = true;
                     desc.set("get", Value::Function(func));
                 }
 
-                if let Some((param, body)) = static_setter_info {
+                if let Some((key, param, body)) = static_setter_info {
+                    let fn_name = accessor_function_name(&key, prop, &eval_env, "set")?;
                     let mut func = ValueFunction::new(
-                        None,
+                        Some(fn_name),
                         vec![param.clone()],
                         body,
                         Rc::clone(&eval_env),
@@ -472,8 +479,9 @@ pub fn get_class_property_descriptor(
                     PropertyKey::Computed(_) => false,
                 };
                 if matches {
+                    let fn_name = method_function_name(name, prop, &eval_env)?;
                     let mut func = ValueFunction::new(
-                        Some(prop.to_string()),
+                        Some(fn_name),
                         params.clone(),
                         body.clone(),
                         Rc::clone(&eval_env),
@@ -509,4 +517,70 @@ pub fn get_class_property_descriptor(
             Ok(Value::Undefined)
         }
     }
+}
+
+fn push_static_key(names: &mut Vec<String>, key: &str) {
+    if key.starts_with('#') || key == "name" {
+        return;
+    }
+    if !names.iter().any(|k| k == key) {
+        names.push(key.to_string());
+    }
+}
+
+/// Own property names for a class constructor (includes non-enumerable builtins).
+pub fn class_own_property_names(c: &crate::value::ClassValue) -> Vec<String> {
+    let deleted = c.deleted_properties.borrow();
+    let mut names = vec!["length".to_string()];
+    if !deleted.contains("name") {
+        names.push("name".to_string());
+    }
+    if !deleted.contains("prototype") {
+        names.push("prototype".to_string());
+    }
+    let eval_env = c
+        .get_class_def_env()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+    for (key, _, _, _, _) in &c.static_methods {
+        if let Ok(k) = prop_key_to_string(key, &eval_env, false) {
+            push_static_key(&mut names, &k);
+        }
+    }
+    for (key, _) in &c.static_getters {
+        if let Ok(k) = prop_key_to_string(key, &eval_env, false) {
+            push_static_key(&mut names, &k);
+        }
+    }
+    for (key, _, _) in &c.static_setters {
+        if let Ok(k) = prop_key_to_string(key, &eval_env, false) {
+            push_static_key(&mut names, &k);
+        }
+    }
+    for (key, _) in &c.static_fields {
+        if let Ok(k) = prop_key_to_string(key, &eval_env, false) {
+            push_static_key(&mut names, &k);
+        }
+    }
+    names
+}
+
+pub fn function_own_property_names(f: &ValueFunction) -> Vec<String> {
+    f.own_property_names()
+}
+
+pub fn native_function_own_property_names(nf: &crate::value::NativeFunction) -> Vec<String> {
+    let mut names = vec!["length".to_string(), "name".to_string()];
+    if nf.get_property("prototype").is_some() || nf.prototype.borrow().is_some() {
+        names.push("prototype".to_string());
+    }
+    names
+}
+
+pub fn native_constructor_own_property_names(nc: &crate::value::NativeConstructor) -> Vec<String> {
+    let _ = nc;
+    vec![
+        "length".to_string(),
+        "name".to_string(),
+        "prototype".to_string(),
+    ]
 }
