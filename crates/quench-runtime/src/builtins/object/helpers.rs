@@ -3,6 +3,7 @@
 //! Builtin tag resolution, property key helpers, and object kind tagging
 //! for Object.prototype.toString.
 
+use crate::value::object::{ObjData, TypedArrayName};
 use crate::value::{kind::ExoticKind, Object, ObjectKind, Value};
 use indexmap::IndexMap;
 use std::cell::RefCell;
@@ -49,32 +50,66 @@ pub fn get_builtin_tag(this_val: &Value) -> String {
 
 /// Get builtin tag for object values
 pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
-    let obj = o.borrow();
-
-    // Check for @@toStringTag first
-    if let Some(tag) = get_to_string_tag(&obj.properties) {
-        return tag;
+    let mut current = Some(Rc::clone(o));
+    while let Some(obj_rc) = current {
+        let obj = obj_rc.borrow();
+        if let Some(tag) = get_to_string_tag_on_object(&obj) {
+            return tag;
+        }
+        if Rc::ptr_eq(&obj_rc, o) {
+            if let Some(tag) = typed_array_builtin_tag(&obj.data) {
+                return tag;
+            }
+            if let Some(tag) = get_exotic_kind_tag(&obj.exotic_kind) {
+                return tag;
+            }
+            return get_object_kind_tag(obj.kind.clone());
+        }
+        current = obj.prototype.clone();
     }
-
-    // Check exotic kind for boxed primitives
-    if let Some(tag) = get_exotic_kind_tag(&obj.exotic_kind) {
-        return tag;
-    }
-
-    // Fall back to ObjectKind-based tag
-    get_object_kind_tag(obj.kind.clone())
+    "Object".to_string()
 }
 
-/// Extract @@toStringTag from properties.
+fn typed_array_builtin_tag(data: &ObjData) -> Option<String> {
+    let ObjData::Idx { name, .. } = data else {
+        return None;
+    };
+    Some(
+        match name {
+            TypedArrayName::Int8 => "Int8Array",
+            TypedArrayName::Uint8 => "Uint8Array",
+            TypedArrayName::Uint8Clamped => "Uint8ClampedArray",
+            TypedArrayName::Int16 => "Int16Array",
+            TypedArrayName::Uint16 => "Uint16Array",
+            TypedArrayName::Int32 => "Int32Array",
+            TypedArrayName::Uint32 => "Uint32Array",
+            TypedArrayName::Float32 => "Float32Array",
+            TypedArrayName::Float64 => "Float64Array",
+            TypedArrayName::BigInt64 => "BigInt64Array",
+            TypedArrayName::BigUint64 => "BigUint64Array",
+        }
+        .to_string(),
+    )
+}
+
+fn get_to_string_tag_on_object(obj: &Object) -> Option<String> {
+    get_to_string_tag(&obj.symbol_properties).or_else(|| get_to_string_tag(&obj.properties))
+}
+
+/// Extract @@toStringTag from a property map (string or symbol storage).
 fn get_to_string_tag(properties: &IndexMap<String, Value>) -> Option<String> {
     for (k, v) in properties {
-        if k.starts_with("Symbol(") && k.contains("toStringTag") {
+        if is_to_string_tag_key(k) {
             if let Value::String(tag) = v {
                 return Some(tag.clone());
             }
         }
     }
     None
+}
+
+fn is_to_string_tag_key(k: &str) -> bool {
+    k == "Symbol.toStringTag" || (k.starts_with("Symbol(") && k.contains("toStringTag"))
 }
 
 /// Get tag from exotic kind.

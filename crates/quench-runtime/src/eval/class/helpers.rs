@@ -1177,6 +1177,41 @@ mod tests {
     }
 
     #[test]
+    fn prod_private_async_method_ref_lost_after_ctor_promise() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "class C { \
+               async #m() { return 42; } \
+               get ref() { return this.#m; } \
+               constructor() { this.#m().then(function() {}); } \
+             } \
+             var c = new C(); \
+             c.ref.name;",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn private_field_destructure_after_super_return_brands_receiver() {
+        let r = eval(
+            "class Base { constructor(o) { return o; } } \
+             class C extends Base { \
+               #field; \
+               m() { \
+                 var init = () => new C(this); \
+                 var object = { get a() { init(); return 'pass'; } }; \
+                 ({a: this.#field} = object); \
+                 return this.#field; \
+               } \
+             } \
+             C.prototype.m.call({})",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("pass".into()));
+    }
+
+    #[test]
     fn reflect_has_does_not_break_private_method_getter() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
