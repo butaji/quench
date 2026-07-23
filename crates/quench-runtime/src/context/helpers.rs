@@ -65,14 +65,14 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     };
     reject_eval_var_lexical_conflict(&program, ctx)?;
-    if crate::interpreter::is_direct_eval() && crate::interpreter::is_eval_in_class_field() {
+    if crate::interpreter::is_eval_in_class_field() {
         let ast::Program::Script(body) = &program;
-        if crate::eval::class::private_elements::program_contains_super_call(body) {
-            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
-                "super is not allowed in class field initializer eval",
-                "SyntaxError",
-            );
-            crate::value::set_thrown_value(err_val);
+        if let Err(js_err) =
+            crate::eval::class::private_elements::reject_class_field_eval_early_errors(
+                body,
+                crate::interpreter::is_direct_eval(),
+            )
+        {
             CURRENT_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = prev_ctx;
             });
