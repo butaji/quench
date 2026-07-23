@@ -1443,6 +1443,12 @@ mod tests {
     }
 
     #[test]
+    fn static_name_method_shadows_constructor_name_string() {
+        let ty = eval("class A { static name() {} } typeof A.name").unwrap();
+        assert_eq!(ty, Value::String("function".into()));
+    }
+
+    #[test]
     fn class_static_method_has_own_name_property() {
         let ok = eval(
             "class A { static id() {} } \
