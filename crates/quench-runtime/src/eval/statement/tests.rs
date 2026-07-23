@@ -332,6 +332,18 @@ mod try_catch_finally_statement {
         let r = eval("try { throw 42; } catch (e) { e }").unwrap();
         assert_eq!(r, Value::Number(42.0));
     }
+
+    #[test]
+    fn try_return_finally_side_effect_runs() {
+        assert_eq!(
+            eval(
+                "var n=0; class C { constructor(){ try { return; } finally { n=1; } } } \
+                  try { new C(); } catch(e) {} n"
+            )
+            .unwrap(),
+            Value::Number(1.0)
+        );
+    }
 }
 
 mod for_in_statement {
