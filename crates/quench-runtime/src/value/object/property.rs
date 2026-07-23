@@ -12,7 +12,8 @@ use crate::value::object::accessor::{
     set_getter_func, set_setter, set_setter_func,
 };
 use crate::value::object::helpers::{
-    as_array_index, GetterStorage, PropertyDescriptor, PropertyFlags, SetterStorage,
+    as_array_index, GetterStorage, ObjData, PropertyDescriptor, PropertyFlags, SetterStorage,
+    TypedArrayName,
 };
 use crate::value::object::keys::{own_keys, own_property_names};
 use crate::value::Object;
@@ -59,6 +60,17 @@ impl Object {
             );
         }
         if let Some(idx) = as_array_index(key) {
+            if let ObjData::Idx { length, name, .. } = self.data {
+                if (idx as u64) < length {
+                    let coerced = coerce_typed_array_element(name, &value);
+                    while self.elements.len() <= idx {
+                        self.elements.push(Value::Undefined);
+                    }
+                    self.elements[idx] = coerced;
+                    self.properties.shift_remove(key);
+                    return;
+                }
+            }
             if self.kind == ObjectKind::Array {
                 while self.elements.len() <= idx {
                     self.elements.push(Value::Undefined);
@@ -141,11 +153,33 @@ impl Object {
             return Some(v.clone());
         }
         if let Some(idx) = as_array_index(key) {
+            if let ObjData::Idx { length, .. } = self.data {
+                if (idx as u64) < length && idx < self.elements.len() {
+                    return Some(self.elements[idx].clone());
+                }
+            }
             if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(self.elements[idx].clone());
             }
         }
         None
+    }
+}
+
+fn coerce_typed_array_element(name: TypedArrayName, value: &Value) -> Value {
+    use TypedArrayName::{
+        BigInt64, BigUint64, Float32, Float64, Int16, Int32, Int8, Uint16, Uint32, Uint8,
+        Uint8Clamped,
+    };
+    let n = crate::value::to_number(value);
+    let u32 = crate::value::to_uint32(n);
+    match name {
+        Uint8 | Int8 => Value::Number(f64::from(u32 & 0xFF)),
+        Uint8Clamped => Value::Number(n.clamp(0.0, 255.0).trunc()),
+        Uint16 | Int16 => Value::Number(f64::from(u32 & 0xFFFF)),
+        Uint32 | Int32 => Value::Number(f64::from(u32)),
+        Float32 | Float64 => Value::Number(n),
+        BigInt64 | BigUint64 => value.clone(),
     }
 }
 
