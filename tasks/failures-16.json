@@ -1,5 +1,5 @@
 {
-  "failed": 21,
+  "failed": 16,
   "groups": [
     {
       "count": 1,
@@ -9,16 +9,6 @@
       "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(24), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }, OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(33), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
-      ],
-      "reason": "Test262Error: Actual [] and expected [f, 3, [Function], g, Test262, [Function]] should have the same contents. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/class-field-is-observable-by-proxy.js"
       ]
     },
     {
@@ -64,16 +54,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js"
-      ],
-      "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/public-class-field-initialization-is-visible-to-proxy.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
@@ -89,16 +69,6 @@
       "reason": "Test262Error: Symbol() should be an own property\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js"
-      ],
-      "reason": "Test262Error: lastIndex descriptor enumerable should be false\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js"
       ]
     },
     {
@@ -164,16 +134,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 42",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/super/in-constructor.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js"
       ],
       "reason": "TypeError: Cannot read property 'name' of undefined",
@@ -200,19 +160,9 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
-      ],
-      "reason": "object is not a function",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
-      ]
     }
   ],
-  "passed": 4346,
+  "passed": 4351,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

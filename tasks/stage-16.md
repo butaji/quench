@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4346 pass / 21 fail (99.5%)** as of 2026-07-23.
+**4,367 tests** · **4351 pass / 16 fail (99.6%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -48,14 +48,14 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4332** | **35** | **99.2%** | Optional chain prefix before private field (`o?.c.#f`) |
 | 2026-07-23 | **4338** | **29** | **99.3%** | Builtin subclass auto-super; field key cache + intercalated ordering; sparse numeric keys; WeakMap/WeakSet subclass |
 | 2026-07-23 | **4346** | **21** | **99.5%** | For-of IteratorClose; static block/field sequencing; String subclass trim/length; frozen field TypeError |
+| 2026-07-23 | **4351** | **16** | **99.6%** | Proxy field defineProperty traps; super.x in ctor; RegExp lastIndex; TCO skip native callees; this-before-super ReferenceError |
 
-## Top remaining clusters (~21)
+## Top remaining clusters (~16)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 2 | Proxy field observability | Field init through Proxy traps |
 | 2 | GeneratorFunction subclassing | Parse/yield in Function constructor |
-| ~17 | Single-test edge cases | See `tasks/failures-16.json` |
+| ~14 | Single-test edge cases | See `tasks/failures-16.json` |
 
 ## How to clear this stage (ASAP × min LOC)
 

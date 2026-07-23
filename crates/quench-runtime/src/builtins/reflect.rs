@@ -4,7 +4,7 @@
 //! the handler omits them). Tests that require the full Reflect or Proxy
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
-use crate::builtins::object_static::to_property_key;
+use crate::builtins::object_static::{object_define_property, to_property_key};
 use crate::context::Context;
 use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
@@ -107,6 +107,15 @@ pub fn register_reflect(ctx: &mut Context) {
             },
         ))),
     );
+    reflect.set(
+        "defineProperty",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| match object_define_property(args) {
+                Ok(_) => Ok(Value::Boolean(true)),
+                Err(_) => Ok(Value::Boolean(false)),
+            },
+        ))),
+    );
     ctx.set_global(
         "Reflect".to_string(),
         Value::Object(Rc::new(RefCell::new(reflect))),
@@ -180,6 +189,14 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         ctx.eval(src).unwrap()
+    }
+
+    #[test]
+    fn reflect_define_property_sets_value() {
+        let result = eval_ok_with_builtins(
+            "var o = {}; Reflect.defineProperty(o, 'x', {value: 42, writable: true, enumerable: true, configurable: true}); o.x",
+        );
+        assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
