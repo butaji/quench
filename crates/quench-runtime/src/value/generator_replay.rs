@@ -138,10 +138,7 @@ pub fn count_yields_in_stmt(stmt: &Statement) -> usize {
 pub fn count_yields_in_expr(expr: &Expression) -> usize {
     match expr {
         Expression::Yield(inner) => {
-            1 + inner
-                .as_ref()
-                .map(|e| count_yields_in_expr(e))
-                .unwrap_or(0)
+            1 + inner.as_ref().map(|e| count_yields_in_expr(e)).unwrap_or(0)
         }
         Expression::YieldDelegate(inner) => 1 + count_yields_in_expr(inner),
         Expression::Spread(inner) => count_yields_in_expr(inner),
@@ -162,9 +159,9 @@ pub fn count_yields_in_expr(expr: &Expression) -> usize {
         Expression::Call { callee, arguments } => {
             count_yields_in_expr(callee) + arguments.iter().map(count_yields_in_expr).sum::<usize>()
         }
-        Expression::Member { object, property, .. } => {
-            count_yields_in_expr(object) + count_yields_in_property_key(property)
-        }
+        Expression::Member {
+            object, property, ..
+        } => count_yields_in_expr(object) + count_yields_in_property_key(property),
         Expression::Conditional {
             condition,
             consequent,
@@ -174,7 +171,10 @@ pub fn count_yields_in_expr(expr: &Expression) -> usize {
                 + count_yields_in_expr(consequent)
                 + count_yields_in_expr(alternate)
         }
-        Expression::New { constructor, arguments } => {
+        Expression::New {
+            constructor,
+            arguments,
+        } => {
             count_yields_in_expr(constructor)
                 + arguments.iter().map(count_yields_in_expr).sum::<usize>()
         }
@@ -257,9 +257,9 @@ mod tests {
 
     #[test]
     fn counts_nested_yield_in_array_spread() {
-        let expr = Expression::Yield(Some(Box::new(Expression::Array(vec![
-            Expression::Spread(Box::new(Expression::Yield(None))),
-        ]))));
+        let expr = Expression::Yield(Some(Box::new(Expression::Array(vec![Expression::Spread(
+            Box::new(Expression::Yield(None)),
+        )]))));
         assert_eq!(count_yields_in_expr(&expr), 2);
     }
 }

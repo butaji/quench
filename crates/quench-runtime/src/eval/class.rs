@@ -133,11 +133,10 @@ pub fn eval_class_expr(
                     if crate::value::generator_replay::yield_pending() {
                         return Ok(Value::Undefined);
                     }
-                    if key_str == "prototype" || key_str == "constructor" {
-                        return Err(JsError(format!(
-                            "TypeError: static class field may not be named '{}'",
-                            key_str
-                        )));
+                    if key_str == "prototype" {
+                        return Err(JsError(
+                            "TypeError: static class field may not be named 'prototype'".into(),
+                        ));
                     }
                     let storage_key = if crate::value::is_private_name_key(&key_str) {
                         key_str
@@ -155,11 +154,10 @@ pub fn eval_class_expr(
                 if crate::value::generator_replay::yield_pending() {
                     return Ok(Value::Undefined);
                 }
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticGetter { name, .. } => {
@@ -168,11 +166,10 @@ pub fn eval_class_expr(
                     return Ok(Value::Undefined);
                 }
                 new_value.push_static_getter_key(key_str.clone());
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticSetter { name, .. } => {
@@ -181,11 +178,10 @@ pub fn eval_class_expr(
                     return Ok(Value::Undefined);
                 }
                 new_value.push_static_setter_key(key_str.clone());
-                if key_str == "prototype" || key_str == "constructor" {
-                    return Err(JsError(format!(
-                        "TypeError: static class method may not be named '{}'",
-                        key_str
-                    )));
+                if key_str == "prototype" {
+                    return Err(JsError(
+                        "TypeError: static class method may not be named 'prototype'".into(),
+                    ));
                 }
             }
             crate::ast::ClassMember::StaticBlock { body } => {

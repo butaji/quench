@@ -220,6 +220,27 @@ fn async_call_returns_promise_object() {
 }
 
 #[test]
+fn sync_function_returning_async_call_returns_promise() {
+    let mut ctx = Context::new().unwrap();
+    let empty = ctx
+        .eval("function g() { return (async function() {})(); } typeof g()")
+        .unwrap();
+    assert_eq!(
+        empty,
+        Value::String("object".into()),
+        "return (async fn)() must yield a Promise, not the resolved value"
+    );
+    let with_val = ctx
+        .eval("function g() { return (async function() { return 42; })(); } typeof g()")
+        .unwrap();
+    assert_eq!(
+        with_val,
+        Value::String("object".into()),
+        "return (async fn returning 42)() must yield a Promise"
+    );
+}
+
+#[test]
 fn async_call_is_not_value_directly() {
     let mut ctx = Context::new().unwrap();
     let v = ctx

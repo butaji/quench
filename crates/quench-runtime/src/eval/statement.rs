@@ -229,11 +229,11 @@ fn eval_function_body_impl(
 
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
-            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) && acc_stack_len() > 0
-            {
-                // Set tail-call signal, then break to let the trampoline extract
-                // the accumulator from the acc_stack.
-                handle_tail_call(expr, env, in_arrow_function)?;
+            let handled_tail = is_last_stmt
+                && expr.as_ref().is_some_and(|e| is_tail_expr(e))
+                && acc_stack_len() > 0
+                && try_handle_tail_call(expr, env, in_arrow_function)?;
+            if handled_tail {
                 break;
             }
             // Non-tail return (or tail return outside an active trampoline).
@@ -313,34 +313,39 @@ fn eval_function_body_impl(
     Ok(last_val)
 }
 
-/// Handle a tail-call return expression: resolve callee and args, then
-/// set the thread-local signal for the trampoline to pick up.
-fn handle_tail_call(
+/// Handle a tail-call return expression when eligible. Returns true if a tail-call
+/// signal was set (async/generator callees are excluded — they use Promise wrapping).
+fn try_handle_tail_call(
     expr: &Option<Box<Expression>>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
-) -> Result<(), JsError> {
-    if let Some(e) = expr.as_ref() {
-        if let Expression::Call { callee, arguments } = e.as_ref() {
-            let args: Vec<Value> = arguments
-                .iter()
-                .map(|arg| eval_expression(arg, env, in_arrow_function))
-                .collect::<Result<Vec<_>, _>>()?;
-            let (callee_val, this_val) = match callee.as_ref() {
-                Expression::Member { .. } => {
-                    let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
-                    (func, this)
-                }
-                _ => (
-                    eval_expression(callee, env, in_arrow_function)?,
-                    Value::Undefined,
-                ),
-            };
-            let function = resolve_callee_to_function(callee_val)?;
-            set_tail_call_signal(TailCallSignal::new(function, args, this_val));
+) -> Result<bool, JsError> {
+    let Some(e) = expr.as_ref() else {
+        return Ok(false);
+    };
+    let Expression::Call { callee, arguments } = e.as_ref() else {
+        return Ok(false);
+    };
+    let args: Vec<Value> = arguments
+        .iter()
+        .map(|arg| eval_expression(arg, env, in_arrow_function))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (callee_val, this_val) = match callee.as_ref() {
+        Expression::Member { .. } => {
+            let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
+            (func, this)
         }
+        _ => (
+            eval_expression(callee, env, in_arrow_function)?,
+            Value::Undefined,
+        ),
+    };
+    let function = resolve_callee_to_function(callee_val)?;
+    if function.is_async || function.is_generator {
+        return Ok(false);
     }
-    Ok(())
+    set_tail_call_signal(TailCallSignal::new(function, args, this_val));
+    Ok(true)
 }
 
 /// Recursively find a tail-call return inside a block at the last position.
@@ -358,8 +363,9 @@ fn handle_tail_call_in_block(
 
     // Last statement is a Return → check for tail call.
     if let Statement::Return(ref expr) = last_stmt {
-        if expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
-            handle_tail_call(expr, env, in_arrow_function)?;
+        if expr.as_ref().is_some_and(|e| is_tail_expr(e))
+            && try_handle_tail_call(expr, env, in_arrow_function)?
+        {
             return Ok(Some(()));
         }
         // Non-tail return inside block: evaluate it and propagate via control flow.
