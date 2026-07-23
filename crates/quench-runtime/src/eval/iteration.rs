@@ -128,18 +128,84 @@ fn take_for_of_suspend() -> Option<crate::value::generator::ForOfSuspend> {
 thread_local! {
     static PENDING_FOR_OF: RefCell<Option<crate::value::generator::ForOfSuspend>> =
         const { RefCell::new(None) };
+    static PENDING_YIELD_DELEGATE: RefCell<Option<crate::value::generator::YieldDelegateSuspend>> =
+        const { RefCell::new(None) };
 }
 
-fn stmt_index_after_first_yield(body: &Statement) -> Option<usize> {
+pub(crate) fn stage_yield_delegate_suspend(state: crate::value::generator::YieldDelegateSuspend) {
+    PENDING_YIELD_DELEGATE.with(|cell| *cell.borrow_mut() = Some(state));
+}
+
+pub(crate) fn take_pending_yield_delegate_suspend(
+) -> Option<crate::value::generator::YieldDelegateSuspend> {
+    PENDING_YIELD_DELEGATE.with(|cell| cell.borrow_mut().take())
+}
+
+/// Evaluate `yield*` with per-value generator suspension.
+pub fn eval_yield_delegate(
+    expr: &Expression,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    if let Some(state) = take_pending_yield_delegate_suspend() {
+        return continue_yield_delegate(state, env);
+    }
+    let iterable = eval_expression(expr, env, in_arrow_function)?;
+    let iterator = match iterable {
+        Value::Generator(gen) => {
+            crate::value::generator::generator_as_iterator_object(gen)
+        }
+        Value::Object(o) => obtain_iterator(&o)?,
+        _ => {
+            return Err(JsError(
+                "TypeError: delegated iterable is not iterable".to_string(),
+            ))
+        }
+    };
+    continue_yield_delegate(
+        crate::value::generator::YieldDelegateSuspend { iterator, index: 0 },
+        env,
+    )
+}
+
+fn continue_yield_delegate(
+    mut state: crate::value::generator::YieldDelegateSuspend,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    loop {
+        let (value, done) = take_iterator_step(&state.iterator, &mut state.index, env)?;
+        if done {
+            return Ok(crate::interpreter::take_generator_resume_value());
+        }
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(Value::Undefined);
+        }
+        let resume_val = crate::interpreter::take_generator_resume_value();
+        crate::interpreter::set_generator_yield(value);
+        crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
+        stage_yield_delegate_suspend(state);
+        return Ok(resume_val);
+    }
+}
+
+fn stmt_index_of_first_yield(body: &Statement) -> Option<usize> {
     let Statement::Block(stmts) = body else {
         return None;
     };
     for (i, stmt) in stmts.iter().enumerate() {
         if crate::value::generator_replay::count_yields_in_stmt(stmt) > 0 {
-            return Some(i + 1);
+            return Some(i);
         }
     }
     None
+}
+
+fn stmt_index_after_first_yield(body: &Statement) -> Option<usize> {
+    stmt_index_of_first_yield(body).map(|i| i + 1)
+}
+
+fn yield_delegate_pending() -> bool {
+    PENDING_YIELD_DELEGATE.with(|cell| cell.borrow().is_some())
 }
 
 fn eval_for_of_iterator(
@@ -150,20 +216,21 @@ fn eval_for_of_iterator(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
     mut index: usize,
-    mut pending_resume: Option<(Value, bool, Option<usize>)>,
+    mut pending_resume: Option<(Value, bool, Option<usize>, bool)>,
 ) -> Result<Value, JsError> {
     let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     let mut completion = Value::Undefined;
     loop {
-        let (item, body_only, body_stmt_resume) = if let Some(resume) = pending_resume.take() {
-            resume
-        } else {
-            let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
-            if done {
-                break;
-            }
-            (item, false, None)
-        };
+        let (item, body_only, body_stmt_resume, resume_at_yield_stmt) =
+            if let Some(resume) = pending_resume.take() {
+                resume
+            } else {
+                let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
+                if done {
+                    break;
+                }
+                (item, false, None, false)
+            };
         match run_for_of_iteration(
             variable,
             &item,
@@ -214,6 +281,7 @@ fn run_for_of_iteration(
     in_arrow_function: bool,
     body_only: bool,
     body_stmt_resume: Option<usize>,
+    resume_at_yield_stmt: bool,
 ) -> Result<ForOfIterResult, JsError> {
     if per_iteration && !body_only {
         env.borrow_mut().push_scope();
@@ -231,8 +299,13 @@ fn run_for_of_iteration(
         }
         if body_only {
             if let (Some(start), Statement::Block(stmts)) = (body_stmt_resume, body) {
+                let slice = if resume_at_yield_stmt {
+                    &stmts[start..=start.min(stmts.len().saturating_sub(1))]
+                } else {
+                    &stmts[start..]
+                };
                 return crate::eval::statement::eval_statements(
-                    &stmts[start..],
+                    slice,
                     env,
                     false,
                     in_arrow_function,
@@ -320,7 +393,7 @@ pub fn eval_for_of(
             env,
             suspend.in_arrow_function,
             suspend.index,
-            Some((suspend.item, true, suspend.body_stmt_resume)),
+            Some((suspend.item, true, suspend.body_stmt_resume, suspend.resume_at_yield_stmt)),
         );
     }
 

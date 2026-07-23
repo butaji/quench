@@ -79,14 +79,7 @@ pub fn eval_expression(
             Ok(resume_val)
         }
         Expression::YieldDelegate(expr) => {
-            let iterable = crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
-            let items = crate::eval::iteration::get_iterator(&iterable)?;
-            let mut last_result = Value::Undefined;
-            for next_val in items {
-                crate::interpreter::set_generator_yield(next_val);
-                last_result = crate::interpreter::take_generator_resume_value();
-            }
-            Ok(last_result)
+            crate::eval::iteration::eval_yield_delegate(expr, env, in_arrow_function)
         }
         Expression::Identifier(name) => eval_identifier(name, env, in_arrow_function),
         Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
