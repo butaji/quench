@@ -161,7 +161,7 @@
       "id": 24,
       "path": "test/language/statements/for-in",
       "tests": 115,
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": 25,
