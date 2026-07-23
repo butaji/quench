@@ -1,5 +1,5 @@
 {
-  "failed": 23,
+  "failed": 21,
   "groups": [
     {
       "count": 1,
@@ -84,16 +84,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Frozen objects can't be changed\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/computed-name-toprimitive-symbol.js"
       ],
       "reason": "Test262Error: Symbol() should be an own property\")",
@@ -109,16 +99,6 @@
       "reason": "Test262Error: lastIndex descriptor enumerable should be false\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js"
-      ],
-      "reason": "Test262Error: length descriptor enumerable should be false\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js"
       ]
     },
     {
@@ -232,7 +212,7 @@
       ]
     }
   ],
-  "passed": 4344,
+  "passed": 4346,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
