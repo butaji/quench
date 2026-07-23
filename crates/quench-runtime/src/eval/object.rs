@@ -333,7 +333,7 @@ fn assign_to_primitive_boxed(
 }
 
 /// Assign to an ordinary object.
-fn assign_to_object(
+pub(crate) fn assign_to_object(
     o: &Rc<RefCell<Object>>,
     prop_name: &str,
     value: &Value,

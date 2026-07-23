@@ -176,7 +176,7 @@ pub fn instantiate_with_fields(
         )
     };
 
-    let result = if has_super {
+    let _ = if has_super {
         if body_calls_super {
             call_env
                 .borrow_mut()
@@ -253,6 +253,10 @@ pub fn build_constructor_env(
     if let Some(ref sc) = class.super_class {
         let sv = eval_expression(sc, env, false)?;
         call_env.set_super_class(sv);
+    } else {
+        // Base class (no extends): super resolves to the class itself,
+        // so super.property looks up the class prototype's prototype chain.
+        call_env.set_super_class(Value::Class(Box::new(class.clone())));
     }
 
     for (i, param) in class.constructor_params.iter().enumerate() {
@@ -438,11 +442,9 @@ pub fn is_constructor_value(val: &Value) -> bool {
                 true
             } else if nf.constructable {
                 // Special built-ins (e.g. Proxy) that have [[Construct]] but
-                // deliberately no .prototype property.
+                // deliberately no .prototype property.  Bound functions set
+                // this flag based on the target's constructability.
                 true
-            } else if let Some(Value::String(n)) = nf.get_property("name") {
-                // Bound functions have [[Construct]] but no .prototype
-                n.starts_with("bound ")
             } else {
                 false
             }
@@ -830,6 +832,18 @@ mod tests {
         assert_eq!(r, Value::Number(7.0));
     }
 
+    #[test]
+    fn static_private_field_in_static_init_block() {
+        // test262: language/statements/class/static-init-scope-private.js
+        // Static init blocks must share the private-name scope so that
+        // C.#privateName is accessible during class definition.
+        let r = eval(
+            "var probe; class C { static #x = 42; static { probe = C.#x; } } probe",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
     // ─── arguments object in constructor ─────────────────────────────────────
 
     #[test]
@@ -1007,6 +1021,68 @@ mod tests {
         let r = eval("var obj = {}; class C extends obj {}");
         assert!(r.is_err());
     }
+
+    #[test]
+    fn class_extends_arrow_function_throws() {
+        let r = eval("var fn = () => {}; class C extends fn {}");
+        assert!(
+            r.is_err(),
+            "arrow function should not be a valid superclass: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn class_extends_bound_arrow_function_throws() {
+        let r = eval("var fn = (() => {}).bind(); class C extends fn {}");
+        assert!(
+            r.is_err(),
+            "bound arrow function should not be a valid superclass: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn class_extends_arrow_function_proto_unreached() {
+        let r = eval(
+            r#"var fn = () => {};
+            try { class C extends fn {}; "no error" } catch(e) { "error thrown" }"#,
+        );
+        assert_eq!(r.unwrap(), Value::String("error thrown".into()));
+    }
+
+    #[test]
+    fn class_extends_bound_arrow_proto_unreached() {
+        let r = eval(
+            r#"var bound = (() => {}).bind();
+            try { class C extends bound {}; "no error" } catch(e) { "error thrown" }"#,
+        );
+        assert_eq!(r.unwrap(), Value::String("error thrown".into()));
+    }
+
+    #[test]
+    fn bound_function_from_regular_fn_is_constructable() {
+        let r = eval("var fn = function() {}.bind(null); new fn()");
+        assert!(
+            r.is_ok(),
+            "bound function from regular fn should be constructable: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn class_extends_proxy_around_arrow_throws() {
+        // Proxy wrapping an arrow function should NOT be a valid superclass.
+        let r = eval(
+            r#"var proxy = new Proxy(() => {}, {
+              get: function() { throw new Error("prototype unreachable"); },
+            });
+            try { class C extends proxy {}; "no error" } catch(e) { "error thrown" }"#,
+        );
+        assert_eq!(r.unwrap(), Value::String("error thrown".into()));
+    }
+
+
 
     // ─── prop_key_to_string ────────────────────────────────────────────────
 
