@@ -856,6 +856,31 @@ mod tests {
     // ─── Private fields ─────────────────────────────────────────────────────
 
     #[test]
+    fn static_getter_returns_value() {
+        let r = eval("class C { static get method() { return 42; } } C.method").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn static_private_method_direct_call() {
+        let r = eval(
+            "class C { static #m() { return 42; } static call() { return this.#m(); } } C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn static_private_method_via_getter() {
+        let r = eval(
+            "class C { static #m() { return 42; } static get method() { return this.#m; } } \
+             C.method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn private_method_not_clobbered_by_hash_string_field() {
         let r = eval(
             "class C { #m() { return 'Test262'; } ['#m'] = 0; \
