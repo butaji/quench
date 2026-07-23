@@ -881,6 +881,17 @@ mod tests {
     }
 
     #[test]
+    fn static_getter_return_super_after_stmt() {
+        let r = eval(
+            "class B { static m() { return 1; } } \
+             class C extends B { static get x() { 0; return super.m(); } } \
+             C.x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
     fn static_private_method_not_has_own_property() {
         let r = eval(
             "class C { static async *#gen() {} static get gen() { return this.#gen; } } \

@@ -176,7 +176,8 @@ pub fn eval_function_body(
 
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
-            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) {
+            if is_last_stmt && expr.as_ref().is_some_and(|e| is_tail_expr(e)) && acc_stack_len() > 0
+            {
                 // Set tail-call signal, then break to let the trampoline extract
                 // the accumulator from the acc_stack. If no signal was set
                 // (e.g. callee is a NativeFunction, not a JS ValueFunction),
@@ -190,7 +191,7 @@ pub fn eval_function_body(
                     break;
                 }
             }
-            // Non-tail return.
+            // Non-tail return (or tail return outside an active trampoline).
             let val = match expr {
                 Some(e) => eval_expression(e, env, in_arrow_function)?,
                 None => Value::Undefined,
@@ -203,7 +204,9 @@ pub fn eval_function_body(
         // Per ES §14.2.1, the block's body is in tail position.
         if is_last_stmt {
             if let Statement::Block(inner_stmts) = stmt {
-                if let Some(()) = handle_tail_call_in_block(inner_stmts, env, in_arrow_function)? {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function)?.is_some()
+                {
                     // Tail call was set; break to let trampoline run.
                     break;
                 }
