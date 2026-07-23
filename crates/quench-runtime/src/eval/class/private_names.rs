@@ -454,6 +454,17 @@ fn scope_expression(expr: &mut Expression, class_id: usize) {
         Expression::Yield(Some(e)) => scope_expression(e, class_id),
         Expression::Yield(None) => {}
         Expression::YieldDelegate(inner) => scope_expression(inner, class_id),
+        Expression::ObjectPattern(props) => {
+            for (key, binding) in props.iter_mut() {
+                scope_property_key(key, class_id);
+                scope_binding_element(binding, class_id);
+            }
+        }
+        Expression::ArrayPattern(bindings) => {
+            for binding in bindings.iter_mut() {
+                scope_binding_element(binding, class_id);
+            }
+        }
         _ => {}
     }
 }
@@ -499,6 +510,23 @@ fn is_unscoped_private(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::Context;
+
+    #[test]
+    fn destructure_assign_scopes_private_field_in_object_pattern() {
+        let src = "class Base { constructor(o) { return o; } } \
+                   class C extends Base { \
+                     #field; \
+                     m() { \
+                       var init = () => new C(this); \
+                       init(); \
+                       ({a: this.#field} = {a: 'pass'}); \
+                       return this.#field; \
+                     } \
+                   } \
+                   C.prototype.m.call({})";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("pass".into()));
+    }
 
     #[test]
     fn distinct_classes_with_same_private_ident_do_not_share_storage() {

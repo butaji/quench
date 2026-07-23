@@ -106,18 +106,27 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     // has_label will only search up to this depth.
     crate::interpreter::set_eval_barrier_depth(label_depth);
     crate::interpreter::push_label_scope();
-    let result = if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
-        crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
-    } else {
-        let is_direct = crate::interpreter::is_direct_eval();
-        let this_value = if is_direct && strict_inherited {
-            Value::Undefined
+    let result = if crate::interpreter::is_direct_eval() {
+        if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
+            crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         } else {
-            ctx.env
-                .borrow()
-                .get("globalThis")
-                .unwrap_or(Value::Undefined)
-        };
+            let this_value = if strict_inherited {
+                Value::Undefined
+            } else {
+                ctx.env
+                    .borrow()
+                    .get("globalThis")
+                    .unwrap_or(Value::Undefined)
+            };
+            crate::interpreter::set_this_binding(&ctx.env, this_value);
+            crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
+        }
+    } else {
+        let this_value = ctx
+            .env
+            .borrow()
+            .get("globalThis")
+            .unwrap_or(Value::Undefined);
         crate::interpreter::set_this_binding(&ctx.env, this_value);
         crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };

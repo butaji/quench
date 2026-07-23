@@ -364,6 +364,7 @@ fn walk_expr(
             variable,
             iterable,
             body,
+            ..
         } => expr_check(variable) || expr_check(iterable) || stmt_check(body),
         Expression::ForIn {
             variable,
@@ -496,6 +497,19 @@ mod tests {
         )
         .unwrap_err();
         assert!(is_syntax_error(&err), "got {}", err.0);
+    }
+
+    #[test]
+    fn nested_indirect_eval_arguments_in_class_field_sees_outer_var() {
+        let r = eval(
+            "var arguments = 1; \
+             class C { \
+               x = () => { var t = () => (0, eval)('arguments;'); return t(); }; \
+             } \
+             new C().x()",
+        )
+        .unwrap();
+        assert_eq!(r, crate::value::Value::Number(1.0));
     }
 
     #[test]

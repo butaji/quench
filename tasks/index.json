@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 17,
+  "current_stage": 20,
   "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC — small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
@@ -209,37 +209,23 @@
       "id": 16,
       "path": "test/language/statements/class",
       "tests": 4367,
-      "status": "done",
-      "difficulty": 7,
-      "impl": "rust",
-      "rust_loc": "200–500",
-      "js_loc": "0–0",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "status": "done"
     },
     {
       "id": 17,
       "path": "test/language/statements/const",
       "tests": 136,
-      "status": "in_progress",
-      "difficulty": 2,
-      "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 23,
-      "pass_rate": "83.1%"
+      "status": "done",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 18,
       "path": "test/language/statements/continue",
       "tests": 24,
-      "status": "pending",
-      "difficulty": 2,
-      "impl": "rust",
-      "rust_loc": "0–0",
-      "js_loc": "0–0",
-      "failed": 1,
-      "pass_rate": "95.8%"
+      "status": "done",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 19,
@@ -257,13 +243,13 @@
       "id": 20,
       "path": "test/language/statements/do-while",
       "tests": 36,
-      "status": "pending",
+      "status": "in_progress",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0–0",
       "js_loc": "0–0",
-      "failed": 36,
-      "pass_rate": "0.0%"
+      "failed": 7,
+      "pass_rate": "80.6%"
     },
     {
       "id": 21,
