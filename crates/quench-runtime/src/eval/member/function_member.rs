@@ -31,6 +31,14 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         set_thrown_value(err);
         return Err(js_err);
     }
+    if f.strict && (prop_name == "arguments" || prop_name == "caller") {
+        let (err, js_err) = create_js_error_with_type(
+            "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+            "TypeError",
+        );
+        set_thrown_value(err);
+        return Err(js_err);
+    }
     match prop_name {
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
         "length" => eval_function_length(f),

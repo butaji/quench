@@ -154,14 +154,9 @@ fn eval_super_call(
     }
 
     let current_this = get_this_binding(env);
-    let field_target = match (&this_obj, &current_this) {
-        (Some(orig), Value::Object(curr)) if !Rc::ptr_eq(orig, curr) => Rc::clone(orig),
-        _ => match &current_this {
-            Value::Object(o) => Rc::clone(o),
-            _ => {
-                return result;
-            }
-        },
+    let field_target = match &current_this {
+        Value::Object(o) => crate::eval::object::private_field_object(o),
+        _ => return result,
     };
 
     // After super() succeeds, run pending field initializers (for derived
