@@ -149,6 +149,7 @@ pub(crate) fn set_boxed_value(obj: &mut Object, value: Value) {
 fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     use prototype_methods::{
         object_prototype_has_own_property, object_prototype_is_prototype_of,
+        object_prototype_lookup_getter, object_prototype_lookup_setter,
         object_prototype_property_is_enumerable,
     };
 
@@ -202,5 +203,15 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_property_is_enumerable,
         ))),
+    );
+
+    object_proto_rc.borrow_mut().set(
+        "__lookupGetter__",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_getter))),
+    );
+
+    object_proto_rc.borrow_mut().set(
+        "__lookupSetter__",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_setter))),
     );
 }

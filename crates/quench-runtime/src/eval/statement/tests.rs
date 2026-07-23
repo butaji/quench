@@ -1039,6 +1039,7 @@ mod acc_stack {
         acc_stack_len, acc_stack_pop_to, acc_stack_push, acc_stack_top, acc_stack_update_last,
     };
     use crate::value::Value;
+    use crate::Context;
 
     fn sym(desc: &'static str) -> Value {
         crate::builtins::symbol::new_symbol(desc)
@@ -1127,6 +1128,25 @@ mod acc_stack {
         acc_stack_push(sym("L2a"));
         assert_eq!(acc_stack_len(), 2);
         assert!(acc_stack_top().is_some_and(|v| v.is_symbol_with("L2a")));
+        drain();
+    }
+
+    #[test]
+    fn acc_stack_empty_after_proxy_class_construct() {
+        drain();
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "class P { constructor() { return new Proxy(this, { get(o,k){ 1; return o[k]; } }); } } \
+             class T extends P { method() { return 1; } } \
+             new T()",
+        )
+        .unwrap();
+        assert_eq!(
+            acc_stack_len(),
+            0,
+            "class construction must not leak acc_stack entries"
+        );
         drain();
     }
 }

@@ -399,7 +399,8 @@ fn assign_to_object(
     }
 
     if crate::value::is_private_name_key(prop_name) {
-        return assign_private_name(o, prop_name, value);
+        let target = private_field_object(o);
+        return assign_private_name(&target, prop_name, value);
     }
 
     // Strict mode checks.

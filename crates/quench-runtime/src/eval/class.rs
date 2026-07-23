@@ -195,6 +195,7 @@ pub fn eval_class_expr(
                 let prev_strict = crate::interpreter::is_strict_mode();
                 crate::interpreter::set_strict_mode(true);
                 let _ = crate::eval::statement::eval_function_body(body, &block_env, false)?;
+                let _ = crate::interpreter::take_control_flow();
                 if crate::value::generator_replay::yield_pending() {
                     return Ok(Value::Undefined);
                 }
@@ -285,6 +286,7 @@ pub fn call_super_constructor(
     } else {
         crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
         let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
+        let _ = crate::interpreter::take_control_flow();
         finish_constructor(result, &this_val)
     }
 }
