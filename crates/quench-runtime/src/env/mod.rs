@@ -39,6 +39,8 @@ pub struct Environment {
     is_static_class_body_flag: bool,
     /// Class id for resolving private names in direct eval (PrivateEnvironment).
     private_class_id: Option<usize>,
+    /// Private names declared on the class (for direct-eval early errors).
+    declared_private_names: std::collections::HashSet<String>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -68,6 +70,7 @@ impl Environment {
             pending_fields: None,
             is_static_class_body_flag: false,
             private_class_id: None,
+            declared_private_names: std::collections::HashSet::new(),
         }
     }
 
@@ -79,6 +82,7 @@ impl Environment {
             pending_fields: None,
             is_static_class_body_flag: false,
             private_class_id: None,
+            declared_private_names: std::collections::HashSet::new(),
         }
     }
 
@@ -117,11 +121,31 @@ impl Environment {
         captured.super_class = self.super_class.clone();
         captured.is_static_class_body_flag = self.is_static_class_body_flag;
         captured.private_class_id = self.private_class_id;
+        captured.declared_private_names = self.declared_private_names.clone();
         captured
     }
 
     pub fn set_private_class_id(&mut self, class_id: usize) {
         self.private_class_id = Some(class_id);
+    }
+
+    pub fn set_private_class_context(
+        &mut self,
+        class_id: usize,
+        declared: std::collections::HashSet<String>,
+    ) {
+        self.private_class_id = Some(class_id);
+        self.declared_private_names = declared;
+    }
+
+    pub fn declared_private_names(&self) -> std::collections::HashSet<String> {
+        if self.private_class_id.is_some() {
+            return self.declared_private_names.clone();
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().declared_private_names();
+        }
+        std::collections::HashSet::new()
     }
 
     pub fn private_class_id(&self) -> Option<usize> {
@@ -423,6 +447,7 @@ impl Clone for Environment {
             pending_fields: None,
             is_static_class_body_flag: self.is_static_class_body_flag,
             private_class_id: self.private_class_id,
+            declared_private_names: self.declared_private_names.clone(),
         }
     }
 }
