@@ -296,6 +296,70 @@ fn eval_super_member(
     Ok(Value::Undefined)
 }
 
+/// Evaluate super.property = value — ES §10.2.9 [[Set]] on the superclass prototype.
+/// Walks the superclass prototype chain to find a setter; if none, assigns to `this`.
+pub fn set_super_property(
+    property: &PropertyKey,
+    value: Value,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let super_val = get_super_value(env).ok_or_else(|| {
+        JsError("ReferenceError: super is only valid in class methods".to_string())
+    })?;
+    let prop_name = eval_property_key(property, env, in_arrow_function)?;
+    let this_val = get_this_binding(env);
+
+    // Get the prototype of the superclass (same logic as eval_super_member).
+    let proto = match &super_val {
+        Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
+        Value::Object(o) => {
+            if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
+                Rc::clone(o)
+            } else {
+                let proto_val = o.borrow().get("prototype");
+                match proto_val {
+                    Some(Value::Object(proto_obj)) => proto_obj.clone(),
+                    _ => {
+                        let mut p = Object::new(ObjectKind::Ordinary);
+                        p.set("constructor", Value::Object(Rc::clone(o)));
+                        Rc::new(RefCell::new(p))
+                    }
+                }
+            }
+        }
+        _ => return Ok(value),
+    };
+
+    // Walk the prototype chain to find a setter (ES §10.2.9.2 OrdinarySetWithOwnDescriptor).
+    let this_obj = match &this_val {
+        Value::Object(o) => Some(o.clone()),
+        _ => None,
+    };
+
+    let mut current: Option<Rc<RefCell<Object>>> = Some(proto);
+    while let Some(obj_rc) = current {
+        {
+            let obj = obj_rc.borrow();
+            let setter_clone = obj.get_setter(&prop_name).cloned();
+            let proto = obj.prototype.clone();
+            drop(obj);
+            if let Some(setter_storage) = setter_clone {
+                crate::eval::object::call_setter(&obj_rc, &setter_storage, value.clone(), env)?;
+                return Ok(value);
+            }
+            current = proto;
+        }
+    }
+
+    // No setter found. Assign to `this` directly.
+    if let Some(this_obj) = this_obj {
+        crate::eval::object::assign_to_object(&this_obj, &prop_name, &value, env)?;
+    }
+
+    Ok(value)
+}
+
 /// Evaluate a new expression (constructor call)
 pub fn eval_new(
     constructor: &Expression,
