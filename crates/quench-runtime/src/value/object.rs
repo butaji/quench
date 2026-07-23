@@ -52,6 +52,7 @@ impl Object {
             holes: HashSet::new(),
             extensible: true,
             data,
+            call_slot: None,
         }
     }
 
@@ -78,6 +79,7 @@ impl Object {
             holes: HashSet::new(),
             extensible: true,
             data,
+            call_slot: None,
         }
     }
 
