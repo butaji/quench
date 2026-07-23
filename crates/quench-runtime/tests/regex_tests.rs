@@ -177,6 +177,27 @@ fn test_regexp_subclass_default_constructor() {
 }
 
 #[test]
+fn test_regexp_subclass_last_index_own_property() {
+    // `lastIndex` must be an own data property on subclass instances
+    // (test262: test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js)
+    let mut ctx = setup();
+    let result = ctx.eval(
+        r#"
+        class RE extends RegExp {}
+        var re = new RE('39?');
+        re.exec('TC39');
+        var desc = Object.getOwnPropertyDescriptor(re, 'lastIndex');
+        desc !== undefined &&
+        desc.value === 0 &&
+        desc.writable === true &&
+        desc.enumerable === false &&
+        desc.configurable === false
+        "#,
+    );
+    assert_eq!(result.unwrap(), quench_runtime::Value::Boolean(true));
+}
+
+#[test]
 fn test_string_search_and_match_both_call_exec() {
     let mut ctx = setup();
     assert!(ctx.eval(r#"/abc/.exec("abcdef")"#).is_ok());
