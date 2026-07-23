@@ -93,6 +93,16 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
                 .first()
                 .cloned()
                 .unwrap_or(Value::String(String::new()));
+            if let Some(Value::Object(error_rc)) = get_native_this() {
+                let mut obj = error_rc.borrow_mut();
+                if obj.prototype.is_none() {
+                    obj.prototype = Some(Rc::clone(&proto_for_closure));
+                }
+                obj.set("message", message);
+                obj.set("name", Value::String(name_str.clone()));
+                drop(obj);
+                return Ok(Value::Object(error_rc));
+            }
             let error_obj =
                 Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
             let error_rc = Rc::new(RefCell::new(error_obj));
