@@ -102,6 +102,7 @@ fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsErr
     )?;
     match result {
         Value::Object(obj) => Ok(obj),
+        Value::Generator(gen) => Ok(crate::value::generator::generator_as_iterator_object(gen)),
         _ => Err(non_iterable_type_error()),
     }
 }
@@ -992,6 +993,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(err, Value::String("ITER_VAL_ERR".into()));
+    }
+
+    #[test]
+    fn array_prototype_symbol_iterator_generator_is_valid_iterator() {
+        let r = eval(
+            "Array.prototype[Symbol.iterator] = function* () { yield 1; yield 2; }; \
+             var pair = (function(){ var [a, b] = [99]; return [a, b]; })(); \
+             pair[0] + ',' + pair[1]",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("1,2".into()));
     }
 
     #[test]
