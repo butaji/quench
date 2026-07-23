@@ -83,35 +83,43 @@ pub fn assign_array_destructuring(
     if arr_rc.borrow().kind == ObjectKind::Array {
         return assign_array_with_iterator(bindings, arr_rc, env);
     }
-    let iter = obtain_iterator(arr_rc);
-    let iterator = iter.as_ref().unwrap_or(arr_rc);
-    assign_array_with_iterator(bindings, iterator, env)
+    let iter = obtain_iterator(arr_rc)?;
+    assign_array_with_iterator(bindings, &iter, env)
 }
 
-/// Obtain an iterator from an object (if it has Symbol.iterator).
-fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Option<Rc<RefCell<Object>>> {
-    if o.borrow().properties.contains_key("next") {
-        return Some(Rc::clone(o));
+/// Obtain an iterator object from an iterable per ES GetIterator.
+fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
+    if o.borrow().get("next").is_some() {
+        return Ok(Rc::clone(o));
     }
-    let symbol_obj = o.borrow().get("Symbol");
-    let symbol_obj = match symbol_obj {
-        Some(Value::Object(obj)) => obj,
-        _ => return None,
+    let Some(iter_sym) = crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") else {
+        return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
-    let iter_value = symbol_obj.borrow().get("iterator");
-    let iter_value = match iter_value {
-        Some(value @ Value::Object(_)) => value,
-        _ => return None,
+    let iter_method = symbol_keyed_property(o, &iter_sym)
+        .filter(|m| matches!(m, Value::Function(_) | Value::NativeFunction(_)));
+    let Some(iter_method) = iter_method else {
+        return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
-    let result = match crate::eval::function::call_value(iter_value.clone(), vec![]) {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    if let Value::Object(obj) = result {
-        Some(obj)
-    } else {
-        None
+    let result = crate::eval::function::call_value_with_this(
+        iter_method,
+        vec![],
+        Value::Object(Rc::clone(o)),
+    )?;
+    match result {
+        Value::Object(obj) => Ok(obj),
+        _ => Err(JsError("Cannot destructure non-iterable value".to_string())),
     }
+}
+
+/// Read a Symbol-keyed own property (assignment may store in `properties` or `symbol_properties`).
+fn symbol_keyed_property(o: &Rc<RefCell<Object>>, key: &Value) -> Option<Value> {
+    let Value::Symbol(sym) = key else {
+        return None;
+    };
+    let prop_key = sym.property_key();
+    let obj = o.borrow();
+    obj.get_own_value(&prop_key)
+        .or_else(|| obj.symbol_properties.get(&prop_key).cloned())
 }
 
 /// Assign destructuring bindings using an iterator.
@@ -509,7 +517,6 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
-
     #[test]
     fn array_rest_only_destructure() {
         let r = eval("var [...[a,b,c]] = [3,4,5]; a+b+c").unwrap();
@@ -519,6 +526,36 @@ mod tests {
     // ─── generator destructuring ─────────────────────────────────────────────
 
     #[test]
+    fn async_gen_default_empty_object_pattern() {
+        let r = eval(
+            "var access=0, obj=Object.defineProperty({}, 'attr', { get: function() { access++; } }); \
+             var n=0; class C { async *method({} = obj) { n=1; } } \
+             C.prototype.method.call(new C()).next(); n + access",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn destructure_default_array_literal() {
+        let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
+        assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn async_gen_default_array_pattern_from_iterator() {
+        let r = eval(
+            "var iter={}; \
+             iter[Symbol.iterator]=function(){ return { \
+               next:function(){ return {value:42,done:false}; } \
+             }; }; \
+             function f([v] = iter) { return v; } f()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn regular_fn_rest_destructure() {
         let r = eval("function f([...[a,b,c]]) { return a+b+c; } f([3,4,5])").unwrap();
         assert_eq!(r, Value::Number(12.0));
@@ -526,10 +563,8 @@ mod tests {
 
     #[test]
     fn standalone_gen_rest_destructure() {
-        let r = eval(
-            "function* f([...[a,b,c]]) { return a+b+c; } f([3,4,5]).next().value",
-        )
-        .unwrap();
+        let r =
+            eval("function* f([...[a,b,c]]) { return a+b+c; } f([3,4,5]).next().value").unwrap();
         assert_eq!(r, Value::Number(12.0));
     }
 
