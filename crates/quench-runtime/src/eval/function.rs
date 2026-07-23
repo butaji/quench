@@ -76,12 +76,13 @@ pub(crate) fn call_value_impl(
             } else if f.is_generator {
                 // Sync generator function: return a GeneratorObject (body not executed yet).
                 // Parameters are evaluated when generator.next() is first called.
-                let gen_obj = crate::value::GeneratorObject::new(
+                let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
                     f.params.clone(),
                     Rc::clone(&f.closure),
                     f.strict,
                 );
+                gen_obj.args = Some(args);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
@@ -343,6 +344,7 @@ fn binding_pattern_expression(pattern: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
         BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+        BindingElement::Rest(binding) => binding_pattern_expression(*binding),
         BindingElement::AssignmentTarget(expr) => expr,
     }
 }
@@ -361,6 +363,7 @@ fn declare_pattern_bindings(pattern: &BindingElement, env: &Rc<RefCell<Environme
             }
         }
         BindingElement::Default(binding, _) => declare_pattern_bindings(binding, env),
+        BindingElement::Rest(binding) => declare_pattern_bindings(binding, env),
         BindingElement::AssignmentTarget(_) => {}
     }
 }

@@ -89,27 +89,15 @@ impl GeneratorObject {
             .borrow_mut()
             .set_this(global_this);
         if let Some(ref args) = self.args {
-            for (i, param) in self.params.iter().enumerate() {
-                let param_value = match args.get(i).cloned() {
-                    Some(Value::Undefined) if param.default.is_some() => {
-                        crate::eval::expression::eval_expression(
-                            param.default.as_ref().unwrap(),
-                            &call_env,
-                            false,
-                        )?
-                    }
-                    Some(v) => v,
-                    None if param.default.is_some() => crate::eval::expression::eval_expression(
-                        param.default.as_ref().unwrap(),
-                        &call_env,
-                        false,
-                    )?,
-                    None => Value::Undefined,
-                };
-                call_env
-                    .borrow_mut()
-                    .define(param.name.clone(), param_value);
-            }
+            let stub = crate::value::ValueFunction::new(
+                None,
+                self.params.clone(),
+                (*self.body).clone(),
+                Rc::clone(&self.closure),
+                self.is_async,
+                true,
+            );
+            crate::eval::function::bind_params(&stub, &self.params, args, &call_env, false)?;
         }
         self.call_env = Some(Rc::clone(&call_env));
         Ok(call_env)
