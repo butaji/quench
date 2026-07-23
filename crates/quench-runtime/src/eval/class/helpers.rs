@@ -3224,6 +3224,26 @@ mod tests {
     }
 
     #[test]
+    fn super_in_arrow_field_initializer_assigns_to_instance() {
+        let r = eval(
+            "class C { func = () => { super.prop = 'test262'; } } \
+             let c = new C(); c.func(); c.prop",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn super_in_arrow_static_field_initializer_assigns_to_class() {
+        let r = eval(
+            "class C { static staticFunc = () => { super.staticProp = 'static test262'; } } \
+             C.staticFunc(); C.staticProp",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("static test262".into()));
+    }
+
+    #[test]
     fn symbol_subclass_super_call_throws_type_error() {
         let err = eval("class S extends Symbol {} new S();").unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
