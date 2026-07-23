@@ -1,5 +1,5 @@
 {
-  "failed": 248,
+  "failed": 241,
   "groups": [
     {
       "count": 1,
@@ -494,30 +494,19 @@
       ]
     },
     {
-      "count": 11,
+      "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-RangeError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-ReferenceError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-SyntaxError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-TypeError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-URIError.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js"
       ],
       "reason": "Test262Error: Expected true but got false\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Date.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Error.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-EvalError.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Function.js",
         "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Object.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-RangeError.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-ReferenceError.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass-builtins/subclass-Promise.js"
       ]
     },
     {
@@ -1127,7 +1116,7 @@
       ]
     }
   ],
-  "passed": 4119,
+  "passed": 4126,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
