@@ -10,6 +10,7 @@
 //! Env: TEST262_DIR=<path-to-test262>
 
 use quench_runtime::test262::metadata::Test262Metadata;
+use quench_runtime::test262::runner::default_test262_dir;
 use quench_runtime::test262::runner::run_single_test;
 use quench_runtime::test262::{HarnessLoader, QuenchHost, TestOutcome};
 
