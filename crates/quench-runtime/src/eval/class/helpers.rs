@@ -586,8 +586,13 @@ pub fn prop_key_to_string(
             if crate::value::generator_replay::yield_pending() {
                 return Ok(String::new());
             }
-            let prim = crate::value::to_primitive(&val, Some("string"))?;
-            Ok(crate::value::to_js_string(&prim))
+            match &val {
+                Value::Symbol(s) => Ok(s.property_key()),
+                _ => {
+                    let prim = crate::value::to_primitive(&val, Some("string"))?;
+                    Ok(crate::value::to_js_string(&prim))
+                }
+            }
         }
     }
 }
@@ -1344,6 +1349,18 @@ mod tests {
     fn prop_key_computed_symbol() {
         let r = eval(
             "class C { [Symbol.for('test')]() { return 'symbol'; } } var desc = Object.getOwnPropertyNames(C.prototype)[0]; desc !== 'constructor'",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn computed_symbol_class_fields_are_distinct_own_properties() {
+        let r = eval(
+            "var x = Symbol(); var y = Symbol(); \
+             class C { [x]; [y] = 42; m() {} } \
+             var c = new C(); \
+             c[x] === undefined && c[y] === 42",
         )
         .unwrap();
         assert_eq!(r, Value::Boolean(true));
