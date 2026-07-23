@@ -217,6 +217,14 @@ impl IteratorResult {
     }
 }
 
+/// Wrap a generator as an iterator object ({ next, return }) for destructuring.
+pub fn generator_as_iterator_object(gen: Rc<RefCell<GeneratorObject>>) -> Rc<RefCell<Object>> {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.set("next", generator_next_fn(Rc::clone(&gen)));
+    obj.set("return", generator_return_fn(gen));
+    Rc::new(RefCell::new(obj))
+}
+
 /// Create a NativeFunction that calls GeneratorObject::next().
 pub fn generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
