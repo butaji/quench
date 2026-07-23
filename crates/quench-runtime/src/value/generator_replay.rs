@@ -188,6 +188,7 @@ fn count_yields_in_property_value(value: &crate::ast::PropertyValue) -> usize {
     use crate::ast::PropertyValue;
     match value {
         PropertyValue::Value(expr) => count_yields_in_expr(expr),
+        PropertyValue::Spread(expr) => count_yields_in_expr(expr),
         PropertyValue::Getter { body, .. } | PropertyValue::Setter { body, .. } => {
             body.iter().map(count_yields_in_stmt).sum()
         }

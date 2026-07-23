@@ -83,6 +83,41 @@ pub fn register_array_buffer(ctx: &mut Context) {
     let ab_fn = Value::NativeFunction(ab_fn_rc);
 
     ctx.set_global("ArrayBuffer".to_string(), ab_fn);
+    register_shared_array_buffer(ctx);
+}
+
+fn register_shared_array_buffer(ctx: &mut Context) {
+    let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
+    let proto_clone = Rc::clone(&proto_rc);
+    let mut sab_native = NativeFunction::new_with_prototype(
+        move |args| {
+            let len = args.first().map(to_number).unwrap_or(0.0);
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            if let Value::Object(this_obj) = this_val {
+                this_obj.borrow_mut().set("byteLength", Value::Number(len));
+                if this_obj.borrow().prototype.is_none() {
+                    this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
+                }
+                Ok(Value::Object(this_obj))
+            } else {
+                Err(crate::JsError::new(
+                    "TypeError: SharedArrayBuffer constructor requires 'new'",
+                ))
+            }
+        },
+        Rc::clone(&proto_rc),
+    );
+    sab_native.name = "SharedArrayBuffer".to_string();
+    let sab_fn_rc = Rc::new(sab_native);
+    let _ = sab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    ctx.set_global(
+        "SharedArrayBuffer".to_string(),
+        Value::NativeFunction(sab_fn_rc),
+    );
 }
 
 #[cfg(test)]
