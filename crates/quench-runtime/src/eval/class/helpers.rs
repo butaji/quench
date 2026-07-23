@@ -728,6 +728,16 @@ mod tests {
     }
 
     #[test]
+    fn static_private_method_not_has_own_property() {
+        let r = eval(
+            "class C { static async *#gen() {} static get gen() { return this.#gen; } } \
+             Object.prototype.hasOwnProperty.call(C, '#gen')",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
     fn private_method_not_clobbered_by_hash_string_field() {
         let r = eval(
             "class C { #m() { return 'Test262'; } ['#m'] = 0; \
