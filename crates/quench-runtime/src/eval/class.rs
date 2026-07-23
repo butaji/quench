@@ -46,7 +46,10 @@ pub fn eval_class_expr(
             .declare_var(name.to_string(), VarKind::Const);
         scope_env
     } else {
-        Rc::clone(env)
+        // Anonymous class (e.g. field initializer): use a child env so
+        // set_private_class_context below does not clobber the enclosing
+        // class id on `env` (needed for sibling nested classes).
+        Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))))
     };
 
     // Set super_class on class_scope so static method closures capture it.
