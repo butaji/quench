@@ -174,6 +174,18 @@ pub fn get_object_property_descriptor(
 ) -> Result<Value, JsError> {
     let obj = o.borrow();
 
+    if prop.contains('\0') {
+        if let Some(value) = obj.symbol_properties.get(prop) {
+            let flags = obj.get_descriptor(prop).unwrap_or_else(|| PropertyFlags {
+                value: Some(value.clone()),
+                writable: true,
+                enumerable: true,
+                configurable: true,
+            });
+            return Ok(make_descriptor_value(flags, value.clone()));
+        }
+    }
+
     // Accessor property (get/set installed via defineProperty or object literal)
     if obj.has_getter(prop) || obj.has_setter(prop) {
         let flags = obj.get_descriptor(prop).unwrap_or(PropertyFlags {
@@ -255,6 +267,18 @@ pub fn get_function_property_descriptor(
         // { [[Value]]: len, [[Writable]]: false, [[Enumerable]]: false,
         // [[Configurable]]: true }.
         return make_property_descriptor_number(len, false, false, true);
+    }
+    if prop == "prototype" {
+        let proto = Value::Object(f.get_prototype());
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(proto.clone()),
+                writable: true,
+                enumerable: false,
+                configurable: !f.empty_prototype,
+            },
+            proto,
+        ));
     }
     Ok(Value::Undefined)
 }

@@ -54,6 +54,9 @@ pub(crate) fn throw_this_before_super() -> Result<Value, JsError> {
 }
 
 pub(crate) fn check_this_access_allowed(env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+    if crate::interpreter::is_inside_super_call() {
+        return Ok(());
+    }
     if let Some(class) = constructing_class_for_super() {
         if class.super_class.is_some() && !crate::interpreter::is_this_binding_initialized(env) {
             throw_this_before_super()?;
@@ -372,8 +375,10 @@ pub fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsEr
 }
 
 fn call_super_callable(func: Value, args: Vec<Value>, this_val: &Value) -> Result<Value, JsError> {
-    let result = crate::eval::function::call_value_with_this(func, args, this_val.clone())?;
-    finish_constructor(result, this_val)
+    crate::interpreter::push_inside_super_call();
+    let result = crate::eval::function::call_value_with_this(func, args, this_val.clone());
+    crate::interpreter::pop_inside_super_call();
+    finish_constructor(result?, this_val)
 }
 
 /// Call the super constructor or use default behavior; returns effective `this`.
@@ -482,13 +487,11 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
-/// Get the superclass constructor's own `[[Prototype]]` (for Object.getPrototypeOf(class)).
-/// Returns:
-/// - None if class extends null (so Object.getPrototypeOf(C) === null)
-/// - The superclass constructor VALUE otherwise (for `extends Base`, returns `Value::Class(Base)`)
+/// Get the class constructor's own `[[Prototype]]` (for Object.getPrototypeOf(class)).
+/// For `extends null`, returns %FunctionPrototype%; for `extends Base`, returns `Base`.
 pub fn get_super_class_own_proto(super_class_val: &Value) -> Option<Value> {
     match super_class_val {
-        Value::Null => None,
+        Value::Null => builtins::get_function_prototype().map(Value::Object),
         // For `class Derived extends Base`, the superclass VALUE IS the class itself.
         // Object.getPrototypeOf(Derived) should return `Base` as a Value.
         Value::Class(class) => Some(Value::Class(class.clone())),
@@ -527,11 +530,9 @@ pub fn create_class_prototype_helper_with_env(
             ));
         }
 
-        // For NativeFunction (e.g. bound functions), use proper member access
-        // to get the .prototype property (handles Object.defineProperty accessors).
-        // Per ES spec §15.2.4 step 5f: if Get(ctor, "prototype") is not Object/Null, throw TypeError
-        // Per ES §26.2.1: Proxy is not subclassable (no valid .prototype for extends).
-        if let Value::NativeFunction(nf) = &super_class_val {
+        if matches!(&super_class_val, Value::Null) {
+            None
+        } else if let Value::NativeFunction(nf) = &super_class_val {
             if nf.name == "Proxy" {
                 return Err(JsError(
                     "TypeError: superclass constructor prototype is not an object or null"
@@ -925,9 +926,36 @@ mod tests {
     }
 
     #[test]
-    fn class_extends_null() {
-        let r = eval("class C extends null {} Object.getPrototypeOf(C)").unwrap();
+    fn symbol_computed_instance_field_is_own_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval(
+                "var s = Symbol(); class C { [s] = 42; } var c = new C(); \
+                 Object.prototype.hasOwnProperty.call(c, s)",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn class_extends_null_prototype_has_null_proto_with_builtins() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("class Foo extends null {} Object.getPrototypeOf(Foo.prototype)")
+            .unwrap();
         assert_eq!(r, Value::Null);
+    }
+
+    #[test]
+    fn class_extends_null() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let r = ctx
+            .eval("class C extends null {} Object.getPrototypeOf(C) === Function.prototype")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 
     // ─── Private fields ─────────────────────────────────────────────────────
