@@ -41,6 +41,8 @@ pub struct Environment {
     private_class_id: Option<usize>,
     /// Private names declared on the class (for direct-eval early errors).
     declared_private_names: std::collections::HashSet<String>,
+    /// Lexical origin: function/eval inside a class field initializer.
+    in_class_field_initializer: bool,
 }
 
 impl std::fmt::Debug for Environment {
@@ -71,6 +73,7 @@ impl Environment {
             is_static_class_body_flag: false,
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
+            in_class_field_initializer: false,
         }
     }
 
@@ -83,6 +86,7 @@ impl Environment {
             is_static_class_body_flag: false,
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
+            in_class_field_initializer: false,
         }
     }
 
@@ -122,7 +126,22 @@ impl Environment {
         captured.is_static_class_body_flag = self.is_static_class_body_flag;
         captured.private_class_id = self.private_class_id;
         captured.declared_private_names = self.declared_private_names.clone();
+        captured.in_class_field_initializer = self.in_class_field_initializer;
         captured
+    }
+
+    pub fn set_in_class_field_initializer(&mut self, in_field: bool) {
+        self.in_class_field_initializer = in_field;
+    }
+
+    pub fn is_in_class_field_initializer(&self) -> bool {
+        if self.in_class_field_initializer {
+            return true;
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().is_in_class_field_initializer();
+        }
+        false
     }
 
     pub fn set_private_class_id(&mut self, class_id: usize) {
@@ -448,6 +467,7 @@ impl Clone for Environment {
             is_static_class_body_flag: self.is_static_class_body_flag,
             private_class_id: self.private_class_id,
             declared_private_names: self.declared_private_names.clone(),
+            in_class_field_initializer: self.in_class_field_initializer,
         }
     }
 }

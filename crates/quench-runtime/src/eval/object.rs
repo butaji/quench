@@ -79,6 +79,21 @@ pub fn eval_callee_with_this(
             property,
             computed,
         } => {
+            if let Expression::Identifier(id) = object.as_ref() {
+                if id == "super" {
+                    crate::eval::class::helpers::check_this_access_allowed(env)?;
+                    let super_val =
+                        crate::eval::literal::get_super_value(env).ok_or_else(|| {
+                            JsError(
+                                "ReferenceError: super is only valid in class methods".to_string(),
+                            )
+                        })?;
+                    let prop_name = extract_property_name(property, *computed, env, false)?;
+                    let func = get_member_function(&super_val, &prop_name, env)?;
+                    let this_val = crate::interpreter::get_this_binding(env);
+                    return Ok((func, this_val, false));
+                }
+            }
             let obj_val = eval_expression(object, env, false)?;
             let prop_name = extract_property_name(property, *computed, env, false)?;
             let func = get_member_function(&obj_val, &prop_name, env)?;
@@ -186,6 +201,50 @@ pub fn call_getter(
     }
 }
 
+/// Evaluate an assignment target's base reference before reading the RHS value.
+/// Per ES KeyedDestructuringAssignmentEvaluation step 1.
+pub(crate) fn touch_assignment_target(
+    target: &Expression,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    match target {
+        Expression::Identifier(name) if name == "this" => {
+            crate::eval::class::helpers::check_this_access_allowed(env)?;
+            Ok(())
+        }
+        Expression::Member {
+            object,
+            property,
+            computed,
+        } => {
+            touch_assignment_target(object, env)?;
+            if *computed {
+                if let PropertyKey::Computed(e) = property {
+                    let _ = eval_expression(e, env, false)?;
+                }
+            }
+            Ok(())
+        }
+        Expression::ArrayPattern(bindings) => {
+            for binding in bindings {
+                if let BindingElement::AssignmentTarget(target) = binding {
+                    touch_assignment_target(target, env)?;
+                }
+            }
+            Ok(())
+        }
+        Expression::ObjectPattern(props) => {
+            for (_, binding) in props {
+                if let BindingElement::AssignmentTarget(target) = binding {
+                    touch_assignment_target(target, env)?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Assign to a member expression (object.property).
 pub fn assign_to_member(
     object: &Expression,
@@ -282,6 +341,15 @@ pub fn assign_to_member(
             assign_to_native_constructor(&nc, &prop_name, value.clone())
         }
         Value::Class(class) => {
+            if (prop_name == "caller" || prop_name == "arguments")
+                && !class.has_static_own_property(&prop_name)
+            {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
             class.set_static_property(&prop_name, value.clone(), env)?;
             Ok(())
         }

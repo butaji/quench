@@ -170,7 +170,7 @@ fn construct_typed_array(
     args: Vec<Value>,
     bytes_per_element: usize,
     typed_array_name: TypedArrayName,
-    proto: &Rc<RefCell<Object>>,
+    _proto: &Rc<RefCell<Object>>,
 ) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Value::Object(object_rc) = this else {
@@ -251,7 +251,6 @@ fn construct_typed_array(
         length,
         name: typed_array_name,
     };
-    object.prototype = Some(Rc::clone(proto));
 
     // Populate elements from source array if provided
     object.elements = src_elements;
@@ -404,5 +403,20 @@ mod tests {
             "Object.getPrototypeOf(Uint8Array) should not be null, got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn extended_uint8_array_element_assignment_coerces_to_uint8() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let r = ctx
+            .eval(
+                "class ExtendedUint8Array extends Uint8Array { \
+                 constructor() { super(10); this[1] = 0xFFA; } } \
+                 new ExtendedUint8Array()[1]",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(250.0));
     }
 }

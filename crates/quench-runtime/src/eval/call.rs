@@ -95,6 +95,7 @@ fn eval_super_call(
     // may run user code that increments counters etc.), THEN check whether
     // `this` was already initialized. The check throws ReferenceError after
     // super() side-effects have already happened.
+    crate::interpreter::push_inside_super_call();
     let result = match super_val {
         Value::Class(super_class) => {
             crate::eval::class::call_super_constructor(*super_class, args, this_val, env)
@@ -123,9 +124,10 @@ fn eval_super_call(
         }
         _ => {
             let (_, js_err) = create_js_error_with_type("super is not a constructor", "TypeError");
-            return Err(js_err);
+            Err(js_err)
         }
     };
+    crate::interpreter::pop_inside_super_call();
 
     // After super() ran, check the lexical this-binding status. Per ES
     // §8.1.1.3.1 BindThisValue, if `this` was already initialized, throw.
@@ -160,6 +162,10 @@ fn eval_super_call(
         Value::Object(o) => crate::eval::object::private_field_object(o),
         _ => return result,
     };
+    let receiver = match &current_this {
+        Value::Object(o) => Rc::clone(o),
+        _ => return result,
+    };
 
     // After super() succeeds, run pending field initializers (for derived
     // classes with instance fields) before returning to the constructor body.
@@ -168,16 +174,22 @@ fn eval_super_call(
     // Private fields live on the original instance even when super() returns a Proxy.
     let pending = env.borrow_mut().take_pending_fields();
     if let Some(fields) = pending {
-        for (prop_key, expr) in fields {
+        let class = crate::eval::class::helpers::constructing_class_for_super();
+        for (i, (prop_key, expr)) in fields.into_iter().enumerate() {
             crate::interpreter::set_eval_in_class_field(true);
             let val = crate::eval::expression::eval_expression(&expr, env, in_arrow_function)?;
             crate::interpreter::set_eval_in_class_field(false);
-            let key_str = eval_property_key(&prop_key, env, in_arrow_function)?;
-            crate::eval::class::helpers::private_field_add(
-                &field_target,
-                &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),
-                val,
-            )?;
+            let key_str = match class.as_ref().and_then(|c| c.instance_field_key(i)) {
+                Some(k) => k,
+                None => eval_property_key(&prop_key, env, in_arrow_function)?,
+            };
+            let storage_key =
+                crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str);
+            if crate::value::is_private_name_key(&storage_key) {
+                crate::eval::class::helpers::private_field_add(&field_target, &storage_key, val)?;
+            } else {
+                crate::eval::object::create_data_property_or_throw(&receiver, &storage_key, val)?;
+            }
         }
     }
 
@@ -226,6 +238,8 @@ fn eval_super_member(
     let super_val = get_super_value(env).ok_or_else(|| {
         JsError("ReferenceError: super is only valid in class methods".to_string())
     })?;
+    // ES MakeSuperPropertyReference: GetThisBinding before evaluating the property key.
+    crate::eval::class::helpers::check_this_access_allowed(env)?;
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     // In static class bodies, super refers to the superclass constructor itself,
@@ -233,7 +247,11 @@ fn eval_super_member(
     // and fields on the superclass are resolved correctly.
     // Check the env chain: the static marker lives on class_def_env, which may
     // be an ancestor of the current env (e.g. call_env -> class_def_env).
-    let is_static = {
+    // Constructor bodies share class_def_env as parent but must use prototype
+    // resolution like instance methods.
+    let is_static = if crate::eval::class::helpers::constructing_class_for_super().is_some() {
+        false
+    } else {
         let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
         let mut found = false;
         while let Some(e) = current {

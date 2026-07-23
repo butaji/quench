@@ -82,12 +82,101 @@ mod tests {
     use super::*;
 
     #[test]
+    fn class_definition_null_proto_test262_case() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/subclass/class-definition-null-proto.js");
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &path);
+        assert_eq!(outcome, TestOutcome::Pass, "{:?}", outcome);
+    }
+
+    #[test]
+    fn class_extends_null_proto_via_quench_host() {
+        let mut host = QuenchHost::new();
+        let r = host.run_script(
+            "class Foo extends null {} \
+             assert.sameValue(Object.getPrototypeOf(Foo.prototype), null);",
+        );
+        assert!(r.is_ok(), "{:?}", r);
+    }
+
+    #[test]
     fn outcome_skip_is_not_pass() {
         let s = TestOutcome::Skip {
             reason: "known crash".into(),
         };
         assert_ne!(s, TestOutcome::Pass);
         assert!(s.to_string().starts_with("SKIP:"));
+    }
+
+    #[test]
+    fn fn_name_method_test262_case() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/definition/fn-name-method.js");
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &path);
+        assert_eq!(outcome, TestOutcome::Pass, "fn-name-method: {:?}", outcome);
+    }
+
+    #[test]
+    fn fn_name_method_static_id_via_build_script() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let ph = harness
+            .build_script("", &["propertyHelper.js".to_string()])
+            .unwrap();
+        let script = format!(
+            "{ph}class A {{ static id() {{}} }} \
+             verifyProperty(A.id, 'name', {{ value: 'id', writable: false, enumerable: false, configurable: true }});"
+        );
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "static A.id verifyProperty: {:?}", result);
+    }
+
+    #[test]
+    fn fn_name_method_via_build_script_first_two() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let ph = harness
+            .build_script("", &["propertyHelper.js".to_string()])
+            .unwrap();
+        let script = format!(
+            "{ph}var namedSym = Symbol('test262'); var anonSym = Symbol(); \
+             class A {{ id() {{}} [anonSym]() {{}} [namedSym]() {{}} }} \
+             verifyProperty(A.prototype.id, 'name', {{ value: 'id', writable: false, enumerable: false, configurable: true }}); \
+             verifyProperty(A.prototype[anonSym], 'name', {{ value: '', writable: false, enumerable: false, configurable: true }});"
+        );
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "first two verifyProperty: {:?}", result);
+    }
+
+    #[test]
+    fn fn_name_method_via_build_script() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::metadata::Test262Metadata;
+        use crate::test262::runner::default_test262_dir;
+        use std::fs;
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/class/definition/fn-name-method.js");
+        let source = fs::read_to_string(&path).unwrap();
+        let meta = Test262Metadata::parse(&source).unwrap();
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let script = harness.build_script(&source, &meta.includes).unwrap();
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "build_script fn-name-method: {:?}", result);
     }
 
     #[test]
