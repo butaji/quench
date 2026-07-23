@@ -5,6 +5,7 @@
 #![allow(clippy::complexity)]
 
 mod function_member;
+pub use function_member::{bound_callable_target, eval_callable_proto_method};
 mod native_member;
 mod object_member;
 mod string_member;
@@ -152,6 +153,12 @@ pub fn eval_class_member(
             }
         }
         _ => {
+            if matches!(prop_name, "call" | "apply" | "bind") {
+                return eval_callable_proto_method(
+                    Value::Class(Box::new(class.clone())),
+                    prop_name,
+                );
+            }
             // Check static fields first
             if let Some(val) = class.get_static_field(prop_name) {
                 return Ok(val);
