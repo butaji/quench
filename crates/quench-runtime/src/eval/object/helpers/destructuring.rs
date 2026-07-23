@@ -145,6 +145,7 @@ pub fn assign_array_with_iterator(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let mut index = 0;
+    let mut iterator_done = false;
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
@@ -154,14 +155,8 @@ pub fn assign_array_with_iterator(
             }
             return Ok(());
         }
-        let result = take_iterator_value(iterator, &mut index, env);
-        let elem_value = match result {
-            Ok(value) => value,
-            Err(error) => {
-                call_iterator_return(iterator);
-                return Err(error);
-            }
-        };
+        let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
+        iterator_done = done;
         if let Err(error) = assign_binding_elem(binding, &elem_value, env) {
             let original = crate::value::take_thrown_value();
             let close_throw = call_iterator_return(iterator);
@@ -173,6 +168,11 @@ pub fn assign_array_with_iterator(
                 return Err(close);
             }
             return Err(error);
+        }
+    }
+    if !iterator_done {
+        if let Some(err) = call_iterator_return(iterator) {
+            return Err(err);
         }
     }
     Ok(())
@@ -200,9 +200,9 @@ fn collect_remaining_array(
     }
     let mut items = Vec::new();
     loop {
-        match take_iterator_value(iterator, index, env) {
-            Ok(Value::Undefined) => break,
-            Ok(v) => items.push(v),
+        match take_iterator_step(iterator, index, env) {
+            Ok((Value::Undefined, true)) => break,
+            Ok((v, _)) => items.push(v),
             Err(error) => return Err(error),
         }
     }
@@ -215,8 +215,17 @@ fn collect_remaining_array(
 pub fn take_iterator_value(
     iterator: &Rc<RefCell<Object>>,
     index: &mut usize,
-    _env: &Rc<RefCell<Environment>>,
+    env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    take_iterator_step(iterator, index, env).map(|(value, _)| value)
+}
+
+/// Take the next iterator step, returning `(value, done)`.
+fn take_iterator_step(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
         let result = {
             let borrowed = iterator.borrow();
@@ -227,46 +236,53 @@ pub fn take_iterator_value(
             }
         };
         *index += 1;
-        return Ok(result.unwrap_or(Value::Undefined));
+        let exhausted = *index >= iterator.borrow().elements.len();
+        return Ok((result.unwrap_or(Value::Undefined), exhausted));
     }
     let next_value = iterator.borrow().get("next");
     let Some(next_fn) = next_value else {
-        return Ok(Value::Undefined);
+        return Ok((Value::Undefined, true));
     };
+    let iter_this = Value::Object(Rc::clone(iterator));
     let result = match next_fn {
-        Value::Object(obj) => {
-            crate::eval::function::call_value(Value::Object(Rc::clone(&obj)), vec![])?
-        }
-        other => crate::eval::function::call_value(other, vec![])?,
+        Value::Object(obj) => crate::eval::function::call_value_with_this(
+            Value::Object(Rc::clone(&obj)),
+            vec![],
+            iter_this.clone(),
+        )?,
+        other => crate::eval::function::call_value_with_this(other, vec![], iter_this)?,
     };
     if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
-        return Ok(Value::Undefined);
+        return Ok((Value::Undefined, true));
     };
-    let env = Rc::new(RefCell::new(Environment::new()));
-    let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(&env))?;
+    let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
     if matches!(done, Value::Boolean(true)) {
-        return Ok(Value::Undefined);
+        return Ok((Value::Undefined, true));
     }
-    crate::eval::member::eval_object_member(&result_obj, "value", Some(&env))
+    let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
+    Ok((value, false))
 }
 
 /// Call iterator.return, returning an error if it throws.
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
+    let iter_this = Value::Object(Rc::clone(iterator));
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
         let params: Vec<crate::ast::Param> = Vec::new();
         let body: Vec<crate::ast::Statement> = (*getter.body).clone();
         let closure = getter.closure.clone();
-        let _ = crate::eval::function::call_value(
+        drop(binding);
+        let _ = crate::eval::function::call_value_with_this(
             crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
                 params,
                 Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
                 closure,
             )),
             vec![],
+            iter_this,
         );
         if let Some(thrown) = crate::value::take_thrown_value() {
             return Some(JsError(crate::value::to_js_string(&thrown)));
@@ -302,7 +318,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let (body, closure) = match (body, closure) {
         (Some(body), Some(closure)) => (body, closure),
         (_, _) => {
-            let _ = crate::eval::function::call_value(return_value, vec![]);
+            let _ = crate::eval::function::call_value_with_this(return_value, vec![], iter_this);
             if let Some(thrown) = crate::value::take_thrown_value() {
                 return Some(JsError(crate::value::to_js_string(&thrown)));
             }
@@ -310,13 +326,14 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
         }
     };
     let params: Vec<crate::ast::Param> = Vec::new();
-    let _ = crate::eval::function::call_value(
+    let _ = crate::eval::function::call_value_with_this(
         crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
             params,
             Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
             closure,
         )),
         vec![],
+        iter_this,
     );
     if let Some(thrown) = crate::value::take_thrown_value() {
         return Some(JsError(crate::value::to_js_string(&thrown)));
@@ -385,18 +402,30 @@ pub fn assign_binding_elem(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    assign_binding_elem_with_default(binding, value, env, None)
+}
+
+fn assign_binding_elem_with_default(
+    binding: &BindingElement,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
     match binding {
         BindingElement::Identifier(name) if name == "__hole" => Ok(()),
-        BindingElement::Identifier(name) => assign_to_identifier(name, value, env),
+        BindingElement::Identifier(name) => assign_to_identifier(name, value, env, default_expr),
         BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
         BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
         BindingElement::Default(binding, default) => {
-            let value = if matches!(value, Value::Undefined) {
-                eval_expression(default, env, false)?
+            let (value, name_default) = if matches!(value, Value::Undefined) {
+                (
+                    eval_expression(default, env, false)?,
+                    Some(default.as_ref()),
+                )
             } else {
-                value.clone()
+                (value.clone(), None)
             };
-            assign_binding_elem(binding, &value, env)
+            assign_binding_elem_with_default(binding, &value, env, name_default)
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
@@ -438,9 +467,12 @@ pub fn assign_to_identifier(
     name: &str,
     value: &Value,
     env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
 ) -> Result<(), JsError> {
     let value = match value {
-        Value::Function(ref f) if f.name.is_none() => {
+        Value::Function(ref f)
+            if f.name.is_none() && default_expr.is_some_and(is_anonymous_function_definition) =>
+        {
             let mut cloned = f.clone();
             cloned.name = Some(name.to_string());
             let _ = cloned.set_property("name", Value::String(name.to_string()));
@@ -505,6 +537,16 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+fn is_anonymous_function_definition(expr: &Expression) -> bool {
+    match expr {
+        Expression::FunctionExpression { name: None, .. } => true,
+        Expression::Sequence(exprs) if exprs.len() == 1 => {
+            is_anonymous_function_definition(&exprs[0])
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -632,6 +674,61 @@ mod tests {
         let r =
             eval("function* f([...[a,b,c]]) { return a+b+c; } f([3,4,5]).next().value").unwrap();
         assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn generator_method_destructure_closes_iterator() {
+        let r = eval(
+            "var doneCallCount = 0; \
+             var iter = {}; \
+             iter[Symbol.iterator] = function() { \
+               return { \
+                 next: function() { return { value: null, done: false }; }, \
+                 return: function() { doneCallCount += 1; return {}; } \
+               }; \
+             }; \
+             var callCount = 0; \
+             class C { *method([x]) { callCount = 1; } } \
+             new C().method(iter).next(); \
+             doneCallCount + callCount * 10",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(11.0));
+    }
+
+    #[test]
+    fn nested_yield_operand_yields_inner_value() {
+        let r = eval(
+            "class A { *g() { yield yield 1; } } \
+             A.prototype.g().next().value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn nested_yield_operand_suspends_outer_on_second_next() {
+        let r = eval(
+            "class A { *g() { yield yield 1; } } \
+             var iter = A.prototype.g(); \
+             iter.next(); \
+             iter.next().done",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn nested_yield_operand_completes_on_third_next() {
+        let r = eval(
+            "class A { *g() { yield yield 1; } } \
+             var iter = A.prototype.g(); \
+             iter.next(); \
+             iter.next(); \
+             iter.next().done",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]

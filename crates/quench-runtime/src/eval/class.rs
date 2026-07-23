@@ -11,7 +11,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub mod helpers;
+pub mod private_elements;
 pub use helpers::*;
+pub use private_elements::install_instance_private_elements;
 
 #[allow(dead_code)]
 fn class_static_field_this_name() {
@@ -119,7 +121,12 @@ pub fn eval_class_expr(
                         .current_scope()
                         .borrow_mut()
                         .set_this(class_value.clone());
-                    let field_value = eval_expression(value_expr, &child_env, false)?;
+                    let field_value = {
+                        crate::interpreter::set_eval_in_class_field(true);
+                        let v = eval_expression(value_expr, &child_env, false)?;
+                        crate::interpreter::set_eval_in_class_field(false);
+                        v
+                    };
                     if crate::value::generator_replay::yield_pending() {
                         return Ok(Value::Undefined);
                     }
@@ -138,7 +145,7 @@ pub fn eval_class_expr(
                     } else {
                         key_str
                     };
-                    new_value.set_static_field(&storage_key, field_value);
+                    new_value.set_static_field(&storage_key, field_value)?;
                     field_idx += 1;
                 }
             }

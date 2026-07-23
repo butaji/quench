@@ -13,6 +13,88 @@ use crate::value::{ClassValue, JsError, Object, ObjectKind, PropertyFlags, Value
 use std::cell::RefCell;
 use std::rc::Rc;
 
+thread_local! {
+    static CONSTRUCTING_CLASS: RefCell<Option<ClassValue>> = const { RefCell::new(None) };
+}
+
+pub fn set_constructing_class(class: Option<ClassValue>) {
+    CONSTRUCTING_CLASS.with(|cell| *cell.borrow_mut() = class);
+}
+
+fn constructing_class() -> Option<ClassValue> {
+    CONSTRUCTING_CLASS.with(|cell| cell.borrow().clone())
+}
+
+pub(crate) fn constructing_class_for_super() -> Option<ClassValue> {
+    constructing_class()
+}
+
+/// Synthetic derived constructor: auto-call `super(...args)` only when
+/// the class had no explicit `constructor` member.
+fn should_auto_super(class: &ClassValue) -> bool {
+    class.super_class.is_some() && !class.has_explicit_constructor
+}
+
+fn throw_uninitialized_this() -> Result<Value, JsError> {
+    let (thrown_val, js_err) = crate::value::error::create_js_error_with_type(
+        "Must call super constructor in derived class before returning",
+        "ReferenceError",
+    );
+    crate::value::error::set_thrown_value(thrown_val);
+    Err(js_err)
+}
+
+/// Finish a constructor: object returns win; derived + uninitialized this → ReferenceError.
+fn finish_ctor_result(
+    result: Value,
+    this_val: &Value,
+    class: &ClassValue,
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match result {
+        Value::Object(_)
+        | Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_) => Ok(result),
+        _ => {
+            if class.super_class.is_some()
+                && !call_env
+                    .borrow()
+                    .current_scope()
+                    .borrow()
+                    .is_this_initialized()
+            {
+                return throw_uninitialized_this();
+            }
+            Ok(this_val.clone())
+        }
+    }
+}
+
+fn new_instance(class: &ClassValue, env: &Rc<RefCell<Environment>>) -> Result<Value, JsError> {
+    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
+    let mut instance = Object::new(ObjectKind::Ordinary);
+    instance.prototype = Some(Rc::clone(&proto_rc));
+    let instance_rc = Rc::new(RefCell::new(instance));
+    let this_val = Value::Object(Rc::clone(&instance_rc));
+    instance_rc
+        .borrow_mut()
+        .set("constructor", Value::Class(Box::new(class.clone())));
+    Ok(this_val)
+}
+
+fn run_ctor_body(
+    body: &[Statement],
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let prev_strict = is_strict_mode();
+    set_strict_mode(true);
+    predeclare_let_const(body, &mut call_env.borrow_mut());
+    let result = eval_function_body(body, call_env, false)?;
+    set_strict_mode(prev_strict);
+    Ok(result)
+}
+
 /// Instantiate without instance fields (fast path)
 pub fn instantiate_simple(
     class: &ClassValue,
@@ -20,96 +102,92 @@ pub fn instantiate_simple(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
-    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
-
-    let mut instance = Object::new(ObjectKind::Ordinary);
-    instance.prototype = Some(Rc::clone(&proto_rc));
-    let instance_rc = Rc::new(RefCell::new(instance));
-
-    let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
-
+    set_constructing_class(Some(class.clone()));
+    let this_val = new_instance(class, env)?;
     let body = class.constructor_body.clone();
-    let call_env = build_constructor_env(class, &args, &this_val, env)?;
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        class, &args, &this_val, env,
+    )?));
 
-    let has_explicit_ctor = class
-        .ordered_members
-        .iter()
-        .any(|m| matches!(m, crate::ast::ClassMember::Constructor { .. }));
-
-    // Per ES §15.2.2: derived class without explicit constructor gets a
-    // default constructor that calls super(...args).
-    if !has_explicit_ctor {
-        if let Some(ref sc) = class.super_class {
-            let sv = eval_expression(sc, env, false)?;
-            call_super_or_default(&sv, args, &this_val, env)?;
+    if should_auto_super(class) {
+        let sc = class.super_class.as_ref().unwrap();
+        let sv = eval_expression(sc, env, false)?;
+        let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
+        if let Value::Object(o) = &effective_this {
+            install_privates_on_object(class, o, env)?;
         }
-        return Ok(this_val);
+        return finalize_instance(effective_this);
     }
 
-    // Class constructors are always strict mode per ES spec.
-    let prev_strict = is_strict_mode();
-    set_strict_mode(true);
-
-    let result = if !body.is_empty() {
-        predeclare_let_const(&body, &mut call_env.borrow_mut());
-        eval_function_body(&body, &call_env, false)?
-    } else {
+    if class.super_class.is_none() {
+        if let Value::Object(o) = &this_val {
+            install_privates_on_object(class, o, env)?;
+        }
+    }
+    let result = if body.is_empty() {
         Value::Undefined
-    };
-    set_strict_mode(prev_strict);
-
-    // Per ES §8.1.1.3.1: derived constructor must call super() or return a
-    // non-primitive (return override). Check return override first.
-    let is_return_override = matches!(
-        result,
-        Value::Object(_)
-            | Value::Function(_)
-            | Value::NativeFunction(_)
-            | Value::NativeConstructor(_)
-    );
-
-    // Only throw ReferenceError for empty constructor bodies (simple case).
-    // Non-empty bodies may have complex control flow (try/catch/finally) that
-    // our interpreter handles with super() in finally — skip the check and
-    // let finish_constructor handle the return value.
-    if body.is_empty()
-        && !is_return_override
-        && class.super_class.is_some()
-        && !call_env
-            .borrow()
-            .scopes
-            .iter()
-            .any(|s| s.borrow().is_this_initialized())
-    {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-            "ReferenceError",
-        );
-        return Err(js_err);
-    }
-
-    // Per ES §9.2.2 [[Construct]] step 13: if the constructor executes an
-    // explicit `return` with a non-undefined, non-object value, throw TypeError.
-    // Expression-statement results (e.g. `count++`) do NOT trigger this — they
-    // produce a normal completion, not a return completion.
-    if is_return_override {
-        Ok(result)
-    } else if body.is_empty() {
-        Ok(this_val)
-    } else if result != Value::Undefined && body.iter().any(|s| matches!(s, Statement::Return(..)))
-    {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "derived constructor returned a non-object",
-            "TypeError",
-        );
-        Err(js_err)
     } else {
-        finish_constructor(result, &this_val)
+        run_ctor_body(&body, &call_env)?
+    };
+    finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
+}
+
+fn init_instance_fields(
+    class: &ClassValue,
+    instance_rc: &Rc<RefCell<Object>>,
+    call_env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    for (name, value_expr) in &class.instance_fields {
+        crate::interpreter::set_eval_in_class_field(true);
+        let field_val = eval_expression(value_expr, call_env, false)?;
+        crate::interpreter::set_eval_in_class_field(false);
+        let key_str = prop_key_to_string(name, call_env, false)?;
+        private_field_add(
+            instance_rc,
+            &storage_key_for_property(name, &key_str),
+            field_val,
+        )?;
     }
+    Ok(())
+}
+
+pub fn private_field_add(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    value: Value,
+) -> Result<(), JsError> {
+    if crate::value::is_private_name_key(key) {
+        let o = obj.borrow();
+        if o.properties.contains_key(key) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Private field already defined",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+        if !o.extensible {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot add private field to non-extensible object",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
+    }
+    obj.borrow_mut().set(key, value);
+    Ok(())
+}
+
+fn finalize_instance(result: Value) -> Result<Value, JsError> {
+    set_constructing_class(None);
+    Ok(result)
+}
+
+fn install_privates_on_object(
+    class: &ClassValue,
+    obj: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    crate::eval::class::install_instance_private_elements(class, obj, env)
 }
 
 /// Instantiate with instance fields: fields init after super(), before body
@@ -119,122 +197,46 @@ pub fn instantiate_with_fields(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
-    let proto_rc = crate::eval::class::get_or_create_class_prototype(class, env)?;
-
-    let mut instance = Object::new(ObjectKind::Ordinary);
-    instance.prototype = Some(Rc::clone(&proto_rc));
-    let instance_rc = Rc::new(RefCell::new(instance));
-
-    let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
-
+    set_constructing_class(Some(class.clone()));
+    let this_val = new_instance(class, env)?;
+    let instance_rc = match &this_val {
+        Value::Object(o) => Rc::clone(o),
+        _ => unreachable!(),
+    };
     let body = class.constructor_body.clone();
-    let call_env = build_constructor_env(class, &args, &this_val, env)?;
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        class, &args, &this_val, env,
+    )?));
 
-    let has_super = class.super_class.is_some();
+    if should_auto_super(class) {
+        let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+        let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
+        if let Value::Object(o) = &effective_this {
+            init_instance_fields(class, o, &call_env)?;
+            install_privates_on_object(class, o, env)?;
+        }
+        return finalize_instance(effective_this);
+    }
+
     let body_calls_super = !body.is_empty() && body_calls_super_call(&body);
-
-    let init_fields = || -> Result<(), JsError> {
-        for (name, value_expr) in &class.instance_fields {
-            let field_val = eval_expression(value_expr, &call_env, false)?;
-            let key_str = prop_key_to_string(name, &call_env, false)?;
-            instance_rc.borrow_mut().set(&key_str, field_val);
-        }
-        Ok(())
-    };
-
-    let has_explicit_ctor = class
-        .ordered_members
-        .iter()
-        .any(|m| matches!(m, crate::ast::ClassMember::Constructor { .. }));
-
-    // Per ES §15.2.2: derived class without explicit constructor gets a
-    // default constructor that calls super(...args).
-    if !has_explicit_ctor {
-        if has_super {
-            let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
-            call_super_or_default(&sv, args, &this_val, env)?;
-        }
-        init_fields()?;
-        return Ok(this_val);
+    if class.super_class.is_some() && body_calls_super {
+        call_env
+            .borrow_mut()
+            .set_pending_fields(class.instance_fields.clone());
+        let result = run_ctor_body(&body, &call_env)?;
+        return finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?);
     }
 
-    // Class constructors are always strict mode per ES spec.
-    let prev_strict = is_strict_mode();
-    set_strict_mode(true);
-
-    let is_return_override = |v: &Value| -> bool {
-        matches!(
-            v,
-            Value::Object(_)
-                | Value::Function(_)
-                | Value::NativeFunction(_)
-                | Value::NativeConstructor(_)
-        )
-    };
-
-    let _ = if has_super {
-        if body_calls_super {
-            call_env
-                .borrow_mut()
-                .set_pending_fields(class.instance_fields.clone());
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let r = eval_function_body(&body, &call_env, false)?;
-            if is_return_override(&r) {
-                set_strict_mode(prev_strict);
-                return Ok(r);
-            }
-            r
-        } else if !body.is_empty() {
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let r = eval_function_body(&body, &call_env, false)?;
-            if is_return_override(&r) {
-                set_strict_mode(prev_strict);
-                return Ok(r);
-            }
-            r
-        } else {
-            Value::Undefined
-        }
+    if class.super_class.is_none() {
+        install_privates_on_object(class, &instance_rc, env)?;
+        init_instance_fields(class, &instance_rc, &call_env)?;
+    }
+    let result = if body.is_empty() {
+        Value::Undefined
     } else {
-        init_fields()?;
-        if !body.is_empty() {
-            predeclare_let_const(&body, &mut call_env.borrow_mut());
-            let r = eval_function_body(&body, &call_env, false)?;
-            if is_return_override(&r) {
-                set_strict_mode(prev_strict);
-                return Ok(r);
-            }
-            r
-        } else {
-            Value::Undefined
-        }
+        run_ctor_body(&body, &call_env)?
     };
-
-    set_strict_mode(prev_strict);
-
-    // Per ES §8.1.1.3.1: derived constructor must call super() before returning
-    // unless a return override (non-primitive) was returned. Only check for
-    // empty body — non-empty bodies may have complex control flow.
-    if has_super
-        && body.is_empty()
-        && !call_env
-            .borrow()
-            .scopes
-            .iter()
-            .any(|s| s.borrow().is_this_initialized())
-    {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-            "ReferenceError",
-        );
-        return Err(js_err);
-    }
-
-    Ok(this_val)
+    finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
 }
 
 /// Build constructor environment (params, arguments, super reference)
@@ -281,60 +283,44 @@ pub fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsEr
     }
 }
 
-/// Call the super constructor or use default behavior
+/// Call the super constructor or use default behavior; returns effective `this`.
 pub fn call_super_or_default(
     super_val: &Value,
     args: Vec<Value>,
     this_val: &Value,
     env: &Rc<RefCell<Environment>>,
-) -> Result<(), JsError> {
+) -> Result<Value, JsError> {
     match super_val {
-        Value::Class(super_class) => {
-            crate::eval::class::call_super_constructor(
-                super_class.as_ref().clone(),
-                args,
-                this_val.clone(),
-                env,
-            )?;
-        }
+        Value::Class(super_class) => crate::eval::class::call_super_constructor(
+            super_class.as_ref().clone(),
+            args,
+            this_val.clone(),
+            env,
+        ),
         Value::Object(o) => {
             if let Some(Value::Function(constructor)) = o.borrow().get("constructor") {
                 crate::eval::function::call_value_with_this(
                     Value::Function(constructor.clone()),
                     args,
                     this_val.clone(),
-                )?;
-            } else if let Some(Value::NativeFunction(nf)) = o.borrow().get("constructor") {
-                crate::eval::function::call_value_with_this(
-                    Value::NativeFunction(nf.clone()),
-                    args,
-                    this_val.clone(),
-                )?;
+                )
             } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
                 crate::eval::function::call_value_with_this(
                     Value::NativeConstructor(nc.clone()),
                     args,
                     this_val.clone(),
-                )?;
+                )
+            } else {
+                Ok(this_val.clone())
             }
         }
-        Value::NativeConstructor(nc) => {
-            crate::eval::function::call_value_with_this(
-                Value::NativeConstructor(nc.clone()),
-                args,
-                this_val.clone(),
-            )?;
-        }
-        Value::NativeFunction(nf) => {
-            crate::eval::function::call_value_with_this(
-                Value::NativeFunction(nf.clone()),
-                args,
-                this_val.clone(),
-            )?;
-        }
-        _ => {}
+        Value::NativeConstructor(nc) => crate::eval::function::call_value_with_this(
+            Value::NativeConstructor(nc.clone()),
+            args,
+            this_val.clone(),
+        ),
+        _ => Ok(this_val.clone()),
     }
-    Ok(())
 }
 
 /// Check if the first statement in a constructor body is an explicit super() call
@@ -558,6 +544,13 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let _storage_key = storage_key_for_property(name, &key_str);
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         let mut func = ValueFunction::new(
             Some(key_str.clone()),
             params.clone(),
@@ -582,7 +575,14 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, body) in &class.getters {
-        let key = prop_key_to_string(name, &closure, false)?;
+        let key_str = prop_key_to_string(name, &closure, false)?;
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let key = storage_key_for_property(name, &key_str);
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         proto.set_getter(
             &key,
             Rc::new(body.clone()),
@@ -592,7 +592,14 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, param, body) in &class.setters {
-        let key = prop_key_to_string(name, &closure, false)?;
+        let key_str = prop_key_to_string(name, &closure, false)?;
+        if key_str.starts_with('#') {
+            continue;
+        }
+        let key = storage_key_for_property(name, &key_str);
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         proto.set_setter(
             &key,
             param.clone(),
@@ -618,6 +625,22 @@ pub fn create_class_prototype_helper_with_env(
     Ok(Rc::new(RefCell::new(proto)))
 }
 
+pub fn storage_key_for_property(name: &crate::ast::PropertyKey, evaluated: &str) -> String {
+    match name {
+        crate::ast::PropertyKey::Ident(s) if s.starts_with('#') => {
+            crate::value::private_name_key(s)
+        }
+        _ => evaluated.to_string(),
+    }
+}
+
+pub fn class_member_storage_key(key: &str) -> String {
+    if key.starts_with('#') {
+        crate::value::private_name_key(key)
+    } else {
+        key.to_string()
+    }
+}
 /// Helper to convert PropertyKey to string, evaluating computed expressions
 pub fn prop_key_to_string(
     key: &crate::ast::PropertyKey,
@@ -788,6 +811,166 @@ mod tests {
     fn class_extends_null() {
         let r = eval("class C extends null {} Object.getPrototypeOf(C)").unwrap();
         assert_eq!(r, Value::Null);
+    }
+
+    // ─── Private fields ─────────────────────────────────────────────────────
+
+    #[test]
+    fn static_getter_returns_value() {
+        let r = eval("class C { static get method() { return 42; } } C.method").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn private_field_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { #val; constructor(seal) { super(seal); this.#val = 42; } } \
+             (function() { try { new C(true); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_method_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { constructor(seal) { super(seal); } #m() { return 42; } \
+             pub() { return this.#m(); } } \
+             (function() { try { new C(true).pub(); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_method_double_install_on_same_object_throws() {
+        let r = eval(
+            "class Base { constructor(o) { return o; } } \
+             class C extends Base { get #p() {} } \
+             var obj = {}; new C(obj); \
+             (function() { try { new C(obj); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn private_accessor_on_nonextensible_object_throws_type_error() {
+        let r = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } \
+             class C extends Base { constructor(seal) { super(seal); } \
+             get #a() { return 42; } get b() { return this.#a; } } \
+             (function() { try { new C(true).b; return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn base_class_field_init_on_self_nonextensible_throws_type_error() {
+        let r = eval(
+            "(function() { try { class C { #g = (Object.preventExtensions(this), 'Test262'); } \
+             new C(); return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn static_private_field_on_nonextensible_class_throws_type_error() {
+        let r = eval(
+            "(function() { try { class C { static #g = (Object.preventExtensions(C), 'Test262'); } return 'ok'; } catch (e) { return e.name; } })()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn static_private_method_direct_call() {
+        let r = eval(
+            "class C { static #m() { return 42; } static call() { return this.#m(); } } C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn static_private_method_via_getter() {
+        let r = eval(
+            "class C { static #m() { return 42; } static get method() { return this.#m; } } \
+             C.method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn static_getter_return_super_after_stmt() {
+        let r = eval(
+            "class B { static m() { return 1; } } \
+             class C extends B { static get x() { 0; return super.m(); } } \
+             C.x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn static_private_field_read_from_static_method() {
+        let r = eval("class C { static #$ = 1; static $() { return this.#$; } } C.$()").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn static_private_field_write_from_static_private_method() {
+        let r = eval(
+            "class C { static #xVal; static #x(v) { this.#xVal = v; return this.#xVal; } \
+             static call() { return this.#x(42); } } C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn tail_return_member_call_preserves_this() {
+        let r = eval(
+            "class C { static m() { return typeof this; } static call() { return this.m(); } } \
+             C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn static_private_method_not_has_own_property() {
+        let r = eval(
+            "class C { static async *#gen() {} static get gen() { return this.#gen; } } \
+             Object.prototype.hasOwnProperty.call(C, '#gen')",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn private_method_not_clobbered_by_hash_string_field() {
+        let r = eval(
+            "class C { #m() { return 'Test262'; } ['#m'] = 0; \
+             check() { return this.#m(); } } new C().check()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("Test262".into()));
+    }
+
+    #[test]
+    fn private_method_getter_returns_method_without_recursion() {
+        let r = eval(
+            "class C { #method() { return 42; } get method() { return this.#method; } } \
+             new C().method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
     }
 
     // ─── prop_key_to_string ─────────────────────────────────────────────────
