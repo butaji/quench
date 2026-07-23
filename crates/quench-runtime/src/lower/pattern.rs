@@ -33,11 +33,13 @@ pub fn lower_binding_elem(pat: &ast::BindingPattern) -> Result<BindingElement, L
 }
 
 fn lower_array_pattern(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerError> {
-    let mut elements: Vec<BindingElement> = arr
-        .elements
-        .iter()
-        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .collect();
+    let mut elements: Vec<BindingElement> = Vec::new();
+    for elem in &arr.elements {
+        match elem {
+            Some(pat) => elements.push(lower_binding_elem(pat)?),
+            None => elements.push(BindingElement::Identifier("__hole".to_string())),
+        }
+    }
 
     // Handle trailing rest element
     if let Some(rest) = &arr.rest {
