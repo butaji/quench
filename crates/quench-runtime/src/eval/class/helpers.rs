@@ -2589,6 +2589,32 @@ mod tests {
     }
 
     #[test]
+    fn private_method_brand_check_with_let_o_binding() {
+        let ok = eval(
+            "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \
+             let c = new C(); c.access(c);",
+        )
+        .unwrap();
+        assert_eq!(ok, Value::String("test262".into()));
+        let err = eval(
+            "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \
+             let c = new C(); let o = {}; c.access(o);",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn private_method_brand_check_on_foreign_object() {
+        let err = eval(
+            "class C { #m() { return 'test262'; } access(o) { return o.#m(); } } \
+             let c = new C(); c.access({});",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
     fn outer_private_getter_works_without_nested_class_field() {
         let r = eval(
             "class C { get #m() { return 'outer'; } method() { return this.#m; } } new C().method()",
