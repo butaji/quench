@@ -691,6 +691,18 @@ mod tests {
         assert_eq!(r, Value::Null);
     }
 
+    // ─── Private fields ─────────────────────────────────────────────────────
+
+    #[test]
+    fn private_method_getter_returns_method_without_recursion() {
+        let r = eval(
+            "class C { #method() { return 42; } get method() { return this.#method; } } \
+             new C().method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
     // ─── prop_key_to_string ─────────────────────────────────────────────────
 
     #[test]

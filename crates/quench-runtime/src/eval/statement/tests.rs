@@ -393,6 +393,19 @@ mod class_declaration {
     }
 
     #[test]
+    fn direct_eval_class_decl_preserves_prior_completion() {
+        assert_eq!(eval("eval('1; class C {}')").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn direct_eval_class_decl_after_prior_class_eval() {
+        assert_eq!(
+            eval("eval('class C {}'); eval('1; class C {}')").unwrap(),
+            Value::Number(1.0)
+        );
+    }
+
+    #[test]
     fn class_with_method() {
         assert_eq!(
             eval("class C { method() { return 42; } } new C().method()").unwrap(),

@@ -197,10 +197,29 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
 fn isolated_message(stderr: &[u8], stdout: &[u8]) -> String {
     let err = String::from_utf8_lossy(stderr);
     let out = String::from_utf8_lossy(stdout);
-    if let Some(line) = out
-        .lines()
-        .find(|l| l.contains("Reason:") || l.contains("FAILED"))
-    {
+    for text in [&out, &err] {
+        if let Some(line) = text.lines().find(|l| l.contains("Reason:")) {
+            return line
+                .split_once("Reason:")
+                .map(|(_, r)| r.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| line.trim())
+                .to_string();
+        }
+    }
+    if let Some(line) = out.lines().find(|l| l.contains("FAILED")) {
+        if let Some(next) = out
+            .lines()
+            .skip_while(|l| !l.contains("FAILED"))
+            .nth(1)
+            .filter(|l| l.contains("Reason:"))
+        {
+            return next
+                .split_once("Reason:")
+                .map(|(_, r)| r.trim())
+                .unwrap_or("")
+                .to_string();
+        }
         return line.trim().to_string();
     }
     if let Some(line) = err.lines().find(|l| !l.is_empty()) {
@@ -228,6 +247,15 @@ fn run_test_binary() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_message_extracts_reason_line() {
+        let stdout = "header\n❌ FAILED\n   Reason: Test262Error: boom\n";
+        assert_eq!(
+            isolated_message(b"", stdout.as_bytes()),
+            "Test262Error: boom"
+        );
+    }
 
     #[test]
     fn check_outcome_pass_and_fail() {

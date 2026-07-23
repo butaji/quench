@@ -1,22 +1,12 @@
 {
-  "failed": 2731,
+  "failed": 2730,
   "groups": [
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/prototype-wiring.js"
-      ],
-      "reason": "isolated exit -1: thread '<unknown>' (122623) has overflowed its stack",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/prototype-wiring.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123595) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144134) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-init-iter-close.js"
       ]
@@ -26,7 +16,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123597) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144136) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-init-iter-no-close.js"
       ]
@@ -36,7 +26,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123601) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144139) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-name-iter-val.js"
       ]
@@ -46,7 +36,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123603) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144141) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -56,7 +46,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123605) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144143) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -66,7 +56,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123607) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144145) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -76,7 +66,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123609) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144147) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -86,7 +76,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123611) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144149) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -96,7 +86,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123613) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144151) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -106,7 +96,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123615) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144153) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -116,7 +106,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123617) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144155) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -126,7 +116,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123619) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144157) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-exhausted.js"
       ]
@@ -136,7 +126,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123621) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144159) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
@@ -146,7 +136,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123623) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144161) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -156,7 +146,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123625) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144163) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -166,7 +156,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123627) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144165) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -176,7 +166,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123629) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144167) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -186,7 +176,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123631) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144169) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -196,7 +186,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123633) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144171) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -204,21 +194,21 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123636) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144173) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-undef.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-undef.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123637) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144176) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-init-undef.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
       ]
     },
     {
@@ -226,7 +216,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123639) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144177) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -236,7 +226,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123641) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144179) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -246,7 +236,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123643) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144181) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -256,7 +246,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123645) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144183) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -266,7 +256,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123647) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144186) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-id.js"
       ]
@@ -276,7 +266,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123649) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144187) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -286,7 +276,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123651) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144189) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -296,7 +286,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123653) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144193) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision-exhausted.js"
       ]
@@ -304,21 +294,21 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123656) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144194) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-empty.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-empty.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123657) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144195) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-empty.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-elision.js"
       ]
     },
     {
@@ -326,7 +316,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123659) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144197) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-elem.js"
       ]
@@ -336,7 +326,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123661) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144199) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-elision.js"
       ]
@@ -346,7 +336,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123663) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144201) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-empty.js"
       ]
@@ -356,7 +346,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123665) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144203) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-ary-rest.js"
       ]
@@ -366,7 +356,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123668) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144206) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id-elision.js"
       ]
@@ -376,7 +366,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123670) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144208) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -386,7 +376,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123672) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144210) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-id.js"
       ]
@@ -396,7 +386,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123691) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144229) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-obj-id.js"
       ]
@@ -406,7 +396,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123695) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144232) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -416,7 +406,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123696) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144234) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-init-iter-close.js"
       ]
@@ -426,7 +416,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123698) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144236) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-init-iter-no-close.js"
       ]
@@ -436,7 +426,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123700) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144238) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-name-iter-val.js"
       ]
@@ -446,7 +436,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123702) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144240) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -456,7 +446,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123704) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144242) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -466,7 +456,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123706) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144244) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -476,7 +466,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123708) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144246) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -486,7 +476,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123710) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144248) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -496,7 +486,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123712) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144250) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -506,7 +496,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123714) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144252) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -516,7 +506,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123716) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144254) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -526,7 +516,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123718) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144256) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ]
@@ -536,7 +526,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123720) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144258) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
@@ -546,7 +536,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123722) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144260) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -556,7 +546,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123724) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144262) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -566,7 +556,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123726) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144264) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -576,7 +566,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123728) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144266) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -586,7 +576,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123730) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144268) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -596,7 +586,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123732) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144270) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -606,7 +596,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123734) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144272) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ]
@@ -616,7 +606,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123736) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144274) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ]
@@ -626,7 +616,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123738) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144276) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -636,7 +626,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123740) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144278) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -646,7 +636,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123742) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144280) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -656,7 +646,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123744) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144282) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -666,7 +656,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123746) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144284) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-id.js"
       ]
@@ -676,7 +666,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123748) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144286) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -686,7 +676,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123750) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144288) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -696,7 +686,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123752) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144290) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elision-exhausted.js"
       ]
@@ -706,7 +696,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123754) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144292) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-elision.js"
       ]
@@ -716,7 +706,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123756) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144294) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-empty.js"
       ]
@@ -726,7 +716,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123758) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144297) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ]
@@ -736,7 +726,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123760) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144298) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ]
@@ -746,7 +736,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123762) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144300) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ]
@@ -756,7 +746,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123764) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144302) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ]
@@ -766,7 +756,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123767) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144305) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id-elision.js"
       ]
@@ -776,7 +766,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123769) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144307) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -786,7 +776,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123771) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144309) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-id.js"
       ]
@@ -796,7 +786,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123788) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144328) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-obj-id.js"
       ]
@@ -806,7 +796,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123793) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144331) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -816,7 +806,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123795) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144333) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-empty.js"
       ]
@@ -826,7 +816,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123797) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144335) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -836,7 +826,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123799) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144337) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -846,7 +836,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123801) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144339) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -856,7 +846,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123803) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144341) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -866,7 +856,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123805) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144343) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -876,7 +866,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123807) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144345) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-init-skipped.js"
       ]
@@ -886,7 +876,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123810) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144348) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ]
@@ -896,7 +886,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123811) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144349) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary-init.js"
       ]
@@ -906,7 +896,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123813) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144351) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -916,7 +906,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123815) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144353) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-ary.js"
       ]
@@ -926,7 +916,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123817) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144356) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -936,7 +926,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123819) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144357) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-init.js"
       ]
@@ -946,7 +936,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123821) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144359) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -956,7 +946,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123823) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144361) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-id.js"
       ]
@@ -966,7 +956,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123825) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144363) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-obj-init.js"
       ]
@@ -976,7 +966,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-obj.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123827) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144365) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-dflt-obj-ptrn-prop-obj.js"
       ]
@@ -986,7 +976,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123832) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144370) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-empty.js"
       ]
@@ -996,7 +986,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123834) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144372) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -1006,7 +996,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123836) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144374) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -1016,7 +1006,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123838) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144376) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -1026,7 +1016,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123840) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144378) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -1036,7 +1026,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123843) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144380) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -1046,7 +1036,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123844) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144382) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-init-skipped.js"
       ]
@@ -1056,7 +1046,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123846) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144384) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-id-trailing-comma.js"
       ]
@@ -1066,7 +1056,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123848) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144386) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary-init.js"
       ]
@@ -1076,7 +1066,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123850) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144388) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -1086,7 +1076,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123852) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144390) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-ary.js"
       ]
@@ -1096,7 +1086,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123859) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144392) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -1106,7 +1096,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123861) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144394) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-init.js"
       ]
@@ -1116,7 +1106,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123863) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144396) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -1126,7 +1116,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123865) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144398) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-id.js"
       ]
@@ -1136,7 +1126,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123867) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144400) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-obj-init.js"
       ]
@@ -1146,7 +1136,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-obj.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (123869) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (144402) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/async-private-gen-meth-obj-ptrn-prop-obj.js"
       ]
@@ -1156,7 +1146,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125816) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146448) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-init-iter-close.js"
       ]
@@ -1166,7 +1156,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125819) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146449) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-init-iter-no-close.js"
       ]
@@ -1176,7 +1166,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125822) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146452) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-name-iter-val.js"
       ]
@@ -1186,7 +1176,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125824) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146454) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -1196,7 +1186,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125826) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146456) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -1206,7 +1196,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125828) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146458) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -1216,7 +1206,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125830) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146460) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -1226,7 +1216,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125832) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146462) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -1236,7 +1226,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125834) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146464) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -1246,7 +1236,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125836) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146466) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -1256,7 +1246,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125838) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146468) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -1266,7 +1256,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125840) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146470) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-exhausted.js"
       ]
@@ -1276,7 +1266,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125842) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146472) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
@@ -1286,7 +1276,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125844) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146474) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -1296,7 +1286,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125846) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146476) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -1306,7 +1296,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125848) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146478) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -1316,7 +1306,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125850) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146480) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -1326,7 +1316,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125852) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146482) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -1336,7 +1326,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125854) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146484) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -1346,7 +1336,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125856) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146486) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-undef.js"
       ]
@@ -1356,7 +1346,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125858) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146488) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-complete.js"
       ]
@@ -1366,7 +1356,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125860) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146490) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -1376,7 +1366,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125862) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146492) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -1386,7 +1376,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125864) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146494) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -1396,7 +1386,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125866) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146496) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -1406,7 +1396,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125868) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146498) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-id.js"
       ]
@@ -1416,7 +1406,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125871) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146500) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -1426,7 +1416,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125872) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146502) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -1436,7 +1426,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125874) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146504) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision-exhausted.js"
       ]
@@ -1446,7 +1436,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125876) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146506) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elision.js"
       ]
@@ -1456,7 +1446,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125878) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146508) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-empty.js"
       ]
@@ -1466,7 +1456,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125880) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146510) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elem.js"
       ]
@@ -1474,21 +1464,21 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elision.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125882) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146513) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elision.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-empty.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-empty.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125884) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146514) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-empty.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-elision.js"
       ]
     },
     {
@@ -1496,7 +1486,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125886) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146516) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-ary-rest.js"
       ]
@@ -1506,7 +1496,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125889) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146519) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id-elision.js"
       ]
@@ -1516,7 +1506,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125891) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146521) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -1526,7 +1516,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125893) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146523) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-id.js"
       ]
@@ -1536,7 +1526,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125911) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146542) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-obj-id.js"
       ]
@@ -1546,7 +1536,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125914) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146544) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -1556,7 +1546,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125917) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146546) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-init-iter-close.js"
       ]
@@ -1566,7 +1556,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125919) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146549) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-init-iter-no-close.js"
       ]
@@ -1576,7 +1566,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125921) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146551) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-name-iter-val.js"
       ]
@@ -1586,7 +1576,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125923) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146554) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -1596,7 +1586,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125925) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146555) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -1606,7 +1596,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125927) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146557) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -1616,7 +1606,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125929) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146559) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -1626,7 +1616,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125931) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146561) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -1636,7 +1626,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125933) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146563) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -1646,7 +1636,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125935) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146565) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -1656,7 +1646,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125937) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146567) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -1666,7 +1656,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125939) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146569) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ]
@@ -1676,7 +1666,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125941) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146572) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
@@ -1686,7 +1676,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125943) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146573) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -1696,7 +1686,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125945) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146575) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -1706,7 +1696,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125947) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146577) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -1716,7 +1706,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125949) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146579) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -1726,7 +1716,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125951) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146581) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -1736,7 +1726,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125953) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146583) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -1746,7 +1736,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125955) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146585) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ]
@@ -1756,7 +1746,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125957) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146587) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ]
@@ -1766,7 +1756,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125959) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146589) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -1776,7 +1766,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125961) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146591) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -1786,7 +1776,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125964) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146593) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -1796,7 +1786,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125965) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146595) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -1806,7 +1796,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125967) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146597) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-id.js"
       ]
@@ -1816,7 +1806,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125969) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146599) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -1826,7 +1816,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125971) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146601) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -1836,7 +1826,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125973) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146603) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elision-exhausted.js"
       ]
@@ -1846,7 +1836,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125975) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146605) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elision.js"
       ]
@@ -1856,7 +1846,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125977) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146607) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-empty.js"
       ]
@@ -1866,7 +1856,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125979) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146609) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ]
@@ -1876,7 +1866,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125981) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146611) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ]
@@ -1886,7 +1876,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125983) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146613) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ]
@@ -1896,7 +1886,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125985) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146616) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ]
@@ -1906,7 +1896,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125988) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146618) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id-elision.js"
       ]
@@ -1916,7 +1906,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125990) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146620) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -1926,7 +1916,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (125992) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146623) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-id.js"
       ]
@@ -1936,7 +1926,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126010) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146639) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-obj-id.js"
       ]
@@ -1946,7 +1936,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126014) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146644) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -1956,7 +1946,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126016) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146646) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-empty.js"
       ]
@@ -1966,7 +1956,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126018) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146648) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -1976,7 +1966,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126020) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146650) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -1986,7 +1976,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126022) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146652) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -1996,7 +1986,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126025) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146654) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -2006,7 +1996,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126026) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146656) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -2016,7 +2006,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126028) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146658) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-skipped.js"
       ]
@@ -2026,7 +2016,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126030) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146660) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ]
@@ -2036,7 +2026,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126032) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146662) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary-init.js"
       ]
@@ -2046,7 +2036,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126034) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146664) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -2056,7 +2046,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126036) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146666) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-ary.js"
       ]
@@ -2066,7 +2056,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126038) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146668) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -2076,7 +2066,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126040) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146670) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-init.js"
       ]
@@ -2086,7 +2076,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126042) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146672) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -2096,7 +2086,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126044) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146674) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-id.js"
       ]
@@ -2106,7 +2096,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126046) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146676) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-obj-init.js"
       ]
@@ -2116,7 +2106,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-obj.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126048) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146678) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-prop-obj.js"
       ]
@@ -2126,7 +2116,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126053) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146683) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-empty.js"
       ]
@@ -2136,7 +2126,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126055) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146685) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -2146,7 +2136,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126057) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146687) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -2156,7 +2146,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126059) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146689) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -2166,7 +2156,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126061) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146691) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -2176,7 +2166,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126063) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146693) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -2186,7 +2176,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126065) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146696) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-skipped.js"
       ]
@@ -2196,7 +2186,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126067) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146697) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-trailing-comma.js"
       ]
@@ -2206,7 +2196,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126069) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146699) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary-init.js"
       ]
@@ -2216,7 +2206,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126071) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146701) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -2226,7 +2216,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126073) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146703) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-ary.js"
       ]
@@ -2236,7 +2226,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126075) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146705) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -2246,7 +2236,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126077) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146707) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-init.js"
       ]
@@ -2254,19 +2244,9 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id.js"
-      ],
-      "reason": "isolated exit -1: thread '<unknown>' (126080) has overflowed its stack",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126081) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146710) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -2274,11 +2254,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126084) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146711) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-id.js"
       ]
     },
     {
@@ -2286,9 +2266,19 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126085) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (146713) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj-init.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj.js"
+      ],
+      "reason": "isolated exit -1: thread '<unknown>' (146715) has overflowed its stack",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-prop-obj.js"
       ]
     },
     {
@@ -2296,7 +2286,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126367) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147026) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-init-iter-close.js"
       ]
@@ -2306,7 +2296,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126369) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147028) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-init-iter-no-close.js"
       ]
@@ -2316,7 +2306,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126371) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147030) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-name-iter-val.js"
       ]
@@ -2326,7 +2316,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126373) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147032) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -2336,7 +2326,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126375) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147034) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -2346,7 +2336,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126377) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147036) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -2356,7 +2346,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126379) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147038) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -2366,7 +2356,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126381) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147040) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -2376,7 +2366,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126383) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147042) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -2386,7 +2376,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126385) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147044) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -2396,7 +2386,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126387) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147046) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -2406,7 +2396,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126389) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147048) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-exhausted.js"
       ]
@@ -2416,7 +2406,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126391) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147050) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
@@ -2426,7 +2416,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126393) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147052) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -2436,7 +2426,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126395) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147054) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -2446,7 +2436,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126397) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147056) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -2456,7 +2446,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126399) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147058) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -2466,7 +2456,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126401) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147060) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -2476,7 +2466,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126403) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147062) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -2486,7 +2476,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126405) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147064) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-undef.js"
       ]
@@ -2496,7 +2486,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126407) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147066) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-complete.js"
       ]
@@ -2506,7 +2496,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126409) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147068) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -2516,7 +2506,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126411) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147071) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -2526,7 +2516,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126413) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147072) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -2536,7 +2526,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126415) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147074) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -2546,7 +2536,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126417) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147076) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-id.js"
       ]
@@ -2556,7 +2546,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126419) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147078) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -2566,7 +2556,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126422) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147080) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -2576,7 +2566,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126423) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147082) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elision-exhausted.js"
       ]
@@ -2586,7 +2576,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126425) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147084) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elision.js"
       ]
@@ -2596,7 +2586,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126427) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147086) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-empty.js"
       ]
@@ -2606,7 +2596,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126430) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147088) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-elem.js"
       ]
@@ -2616,7 +2606,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126431) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147090) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-elision.js"
       ]
@@ -2626,7 +2616,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126433) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147092) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-empty.js"
       ]
@@ -2636,7 +2626,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126435) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147094) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-ary-rest.js"
       ]
@@ -2646,7 +2636,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126438) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147097) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id-elision.js"
       ]
@@ -2656,7 +2646,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126440) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147099) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -2666,7 +2656,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126442) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147101) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-id.js"
       ]
@@ -2676,7 +2666,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126459) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147120) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-obj-id.js"
       ]
@@ -2686,7 +2676,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126464) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147122) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -2696,7 +2686,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-init-iter-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126466) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147125) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-init-iter-close.js"
       ]
@@ -2706,7 +2696,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-init-iter-no-close.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126468) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147127) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-init-iter-no-close.js"
       ]
@@ -2716,7 +2706,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-name-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126470) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147129) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-name-iter-val.js"
       ]
@@ -2726,7 +2716,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126472) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147131) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elem-init.js"
       ]
@@ -2736,7 +2726,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126474) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147133) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elem-iter.js"
       ]
@@ -2746,7 +2736,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126476) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147135) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elision-init.js"
       ]
@@ -2756,7 +2746,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126478) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147137) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-elision-iter.js"
       ]
@@ -2766,7 +2756,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126480) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147139) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-empty-init.js"
       ]
@@ -2776,7 +2766,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126482) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147141) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-empty-iter.js"
       ]
@@ -2786,7 +2776,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126484) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147143) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-rest-init.js"
       ]
@@ -2796,7 +2786,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126486) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147145) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-ary-rest-iter.js"
       ]
@@ -2804,21 +2794,21 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126489) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147147) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
       ]
     },
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126490) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147150) has overflowed its stack",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-exhausted.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js"
       ]
     },
     {
@@ -2826,7 +2816,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126492) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147151) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-class.js"
       ]
@@ -2836,7 +2826,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126494) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147153) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-cover.js"
       ]
@@ -2846,7 +2836,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126497) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147155) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-fn.js"
       ]
@@ -2856,7 +2846,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126498) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147157) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-gen.js"
       ]
@@ -2866,7 +2856,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126500) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147159) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-hole.js"
       ]
@@ -2876,7 +2866,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126502) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147161) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-skipped.js"
       ]
@@ -2886,7 +2876,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126504) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147163) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-undef.js"
       ]
@@ -2896,7 +2886,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126506) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147165) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-complete.js"
       ]
@@ -2906,7 +2896,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126508) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147167) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-done.js"
       ]
@@ -2916,7 +2906,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126510) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147169) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-val-array-prototype.js"
       ]
@@ -2926,7 +2916,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126513) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147171) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-iter-val.js"
       ]
@@ -2936,7 +2926,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126514) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147173) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-id-init.js"
       ]
@@ -2946,7 +2936,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126516) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147175) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-id.js"
       ]
@@ -2956,7 +2946,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126518) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147177) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-prop-id-init.js"
       ]
@@ -2966,7 +2956,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126520) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147179) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-obj-prop-id.js"
       ]
@@ -2976,7 +2966,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elision-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126522) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147181) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elision-exhausted.js"
       ]
@@ -2986,7 +2976,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126524) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147183) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elision.js"
       ]
@@ -2996,7 +2986,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126526) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147185) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-empty.js"
       ]
@@ -3006,7 +2996,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126528) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147187) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-elem.js"
       ]
@@ -3016,7 +3006,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126530) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147190) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-elision.js"
       ]
@@ -3026,7 +3016,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126532) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147191) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-empty.js"
       ]
@@ -3036,7 +3026,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126534) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147193) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-ary-rest.js"
       ]
@@ -3046,7 +3036,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id-elision.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126537) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147196) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id-elision.js"
       ]
@@ -3056,7 +3046,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126539) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147198) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id-exhausted.js"
       ]
@@ -3066,7 +3056,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126541) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147200) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-id.js"
       ]
@@ -3076,7 +3066,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-obj-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126560) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147219) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-obj-id.js"
       ]
@@ -3086,7 +3076,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126562) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147221) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-rest-obj-prop-id.js"
       ]
@@ -3096,7 +3086,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126564) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147224) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-empty.js"
       ]
@@ -3106,7 +3096,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126567) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147226) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -3116,7 +3106,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126569) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147228) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -3126,7 +3116,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126571) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147230) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -3136,7 +3126,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126573) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147232) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -3146,7 +3136,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126575) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147234) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -3156,7 +3146,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126577) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147236) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-skipped.js"
       ]
@@ -3166,7 +3156,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126579) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147238) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-trailing-comma.js"
       ]
@@ -3176,7 +3166,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126581) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147240) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary-init.js"
       ]
@@ -3186,7 +3176,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126583) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147242) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -3196,7 +3186,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126585) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147244) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-ary.js"
       ]
@@ -3206,7 +3196,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126588) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147246) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -3216,7 +3206,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126589) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147248) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-init.js"
       ]
@@ -3226,7 +3216,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126591) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147250) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -3236,7 +3226,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126593) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147252) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-id.js"
       ]
@@ -3246,7 +3236,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126595) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147254) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-obj-init.js"
       ]
@@ -3256,7 +3246,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-obj.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126597) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147256) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-prop-obj.js"
       ]
@@ -3266,7 +3256,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-empty.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126602) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147261) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-empty.js"
       ]
@@ -3276,7 +3266,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126604) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147263) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-arrow.js"
       ]
@@ -3286,7 +3276,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-class.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126606) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147265) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-class.js"
       ]
@@ -3296,7 +3286,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-cover.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126609) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147267) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-cover.js"
       ]
@@ -3306,7 +3296,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-fn.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126610) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147269) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-fn.js"
       ]
@@ -3316,7 +3306,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-gen.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126615) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147271) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-gen.js"
       ]
@@ -3326,7 +3316,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126630) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147273) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-skipped.js"
       ]
@@ -3336,7 +3326,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126639) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147275) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-trailing-comma.js"
       ]
@@ -3346,7 +3336,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126641) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147277) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary-init.js"
       ]
@@ -3356,7 +3346,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126644) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147279) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary-trailing-comma.js"
       ]
@@ -3366,7 +3356,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126646) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147281) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-ary.js"
       ]
@@ -3376,7 +3366,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-init-skipped.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126657) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147284) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-init-skipped.js"
       ]
@@ -3386,7 +3376,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126670) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147285) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-init.js"
       ]
@@ -3396,7 +3386,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-trailing-comma.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126692) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147287) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id-trailing-comma.js"
       ]
@@ -3406,7 +3396,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126725) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147289) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-id.js"
       ]
@@ -3416,7 +3406,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-obj-init.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126770) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147291) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-obj-init.js"
       ]
@@ -3426,7 +3416,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-obj.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (126777) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147293) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-prop-obj.js"
       ]
@@ -3436,7 +3426,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-1.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (127378) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147845) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-1.js"
       ]
@@ -3446,7 +3436,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-2.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (127380) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147847) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-2.js"
       ]
@@ -3456,7 +3446,7 @@
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-direct-eval-err-contains-newtarget.js"
       ],
-      "reason": "isolated exit -1: thread '<unknown>' (127404) has overflowed its stack",
+      "reason": "isolated exit -1: thread '<unknown>' (147871) has overflowed its stack",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-direct-eval-err-contains-newtarget.js"
       ]
@@ -5863,7 +5853,7 @@
       ]
     }
   ],
-  "passed": 1636,
+  "passed": 1637,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

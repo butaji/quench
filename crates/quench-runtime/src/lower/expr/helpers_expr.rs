@@ -130,11 +130,15 @@ fn lower_computed_member_expr(
     })
 }
 
+fn private_field_prop_key(name: &str) -> PropertyKey {
+    PropertyKey::Ident(format!("#{name}"))
+}
+
 fn lower_private_field_expr(
     member: &ast::PrivateFieldExpression,
 ) -> Result<Expression, LowerError> {
     let obj = lower_expr_inner(&member.object)?;
-    let property = PropertyKey::Ident(member.field.name.as_str().to_string());
+    let property = private_field_prop_key(member.field.name.as_str());
     Ok(Expression::Member {
         object: Box::new(obj),
         property,
@@ -295,7 +299,7 @@ pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Express
             let obj = lower_expr_inner(&pf.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
-                property: PropertyKey::Ident(pf.field.name.as_str().to_string()),
+                property: private_field_prop_key(pf.field.name.as_str()),
                 computed: false,
             })
         }
@@ -335,7 +339,7 @@ pub fn lower_simple_assignment_target(
             let obj = lower_expr_inner(&pf.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
-                property: PropertyKey::Ident(pf.field.name.as_str().to_string()),
+                property: private_field_prop_key(pf.field.name.as_str()),
                 computed: false,
             })
         }
