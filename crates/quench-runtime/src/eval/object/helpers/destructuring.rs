@@ -122,6 +122,14 @@ pub fn assign_array_with_iterator(
 ) -> Result<(), JsError> {
     let mut index = 0;
     for binding in bindings {
+        if let BindingElement::Rest(inner) = binding {
+            let rest_array = collect_remaining_array(iterator, &mut index);
+            if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
+                call_iterator_return(iterator);
+                return Err(error);
+            }
+            return Ok(());
+        }
         let result = take_iterator_value(iterator, &mut index, env);
         let elem_value = match result {
             Ok(value) => value,
@@ -144,6 +152,31 @@ pub fn assign_array_with_iterator(
         }
     }
     Ok(())
+}
+
+/// Collect all remaining elements from an array or iterator starting at `index`.
+fn collect_remaining_array(iterator: &Rc<RefCell<Object>>, index: &mut usize) -> Value {
+    if iterator.borrow().kind == ObjectKind::Array {
+        let remaining = {
+            let borrowed = iterator.borrow();
+            if *index < borrowed.elements.len() {
+                borrowed.elements[*index..].to_vec()
+            } else {
+                Vec::new()
+            }
+        };
+        *index = iterator.borrow().elements.len();
+        return Value::Object(Rc::new(RefCell::new(Object::new_array_from(remaining))));
+    }
+    let mut items = Vec::new();
+    loop {
+        match take_iterator_value(iterator, index, &Rc::new(RefCell::new(Environment::new()))) {
+            Ok(Value::Undefined) => break,
+            Ok(v) => items.push(v),
+            Err(_) => break,
+        }
+    }
+    Value::Object(Rc::new(RefCell::new(Object::new_array_from(items))))
 }
 
 /// Take the next value from an iterator (or array-like).
@@ -341,6 +374,7 @@ pub fn assign_binding_elem(
             };
             assign_binding_elem(binding, &value, env)
         }
+        BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
             if let Expression::Member {
                 object, property, ..
@@ -475,7 +509,39 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+
+    #[test]
+    fn array_rest_only_destructure() {
+        let r = eval("var [...[a,b,c]] = [3,4,5]; a+b+c").unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
     // ─── generator destructuring ─────────────────────────────────────────────
+
+    #[test]
+    fn regular_fn_rest_destructure() {
+        let r = eval("function f([...[a,b,c]]) { return a+b+c; } f([3,4,5])").unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn standalone_gen_rest_destructure() {
+        let r = eval(
+            "function* f([...[a,b,c]]) { return a+b+c; } f([3,4,5]).next().value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
+
+    #[test]
+    fn generator_method_destructures_rest_param() {
+        let r = eval(
+            "var c=0,x=0,y=0,z=0; class C { *method([...[a, b, c]]) { \
+             x=a; y=b; z=c; c=1; } } new C().method([3, 4, 5]).next(); x+y+z",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(12.0));
+    }
 
     #[test]
     fn assign_array_destructuring_generator_elision() {
