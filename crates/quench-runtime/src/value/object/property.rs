@@ -59,15 +59,19 @@ impl Object {
             );
         }
         if let Some(idx) = as_array_index(key) {
-            while self.elements.len() <= idx {
-                self.elements.push(Value::Undefined);
+            if self.kind == ObjectKind::Array {
+                while self.elements.len() <= idx {
+                    self.elements.push(Value::Undefined);
+                }
+                self.elements[idx] = value.clone();
+                self.holes.remove(&idx);
+                self.properties.insert(
+                    "length".to_string(),
+                    Value::Number(self.elements.len() as f64),
+                );
+            } else {
+                self.properties.insert(key.to_string(), value);
             }
-            self.elements[idx] = value;
-            self.holes.remove(&idx);
-            self.properties.insert(
-                "length".to_string(),
-                Value::Number(self.elements.len() as f64),
-            );
         } else if key == "length" && self.kind == ObjectKind::Array {
             self.set_array_length_value(value);
         } else {
@@ -134,7 +138,7 @@ impl Object {
             return Some(v.clone());
         }
         if let Some(idx) = as_array_index(key) {
-            if idx < self.elements.len() {
+            if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(self.elements[idx].clone());
             }
         }
@@ -244,7 +248,7 @@ impl Object {
             });
         }
         if let Some(idx) = as_array_index(key) {
-            if idx < self.elements.len() {
+            if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(PropertyDescriptor {
                     value: Some(self.elements[idx].clone()),
                     writable: Some(true),

@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::helpers::{
-    iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value, set_populate,
-    set_values,
+    init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
+    set_populate, set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -88,14 +88,16 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
 
     let set_proto_for_ctor = Rc::clone(&set_proto);
     let set_constructor = native_fn(move |args| {
-        let set_obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
-        let set = Rc::new(RefCell::new(set_obj));
-        {
-            let mut s = set.borrow_mut();
-            let values = Object::new_array(0);
-            s.set("_values", Value::Object(Rc::new(RefCell::new(values))));
-            s.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let set = if let Value::Object(obj_rc) = this_val {
+            init_set_object(&obj_rc);
+            obj_rc
+        } else {
+            let set_obj = Object::with_prototype(ObjectKind::Set, Rc::clone(&set_proto_for_ctor));
+            let set = Rc::new(RefCell::new(set_obj));
+            init_set_object(&set);
+            set
+        };
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 set_populate(&set, src)?;
