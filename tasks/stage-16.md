@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4147 pass / 220 fail (95.0%)** as of 2026-07-23.
+**4,367 tests** · **4152 pass / 215 fail (95.1%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -26,18 +26,18 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4126** | **241** | **94.5%** | Error subclass super() preserves derived prototype |
 | 2026-07-23 | **4145** | **222** | **94.9%** | Symbol computed field keys; Object/Promise/Function subclass instanceof |
 | 2026-07-23 | **4147** | **220** | **95.0%** | for-of/for-in member+private LHS lowering (private field brand checks) |
+| 2026-07-23 | **4152** | **215** | **95.1%** | Destructuring private assign via assign_to; object rest LHS; nested outer private fields |
 
-## Top remaining clusters (~222)
+## Top remaining clusters (~215)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 14 | Value is not a function, got undefined | Residual private ref/proxy |
 | 17 | Expected Test262Error not thrown | Destructuring eval-order |
-| 17 | Expected TypeError not thrown | Abrupt completion / brand |
+| 14 | Value is not a function, got undefined | Private ref/proxy |
+| 25 | Expected TypeError not thrown | Heterogeneous (brand, frozen, static private) |
 | 11 | Private method or accessor already defined | Escape-sequence private names |
 | 9 | Value is not iterable | yield* spread |
 | 8 | Expected SyntaxError (privatename eval) | Direct eval early errors |
-| 8 | Expected ReferenceError not thrown | TDZ / uninitialized this |
 | ~20 | Missing builtins (DataView, TypedArrays, …) | Stage-gated primitives |
 
 ## How to clear this stage (ASAP × min LOC)

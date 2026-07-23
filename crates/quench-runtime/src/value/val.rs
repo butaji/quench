@@ -210,10 +210,14 @@ pub struct ClassValue {
 impl ClassValue {
     /// Create a ClassValue from an AST Class node
     #[allow(dead_code)]
-    pub fn from_ast(class: &Class) -> Self {
+    pub fn from_ast(class: &Class, parent_class_id: Option<usize>) -> Self {
         let id = CLASS_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut scoped_class = class.clone();
-        crate::eval::class::private_names::scope_class_private_names(&mut scoped_class, id);
+        crate::eval::class::private_names::scope_class_private_names(
+            &mut scoped_class,
+            id,
+            parent_class_id,
+        );
 
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
@@ -819,7 +823,7 @@ mod tests {
             super_class: None,
             body: vec![setter_member],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 
@@ -843,7 +847,7 @@ mod tests {
             super_class: None,
             body: vec![setter_member],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 
@@ -861,7 +865,7 @@ mod tests {
             super_class: None,
             body: vec![],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 
