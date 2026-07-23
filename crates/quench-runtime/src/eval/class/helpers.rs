@@ -5,7 +5,6 @@ use crate::ast::Statement;
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
-use crate::eval::statement::eval_function_body;
 use crate::interpreter::{
     check_depth_guard, is_strict_mode, predeclare_let_const, set_strict_mode,
 };
@@ -47,6 +46,7 @@ fn throw_uninitialized_this() -> Result<Value, JsError> {
 /// Finish a constructor: object returns win; derived + uninitialized this → ReferenceError.
 fn finish_ctor_result(
     result: Value,
+    explicit_return: bool,
     this_val: &Value,
     class: &ClassValue,
     call_env: &Rc<RefCell<Environment>>,
@@ -57,14 +57,22 @@ fn finish_ctor_result(
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_) => Ok(result),
         _ => {
-            if class.super_class.is_some()
-                && !call_env
+            if class.super_class.is_some() {
+                if !call_env
                     .borrow()
                     .current_scope()
                     .borrow()
                     .is_this_initialized()
-            {
-                return throw_uninitialized_this();
+                {
+                    return throw_uninitialized_this();
+                }
+                if explicit_return && !matches!(result, Value::Undefined) {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Derived constructors may only return object or undefined",
+                        "TypeError",
+                    );
+                    return Err(js_err);
+                }
             }
             Ok(this_val.clone())
         }
@@ -86,13 +94,13 @@ fn new_instance(class: &ClassValue, env: &Rc<RefCell<Environment>>) -> Result<Va
 fn run_ctor_body(
     body: &[Statement],
     call_env: &Rc<RefCell<Environment>>,
-) -> Result<Value, JsError> {
+) -> Result<(Value, bool), JsError> {
     let prev_strict = is_strict_mode();
     set_strict_mode(true);
     predeclare_let_const(body, &mut call_env.borrow_mut());
-    let result = eval_function_body(body, call_env, false)?;
+    let body_result = crate::eval::statement::eval_function_body_with_meta(body, call_env, false)?;
     set_strict_mode(prev_strict);
-    Ok(result)
+    Ok((body_result.value, body_result.explicit_return))
 }
 
 /// Instantiate without instance fields (fast path)
@@ -135,12 +143,18 @@ pub fn instantiate_simple(
             install_privates_on_object(class, o, env)?;
         }
     }
-    let result = if body.is_empty() {
-        Value::Undefined
+    let (result, explicit_return) = if body.is_empty() {
+        (Value::Undefined, false)
     } else {
         run_ctor_body(&body, &call_env)?
     };
-    finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
+    finalize_instance(finish_ctor_result(
+        result,
+        explicit_return,
+        &this_val,
+        class,
+        &call_env,
+    )?)
 }
 
 pub(crate) fn init_instance_fields(
@@ -234,20 +248,32 @@ pub fn instantiate_with_fields(
         call_env
             .borrow_mut()
             .set_pending_fields(class.instance_fields.clone());
-        let result = run_ctor_body(&body, &call_env)?;
-        return finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?);
+        let (result, explicit_return) = run_ctor_body(&body, &call_env)?;
+        return finalize_instance(finish_ctor_result(
+            result,
+            explicit_return,
+            &this_val,
+            class,
+            &call_env,
+        )?);
     }
 
     if class.super_class.is_none() {
         install_privates_on_object(class, &instance_rc, env)?;
         init_instance_fields(class, &instance_rc, &call_env)?;
     }
-    let result = if body.is_empty() {
-        Value::Undefined
+    let (result, explicit_return) = if body.is_empty() {
+        (Value::Undefined, false)
     } else {
         run_ctor_body(&body, &call_env)?
     };
-    finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
+    finalize_instance(finish_ctor_result(
+        result,
+        explicit_return,
+        &this_val,
+        class,
+        &call_env,
+    )?)
 }
 
 /// Build constructor environment (params, arguments, super reference)
@@ -351,18 +377,16 @@ pub fn is_constructor_value(val: &Value) -> bool {
         Value::Class(_) => true,
         Value::NativeConstructor(_) => true,
         Value::NativeFunction(nf) => {
-            // Check if prototype is set (native constructors)
-            if nf.prototype.borrow().is_some() {
-                true
-            } else if let Some(Value::String(n)) = nf.get_property("name") {
-                // Bound functions have [[Construct]] but no .prototype
-                n.starts_with("bound ")
-            } else {
-                false
+            if let Some(target) = nf.get_property("__quench_bound_target") {
+                return is_constructor_value(&target);
             }
+            nf.prototype.borrow().is_some()
         }
-        Value::Function(f) => !f.is_arrow,
+        Value::Function(f) => !f.is_arrow && !f.is_async && !f.is_generator,
         Value::Object(o) => {
+            if let Some(target) = o.borrow().get_own_value("__quench_proxy_target") {
+                return is_constructor_value(&target);
+            }
             o.borrow().get("prototype").is_some() && o.borrow().get("constructor").is_some()
         }
         _ => false,
@@ -2487,6 +2511,61 @@ mod tests {
     fn private_method_assignment_throws_type_error() {
         let err =
             eval("class C { #m() {} assign() { this.#m = 0; } } new C().assign()").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn static_private_method_assignment_throws_type_error() {
+        let err = eval("class C { static #m() {} static assign() { this.#m = 0; } } C.assign()")
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn derived_constructor_return_boolean_throws_type_error() {
+        let err = eval(
+            "class Base {} class Derived extends Base { constructor() { super(); return true; } } \
+             new Derived()",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_async_function_throws_type_error() {
+        let err = eval("async function fn() {} class A extends fn {}").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_async_function_before_prototype_getter() {
+        let err = eval(
+            "async function fn() {} \
+             Object.defineProperty(fn, 'prototype', { get: function() { throw new Test262Error('unreachable'); } }); \
+             class A extends fn {}",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_bound_async_function_throws_type_error() {
+        let err = eval(
+            "var bound = (async function() {}).bind(); \
+             Object.defineProperty(bound, 'prototype', { get: function() { throw new Test262Error('unreachable'); } }); \
+             class A extends bound {}",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_proxy_wrapping_async_function_throws_type_error() {
+        let err = eval(
+            "var proxy = new Proxy(async function() {}, { get: function() { throw new Test262Error('unreachable'); } }); \
+             class A extends proxy {}",
+        )
+        .unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
 
