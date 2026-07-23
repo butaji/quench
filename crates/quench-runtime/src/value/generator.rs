@@ -41,6 +41,8 @@ pub struct GeneratorObject {
     pub yields_to_replay: usize,
     /// Resume values for completed yields in the pending statement.
     pub stored_resumes: Vec<Value>,
+    /// Execution environment persisted across `.next()` calls.
+    pub call_env: Option<Rc<RefCell<Environment>>>,
 }
 
 impl GeneratorObject {
@@ -65,29 +67,17 @@ impl GeneratorObject {
             pending_stmt: None,
             yields_to_replay: 0,
             stored_resumes: Vec::new(),
+            call_env: None,
         }
     }
 
-    /// Advance the generator by one step.
-    pub fn next(&mut self, value: Value) -> Result<IteratorResult, JsError> {
-        if self.state == GeneratorState::Completed {
-            return Ok(IteratorResult {
-                value: Value::Undefined,
-                done: true,
-            });
+    fn call_env(&mut self) -> Result<Rc<RefCell<Environment>>, JsError> {
+        if let Some(ref env) = self.call_env {
+            return Ok(Rc::clone(env));
         }
-        self.state = GeneratorState::Running;
-        self.next_value = value;
-
-        // Store the resume value so yield expressions can find it
-        crate::interpreter::set_generator_resume_value(self.next_value.clone());
-
-        // Create a fresh call environment
         let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
             &self.closure,
         ))));
-
-        // Set up `this` binding
         let global_this = self
             .closure
             .borrow()
@@ -98,8 +88,6 @@ impl GeneratorObject {
             .current_scope()
             .borrow_mut()
             .set_this(global_this);
-
-        // For async generators, params are pre-evaluated. Bind them here.
         if let Some(ref args) = self.args {
             for (i, param) in self.params.iter().enumerate() {
                 let param_value = match args.get(i).cloned() {
@@ -123,6 +111,25 @@ impl GeneratorObject {
                     .define(param.name.clone(), param_value);
             }
         }
+        self.call_env = Some(Rc::clone(&call_env));
+        Ok(call_env)
+    }
+
+    /// Advance the generator by one step.
+    pub fn next(&mut self, value: Value) -> Result<IteratorResult, JsError> {
+        if self.state == GeneratorState::Completed {
+            return Ok(IteratorResult {
+                value: Value::Undefined,
+                done: true,
+            });
+        }
+        self.state = GeneratorState::Running;
+        self.next_value = value;
+
+        // Store the resume value so yield expressions can find it
+        crate::interpreter::set_generator_resume_value(self.next_value.clone());
+
+        let call_env = self.call_env()?;
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
@@ -154,6 +161,12 @@ impl GeneratorObject {
                             done: false,
                         });
                     }
+                    if let Some(crate::interpreter::ControlFlow::Return(ret)) =
+                        crate::interpreter::take_control_flow()
+                    {
+                        last_val = ret;
+                        break;
+                    }
                     crate::value::generator_replay::commit_completed_yields(
                         &mut self.stored_resumes,
                     );
@@ -167,6 +180,7 @@ impl GeneratorObject {
                 }
                 Err(e) => {
                     self.state = GeneratorState::Completed;
+                    self.call_env = None;
                     crate::interpreter::set_strict_mode(prev_strict);
                     return Err(e);
                 }
@@ -177,6 +191,7 @@ impl GeneratorObject {
         self.pending_stmt = None;
         self.yields_to_replay = 0;
         self.stored_resumes.clear();
+        self.call_env = None;
         crate::value::generator_replay::set_resuming_pending_yield(false);
         crate::interpreter::set_strict_mode(prev_strict);
         Ok(IteratorResult {
@@ -474,6 +489,18 @@ mod tests {
     fn test_generator_debug_output() {
         let gen_str = format!("{:?}", GeneratorState::Suspended);
         assert!(!gen_str.is_empty());
+    }
+
+    #[test]
+    fn test_generator_bindings_persist_across_yield_in_later_statement() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "function* g() { yield 1; let c = 2; return yield c; } \
+                 var iter = g(); iter.next(); iter.next(1); iter.next(3).value",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(3.0));
     }
 
     /// Test that a generator with a simple yield body returns properly.
