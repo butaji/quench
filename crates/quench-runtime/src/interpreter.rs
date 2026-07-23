@@ -22,11 +22,27 @@ pub use helpers::*;
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant, dead_code)]
 pub(crate) enum ControlFlow {
-    Break,
-    Continue,
+    Break(Option<String>),
+    Continue(Option<String>),
     Return(Value),
     Yield(Value),
     YieldDelegate(Value),
+}
+
+/// Whether this loop should handle the break/continue (innermost matching target).
+pub(crate) fn loop_handles_break(cf: &ControlFlow, loop_labels: &[String]) -> bool {
+    matches!(cf, ControlFlow::Break(label) if targets_this_loop(label, loop_labels))
+}
+
+pub(crate) fn loop_handles_continue(cf: &ControlFlow, loop_labels: &[String]) -> bool {
+    matches!(cf, ControlFlow::Continue(label) if targets_this_loop(label, loop_labels))
+}
+
+fn targets_this_loop(label: &Option<String>, loop_labels: &[String]) -> bool {
+    match label {
+        None => true,
+        Some(name) => loop_labels.iter().any(|l| l == name),
+    }
 }
 
 thread_local! {

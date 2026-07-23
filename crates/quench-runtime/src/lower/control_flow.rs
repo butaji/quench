@@ -114,30 +114,32 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
     let iterable = lower_expr(&for_of_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_of_stmt.body).unwrap_or(Statement::Empty));
 
-    // When the left side is a VariableDeclaration, also emit the var/let/const
-    // declaration so the binding is created in the environment.
-    // For patterns, pass the iterable so the pattern can access elements from it.
-    let var_decl_stmt =
+    let (var_decl_stmt, loop_binding) =
         if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_of_stmt.left {
+            let kind = match decl.kind {
+                ast::VariableDeclarationKind::Var => VarKind::Var,
+                ast::VariableDeclarationKind::Let => VarKind::Let,
+                ast::VariableDeclarationKind::Const => VarKind::Const,
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
+                    return None;
+                }
+            };
             let has_pattern = decl
                 .declarations
                 .iter()
                 .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
-            let mut vd = if has_pattern {
-                crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+            if matches!(kind, VarKind::Var) {
+                let vd = if has_pattern {
+                    crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+                } else {
+                    crate::lower::stmt::lower_var_decl(decl)
+                };
+                (vd, None)
             } else {
-                crate::lower::stmt::lower_var_decl(decl)
-            };
-            // For-of with const should create a new binding per iteration (ES spec),
-            // but our runtime reassigns the same binding. Use let to avoid errors.
-            if let Some(Statement::VarDeclaration { ref mut kind, .. }) = vd {
-                if *kind == VarKind::Const {
-                    *kind = VarKind::Let;
-                }
+                (None, Some(kind))
             }
-            vd
         } else {
-            None
+            (None, None)
         };
 
     let variable = lower_for_lhs(&for_of_stmt.left)?;
@@ -145,6 +147,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
         variable: Box::new(variable),
         iterable: Box::new(iterable),
         body,
+        loop_binding,
     }));
 
     if let Some(var_stmt) = var_decl_stmt {
