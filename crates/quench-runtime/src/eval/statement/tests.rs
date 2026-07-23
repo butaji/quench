@@ -608,6 +608,15 @@ mod function_body {
 
     /// Empty block: undefined per ES §13.2.1.
     #[test]
+    fn return_async_call_yields_promise_not_tco() {
+        assert_eq!(
+            eval("function g() { return (async function() {})(); } typeof g()").unwrap(),
+            Value::String("object".into())
+        );
+    }
+
+    /// Empty block: undefined per ES §13.2.1.
+    #[test]
     fn empty_block_is_undefined() {
         assert_eq!(eval("function f() {} f()").unwrap(), Value::Undefined);
     }

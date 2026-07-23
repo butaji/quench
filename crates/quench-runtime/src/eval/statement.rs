@@ -321,9 +321,9 @@ fn eval_function_body_impl(
     Ok(last_val)
 }
 
-/// Handle a tail-call return expression: resolve callee and args, then
-/// set the thread-local signal for the trampoline to pick up.
-fn handle_tail_call(
+/// Handle a tail-call return expression when eligible. Returns true if a tail-call
+/// signal was set (async/generator callees are excluded — they use Promise wrapping).
+fn try_handle_tail_call(
     expr: &Option<Box<Expression>>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
@@ -342,8 +342,17 @@ fn handle_tail_call(
                 set_tail_call_signal(TailCallSignal::new(function, args));
             }
         }
+        _ => (
+            eval_expression(callee, env, in_arrow_function)?,
+            Value::Undefined,
+        ),
+    };
+    let function = resolve_callee_to_function(callee_val)?;
+    if function.is_async || function.is_generator {
+        return Ok(false);
     }
-    Ok(())
+    set_tail_call_signal(TailCallSignal::new(function, args, this_val));
+    Ok(true)
 }
 
 /// Recursively find a tail-call return inside a block at the last position.

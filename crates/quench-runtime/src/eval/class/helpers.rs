@@ -2773,6 +2773,17 @@ mod tests {
     }
 
     #[test]
+    fn private_field_async_function_direct_return_is_promise() {
+        let r = eval(
+            "class C { #m = async function() { return 'test262'; }; \
+             method() { return this.#m(); } } \
+             typeof new C().method().then",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
     fn private_field_async_arrow_function_callable() {
         let r = eval(
             "class C { #m = async () => 'test262'; \
