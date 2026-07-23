@@ -74,6 +74,10 @@ pub fn assign_array_destructuring(
         return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
     }
     let Value::Object(arr_rc) = value else {
+        if let Value::Generator(gen) = value {
+            let iter = crate::value::generator::generator_as_iterator_object(Rc::clone(gen));
+            return assign_array_with_iterator(bindings, &iter, env);
+        }
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
@@ -161,11 +165,15 @@ pub fn take_iterator_value(
         return Ok(result.unwrap_or(Value::Undefined));
     }
     let next_value = iterator.borrow().get("next");
-    let next_obj = match next_value {
-        Some(Value::Object(obj)) => obj,
-        _ => return Ok(Value::Undefined),
+    let Some(next_fn) = next_value else {
+        return Ok(Value::Undefined);
     };
-    let result = crate::eval::function::call_value(Value::Object(Rc::clone(&next_obj)), vec![])?;
+    let result = match next_fn {
+        Value::Object(obj) => {
+            crate::eval::function::call_value(Value::Object(Rc::clone(&obj)), vec![])?
+        }
+        other => crate::eval::function::call_value(other, vec![])?,
+    };
     if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
@@ -321,6 +329,7 @@ pub fn assign_binding_elem(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match binding {
+        BindingElement::Identifier(name) if name == "__hole" => Ok(()),
         BindingElement::Identifier(name) => assign_to_identifier(name, value, env),
         BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
         BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
@@ -442,8 +451,11 @@ pub fn assign_to_identifier(
 
 #[cfg(test)]
 mod tests {
+    use crate::test262::host::Test262Host;
     use crate::Context;
     use crate::Value;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
         Context::new().unwrap().eval(src)
@@ -461,6 +473,82 @@ mod tests {
     fn box_primitive_boolean() {
         let r = eval("var b = Object(true); b.valueOf()").unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    // ─── generator destructuring ─────────────────────────────────────────────
+
+    #[test]
+    fn assign_array_destructuring_generator_elision() {
+        use crate::ast::BindingElement;
+        use crate::eval::object::helpers::destructuring::assign_array_destructuring;
+
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; }",
+        )
+        .unwrap();
+        let gen = ctx.eval("g()").unwrap();
+        let env = Rc::clone(ctx.env());
+        let bindings = vec![BindingElement::Identifier("__hole".into())];
+        assign_array_destructuring(&bindings, &gen, &env).unwrap();
+        assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn bind_params_destructures_generator_elision() {
+        use crate::ast::{BindingElement, Param};
+        use crate::env::Environment;
+        use crate::eval::function::bind_params;
+        use crate::value::ValueFunction;
+
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; }",
+        )
+        .unwrap();
+        let gen = ctx.eval("g()").unwrap();
+        let params = vec![Param {
+            name: "arg".to_string(),
+            default: None,
+            pattern: Some(BindingElement::ArrayPattern(vec![
+                BindingElement::Identifier("__hole".into()),
+            ])),
+            rest: false,
+        }];
+        let env = Rc::clone(ctx.env());
+        let f = ValueFunction::new(None, params.clone(), vec![], Rc::clone(&env), false, false);
+        let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&env))));
+        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env, false).unwrap();
+        assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("second").unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn destructure_generator_elision_advances_iterator() {
+        let mut host = crate::test262::QuenchHost::new();
+        host.run_script(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; } \
+             class C { method([,]) {} } \
+             new C().method(g()); \
+             if (first !== 1 || second !== 0) throw new Error('got ' + first + ',' + second);",
+        )
+        .expect("class method generator destructuring");
+    }
+
+    #[test]
+    fn destructure_generator_elision_iife() {
+        let r = eval(
+            "var first = 0, second = 0; \
+             function* g() { first += 1; yield; second += 1; } \
+             (function([,]) {})(g()); \
+             first + second * 10",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
     }
 
     // ─── array destructuring ─────────────────────────────────────────────────

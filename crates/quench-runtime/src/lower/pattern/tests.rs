@@ -294,6 +294,45 @@ fn lower_var_array_destructure() {
 // ─── Function parameters (destructuring) ────────────────────────────────
 
 #[test]
+fn lower_class_method_array_elision() {
+    let stmts = parse_statements("class C { method([,]) {} }");
+    if let Statement::ClassDeclaration { class, .. } = &stmts[0] {
+        let method = class
+            .body
+            .iter()
+            .find_map(|m| {
+                if let crate::ast::ClassMember::Method { params, .. } = m {
+                    Some(params)
+                } else {
+                    None
+                }
+            })
+            .expect("method");
+        let pattern = method[0].pattern.as_ref().expect("pattern");
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert_eq!(elems.len(), 1);
+            assert!(matches!(&elems[0], BindingElement::Identifier(n) if n == "__hole"));
+        } else {
+            panic!("expected array pattern");
+        }
+    }
+}
+
+#[test]
+fn lower_param_array_elision() {
+    let stmts = parse_statements("function f([,]) {}");
+    if let Statement::FunctionDeclaration { params, .. } = &stmts[0] {
+        let pattern = params[0].pattern.as_ref().expect("pattern");
+        if let BindingElement::ArrayPattern(elems) = pattern {
+            assert_eq!(elems.len(), 1);
+            assert!(matches!(&elems[0], BindingElement::Identifier(n) if n == "__hole"));
+        } else {
+            panic!("expected array pattern, got {:?}", pattern);
+        }
+    }
+}
+
+#[test]
 fn lower_param_array_destructure() {
     let stmts = parse_statements("function f([a, b]) {}");
     assert_eq!(stmts.len(), 1);
