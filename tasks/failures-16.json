@@ -1,5 +1,5 @@
 {
-  "failed": 449,
+  "failed": 383,
   "groups": [
     {
       "count": 1,
@@ -146,21 +146,13 @@
       ]
     },
     {
-      "count": 6,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-2.js",
         "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
         "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
       ],
       "reason": "ReferenceError: super is only valid in class methods",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-contains-superproperty-2.js",
         "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
         "/workspace/tests/test262/test/language/statements/class/syntax/class-body-method-definition-super-property.js"
       ]
@@ -173,30 +165,6 @@
       "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(24), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }, OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(33), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 8,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-2.js"
-      ],
-      "reason": "SyntaxError: super is not allowed in class field initializer eval",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-direct-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-2.js"
       ]
     },
     {
@@ -297,69 +265,20 @@
       ]
     },
     {
-      "count": 8,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall.js"
-      ],
-      "reason": "Test262Error: Expected SyntaxError but got ReferenceError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-direct-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-derived-cls-indirect-eval-err-contains-supercall.js"
-      ]
-    },
-    {
-      "count": 10,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-indirect-eval-err-contains-newtarget.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js"
       ],
       "reason": "Test262Error: Expected SyntaxError but got TypeError. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-direct-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-derived-cls-indirect-eval-err-contains-supercall.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js"
       ]
     },
     {
-      "count": 18,
+      "count": 9,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-indirect-eval-err-contains-newtarget.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/indirect-eval-err-contains-newtarget.js",
         "/workspace/tests/test262/test/language/statements/class/elements/nested-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-indirect-eval-err-contains-newtarget.js",
         "/workspace/tests/test262/test/language/statements/class/elements/nested-private-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-indirect-eval-err-contains-newtarget.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-indirect-eval-err-contains-newtarget.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
@@ -370,14 +289,14 @@
       ],
       "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-indirect-eval-err-contains-newtarget.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/arrow-body-private-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/indirect-eval-err-contains-newtarget.js",
         "/workspace/tests/test262/test/language/statements/class/elements/nested-direct-eval-err-contains-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-indirect-eval-err-contains-newtarget.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-direct-eval-err-contains-arguments.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-direct-eval-err-contains-arguments.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js"
       ]
     },
     {
@@ -450,6 +369,36 @@
     {
       "count": 1,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js"
+      ],
+      "reason": "Test262Error: Expected TypeError but got Test262Error. invalid access to a private field\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js"
+      ],
+      "reason": "Test262Error: Expected TypeError but got Test262Error. invalid access to a private getter\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js"
+      ],
+      "reason": "Test262Error: Expected TypeError but got Test262Error. invalid access to a private method\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js"
       ],
       "reason": "Test262Error: Expected TypeError but got Test262Error. invalid access to a private setter\")",
@@ -458,9 +407,8 @@
       ]
     },
     {
-      "count": 26,
+      "count": 25,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-2.js",
@@ -489,14 +437,14 @@
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-2.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-4.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-typeerror-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-11.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-2.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-4.js"
       ]
     },
     {
@@ -688,16 +636,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid [[Set]] operation in a private method\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-brand-check.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access a private method\")",
@@ -727,6 +665,28 @@
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class getter from an object of outer class\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-getter-on-nested-class.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access of inner class method from an object of outer class\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-shadowed-by-method-on-nested-class.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access to a private field\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
       ]
     },
     {
@@ -774,31 +734,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-private-method.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. set operation on private method should throw TypeError\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-private-method.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-shadowed-private-getter.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. subclass private accessor should shadow super class private accessor\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/get-access-of-missing-shadowed-private-getter.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-shadowed-private-method.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. subclass private method should shadow super class private accessor\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-shadowed-private-method.js"
       ]
     },
     {
@@ -1130,16 +1070,6 @@
       ]
     },
     {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-init-with-this.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"undefinedtest\\\" !== \\\"test262test\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-init-with-this.js"
-      ]
-    },
-    {
       "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
@@ -1162,28 +1092,8 @@
       ]
     },
     {
-      "count": 28,
+      "count": 8,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-indirect-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-indirect-eval-err-contains-supercall.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
@@ -1195,14 +1105,14 @@
       ],
       "reason": "Test262Error: sameValue failed: true !== false",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/derived-cls-indirect-eval-err-contains-supercall.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-contains-superproperty-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-contains-superproperty-2.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/nested-derived-cls-indirect-eval-err-contains-supercall-1.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/ReferenceError-message.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/TypeError-message.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/URIError-message.js"
       ]
     },
     {
@@ -1242,26 +1152,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 44",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== 53",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-4.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"Avalue\\\"",
@@ -1272,7 +1162,7 @@
     {
       "count": 10,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
@@ -1285,7 +1175,7 @@
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"Test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
@@ -1467,12 +1357,11 @@
       ]
     },
     {
-      "count": 20,
+      "count": 19,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
@@ -1495,11 +1384,11 @@
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-generator.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-async-method.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-generator.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-methods/prod-private-method.js"
       ]
     },
     {
@@ -1638,29 +1527,9 @@
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-10.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-typeerror-8.js"
       ]
-    },
-    {
-      "count": 6,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js"
-      ],
-      "reason": "object is not a function",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js"
-      ]
     }
   ],
-  "passed": 3918,
+  "passed": 3984,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

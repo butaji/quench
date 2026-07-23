@@ -1000,6 +1000,15 @@ mod is_tail_expr {
         };
         assert!(!is_tail_expr(&expr));
     }
+
+    #[test]
+    fn direct_eval_call_is_not_tail() {
+        let expr = Expression::Call {
+            callee: Box::new(Expression::Identifier("eval".into())),
+            arguments: vec![Expression::String("1".into())],
+        };
+        assert!(!is_tail_expr(&expr));
+    }
 }
 
 // ─── acc_stack thread-local ────────────────────────────────────────────────
