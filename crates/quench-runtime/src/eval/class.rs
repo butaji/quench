@@ -196,7 +196,9 @@ pub fn eval_class_expr(
                 }
             }
             crate::ast::ClassMember::StaticBlock { body } => {
-                let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
+                let block_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(
+                    &class_scope,
+                ))));
                 block_env
                     .borrow_mut()
                     .current_scope()
@@ -272,41 +274,26 @@ pub fn call_super_constructor(
 ) -> Result<Value, JsError> {
     let _proto_rc = get_or_create_class_prototype(&class, env)?;
 
-    let _params = class.constructor_params.clone();
     let body = class.constructor_body.clone();
-
-    let mut call_env = Environment::with_parent(Rc::clone(env));
-    call_env
-        .current_scope()
-        .borrow_mut()
-        .set_this_value(this_val.clone());
-
-    if let Some(ref sc) = class.super_class {
-        let sv = crate::eval::expression::eval_expression(sc, env, false)?;
-        call_env.set_super_class(sv);
-    }
-
-    for (i, param) in _params.iter().enumerate() {
-        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
-    }
-
-    let args_obj = create_arguments_object_simple(args);
-    call_env.define("arguments".to_string(), args_obj);
-
-    let call_env = Rc::new(RefCell::new(call_env));
+    let call_env = Rc::new(RefCell::new(build_constructor_env(
+        &class, &args, &this_val, env,
+    )?));
 
     if body.is_empty() {
         if let Value::Object(o) = &this_val {
-            crate::eval::class::install_instance_private_elements(&class, o, env)?;
+            let field_obj = crate::eval::object::private_field_object(o);
+            if !class.instance_fields.is_empty() {
+                init_instance_fields(&class, &field_obj, &call_env)?;
+            }
+            install_instance_private_elements(&class, &field_obj, env)?;
         }
-        Ok(this_val)
-    } else {
-        crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
-        let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
-        let _ = crate::interpreter::take_control_flow();
-        finish_constructor(result, &this_val)
+        return Ok(this_val);
     }
+
+    crate::interpreter::predeclare_let_const(&body, &mut call_env.borrow_mut());
+    let result = crate::eval::statement::eval_function_body(&body, &call_env, false)?;
+    let _ = crate::interpreter::take_control_flow();
+    finish_constructor(result, &this_val)
 }
 
 /// Get or create the prototype for a class, caching it in the ClassValue

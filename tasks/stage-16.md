@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4274 pass / 93 fail (97.9%)** as of 2026-07-23.
+**4,367 tests** · **4278 pass / 89 fail (98.0%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -35,13 +35,13 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4248** | **119** | **97.3%** | Proxy get traps; ctor ControlFlow::Return leak; private fields on proxy target; __lookupGetter__ |
 | 2026-07-23 | **4259** | **108** | **97.5%** | hasParameterExpressions body env; setter Param defaults; eval undeclared-private SyntaxError |
 | 2026-07-23 | **4266** | **101** | **97.7%** | Generator method param/body env; direct eval AllPrivateNamesValid always |
+| 2026-07-23 | **4274** | **93** | **97.9%** | Const binding, private primitive get/put, super field target, arguments-callee, extends TDZ, Proxy/Symbol extends |
 
-## Top remaining clusters (~101)
+## Top remaining clusters (~93)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
 | 7 | sameValue true !== false | Error subclass message own props |
-| 6 | Expected TypeError not thrown | const binding, restricted props, arguments.callee |
 | 5 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
 | 5 | Expected Test262Error not thrown | Primitive receiver, frozen objects, Proxy |
 | 5 | Value is not a function | scope-setter, builtin subclass regular-subclassing |

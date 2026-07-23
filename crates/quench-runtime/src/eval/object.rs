@@ -196,6 +196,20 @@ pub fn assign_to_member(
 ) -> Result<(), JsError> {
     let prop_name = extract_property_name(property, computed, env, false)?;
 
+    if let Expression::Identifier(id) = object {
+        if id == "super" {
+            let this_val =
+                eval_expression(&Expression::Identifier("this".to_string()), env, false)?;
+            if let Value::Object(o) = this_val {
+                return assign_to_object(&o, &prop_name, value, env);
+            }
+            return Err(JsError(format!(
+                "Cannot assign to property of non-object, got {:?}",
+                this_val
+            )));
+        }
+    }
+
     // Handle chained member: e.g. assert.deepEqual._compare = ...
     if let Expression::Member {
         object: parent_obj,

@@ -3174,6 +3174,56 @@ mod tests {
     }
 
     #[test]
+    fn this_assign_in_method_works() {
+        let r = eval("class A { m() { this.makeBugs = 1; return this.makeBugs; } } new A().m()")
+            .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn super_to_string_in_constructor_without_extends() {
+        eval("class A { constructor() { super.toString(); } } new A();").unwrap();
+    }
+
+    #[test]
+    fn super_property_assign_sets_on_this() {
+        let r = eval(
+            "class A { dontDoThis() { super.makeBugs = 1; } } var a = new A(); a.dontDoThis(); a.makeBugs",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
+    fn super_property_without_extends_in_constructor() {
+        eval(
+            "class A { constructor() { super.toString(); } dontDoThis() { super.makeBugs = 1; } } \
+             var a = new A(); a.dontDoThis();",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn static_block_super_property_access() {
+        let r = eval(
+            "function Parent() {} Parent.test262 = 'test262'; var value; \
+             class C extends Parent { static { value = super.test262; } } value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn derived_private_field_inherits_super_private_field_value() {
+        let r = eval(
+            "class A { #x = 'Avalue'; x() { return this.#x; } } \
+             class B extends A { #x = 'Bvalue'; } new B().x()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("Avalue".into()));
+    }
+
+    #[test]
     fn symbol_subclass_super_call_throws_type_error() {
         let err = eval("class S extends Symbol {} new S();").unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);

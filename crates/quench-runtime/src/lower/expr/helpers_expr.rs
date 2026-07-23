@@ -297,6 +297,13 @@ pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Express
             })
         }
         ast::AssignmentTarget::ComputedMemberExpression(cm) => {
+            if matches!(cm.object, ast::Expression::Super(_)) {
+                return Ok(Expression::Member {
+                    object: Box::new(Expression::Identifier("super".to_string())),
+                    property: PropertyKey::Computed(Box::new(lower_expr_inner(&cm.expression)?)),
+                    computed: true,
+                });
+            }
             let obj = lower_expr_inner(&cm.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
@@ -329,6 +336,13 @@ pub fn lower_simple_assignment_target(
             Ok(Expression::Identifier(ident.name.as_str().to_string()))
         }
         ast::SimpleAssignmentTarget::StaticMemberExpression(sm) => {
+            if matches!(sm.object, ast::Expression::Super(_)) {
+                return Ok(Expression::Member {
+                    object: Box::new(Expression::Identifier("super".to_string())),
+                    property: PropertyKey::Ident(sm.property.name.as_str().to_string()),
+                    computed: false,
+                });
+            }
             let obj = lower_expr_inner(&sm.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
@@ -337,6 +351,13 @@ pub fn lower_simple_assignment_target(
             })
         }
         ast::SimpleAssignmentTarget::ComputedMemberExpression(cm) => {
+            if matches!(cm.object, ast::Expression::Super(_)) {
+                return Ok(Expression::Member {
+                    object: Box::new(Expression::Identifier("super".to_string())),
+                    property: PropertyKey::Computed(Box::new(lower_expr_inner(&cm.expression)?)),
+                    computed: true,
+                });
+            }
             let obj = lower_expr_inner(&cm.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
