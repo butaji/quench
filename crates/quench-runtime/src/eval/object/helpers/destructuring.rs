@@ -541,7 +541,9 @@ pub fn assign_to_identifier(
 
 fn is_anonymous_function_definition(expr: &Expression) -> bool {
     match expr {
-        Expression::FunctionExpression { name: None, .. } => true,
+        Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
+            true
+        }
         Expression::Sequence(exprs) if exprs.len() == 1 => {
             is_anonymous_function_definition(&exprs[0])
         }
@@ -600,6 +602,17 @@ mod tests {
     fn destructure_default_array_literal() {
         let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
         assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn destructure_default_arrow_function_gets_param_name() {
+        let r = eval(
+            "var name = ''; \
+             function* g([arrow = () => {}]) { name = arrow.name; } \
+             g([]).next(); name",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("arrow".into()));
     }
 
     #[test]
