@@ -1,7 +1,7 @@
 //! Property descriptor helpers for Object.getOwnPropertyDescriptor,
 //! Object.defineProperty, and related operations.
 
-use crate::ast::{Param, PropertyKey};
+use crate::ast::PropertyKey;
 use crate::env::Environment;
 use crate::eval::class::helpers::prop_key_to_string;
 use crate::value::{
@@ -106,7 +106,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     let closure = Rc::new(RefCell::new((*s.closure).borrow().clone()));
                     let func = Value::Function(ValueFunction::new(
                         None,
-                        vec![crate::ast::Param::new(&s.param)],
+                        vec![s.param.clone()],
                         (*s.body).clone(),
                         closure,
                         false,
@@ -446,7 +446,7 @@ pub fn get_class_property_descriptor(
                 if let Some((param, body)) = static_setter_info {
                     let mut func = ValueFunction::new(
                         None,
-                        vec![Param::new(&param)],
+                        vec![param.clone()],
                         body,
                         Rc::clone(&eval_env),
                         false,

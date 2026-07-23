@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::ast::{Param, Statement};
+use crate::ast::Statement;
 use crate::env::Environment;
 use crate::value::function::ValueFunction;
 
@@ -56,7 +56,7 @@ pub fn set_getter_func(obj: &mut crate::value::Object, key: &str, func: crate::v
 pub fn set_setter(
     obj: &mut crate::value::Object,
     key: &str,
-    param: String,
+    param: crate::ast::Param,
     body: std::rc::Rc<Vec<Statement>>,
     closure: std::rc::Rc<std::cell::RefCell<Environment>>,
     is_method: bool,
@@ -66,7 +66,7 @@ pub fn set_setter(
     // getOwnPropertyDescriptor returns the same function object.
     let mut func = ValueFunction::new(
         None,
-        vec![Param::new(&param)],
+        vec![param.clone()],
         (*body).clone(),
         closure.clone(),
         false,
@@ -98,7 +98,7 @@ pub fn set_setter_func(obj: &mut crate::value::Object, key: &str, func: crate::v
     obj.setters.insert(
         key.to_string(),
         crate::value::object::helpers::SetterStorage {
-            param: String::new(),
+            param: crate::ast::Param::new(""),
             body: std::rc::Rc::new(Vec::new()),
             closure: std::rc::Rc::new(std::cell::RefCell::new(Environment::new())),
             func: Some(func),
@@ -160,7 +160,7 @@ pub fn get_setter_func(obj: &crate::value::Object, key: &str) -> Option<crate::v
             let closure = Rc::new(RefCell::new((*s.closure).borrow().clone()));
             let func = crate::value::Value::Function(ValueFunction::new(
                 None,
-                vec![Param::new(&s.param)],
+                vec![s.param.clone()],
                 (*s.body).clone(),
                 closure,
                 false,

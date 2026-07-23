@@ -453,7 +453,7 @@ pub enum ClassMember {
     /// Setter
     Setter {
         name: PropertyKey,
-        param: String,
+        param: Param,
         body: Vec<Statement>,
     },
     /// Static method (params include default values)
@@ -482,7 +482,7 @@ pub enum ClassMember {
     /// Static setter
     StaticSetter {
         name: PropertyKey,
-        param: String,
+        param: Param,
         body: Vec<Statement>,
     },
     /// Static initialization block: static { ... }
