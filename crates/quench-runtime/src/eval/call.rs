@@ -35,7 +35,14 @@ pub fn eval_call(
     // This ensures nested eval calls don't clobber the outer eval's flag.
     let prev_direct = crate::interpreter::is_direct_eval();
     crate::interpreter::set_direct_eval(is_direct_eval);
+    let prev_eval_env = crate::interpreter::get_current_eval_env();
+    if is_direct_eval && prev_eval_env.is_none() {
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(env)));
+    }
     let result = call_value_with_this(func, args, this_val);
+    if is_direct_eval && prev_eval_env.is_none() {
+        crate::interpreter::set_current_eval_env(prev_eval_env);
+    }
     // Restore the previous flag (important for nested eval)
     crate::interpreter::set_direct_eval(prev_direct);
     result

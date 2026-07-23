@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 pub mod helpers;
 pub mod private_elements;
+pub mod private_names;
 pub use helpers::*;
 pub use private_elements::install_instance_private_elements;
 

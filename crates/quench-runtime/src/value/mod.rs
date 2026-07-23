@@ -34,7 +34,10 @@ pub use object::{
     Getter, GetterBody, GetterStorage, ObjData, Object, PropertyDescriptor, PropertyFlags, Setter,
     SetterBody, SetterStorage, TypedArrayName,
 };
-pub use val::{is_private_name_key, private_name_key, ClassValue, Symbol, Value};
+pub use val::{
+    is_private_name_key, is_unscoped_private_name_key, private_name_key, scoped_private_name_key,
+    ClassValue, Symbol, Value,
+};
 
 // =============================================================================
 // Tests
