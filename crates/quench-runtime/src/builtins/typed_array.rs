@@ -170,7 +170,7 @@ fn construct_typed_array(
     args: Vec<Value>,
     bytes_per_element: usize,
     typed_array_name: TypedArrayName,
-    proto: &Rc<RefCell<Object>>,
+    _proto: &Rc<RefCell<Object>>,
 ) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Value::Object(object_rc) = this else {
@@ -251,7 +251,6 @@ fn construct_typed_array(
         length,
         name: typed_array_name,
     };
-    object.prototype = Some(Rc::clone(proto));
 
     // Populate elements from source array if provided
     object.elements = src_elements;
