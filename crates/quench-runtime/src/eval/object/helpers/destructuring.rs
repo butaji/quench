@@ -352,18 +352,66 @@ pub fn assign_object_destructuring(
         Value::Object(o) => o.clone(),
         _ => return Err(JsError("Cannot destructure non-object value".to_string())),
     };
+    let mut excluded = std::collections::HashSet::new();
+    let mut rest_binding: Option<&BindingElement> = None;
+
     for (key, binding) in props {
+        if is_object_rest_key(key) {
+            rest_binding = Some(binding);
+            continue;
+        }
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
+            excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             crate::eval::object::assign_to(target, &prop_value, env)?;
         } else {
             let key_str = extract_destructure_key(key, env)?;
+            excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             assign_binding_elem(binding, &prop_value, env)?;
         }
     }
+
+    if let Some(binding) = rest_binding {
+        let rest_val = copy_enumerable_own_properties(&obj, &excluded)?;
+        assign_binding_elem(binding, &rest_val, env)?;
+    }
     Ok(())
+}
+
+fn is_object_rest_key(key: &PropertyKey) -> bool {
+    matches!(key, PropertyKey::Ident(s) if s == "...")
+}
+
+fn copy_enumerable_own_properties(
+    obj: &Rc<RefCell<Object>>,
+    excluded: &std::collections::HashSet<String>,
+) -> Result<Value, JsError> {
+    use crate::value::object::helpers::as_array_index;
+
+    let mut rest = Object::new(ObjectKind::Ordinary);
+    let src = obj.borrow();
+    for i in 0..src.elements.len() {
+        if src.holes.contains(&i) {
+            continue;
+        }
+        let key = i.to_string();
+        if excluded.contains(&key) || !src.is_enumerable(&key) {
+            continue;
+        }
+        rest.set(&key, src.elements[i].clone());
+    }
+    for (key, val) in src.properties.iter() {
+        if excluded.contains(key) || !src.is_enumerable(key) {
+            continue;
+        }
+        if as_array_index(key).is_some() {
+            continue;
+        }
+        rest.set(key, val.clone());
+    }
+    Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
 
 /// Compute the string key for a property key.
@@ -918,6 +966,18 @@ mod tests {
     fn object_destructuring_rest() {
         let r = eval("var {a, ...rest} = {a: 1, b: 2, c: 3}; rest.b + rest.c").unwrap();
         assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
+    fn object_rest_param_skips_non_enumerable() {
+        let r = eval(
+            "class C { method({...rest}) { return rest.a + rest.b; } } \
+             var o = {a: 3, b: 4}; \
+             Object.defineProperty(o, 'x', { value: 4, enumerable: false }); \
+             new C().method(o);",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(7.0));
     }
 
     // ─── compute_property_key ────────────────────────────────────────────────
