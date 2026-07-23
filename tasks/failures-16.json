@@ -1,5 +1,5 @@
 {
-  "failed": 49,
+  "failed": 44,
   "groups": [
     {
       "count": 1,
@@ -142,11 +142,11 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-method-subclass-receiver.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
       ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. D does not contain static private method #g\")",
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed static private setter from an object which did not contain it\")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-method-subclass-receiver.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
       ]
     },
     {
@@ -326,16 +326,6 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"Test262\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"test262\\\"",
@@ -351,22 +341,6 @@
       "reason": "TypeError: Boolean.prototype.valueOf requires a Boolean receiver",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Boolean/regular-subclassing.js"
-      ]
-    },
-    {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
-      ],
-      "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ]
     },
     {
@@ -420,7 +394,7 @@
       ]
     }
   ],
-  "passed": 4318,
+  "passed": 4323,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

@@ -42,16 +42,18 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4298** | **69** | **98.4%** | finish_constructor on function super; AggregateError/SAB/WeakRef/BigInt64/Uint64; object literal spread + yield-spread-obj |
 | 2026-07-23 | **4300** | **67** | **98.5%** | Object destructure param ToObject for string primitives (static-init-arguments) |
 | 2026-07-23 | **4311** | **56** | **98.7%** | fn-name SetFunctionName (method/accessor); static name/length shadow; private static `#method` name; getOwnPropertyNames |
+| 2026-07-23 | **4318** | **49** | **98.9%** | Generator completion undefined unless return; class field SetFunctionName; arrow no spurious empty `.name` |
 
-## Top remaining clusters (~56)
+## Top remaining clusters (~49)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 4 | sameValue [object] !== undefined | Error subclass own `message` props |
-| 3 | Expected SyntaxError got TypeError | Field initializer / nested eval early errors |
-| 3 | Expected ReferenceError got TypeError | Private field evaluation order |
+| 4 | Cannot read private member from undeclared class | Nested class private static access |
+| 3 | Expected TypeError got ReferenceError | Derived ctor catch/super return override |
 | 2 | Expected SyntaxError not thrown | Nested direct eval `arguments` in class |
 | 2 | Expected Test262Error not thrown | Proxy field observability, derived for-of return |
+| 2 | Expected TypeError not thrown | Private static setter shadow on nested class |
+| 2 | sameValue false !== true | this-access-restriction, RegExp subclass |
 
 ## How to clear this stage (ASAP × min LOC)
 

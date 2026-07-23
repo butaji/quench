@@ -326,11 +326,7 @@ fn private_member_type_error() -> JsError {
 }
 
 fn class_private_brand_matches(class: &ClassValue, prop_name: &str) -> bool {
-    if let Some(decl_id) = crate::value::private_name_declaring_class_id(prop_name) {
-        decl_id == class.class_id()
-    } else {
-        class.declared_private_names.contains(prop_name)
-    }
+    class.private_brand_matches(prop_name)
 }
 
 fn static_member_storage_key(
