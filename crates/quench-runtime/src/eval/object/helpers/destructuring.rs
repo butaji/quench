@@ -920,7 +920,7 @@ mod tests {
         let env = Rc::clone(ctx.env());
         let f = ValueFunction::new(None, params.clone(), vec![], Rc::clone(&env), false, false);
         let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&env))));
-        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env, false).unwrap();
+        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env).unwrap();
         assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("second").unwrap(), Value::Number(0.0));
     }

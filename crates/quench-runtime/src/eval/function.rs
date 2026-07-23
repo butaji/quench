@@ -61,7 +61,7 @@ pub(crate) fn call_value_impl(
                 // We evaluate params in a throwaway environment just to catch errors.
                 let eval_env = Environment::with_parent(Rc::clone(&f.closure));
                 let eval_env_rc = Rc::new(RefCell::new(eval_env));
-                bind_params(&f, &f.params, &args, &eval_env_rc, true)?;
+                bind_params(&f, &f.params, &args, &eval_env_rc)?;
 
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
@@ -84,7 +84,7 @@ pub(crate) fn call_value_impl(
                         .set_this(this_val.clone());
                 }
                 let call_env_rc = Rc::new(RefCell::new(call_env));
-                bind_params(&f, &f.params, &args, &call_env_rc, false)?;
+                bind_params(&f, &f.params, &args, &call_env_rc)?;
 
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
@@ -219,7 +219,7 @@ pub(crate) fn call_js_function_impl_with_strict(
                 .define("arguments".to_string(), args_obj);
         }
 
-        bind_params(&f, &params, &args, &call_env_rc, false)?;
+        bind_params(&f, &params, &args, &call_env_rc)?;
 
         call_env_rc.borrow_mut().push_scope();
         predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
@@ -269,15 +269,13 @@ pub(crate) fn call_js_function_impl_with_strict(
 }
 
 /// Bind parameters from `args` into the call environment.
-/// When `use_tdz` is true, each param is first declared in TDZ (Temporal Dead Zone)
-/// before evaluating its default expression. This ensures that self-referencing
-/// defaults like `f(x = x)` throw a ReferenceError rather than silently succeeding.
+/// Params with default expressions are declared in TDZ before evaluating the
+/// default so self-references like `f(x = x)` throw ReferenceError.
 pub(crate) fn bind_params(
     f: &ValueFunction,
     params: &[crate::ast::Param],
     args: &[Value],
     call_env_rc: &Rc<RefCell<Environment>>,
-    use_tdz: bool,
 ) -> Result<(), JsError> {
     let mut found_rest = false;
     for (i, param) in params.iter().enumerate() {
@@ -304,9 +302,8 @@ pub(crate) fn bind_params(
             }
         } else {
             let arg = args.get(i).cloned();
-            // When use_tdz is true (async generators), declare the param in TDZ first.
-            // This ensures self-referencing defaults throw ReferenceError.
-            if use_tdz && param.default.is_some() {
+            // Declare params with defaults in TDZ before evaluating default expressions.
+            if param.default.is_some() {
                 call_env_rc
                     .borrow_mut()
                     .declare_var(param.name.clone(), crate::ast::VarKind::Let);
@@ -323,8 +320,7 @@ pub(crate) fn bind_params(
                 None => Value::Undefined,
             };
 
-            // If we used TDZ, initialize the declared binding or destructure the default.
-            if use_tdz && param.default.is_some() {
+            if param.default.is_some() {
                 if let Some(pattern) = &param.pattern {
                     declare_pattern_bindings(pattern, call_env_rc);
                     let target = binding_pattern_expression(pattern.clone());
