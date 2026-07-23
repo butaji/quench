@@ -1,5 +1,5 @@
 {
-  "failed": 108,
+  "failed": 101,
   "groups": [
     {
       "count": 1,
@@ -205,24 +205,6 @@
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-8.js"
-      ],
-      "reason": "Test262Error: Expected SyntaxError but got TypeError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-8.js"
       ]
     },
     {
@@ -500,18 +482,6 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"inside\\\" !== \\\"outside\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/scope-gen-meth-paramsbody-var-open.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-static-gen-meth-paramsbody-var-open.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/fn-length-static-precedence.js"
@@ -706,7 +676,7 @@
       ]
     }
   ],
-  "passed": 4259,
+  "passed": 4266,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
