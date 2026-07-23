@@ -218,9 +218,10 @@ pub(crate) fn init_instance_fields(
 ) -> Result<(), JsError> {
     for (name, value_expr) in &class.instance_fields {
         crate::interpreter::set_eval_in_class_field(true);
-        let field_val = eval_expression(value_expr, call_env, false)?;
+        let mut field_val = eval_expression(value_expr, call_env, false)?;
         crate::interpreter::set_eval_in_class_field(false);
         let key_str = prop_key_to_string(name, call_env, false)?;
+        set_function_name_for_field_initializer(&mut field_val, name, &key_str, value_expr);
         private_field_add(
             instance_rc,
             &storage_key_for_property(name, &key_str),
@@ -801,6 +802,50 @@ pub fn accessor_function_name(
 ) -> Result<String, JsError> {
     let base = method_function_name(key, key_str, env)?;
     Ok(format!("{prefix} {base}"))
+}
+
+fn is_anonymous_function_definition(expr: &Expression) -> bool {
+    match expr {
+        Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
+            true
+        }
+        Expression::Sequence(exprs) if exprs.len() == 1 => {
+            is_anonymous_function_definition(&exprs[0])
+        }
+        _ => false,
+    }
+}
+
+/// Display name for SetFunctionName on a class field key (incl. private `#m`).
+pub fn field_display_name(key: &PropertyKey, key_str: &str) -> String {
+    if crate::value::is_private_element_key(key_str) {
+        return crate::value::private_method_display_name(key_str);
+    }
+    if let PropertyKey::Ident(s) = key {
+        if s.starts_with('#') {
+            return crate::value::private_method_display_name(s);
+        }
+    }
+    key_str.to_string()
+}
+
+/// Apply SetFunctionName when a field initializer is an anonymous function definition.
+pub fn set_function_name_for_field_initializer(
+    value: &mut Value,
+    key: &PropertyKey,
+    key_str: &str,
+    init_expr: &Expression,
+) {
+    if !is_anonymous_function_definition(init_expr) {
+        return;
+    }
+    let name = field_display_name(key, key_str);
+    if let Value::Function(f) = value {
+        if f.get_property("name").is_none() {
+            f.name = Some(name.clone());
+            let _ = f.set_property("name", Value::String(name));
+        }
+    }
 }
 
 /// Helper to convert PropertyKey to string, evaluating computed expressions
@@ -1574,6 +1619,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn static_private_field_anonymous_arrow_gets_hash_field_name() {
+        let name = eval(
+            "class C { static #field = () => 'Test262'; \
+             static accessPrivateField() { return this.#field; } } \
+             C.accessPrivateField().name",
+        )
+        .unwrap();
+        assert_eq!(name, Value::String("#field".into()));
+    }
+
+    #[test]
+    fn static_field_anonymous_function_gets_field_name() {
+        let name =
+            eval("class C { static field = function() { return 42; }; } C.field.name").unwrap();
+        assert_eq!(name, Value::String("field".into()));
     }
 
     #[test]
