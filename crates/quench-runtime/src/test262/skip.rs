@@ -13,7 +13,6 @@ const UNSUPPORTED_FEATURES: &[&str] = &[];
 
 /// File basenames that stack-overflow / abort the process in-process.
 const CRASH_FILES: &[(&str, &str)] = &[
-    ("prototype-wiring.js", "known crash: stack overflow"),
     ("prototype-setter.js", "known crash: stack overflow"),
     (
         "this-access-restriction-2.js",
