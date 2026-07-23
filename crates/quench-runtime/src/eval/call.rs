@@ -107,7 +107,7 @@ fn eval_super_call(
             } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
                 call_value_with_this(Value::NativeConstructor(nc.clone()), args, this_val)
             } else {
-                Ok(Value::Undefined)
+                Ok(this_val)
             }
         }
         Value::NativeConstructor(nc) => {
