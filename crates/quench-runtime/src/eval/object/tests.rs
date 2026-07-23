@@ -866,6 +866,27 @@ fn private_setter_brand_check_on_foreign_object() {
 }
 
 #[test]
+fn private_field_direct_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { this.#field = 1; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_for_of_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval(
+            "class C { #field; m() { for (this.#field of [1]) ; } } \
+             C.prototype.m.call({});",
+        )
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
 fn private_field_set_on_foreign_class_instance_throws() {
     let mut ctx = Context::new().unwrap();
     let err = ctx
