@@ -183,6 +183,12 @@ fn array_with_iterator_impl(
     };
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
+            if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
+                if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
+                    let _ = call_iterator_return(iterator);
+                    return Err(error);
+                }
+            }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = apply(inner, &rest_array) {
                 call_iterator_return(iterator);
@@ -326,7 +332,7 @@ pub fn take_iterator_step(
         return Err(js_err);
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
-    if matches!(done, Value::Boolean(true)) {
+    if crate::value::to_bool(&done) {
         return Ok((Value::Undefined, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;

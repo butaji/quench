@@ -106,6 +106,40 @@ enum ForOfIterResult {
     Done(Value),
     Break(Value),
     Step(Value),
+    Yield(Value),
+}
+
+pub(crate) fn stage_stored_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
+    PENDING_FOR_OF.with(|cell| *cell.borrow_mut() = Some(state));
+}
+
+pub(crate) fn take_pending_for_of_suspend() -> Option<crate::value::generator::ForOfSuspend> {
+    take_for_of_suspend()
+}
+
+fn save_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
+    PENDING_FOR_OF.with(|cell| *cell.borrow_mut() = Some(state));
+}
+
+fn take_for_of_suspend() -> Option<crate::value::generator::ForOfSuspend> {
+    PENDING_FOR_OF.with(|cell| cell.borrow_mut().take())
+}
+
+thread_local! {
+    static PENDING_FOR_OF: RefCell<Option<crate::value::generator::ForOfSuspend>> =
+        const { RefCell::new(None) };
+}
+
+fn stmt_index_after_first_yield(body: &Statement) -> Option<usize> {
+    let Statement::Block(stmts) = body else {
+        return None;
+    };
+    for (i, stmt) in stmts.iter().enumerate() {
+        if crate::value::generator_replay::count_yields_in_stmt(stmt) > 0 {
+            return Some(i + 1);
+        }
+    }
+    None
 }
 
 fn eval_for_of_iterator(
@@ -115,15 +149,21 @@ fn eval_for_of_iterator(
     loop_binding: Option<VarKind>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
+    mut index: usize,
+    mut pending_resume: Option<(Value, bool, Option<usize>)>,
 ) -> Result<Value, JsError> {
     let per_iteration = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
-    let mut index = 0usize;
     let mut completion = Value::Undefined;
     loop {
-        let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
-        if done {
-            break;
-        }
+        let (item, body_only, body_stmt_resume) = if let Some(resume) = pending_resume.take() {
+            resume
+        } else {
+            let (item, done) = take_iterator_step(&iterator, &mut index, env)?;
+            if done {
+                break;
+            }
+            (item, false, None)
+        };
         match run_for_of_iteration(
             variable,
             &item,
@@ -172,46 +212,66 @@ fn run_for_of_iteration(
     per_iteration: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
+    body_only: bool,
+    body_stmt_resume: Option<usize>,
 ) -> Result<ForOfIterResult, JsError> {
-    if per_iteration {
+    if per_iteration && !body_only {
         env.borrow_mut().push_scope();
     }
     let result = (|| {
-        if let Some(kind) = loop_binding {
-            declare_for_of_binding(variable, kind, env)?;
+        if !body_only {
+            if let Some(kind) = loop_binding {
+                declare_for_of_binding(variable, kind, env)?;
+            }
+            if loop_binding.is_some() {
+                init_to(variable, item, env)?;
+            } else {
+                assign_to(variable, item, env)?;
+            }
         }
-        if loop_binding.is_some() {
-            init_to(variable, item, env)?;
-        } else {
-            assign_to(variable, item, env)?;
+        if body_only {
+            if let (Some(start), Statement::Block(stmts)) = (body_stmt_resume, body) {
+                return crate::eval::statement::eval_statements(
+                    &stmts[start..],
+                    env,
+                    false,
+                    in_arrow_function,
+                );
+            }
         }
         eval_statement(body, env, false, in_arrow_function)
     })();
-    if per_iteration {
+    let yielding = crate::interpreter::peek_generator_yield();
+    if per_iteration && !yielding {
         env.borrow_mut().pop_scope();
     }
     match result {
-        Ok(body_val) => match take_control_flow() {
-            Some(cf @ ControlFlow::Break(_)) => {
-                set_control_flow(cf);
-                Ok(ForOfIterResult::Break(body_val))
+        Ok(body_val) => {
+            if yielding {
+                return Ok(ForOfIterResult::Yield(body_val));
             }
-            Some(cf @ ControlFlow::Continue(_)) => {
-                if loop_handles_continue(&cf, &[]) {
-                    Ok(ForOfIterResult::Step(body_val))
-                } else {
+            match take_control_flow() {
+                Some(cf @ ControlFlow::Break(_)) => {
                     set_control_flow(cf);
                     Ok(ForOfIterResult::Break(body_val))
                 }
+                Some(cf @ ControlFlow::Continue(_)) => {
+                    if loop_handles_continue(&cf, &[]) {
+                        Ok(ForOfIterResult::Step(body_val))
+                    } else {
+                        set_control_flow(cf);
+                        Ok(ForOfIterResult::Break(body_val))
+                    }
+                }
+                Some(ControlFlow::Return(val))
+                | Some(ControlFlow::Yield(val))
+                | Some(ControlFlow::YieldDelegate(val)) => {
+                    set_control_flow(ControlFlow::Return(val.clone()));
+                    Ok(ForOfIterResult::Done(val))
+                }
+                None => Ok(ForOfIterResult::Step(body_val)),
             }
-            Some(ControlFlow::Return(val))
-            | Some(ControlFlow::Yield(val))
-            | Some(ControlFlow::YieldDelegate(val)) => {
-                set_control_flow(ControlFlow::Return(val.clone()));
-                Ok(ForOfIterResult::Done(val))
-            }
-            None => Ok(ForOfIterResult::Step(body_val)),
-        },
+        }
         Err(e) => Err(e),
     }
 }
@@ -251,6 +311,19 @@ pub fn eval_for_of(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    if let Some(suspend) = take_for_of_suspend() {
+        return eval_for_of_iterator(
+            suspend.iterator,
+            &suspend.variable,
+            &suspend.body,
+            suspend.loop_binding,
+            env,
+            suspend.in_arrow_function,
+            suspend.index,
+            Some((suspend.item, true, suspend.body_stmt_resume)),
+        );
+    }
+
     let head_lexical = loop_binding.is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
     if head_lexical {
         env.borrow_mut().push_scope();
@@ -282,6 +355,8 @@ pub fn eval_for_of(
         loop_binding,
         env,
         in_arrow_function,
+        0,
+        None,
     )
 }
 
@@ -397,6 +472,21 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         builtins::register_builtins(&mut ctx);
         ctx
+    }
+
+    #[test]
+    fn for_of_sloppy_arguments_object() {
+        let mut ctx = new_ctx();
+        let count = ctx
+            .eval(
+                "(function() { \
+                   var i = 0; \
+                   for (var v of arguments) { i++; } \
+                   return i; \
+                 }(1, 2, 3))",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(3.0));
     }
 
     #[test]

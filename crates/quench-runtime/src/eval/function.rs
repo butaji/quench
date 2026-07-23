@@ -241,7 +241,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         let call_env_rc = Rc::new(RefCell::new(call_env));
 
         if !f.is_arrow {
-            let args_obj = create_arguments_object(&f, args.clone(), in_strict);
+            let args_obj = create_arguments_object(&f, args.clone(), in_strict, &call_env_rc);
             call_env_rc
                 .borrow_mut()
                 .define("arguments".to_string(), args_obj);
@@ -463,14 +463,51 @@ fn box_sloppy_this(this_val: Value) -> Value {
 }
 
 /// Create the JavaScript arguments object for a function call
-fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: bool) -> Value {
+fn create_arguments_object(
+    f: &ValueFunction,
+    args: Vec<Value>,
+    strict_mode: bool,
+    call_env: &Rc<RefCell<Environment>>,
+) -> Value {
     let mut obj = Object::new(ObjectKind::Ordinary);
-    // Set indexed arguments (arguments[0], arguments[1], etc.)
-    for (i, arg) in args.iter().enumerate() {
-        obj.set(&i.to_string(), arg.clone());
-    }
-    // Set length property
+    obj.elements = args.clone();
     obj.set("length", Value::Number(args.len() as f64));
+
+    let mappable = !strict_mode
+        && f.params
+            .iter()
+            .all(|p| !p.rest && p.default.is_none() && p.pattern.is_none());
+
+    if mappable {
+        let mut mapped = std::collections::HashMap::new();
+        for (i, param) in f.params.iter().enumerate() {
+            mapped.insert(i as u32, param.name.clone());
+            let name = param.name.clone();
+            let env = Rc::clone(call_env);
+            let key = i.to_string();
+            let getter = Value::NativeFunction(Rc::new(NativeFunction::new({
+                let env = Rc::clone(&env);
+                let name = name.clone();
+                move |_a| Ok(env.borrow().get(&name).unwrap_or(Value::Undefined))
+            })));
+            let setter = Value::NativeFunction(Rc::new(NativeFunction::new({
+                let env = Rc::clone(&env);
+                let name = name.clone();
+                move |a| {
+                    let val = a.first().cloned().unwrap_or(Value::Undefined);
+                    env.borrow_mut().set(&name, val);
+                    Ok(Value::Undefined)
+                }
+            })));
+            crate::value::object::set_getter_func(&mut obj, &key, getter);
+            crate::value::object::set_setter_func(&mut obj, &key, setter);
+        }
+        obj.data = crate::value::object::helpers::ObjData::Args { mapped };
+    } else {
+        for (i, arg) in args.iter().enumerate() {
+            obj.set(&i.to_string(), arg.clone());
+        }
+    }
 
     // Set callee property
     if strict_mode {
@@ -483,11 +520,27 @@ fn create_arguments_object(f: &ValueFunction, args: Vec<Value>, strict_mode: boo
         });
         obj.set_getter_func("callee", Value::NativeFunction(Rc::new(nf)));
     } else {
-        // In non-strict mode, callee is the function itself
         obj.set("callee", Value::Function(f.clone()));
     }
 
-    Value::Object(Rc::new(RefCell::new(obj)))
+    let obj_rc = Rc::new(RefCell::new(obj));
+    if let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let key = sym.property_key();
+        let target = Rc::clone(&obj_rc);
+        let iter_fn = NativeFunction::new(move |_args| {
+            Ok(crate::builtins::map::helpers::make_live_index_iterator(
+                Rc::clone(&target),
+                crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
+            ))
+        });
+        obj_rc
+            .borrow_mut()
+            .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
+    }
+
+    Value::Object(obj_rc)
 }
 
 fn call_arrow_body(

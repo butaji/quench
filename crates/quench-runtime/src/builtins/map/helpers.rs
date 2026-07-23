@@ -131,15 +131,31 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
         let mut result = Object::new(ObjectKind::Ordinary);
         let mut i = index.borrow_mut();
         let borrowed = arr.borrow();
-        let len = borrowed.elements.len();
+        let len = borrowed
+            .get("length")
+            .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
+            .unwrap_or(borrowed.elements.len());
         if *i < len {
+            let key = i.to_string();
             let value = match mode {
                 LiveIndexIteratorMode::Keys => Value::Number(*i as f64),
-                LiveIndexIteratorMode::Values => borrowed.elements[*i].clone(),
+                LiveIndexIteratorMode::Values => borrowed.get(&key).unwrap_or_else(|| {
+                    if *i < borrowed.elements.len() {
+                        borrowed.elements[*i].clone()
+                    } else {
+                        Value::Undefined
+                    }
+                }),
                 LiveIndexIteratorMode::Entries => {
                     Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
                         Value::Number(*i as f64),
-                        borrowed.elements[*i].clone(),
+                        borrowed.get(&key).unwrap_or_else(|| {
+                            if *i < borrowed.elements.len() {
+                                borrowed.elements[*i].clone()
+                            } else {
+                                Value::Undefined
+                            }
+                        }),
                     ]))))
                 }
             };

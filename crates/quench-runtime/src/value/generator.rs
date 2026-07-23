@@ -11,6 +11,21 @@ use crate::env::Environment;
 use crate::value::{Object, ObjectKind, Value};
 use crate::JsError;
 
+/// Saved for-of loop state when a generator `yield` suspends mid-iteration.
+#[derive(Debug, Clone)]
+pub struct ForOfSuspend {
+    pub iterator: Rc<RefCell<Object>>,
+    pub index: usize,
+    pub item: Value,
+    pub resume_body: bool,
+    pub body_stmt_resume: Option<usize>,
+    pub variable: crate::ast::Expression,
+    pub body: Statement,
+    pub loop_binding: Option<crate::ast::VarKind>,
+    pub per_iteration: bool,
+    pub in_arrow_function: bool,
+}
+
 /// Generator state
 #[derive(Debug, Clone, PartialEq)]
 pub enum GeneratorState {
@@ -43,6 +58,8 @@ pub struct GeneratorObject {
     pub stored_resumes: Vec<Value>,
     /// Execution environment persisted across `.next()` calls.
     pub call_env: Option<Rc<RefCell<Environment>>>,
+    /// Mid-for-of suspension when `yield` runs in the loop body.
+    pub for_of_suspend: Option<ForOfSuspend>,
 }
 
 impl GeneratorObject {
@@ -68,6 +85,7 @@ impl GeneratorObject {
             yields_to_replay: 0,
             stored_resumes: Vec::new(),
             call_env: None,
+            for_of_suspend: None,
         }
     }
 
@@ -133,6 +151,10 @@ impl GeneratorObject {
         // Store the resume value so yield expressions can find it
         crate::interpreter::set_generator_resume_value(self.next_value.clone());
 
+        if let Some(s) = self.for_of_suspend.take() {
+            crate::eval::iteration::stage_stored_for_of_suspend(s);
+        }
+
         let call_env = self.call_env()?;
 
         let prev_strict = crate::interpreter::is_strict_mode();
@@ -157,6 +179,9 @@ impl GeneratorObject {
                         self.yielded_value = yield_val;
                         self.yield_index += 1;
                         self.state = GeneratorState::Suspended;
+                        if let Some(s) = crate::eval::iteration::take_pending_for_of_suspend() {
+                            self.for_of_suspend = Some(s);
+                        }
                         crate::value::generator_replay::set_resuming_pending_yield(false);
                         crate::interpreter::set_strict_mode(prev_strict);
                         return Ok(IteratorResult {
@@ -194,6 +219,8 @@ impl GeneratorObject {
         self.pending_stmt = None;
         self.yields_to_replay = 0;
         self.stored_resumes.clear();
+        self.for_of_suspend = None;
+        let _ = crate::eval::iteration::take_pending_for_of_suspend();
         self.call_env = None;
         crate::value::generator_replay::set_resuming_pending_yield(false);
         crate::interpreter::set_strict_mode(prev_strict);
