@@ -1,5 +1,5 @@
 {
-  "failed": 186,
+  "failed": 175,
   "groups": [
     {
       "count": 1,
@@ -310,43 +310,21 @@
       ]
     },
     {
-      "count": 1,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-arrow-function.js"
-      ],
-      "reason": "Test262Error: Expected TypeError but got Test262Error. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-arrow-function.js"
-      ]
-    },
-    {
-      "count": 14,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-boolean.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-null.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-number.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-string.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-async-generator-function.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/superclass-generator-function.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-not-writable.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/const.js",
         "/workspace/tests/test262/test/language/statements/class/restricted-properties.js",
         "/workspace/tests/test262/test/language/statements/class/strict-mode/arguments-callee.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-with-boolean.js"
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js"
       ]
     },
     {
@@ -423,16 +401,6 @@
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access to a static private getter\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-missing-private-static-setter.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. set operation on private accessor without setter should throw TypeError\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/set-access-of-missing-private-static-setter.js"
       ]
     },
     {
@@ -882,9 +850,8 @@
       ]
     },
     {
-      "count": 9,
+      "count": 8,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-star-before-newline.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
@@ -896,14 +863,14 @@
       ],
       "reason": "TypeError: Value is not iterable",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-star-before-newline.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
         "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-single.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-multiple.js",
         "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js"
+        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js",
+        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-single.js"
       ]
     },
     {
@@ -969,6 +936,16 @@
     {
       "count": 1,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
+      ],
+      "reason": "TypeError: superclass must be a constructor",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
       ],
       "reason": "object is not a function",
@@ -977,7 +954,7 @@
       ]
     }
   ],
-  "passed": 4181,
+  "passed": 4192,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
