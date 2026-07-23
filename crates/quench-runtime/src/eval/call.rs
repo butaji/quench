@@ -280,6 +280,91 @@ fn eval_super_member(
     Ok(Value::Undefined)
 }
 
+/// Evaluate super.property = value — assignment through super [[Set]] semantics
+pub fn set_super_property(
+    property: &PropertyKey,
+    _computed: bool,
+    value: Value,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let super_val = get_super_value(env).ok_or_else(|| {
+        JsError("ReferenceError: super is only valid in class methods".to_string())
+    })?;
+    let prop_name = eval_property_key(property, env, in_arrow_function)?;
+
+    // Check if we're in a static context (static method, static init block).
+    let is_static = {
+        let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
+        let mut found = false;
+        while let Some(e) = current {
+            if e.borrow().is_static_class_body() {
+                found = true;
+                break;
+            }
+            current = e.borrow().get_parent();
+        }
+        found
+    };
+
+    if is_static {
+        // Static: set property on the superclass constructor.
+        if let Value::Class(class) = &super_val {
+            class.set_static_property(&prop_name, value.clone(), env)?;
+        }
+        return Ok(value);
+    }
+
+    // Instance: super [[Set]] — look up the property on the super base prototype,
+    // then call [[Set]] with `this` as receiver so the property ends up on the instance.
+    let this_val = crate::interpreter::get_this_binding(env);
+    let proto = match &super_val {
+        Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
+        Value::Object(o) => {
+            let proto_val = o.borrow().get("prototype");
+            match proto_val {
+                Some(Value::Object(proto_obj)) => proto_obj.clone(),
+                _ => {
+                    let mut p = Object::new(ObjectKind::Ordinary);
+                    p.set("constructor", Value::Object(Rc::clone(o)));
+                    Rc::new(RefCell::new(p))
+                }
+            }
+        }
+        _ => return Ok(value),
+    };
+
+    // Walk the prototype chain for inherited setters.
+    let mut prototype: Option<Rc<RefCell<Object>>> = Some(proto);
+    let mut setter_clone: Option<crate::value::object::helpers::SetterStorage> = None;
+    while let Some(current) = prototype {
+        let obj_ref = current.borrow();
+        if obj_ref.get_setter(&prop_name).is_some() {
+            setter_clone = obj_ref.get_setter(&prop_name).cloned();
+            break;
+        }
+        prototype = obj_ref.prototype.as_ref().map(Rc::clone);
+    }
+
+    if let Some(setter_storage) = setter_clone {
+        if let Value::Object(ref this_obj) = this_val {
+            crate::eval::object::call_setter(
+                this_obj,
+                &setter_storage,
+                value.clone(),
+                env,
+            )?;
+        }
+        return Ok(value);
+    }
+
+    // No setter found: set the property on `this` (the receiver).
+    if let Value::Object(ref o) = this_val {
+        o.borrow_mut().set(&prop_name, value.clone());
+    }
+    Ok(value)
+}
+
 /// Evaluate a new expression (constructor call)
 pub fn eval_new(
     constructor: &Expression,

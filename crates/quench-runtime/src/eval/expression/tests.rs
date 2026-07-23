@@ -388,3 +388,82 @@ fn test_export_default_expr_lowers_to_assignment() {
         stmts.len()
     );
 }
+
+// ─── super in static init block ───────────────────────────────────
+
+#[test]
+fn super_in_static_init_block_resolves_to_superclass() {
+    // test262: static-init-super-property.js
+    // super.property in a static init block should access the superclass's
+    // own properties (static fields), not the prototype chain.
+    let r = eval(
+        "function Parent() {} \
+         Parent.test262 = 'test262'; \
+         var value; \
+         class C extends Parent { \
+           static { value = super.test262; } \
+         } \
+         value",
+    )
+    .unwrap();
+    assert_eq!(r, Value::String("test262".into()));
+}
+
+// ─── super in base class instance methods ─────────────────────────
+
+#[test]
+fn super_in_derived_instance_method_looks_up_prototype_chain() {
+    // Sanity check: super in a derived class instance method.
+    let r = eval(
+        "class Base { foo() { return 42; } } \
+         class Derived extends Base { bar() { return super.foo(); } } \
+         new Derived().bar()",
+    )
+    .unwrap();
+    assert_eq!(r, Value::Number(42.0));
+}
+
+#[test]
+fn super_in_base_class_instance_method_works() {
+    // test262: class-body-method-definition-super-property.js
+    // Step 1: can we construct the class and call dontDoThis?
+    let r = eval(
+        "class A { \
+           dontDoThis() { super.makeBugs = 1; } \
+         } \
+         var a = new A(); \
+         a.dontDoThis(); \
+         a.makeBugs",
+    );
+    let val = r.unwrap_or_else(|e| panic!("step 1 failed: {:?}", e));
+    assert_eq!(val, Value::Number(1.0));
+    // Step 2: add constructor with super.toString()
+    let r2 = eval(
+        "class A { \
+           constructor() { super.toString(); } \
+           dontDoThis() { super.makeBugs = 1; } \
+         } \
+         var a = new A(); \
+         a.dontDoThis(); \
+         a.makeBugs",
+    );
+    let val2 = r2.unwrap_or_else(|e| panic!("step 2 failed: {:?}", e));
+    assert_eq!(val2, Value::Number(1.0));
+}
+
+// ─── super in static method of derived class ──────────────────────
+
+#[test]
+fn super_in_static_method_of_derived_class_works() {
+    // super.property in a static method should access the superclass constructor's
+    // own properties (static methods/fields).
+    let r = eval(
+        "class Parent { static greet() { return 'hello'; } } \
+         class Child extends Parent { \
+           static doIt() { return super.greet(); } \
+         } \
+         Child.doIt()",
+    )
+    .unwrap();
+    assert_eq!(r, Value::String("hello".into()));
+}
