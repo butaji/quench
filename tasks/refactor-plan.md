@@ -20,7 +20,9 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Builtins Rust LOC | ~14k |
 | JS builtins | **0** — R0 not started |
 | `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + thin `%ops%` wrapper; not yet the single owner |
-| Target after migration | **~8–12k Rust** + **~19k JS** |
+| Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
+| Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
+| Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
 | Current stage | 16 `class` (4,367 tests) |
 | Crate strategy | `DEPENDENCIES.md` — verified 2026-07-23 |
 
@@ -51,7 +53,7 @@ Priority legend used below:
 
 ---
 
-## R4 — Delete speculative `TComp` infra  *(DONE 2026-07-23)*
+## R4 — Delete speculative `TComp` infra  *(DONE 2026-07-23, diff=1)*
 
 Re-audit 2026-07-22 (`tasks/review-2026-07-22-object-model.md`): the
 layer lived in `value/object/vtable.rs` (274 LOC),
@@ -67,7 +69,7 @@ Dead copy disagrees with live store on attribute defaults.
 
 ~470 LOC saved. Commit `9822e375`.
 
-## R5 — Collapse `Object` property storage + fix spec semantics  *(partial DONE 2026-07-23)*
+## R5 — Collapse `Object` property storage + fix spec semantics  *(partial DONE 2026-07-23, diff=7)*
 
 Highest language-stage lever. Parallel maps in
 `value/object/helpers.rs` plus hand-rolled walk in
@@ -101,7 +103,7 @@ reproducer `#[test]` first):
 Spec-bug fixes landed (commit `28bc28b7`); full IndexMap collapse deferred.
 Do **not** wait for R0 — language stages need this now.
 
-## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A)*
+## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A, diff=4)*
 
 High tests-per-LOC for the language half. Hand-rolling early errors in
 `lower/` is thousands of LOC. `oxc_semantic` confirmed in `docs.rs/oxc`
@@ -115,7 +117,7 @@ under the main oxc crate — verify if a feature flag is needed or if
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
 
-## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B)*
+## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
 as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
@@ -136,7 +138,7 @@ private copies remain in `builtins/*.rs` and `eval/`.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of
       the ops list above remain outside `eval/ops.rs`.
 
-## R0 — Self-host builtins in JS  *(PHASE-B — before built-ins stages)*
+## R0 — Self-host builtins in JS  *(PHASE-B — before built-ins stages, diff=5)*
 
 Move every pure-spec builtin from `builtins/*.rs` to `builtins/*.js`.
 Do **not** start a full migration during stage 16; it does not unblock
@@ -157,7 +159,7 @@ failing stage is a built-in you would otherwise enlarge in Rust).
 Unblocks R2 / R7 / R8 / R13 cleanup. Never grind `Object`/`Array`/
 `String` stages by growing Rust builtins first.
 
-## R2 — One iterator protocol  *(PHASE-B, with R0 Iterator.js)*
+## R2 — One iterator protocol  *(PHASE-B, with R0 Iterator.js, diff=3)*
 
 Four impls today: `eval/iteration.rs` (eager `Vec<Value>`, breaks
 generators), `builtins/weak.rs` `for_each_on_iterable`,
@@ -172,7 +174,7 @@ generators), `builtins/weak.rs` `for_each_on_iterable`,
 materializer, land the streaming `ops` path (and delete that one
 duplicate) in Phase A without waiting for full R0.
 
-## R3 — `chrono`-backed Date core  *(PHASE-B / with Date.js)*
+## R3 — `chrono`-backed Date core  *(PHASE-B / with Date.js, diff=2)*
 
 `builtins/date.rs` hand-rolls leap-year math under `chrono_*` names but
 never imports `chrono` (confirmed via grep: zero `use chrono` hits). R3
@@ -186,7 +188,7 @@ implements the fix documented in `DEPENDENCIES.md`.
 
 ~50 LOC saved.
 
-## R6 — `Realm` owns intrinsic prototypes; `%ThrowTypeError%`  *(LATER / stage-gated)*
+## R6 — `Realm` owns intrinsic prototypes; `%ThrowTypeError%`  *(LATER / stage-gated, diff=5)*
 
 `Context::reset` clears only 2 of ~14 thread_local proto pointers.
 `%ThrowTypeError%` missing (skip-listed in runner).
@@ -200,12 +202,12 @@ implements the fix documented in `DEPENDENCIES.md`.
 
 Do when the `ThrowTypeError` stage (or a digest cluster) demands it.
 
-## R7 — One `to_object`  *(absorbed by R1)*
+## R7 — One `to_object`  *(absorbed by R1, diff=1)*
 
 Three divergent boxers (one boxes `undefined`/`null`). Delete on touch
 as R1 owns `to_object`.
 
-## R8 — `panic!` → `throw_type_error`  *(LATER; most vanish under R0)*
+## R8 — `panic!` → `throw_type_error`  *(LATER; most vanish under R0, diff=2)*
 
 - [ ] `value::error::throw_type_error(msg) -> JsError`.
 - [ ] `#[test]` per panic site that must remain in Rust (`core/`).
@@ -214,7 +216,7 @@ as R1 owns `to_object`.
 Prefer fixing a panic when a stage digest hits it; otherwise sweep with
 R0.
 
-## R9 — Dead code sweep  *(LATER, after R4 / with R0)*
+## R9 — Dead code sweep  *(LATER, after R4 / with R0, diff=2)*
 
 After R4/R1/R0 reduce the surface: dead convert helpers, unused
 `Getter`/`Setter*` types, `ObjData` variants never constructed,
@@ -222,30 +224,30 @@ After R4/R1/R0 reduce the surface: dead convert helpers, unused
 
 ~620 LOC saved. Opportunistic on touch; no dedicated queue jump.
 
-## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER)*
+## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER, diff=4)*
 
 Open-coded save/restore skips restore on some `Err` paths.
 
 - [ ] `CtxGuard` + `Drop`; `RefCell` peek instead of take+set.
 - [ ] Pairs with R6.
 
-## R11 — `Context::call_js_function` → `eval::function::call_value`  *(LATER)*
+## R11 — `Context::call_js_function` → `eval::function::call_value`  *(LATER, diff=1)*
 
 ~55 LOC. Delete when touching call paths.
 
-## R12 — Split `eval/object.rs`  *(DONE)*
+## R12 — Split `eval/object.rs`  *(DONE, diff=1)*
 
 Remaining over-500 offenders tracked in R15.
 
-## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5)*
+## R13 — `object_static.rs` cleanup  *(absorbed by R0 + R5, diff=1)*
 
 Including `FROZEN_OBJECTS` → see R16.
 
-## R14 — `lower_expr` fail-loud on unknown  *(LATER)*
+## R14 — `lower_expr` fail-loud on unknown  *(LATER, diff=1)*
 
 Catch-all → `Err` so new OXC variants surface at lower time.
 
-## R15 — Linter-gate sweep  *(continuous on touch; final sweep LATER)*
+## R15 — Linter-gate sweep  *(continuous on touch; final sweep LATER, diff=2)*
 
 **Not a test262 unlock.** Enforced on every PR for files you edit.
 Wholesale split of untouched >500-line files waits until after R0/R5
@@ -255,7 +257,7 @@ shrink the surface — do not prioritize ahead of Phase A/B.
 - [ ] Final sweep: `rg '#\[allow\(' crates/quench-runtime/src` zero hits;
       no production file > 500 lines; clippy clean.
 
-## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path)*
+## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path, diff=2)*
 
 Use `Object.extensible` (and proper descriptors from R5); delete
 `FROZEN_OBJECTS` + `is_frozen_object`. Details: T14 in
@@ -263,7 +265,7 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 
 ---
 
-## R18 — RegExp Unicode property escapes  *(LATER / stage 84)*
+## R18 — RegExp Unicode property escapes  *(LATER / stage 84, diff=2)*
 
 `regress` (ES2018, confirmed in `DEPENDENCIES.md`) does NOT support
 Unicode property escapes `\p{}` (docs.rs regress: "features which have
