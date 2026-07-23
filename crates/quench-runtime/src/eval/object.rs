@@ -282,6 +282,15 @@ pub fn assign_to_member(
             assign_to_native_constructor(&nc, &prop_name, value.clone())
         }
         Value::Class(class) => {
+            if (prop_name == "caller" || prop_name == "arguments")
+                && !class.has_static_own_property(&prop_name)
+            {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
             class.set_static_property(&prop_name, value.clone(), env)?;
             Ok(())
         }
