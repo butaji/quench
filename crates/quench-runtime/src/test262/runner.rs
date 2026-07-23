@@ -153,11 +153,32 @@ pub const STAGES: &[&str] = &[
 fn collect_tests(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     // Skip individual tests that cause stack overflow (pre-existing bugs)
-    let skip_files: std::collections::HashSet<&str> =
-        ["prototype-wiring.js", "prototype-setter.js", "this-access-restriction-2.js", "this-access-restriction.js", "this-check-ordering.js", "restricted-properties.js", "static-init-arguments-functions.js", "static-init-arguments-methods.js", "static-init-arguments-eval.js", "tco.js"].iter().cloned().collect();
+    let skip_files: std::collections::HashSet<&str> = [
+        "prototype-wiring.js",
+        "prototype-setter.js",
+        "this-access-restriction-2.js",
+        "this-access-restriction.js",
+        "this-check-ordering.js",
+        "restricted-properties.js",
+        "static-init-arguments-functions.js",
+        "static-init-arguments-methods.js",
+        "static-init-arguments-eval.js",
+        "tco.js",
+    ]
+    .iter()
+    .cloned()
+    .collect();
     // Subdirectories requiring completely missing features (async generators, private fields)
-    let skip_dirs: std::collections::HashSet<&str> =
-        ["dstr", "elements", "method", "method-static", "name-binding"].iter().cloned().collect();
+    let skip_dirs: std::collections::HashSet<&str> = [
+        "dstr",
+        "elements",
+        "method",
+        "method-static",
+        "name-binding",
+    ]
+    .iter()
+    .cloned()
+    .collect();
     // Files requiring infrastructure changes (param/body scope separation, etc.)
     let skip_scope_tests: std::collections::HashSet<&str> = [
         "scope-meth-paramsbody-var-open.js",
@@ -179,7 +200,10 @@ fn collect_tests(dir: &Path) -> Vec<PathBuf> {
         "scope-name-lex-close.js",
         "scope-name-lex-open-heritage.js",
         "scope-name-lex-open-no-heritage.js",
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
     if dir.is_file() {
         if dir.extension().map(|e| e == "js").unwrap_or(false)
             && !dir
@@ -377,7 +401,7 @@ impl Test262Runner {
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let quick = std::env::var("TEST262_QUICK")
+        let _quick = std::env::var("TEST262_QUICK")
             .ok()
             .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -506,7 +530,10 @@ impl Test262Runner {
         let count = tests.len();
         let timeout = std::time::Duration::from_secs(TEST_TIMEOUT_SECS);
 
-        println!("\n=== DIGEST Stage {}: {} ({} tests) ===", stage, stage_dir, count);
+        println!(
+            "\n=== DIGEST Stage {}: {} ({} tests) ===",
+            stage, stage_dir, count
+        );
 
         let mut failures: Vec<(String, String)> = Vec::new(); // (path, reason)
         let mut passed = 0usize;
@@ -519,15 +546,27 @@ impl Test262Runner {
             // Read test source + metadata
             let source = match std::fs::read_to_string(path) {
                 Ok(s) => s,
-                Err(_) => { failures.push((path.display().to_string(), "read error".into())); continue; }
+                Err(_) => {
+                    failures.push((path.display().to_string(), "read error".into()));
+                    continue;
+                }
             };
             let meta = match Test262Metadata::parse(&source) {
                 Some(m) => m,
-                None => { failures.push((path.display().to_string(), "bad frontmatter".into())); continue; }
+                None => {
+                    failures.push((path.display().to_string(), "bad frontmatter".into()));
+                    continue;
+                }
             };
-            if crate::test262::skip::should_skip(&meta).is_some() { passed += 1; continue; }
+            if crate::test262::skip::should_skip(&meta).is_some() {
+                passed += 1;
+                continue;
+            }
             if let Some(tp) = path.to_str() {
-                if crate::test262::skip::should_skip_path(tp).is_some() { passed += 1; continue; }
+                if crate::test262::skip::should_skip_path(tp).is_some() {
+                    passed += 1;
+                    continue;
+                }
             }
 
             let is_raw = meta.flags.contains(&"raw".to_string());
@@ -546,7 +585,10 @@ impl Test262Runner {
                             s
                         }
                     }
-                    Err(e) => { failures.push((path.display().to_string(), e)); continue; }
+                    Err(e) => {
+                        failures.push((path.display().to_string(), e));
+                        continue;
+                    }
                 }
             };
 
@@ -562,8 +604,11 @@ impl Test262Runner {
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
                     let mut inner = crate::test262::host::QuenchHost::new();
-                    let r = if is_module { inner.run_module_script(&script2) }
-                             else { inner.run_script(&script2) };
+                    let r = if is_module {
+                        inner.run_module_script(&script2)
+                    } else {
+                        inner.run_script(&script2)
+                    };
                     let _ = tx.send(check_outcome(&meta2, r));
                 });
                 match rx.recv_timeout(timeout) {
@@ -579,11 +624,15 @@ impl Test262Runner {
 
             let outcome = match result {
                 Ok(o) => o,
-                Err(_) => TestOutcome::Fail { reason: "panic in harness".into() },
+                Err(_) => TestOutcome::Fail {
+                    reason: "panic in harness".into(),
+                },
             };
 
             match outcome {
-                TestOutcome::Pass => { passed += 1; }
+                TestOutcome::Pass => {
+                    passed += 1;
+                }
                 TestOutcome::Fail { reason } => {
                     failures.push((test_path.clone(), reason));
                 }
@@ -597,14 +646,17 @@ impl Test262Runner {
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
                         let mut inner = crate::test262::host::QuenchHost::new();
-                        let r = if is_module { inner.run_module_script(&strict_script) }
-                                 else { inner.run_script(&strict_script) };
+                        let r = if is_module {
+                            inner.run_module_script(&strict_script)
+                        } else {
+                            inner.run_script(&strict_script)
+                        };
                         let _ = tx.send(check_outcome(&meta3, r));
                     });
                     match rx.recv_timeout(timeout) {
                         Ok(o) => o,
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
-                        reason: format!("strict: timed out after {}s", TEST_TIMEOUT_SECS),
+                            reason: format!("strict: timed out after {}s", TEST_TIMEOUT_SECS),
                         },
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
                             reason: "strict: panicked".into(),
@@ -658,7 +710,10 @@ impl Test262Runner {
                     })
                 }).collect::<Vec<_>>()
             });
-            println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
         }
 
         RunSummary {

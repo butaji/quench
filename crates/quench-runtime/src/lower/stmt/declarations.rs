@@ -259,11 +259,8 @@ fn lower_class_member_stmt(member: &ast::ClassElement) -> Option<ClassMember> {
         }
         ast::ClassElement::PropertyDefinition(prop) => lower_class_prop_stmt(prop),
         ast::ClassElement::StaticBlock(block) => {
-            let body: Vec<crate::ast::Statement> = block
-                .body
-                .iter()
-                .filter_map(|s| lower_stmt(s))
-                .collect();
+            let body: Vec<crate::ast::Statement> =
+                block.body.iter().filter_map(|s| lower_stmt(s)).collect();
             Some(ClassMember::StaticBlock { body })
         }
         _ => None,

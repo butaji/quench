@@ -1,12 +1,34 @@
 use crate::value::kind::ObjectKind;
 use crate::value::object::helpers::as_array_index;
 use crate::value::object::{
-    define_accessor, has_getter, has_setter, set_getter_func, set_setter_func, Desc, Object,
+    define_accessor, has_getter, has_setter, set_getter_func, set_setter_func, Object,
     PropertyDescriptor, PropertyFlags, Value,
 };
 use crate::value::NativeFunction;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+// ─── R4 refactor pin: live store survives TComp deletion ────────────────
+
+#[test]
+fn array_assign_and_define_own_property_survive() {
+    let mut obj = Object::new_array(1);
+    obj.set("0", Value::Number(10.0));
+    let pd = PropertyDescriptor {
+        value: Some(Value::Number(20.0)),
+        writable: Some(true),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..Default::default()
+    };
+    assert!(obj.define_own_property("1", &pd));
+    assert_eq!(obj.get("0"), Some(Value::Number(10.0)));
+    assert_eq!(obj.get("1"), Some(Value::Number(20.0)));
+    assert_eq!(
+        obj.properties.get("length"),
+        Some(&Value::Number(obj.elements.len() as f64))
+    );
+}
 
 // ─── Core existing tests ────────────────────────────────────────────────
 
@@ -479,21 +501,6 @@ fn test_property_descriptor_type_checks() {
         ..Default::default()
     };
     assert!(!acc.is_data() && acc.is_accessor());
-}
-
-#[test]
-fn test_desc_type_checks() {
-    let data = Desc {
-        value: Some(Value::Number(1.0)),
-        ..Default::default()
-    };
-    assert!(data.is_data() && !data.is_accessor() && !data.is_generic());
-    let acc = Desc {
-        get: Some(Value::Null),
-        ..Default::default()
-    };
-    assert!(!acc.is_data() && acc.is_accessor() && !acc.is_generic());
-    assert!(Desc::default().is_generic());
 }
 
 #[test]
