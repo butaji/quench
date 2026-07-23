@@ -203,6 +203,18 @@ pub(crate) fn is_direct_eval() -> bool {
 }
 
 thread_local! {
+    static EVAL_IN_CLASS_FIELD: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn set_eval_in_class_field(in_field: bool) {
+    EVAL_IN_CLASS_FIELD.with(|cell| cell.set(in_field));
+}
+
+pub(crate) fn is_eval_in_class_field() -> bool {
+    EVAL_IN_CLASS_FIELD.with(|cell| cell.get())
+}
+
+thread_local! {
     static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
 
