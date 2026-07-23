@@ -92,10 +92,21 @@ pub fn instantiate_simple(
         return Err(js_err);
     }
 
+    // Per ES §9.2.2 [[Construct]] step 13: if the constructor executes an
+    // explicit `return` with a non-undefined, non-object value, throw TypeError.
+    // Expression-statement results (e.g. `count++`) do NOT trigger this — they
+    // produce a normal completion, not a return completion.
     if is_return_override {
         Ok(result)
     } else if body.is_empty() {
         Ok(this_val)
+    } else if result != Value::Undefined && body.iter().any(|s| matches!(s, Statement::Return(..)))
+    {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "derived constructor returned a non-object",
+            "TypeError",
+        );
+        Err(js_err)
     } else {
         finish_constructor(result, &this_val)
     }

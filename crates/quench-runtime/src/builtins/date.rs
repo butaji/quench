@@ -9,7 +9,7 @@ pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
     to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
-    ObjectKind, Value,
+    ObjectKind, PropertyFlags, Value,
 };
 use crate::Context;
 
@@ -111,9 +111,16 @@ fn create_string_constructor_fn(string_proto_clone: Rc<RefCell<Object>>) -> Valu
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
                 this_obj.borrow_mut().set("0", Value::String(s.clone()));
-                this_obj
-                    .borrow_mut()
-                    .set("length", Value::Number(s.len() as f64));
+                this_obj.borrow_mut().define(
+                    "length",
+                    Value::Number(s.len() as f64),
+                    PropertyFlags {
+                        writable: false,
+                        enumerable: false,
+                        configurable: false,
+                        ..Default::default()
+                    },
+                );
                 crate::builtins::object::set_boxed_value(
                     &mut this_obj.borrow_mut(),
                     Value::String(s.clone()),
