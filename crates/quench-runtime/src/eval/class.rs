@@ -67,7 +67,10 @@ pub fn eval_class_expr(
         new_value.declared_private_names.clone(),
     );
     let cached_super_class_val = if let Some(ref super_class_expr) = new_value.super_class {
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
         let val = eval_expression(super_class_expr, &class_scope, false)?;
+        crate::interpreter::set_strict_mode(prev_strict);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Value::Undefined);
         }
