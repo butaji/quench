@@ -137,9 +137,60 @@ pub fn count_yields_in_stmt(stmt: &Statement) -> usize {
 
 pub fn count_yields_in_expr(expr: &Expression) -> usize {
     match expr {
-        Expression::Yield(_) | Expression::YieldDelegate(_) => 1,
+        Expression::Yield(inner) => {
+            1 + inner
+                .as_ref()
+                .map(|e| count_yields_in_expr(e))
+                .unwrap_or(0)
+        }
+        Expression::YieldDelegate(inner) => 1 + count_yields_in_expr(inner),
+        Expression::Spread(inner) => count_yields_in_expr(inner),
+        Expression::Array(elements) => elements.iter().map(count_yields_in_expr).sum(),
         Expression::Class(class) => count_yields_in_class(class),
+        Expression::Object(props) => props
+            .iter()
+            .map(|(_, value)| count_yields_in_property_value(value))
+            .sum(),
+        Expression::Binary { left, right, .. }
+        | Expression::LogicalCompoundAssignment { left, right, .. }
+        | Expression::CompoundAssignment { left, right, .. }
+        | Expression::Assignment { left, right } => {
+            count_yields_in_expr(left) + count_yields_in_expr(right)
+        }
+        Expression::Unary { argument, .. } => count_yields_in_expr(argument),
+        Expression::Update { argument, .. } => count_yields_in_expr(argument),
+        Expression::Call { callee, arguments } => {
+            count_yields_in_expr(callee) + arguments.iter().map(count_yields_in_expr).sum::<usize>()
+        }
+        Expression::Member { object, property, .. } => {
+            count_yields_in_expr(object) + count_yields_in_property_key(property)
+        }
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            count_yields_in_expr(condition)
+                + count_yields_in_expr(consequent)
+                + count_yields_in_expr(alternate)
+        }
+        Expression::New { constructor, arguments } => {
+            count_yields_in_expr(constructor)
+                + arguments.iter().map(count_yields_in_expr).sum::<usize>()
+        }
+        Expression::Sequence(exprs) => exprs.iter().map(count_yields_in_expr).sum(),
+        Expression::BlockExpr(stmts) => stmts.iter().map(count_yields_in_stmt).sum(),
         _ => 0,
+    }
+}
+
+fn count_yields_in_property_value(value: &crate::ast::PropertyValue) -> usize {
+    use crate::ast::PropertyValue;
+    match value {
+        PropertyValue::Value(expr) => count_yields_in_expr(expr),
+        PropertyValue::Getter { body, .. } | PropertyValue::Setter { body, .. } => {
+            body.iter().map(count_yields_in_stmt).sum()
+        }
     }
 }
 
@@ -202,5 +253,13 @@ mod tests {
             }],
         };
         assert_eq!(count_yields_in_expr(&Expression::Class(class)), 1);
+    }
+
+    #[test]
+    fn counts_nested_yield_in_array_spread() {
+        let expr = Expression::Yield(Some(Box::new(Expression::Array(vec![
+            Expression::Spread(Box::new(Expression::Yield(None))),
+        ]))));
+        assert_eq!(count_yields_in_expr(&expr), 2);
     }
 }
