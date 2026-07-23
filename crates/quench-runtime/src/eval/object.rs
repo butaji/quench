@@ -24,7 +24,7 @@ pub fn assign_to(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     match target {
-        Expression::Identifier(name) => assign_to_identifier(name, value, env),
+        Expression::Identifier(name) => assign_to_identifier(name, value, env, None),
         Expression::Member {
             object,
             property,
