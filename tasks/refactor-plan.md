@@ -24,7 +24,7 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
 | Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
-| Crate strategy | `DEPENDENCIES.md` — verified 2026-07-23 |
+| Crate candidates | `DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
 are snapshots; re-locate by symbol name before editing. Object-model
@@ -281,6 +281,123 @@ tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 - [ ] `#[test]` for `\p{Emoji}` matching, `\p{Script=Latin}`,
       `\p{General_Category=Number}`.
 
+## R19 — `bumpalo` arena allocation  *(LATER / Phase B, diff=3)*
+
+`bumpalo` (244M+ downloads) provides arena allocation — a single bump
+pointer, no per-allocation bookkeeping. `bump_scope` benches ~2x faster
+but less proven. Most `JsValue` objects and eval frames are short-lived
+and freed in LIFO order: the exact use case for arena.
+
+Key constraint: **no `Drop` on freed objects.** `bumpalo::boxed::Box`
+runs Drop on scope exit for types that need it; standard heap allocation
+is acceptable for those. Most JS value types have no Drop impl.
+
+Usage in Quench:
+- Parsing: `Arena` lives for parse phase; all `NodeId`s / AST nodes freed
+  in one shot when the arena drops.
+- Eval frames: `Bump` in `Context`; eval loop allocates Value slots from
+  it; each top-level eval call resets with `Bump::new`.
+- NaN-boxed `JsValue` (R20): arena allocation pairs well — fewer heap
+  objects means less GC pressure.
+
+- [ ] `bumpalo = "3"` in `Cargo.toml` (or `bump_scope` if bench proves it).
+- [ ] `DEPENDENCIES.md` row.
+- [ ] `#[test]`: no Drop impls on freed arena objects.
+- [ ] Migration order: eval frames first, then parser, then Value constructors.
+
+## R20 — NaN-boxed `JsValue`  *(LATER / Phase B, diff=3)*
+
+Rust's `enum JsValue` with inline/`Box`/`Rc` variants costs 2 words per
+Value plus heap traffic for every object. NaN boxing stores everything in
+a single `u64` — integers in the top 33 bits, pointers in the low 49
+bits of a quiet NaN, with tag bits distinguishing the slot type.
+
+**Confirmed (2026-07-23):**
+- Boa v0.21 switched from enum to NaN-boxed `JsValue` (October 2025).
+- Boa v0.21 achieves 94.12% test262 conformance.
+- SpiderMonkey and JSC use NaN boxing; V8 uses tagged pointers.
+- No dedicated Rust crate — implement with `unsafe` in `value/` module.
+- Quiet NaN (qNaN) only — signaling NaN never appears in IEEE754 JS values.
+
+Bit layout:
+```
+63       49     48     32     31     0
+[unused][tag=0xFFFF][integer payload] — integer slot
+63       49     48     32     31     0
+[unused][tag=0x0000][pointer payload    ] — pointer slot
+```
+Tag values: `0xFFFF` → Integer, `0x0000` → Pointer, `0x7FFC` → Double.
+Pointer encoding uses 2^49 offset to distinguish from canonical NaN
+(`0x7FFC000000000000`).
+
+`JsValue` becomes a newtype `u64` with accessor methods:
+`JsValue::new_integer(i32)`, `JsValue::new_object(*mut Object)`,
+`JsValue::new_double(f64)`, `JsValue::unbox()`.
+
+Do **not** migrate before R5 (object model correctness) — NaN boxing must
+pair with the correct property store, not the current buggy one.
+
+- [ ] `value/value_nan.rs` — `JsValue` newtype + all accessor methods.
+- [ ] `#[test]`: integer, object, double round-trips; `undefined`, `null`,
+      `true`, `false`, `NaN`, `Infinity`.
+- [ ] `#[test]`: NaN-boxed value survives a bumpalo round-trip.
+- [ ] `#[test]`: `Object.is` / `SameValue` on NaN-boxed values.
+
+## R21 — String interning / atom table  *(LATER / Phase B, diff=2)*
+
+JavaScript string comparisons are pervasive: property key lookup, `===`,
+`Map`/`Set` hashing. Un-interned strings do O(n) byte-by-byte comparison
+on every `==`; an atom table makes pointer comparison O(1).
+
+**Confirmed (2026-07-23):**
+- `string_interner` crate: widely used, thread-safe variant, O(1) get/create.
+- `fnv = "2"`: Fast HashMap; fine for atom table scale (~50k entries).
+- QuickJS uses a global atom table in `JSRuntime`.
+- `string_cache` (Servo): unmaintained since ~2020.
+- `rustc-hash`: fastest overall but lower-quality; fine for atom table.
+
+Usage:
+- Property keys (string + Symbol): interned key lookup for `Object` property
+  map; `Key = InternedKey(KeyId)`.
+- String literals: intern at parse time; string comparison in eval uses
+  `KeyId::eq` (pointer compare).
+- String values: `StringId` type wrapping `string_interner::DefaultSymbol`.
+
+- [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
+- [ ] `DEPENDENCIES.md` row.
+- [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId` type.
+- [ ] `#[test]`: interned string pointer equality; `"abc" == "abc"` pointer compare.
+- [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
+
+## R22 — Profiling tools on macOS  *(LATER / when needed, diff=1)*
+
+When the test262 iteration loop is the bottleneck, profile before tuning:
+
+**cargo-flamegraph** (most common, uses `xctrace` under the hood):
+```bash
+cargo install cargo-flamegraph
+cargo flamegraph --bin run-test -- test262/sample.js
+# opens Speedscope / Firefox Profiler format
+```
+
+**samply** (Rust-native alternative; Firefox Profiler UI):
+```bash
+cargo install samply
+samply record -- cargo run --bin run-test -- test.js
+samply codegen  # generates .profile.json
+# open in https://profiler.firefox.com/
+```
+
+**xctrace CLI** ( Instruments.app on macOS):
+```bash
+xcrun xctrace list templates   # list available templates
+xcrun xctrace record --template "Time Profiler" --output trace.trace -- cargo run -- test.js
+open trace.trace               # open in Instruments.app
+```
+
+For flamegraph output: `~/.cargo/bin/cargo-flamegraph` or install via
+`cargo install cargo-flamegraph`. `perf` on Linux is equivalent.
+
 ---
 
 ## Sequencing (summary)
@@ -290,7 +407,9 @@ NOW:     R4 ✓ → R5 ✓ → stage 16 (S2) → R17 → language stages
          R1 incremental on every op touch
          S5 harness (parallel digest, failed-only rerun) — active
 PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js) → R18
+         R19 (bumpalo) + R20 (NaN boxing) + R21 (interning)
 LATER:   R6 R8 R9 R10 R11 R14 R16 as stages/digests demand
+         R22 profiling when loop is the bottleneck
          R15 on every touch; repo-wide sweep after R0/R5
 ```
 
