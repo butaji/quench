@@ -34,7 +34,7 @@ pub use object::{
     Getter, GetterBody, GetterStorage, ObjData, Object, PropertyDescriptor, PropertyFlags, Setter,
     SetterBody, SetterStorage, TypedArrayName,
 };
-pub use val::{ClassValue, Symbol, Value};
+pub use val::{private_name_key, ClassValue, Symbol, Value};
 
 // =============================================================================
 // Tests

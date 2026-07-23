@@ -609,6 +609,7 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
+        let storage_key = class_member_storage_key(&key_str);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -624,7 +625,7 @@ pub fn create_class_prototype_helper_with_env(
         func.is_method = true;
         // Class methods are non-enumerable per ES spec §10.1.7
         proto.define(
-            &key_str,
+            &storage_key,
             Value::Function(func),
             PropertyFlags {
                 enumerable: false,
@@ -636,7 +637,7 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, body) in &class.getters {
-        let key = prop_key_to_string(name, &closure, false)?;
+        let key = class_member_storage_key(&prop_key_to_string(name, &closure, false)?);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -649,7 +650,7 @@ pub fn create_class_prototype_helper_with_env(
     }
 
     for (name, param, body) in &class.setters {
-        let key = prop_key_to_string(name, &closure, false)?;
+        let key = class_member_storage_key(&prop_key_to_string(name, &closure, false)?);
         if crate::value::generator_replay::yield_pending() {
             return Ok(Rc::new(RefCell::new(proto)));
         }
@@ -676,6 +677,14 @@ pub fn create_class_prototype_helper_with_env(
     );
 
     Ok(Rc::new(RefCell::new(proto)))
+}
+
+fn class_member_storage_key(key: &str) -> String {
+    if key.starts_with('#') {
+        crate::value::private_name_key(key)
+    } else {
+        key.to_string()
+    }
 }
 
 /// Helper to convert PropertyKey to string, evaluating computed expressions
@@ -845,6 +854,16 @@ mod tests {
     }
 
     // ─── Private fields ─────────────────────────────────────────────────────
+
+    #[test]
+    fn private_method_not_clobbered_by_hash_string_field() {
+        let r = eval(
+            "class C { #m() { return 'Test262'; } ['#m'] = 0; \
+             check() { return this.#m(); } } new C().check()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("Test262".into()));
+    }
 
     #[test]
     fn private_method_getter_returns_method_without_recursion() {
