@@ -30,13 +30,16 @@ pub struct TailCallSignal {
     pub function: ValueFunction,
     /// The evaluated arguments.
     pub arguments: Vec<Value>,
+    /// `this` binding for member-expression tail calls; otherwise `Undefined`.
+    pub this_val: Value,
 }
 
 impl TailCallSignal {
-    pub fn new(function: ValueFunction, arguments: Vec<Value>) -> Self {
+    pub fn new(function: ValueFunction, arguments: Vec<Value>, this_val: Value) -> Self {
         Self {
             function,
             arguments,
+            this_val,
         }
     }
 }
@@ -272,7 +275,6 @@ fn handle_tail_call(
 ) -> Result<(), JsError> {
     if let Some(e) = expr.as_ref() {
         if let Expression::Call { callee, arguments } = e.as_ref() {
-            let callee_val = eval_expression(callee, env, in_arrow_function)?;
             let args: Vec<Value> = arguments
                 .iter()
                 .map(|arg| eval_expression(arg, env, in_arrow_function))

@@ -1184,6 +1184,7 @@ mod tail_signal {
         let sig = TailCallSignal {
             function: make_fn(),
             arguments: vec![Value::Number(42.0)],
+            this_val: Value::Undefined,
         };
         set_tail_call_signal(sig);
         let taken = take_tail_call_signal();
@@ -1196,6 +1197,7 @@ mod tail_signal {
         let sig = TailCallSignal {
             function: make_fn(),
             arguments: vec![],
+            this_val: Value::Undefined,
         };
         set_tail_call_signal(sig);
         assert!(take_tail_call_signal().is_some());

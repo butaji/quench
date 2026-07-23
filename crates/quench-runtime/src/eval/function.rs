@@ -264,7 +264,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         crate::eval::statement::acc_stack_update_last(result.unwrap_or(Value::Undefined));
         let next_force_strict = tail.function.strict || check_use_strict(&tail.function.body);
         f = tail.function;
-        this_val = Value::Undefined;
+        this_val = tail.this_val;
         force_strict = next_force_strict;
         args = tail.arguments;
     }
