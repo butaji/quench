@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 16,
-  "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
+  "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC — small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A–C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
       "test/"
@@ -17,9 +17,13 @@
       "id": 0,
       "path": "test/harness",
       "tests": 116,
-      "status": "done",
+      "status": "pending",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 4,
+      "pass_rate": "96.6%"
     },
     {
       "id": 1,
@@ -27,7 +31,11 @@
       "tests": 534,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 2,
@@ -35,7 +43,11 @@
       "tests": 268,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 3,
@@ -43,7 +55,11 @@
       "tests": 55,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 4,
@@ -51,7 +67,11 @@
       "tests": 27,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 5,
@@ -59,7 +79,11 @@
       "tests": 25,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 6,
@@ -67,7 +91,11 @@
       "tests": 11,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 7,
@@ -75,7 +103,11 @@
       "tests": 67,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 8,
@@ -83,7 +115,11 @@
       "tests": 41,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 9,
@@ -91,7 +127,11 @@
       "tests": 52,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 10,
@@ -99,7 +139,11 @@
       "tests": 1,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 11,
@@ -107,7 +151,11 @@
       "tests": 113,
       "status": "done",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 12,
@@ -115,15 +163,23 @@
       "tests": 62,
       "status": "done",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 13,
       "path": "test/language/statements/async-function",
       "tests": 74,
-      "status": "done",
+      "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 1,
+      "pass_rate": "98.6%"
     },
     {
       "id": 14,
@@ -131,7 +187,11 @@
       "tests": 21,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 15,
@@ -139,7 +199,11 @@
       "tests": 20,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 16,
@@ -147,7 +211,11 @@
       "tests": 4367,
       "status": "in_progress",
       "difficulty": 7,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–500",
+      "js_loc": "0–0",
+      "failed": 6,
+      "pass_rate": "99.9%"
     },
     {
       "id": 17,
@@ -155,7 +223,11 @@
       "tests": 136,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 23,
+      "pass_rate": "83.1%"
     },
     {
       "id": 18,
@@ -163,7 +235,11 @@
       "tests": 24,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 1,
+      "pass_rate": "95.8%"
     },
     {
       "id": 19,
@@ -171,7 +247,11 @@
       "tests": 2,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 20,
@@ -179,7 +259,11 @@
       "tests": 36,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 36,
+      "pass_rate": "0.0%"
     },
     {
       "id": 21,
@@ -187,7 +271,11 @@
       "tests": 2,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 22,
@@ -195,7 +283,11 @@
       "tests": 3,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 23,
@@ -203,7 +295,11 @@
       "tests": 385,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "150–300",
+      "js_loc": "0–0",
+      "failed": 265,
+      "pass_rate": "31.2%"
     },
     {
       "id": 24,
@@ -211,7 +307,11 @@
       "tests": 115,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 28,
+      "pass_rate": "75.7%"
     },
     {
       "id": 25,
@@ -219,7 +319,11 @@
       "tests": 751,
       "status": "pending",
       "difficulty": 4,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "300–600",
+      "js_loc": "0–0",
+      "failed": 266,
+      "pass_rate": "64.6%"
     },
     {
       "id": 26,
@@ -227,15 +331,23 @@
       "tests": 451,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–400",
+      "js_loc": "0–0",
+      "failed": 64,
+      "pass_rate": "85.8%"
     },
     {
       "id": 27,
       "path": "test/language/statements/generators",
       "tests": 266,
-      "status": "done",
+      "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 14,
+      "pass_rate": "94.7%"
     },
     {
       "id": 28,
@@ -243,15 +355,23 @@
       "tests": 69,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 3,
+      "pass_rate": "95.7%"
     },
     {
       "id": 29,
       "path": "test/language/statements/labeled",
       "tests": 24,
-      "status": "done",
+      "status": "pending",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 1,
+      "pass_rate": "95.8%"
     },
     {
       "id": 30,
@@ -259,7 +379,11 @@
       "tests": 145,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "150–300",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 31,
@@ -267,7 +391,11 @@
       "tests": 16,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 32,
@@ -275,7 +403,11 @@
       "tests": 111,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "150–300",
+      "js_loc": "0–0",
+      "failed": 34,
+      "pass_rate": "69.4%"
     },
     {
       "id": 33,
@@ -283,7 +415,11 @@
       "tests": 14,
       "status": "done",
       "difficulty": 1,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 34,
@@ -291,7 +427,11 @@
       "tests": 201,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–400",
+      "js_loc": "0–0",
+      "failed": 112,
+      "pass_rate": "44.3%"
     },
     {
       "id": 35,
@@ -299,7 +439,11 @@
       "tests": 178,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "150–300",
+      "js_loc": "0–0",
+      "failed": 34,
+      "pass_rate": "80.9%"
     },
     {
       "id": 36,
@@ -307,7 +451,11 @@
       "tests": 38,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 11,
+      "pass_rate": "71.1%"
     },
     {
       "id": 37,
@@ -315,7 +463,11 @@
       "tests": 181,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 70,
+      "pass_rate": "61.3%"
     },
     {
       "id": 38,
@@ -323,7 +475,11 @@
       "tests": 301,
       "status": "pending",
       "difficulty": 7,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "500–1000",
+      "js_loc": "0–0",
+      "failed": 9,
+      "pass_rate": "97.0%"
     },
     {
       "id": 39,
@@ -331,7 +487,11 @@
       "tests": 94,
       "status": "pending",
       "difficulty": 6,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–400",
+      "js_loc": "0–0",
+      "failed": 2,
+      "pass_rate": "97.9%"
     },
     {
       "id": 40,
@@ -339,7 +499,11 @@
       "tests": 1234,
       "status": "pending",
       "difficulty": 7,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "400–800",
+      "js_loc": "0–0",
+      "failed": 128,
+      "pass_rate": "89.6%"
     },
     {
       "id": 41,
@@ -347,7 +511,11 @@
       "tests": 78,
       "status": "pending",
       "difficulty": 6,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 34,
+      "pass_rate": "56.4%"
     },
     {
       "id": 42,
@@ -355,7 +523,11 @@
       "tests": 80,
       "status": "done",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 43,
@@ -363,7 +535,11 @@
       "tests": 145,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "150–300",
+      "js_loc": "0–0",
+      "failed": 8,
+      "pass_rate": "94.5%"
     },
     {
       "id": 44,
@@ -371,7 +547,11 @@
       "tests": 11101,
       "status": "pending",
       "difficulty": 8,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "800–2000",
+      "js_loc": "0–0",
+      "failed": 1336,
+      "pass_rate": "88.0%"
     },
     {
       "id": 45,
@@ -379,7 +559,11 @@
       "tests": 48,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 16,
+      "pass_rate": "66.7%"
     },
     {
       "id": 46,
@@ -387,7 +571,11 @@
       "tests": 19,
       "status": "pending",
       "difficulty": 4,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–500",
+      "js_loc": "0–0",
+      "failed": 2,
+      "pass_rate": "89.5%"
     },
     {
       "id": 47,
@@ -395,7 +583,11 @@
       "tests": 11,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 2,
+      "pass_rate": "81.8%"
     },
     {
       "id": 48,
@@ -403,7 +595,11 @@
       "tests": 217,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 7,
+      "pass_rate": "96.8%"
     },
     {
       "id": 49,
@@ -411,7 +607,11 @@
       "tests": 263,
       "status": "pending",
       "difficulty": 4,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–500",
+      "js_loc": "0–0",
+      "failed": 66,
+      "pass_rate": "74.9%"
     },
     {
       "id": 50,
@@ -419,7 +619,11 @@
       "tests": 347,
       "status": "pending",
       "difficulty": 5,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "300–800",
+      "js_loc": "0–0",
+      "failed": 234,
+      "pass_rate": "32.6%"
     },
     {
       "id": 51,
@@ -427,7 +631,11 @@
       "tests": 42,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 21,
+      "pass_rate": "50.0%"
     },
     {
       "id": 52,
@@ -435,7 +643,11 @@
       "tests": 14,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 53,
@@ -443,7 +655,11 @@
       "tests": 599,
       "status": "pending",
       "difficulty": 5,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–500",
+      "js_loc": "0–0",
+      "failed": 168,
+      "pass_rate": "72.0%"
     },
     {
       "id": 54,
@@ -451,7 +667,11 @@
       "tests": 127,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 110,
+      "pass_rate": "13.4%"
     },
     {
       "id": 55,
@@ -459,7 +679,11 @@
       "tests": 3,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 56,
@@ -467,7 +691,11 @@
       "tests": 102,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 2,
+      "pass_rate": "98.0%"
     },
     {
       "id": 57,
@@ -475,7 +703,11 @@
       "tests": 29,
       "status": "done",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 58,
@@ -483,7 +715,11 @@
       "tests": 6,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 4,
+      "pass_rate": "33.3%"
     },
     {
       "id": 59,
@@ -491,7 +727,11 @@
       "tests": 6,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 4,
+      "pass_rate": "33.3%"
     },
     {
       "id": 60,
@@ -499,7 +739,11 @@
       "tests": 8,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 5,
+      "pass_rate": "37.5%"
     },
     {
       "id": 61,
@@ -507,7 +751,11 @@
       "tests": 55,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 3,
+      "pass_rate": "94.5%"
     },
     {
       "id": 62,
@@ -515,7 +763,11 @@
       "tests": 54,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 7,
+      "pass_rate": "87.0%"
     },
     {
       "id": 63,
@@ -523,7 +775,11 @@
       "tests": 15,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 7,
+      "pass_rate": "53.3%"
     },
     {
       "id": 64,
@@ -531,7 +787,11 @@
       "tests": 15,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 1,
+      "pass_rate": "93.3%"
     },
     {
       "id": 65,
@@ -539,7 +799,11 @@
       "tests": 55,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 24,
+      "pass_rate": "56.4%"
     },
     {
       "id": 66,
@@ -547,7 +811,11 @@
       "tests": 56,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 14,
+      "pass_rate": "75.0%"
     },
     {
       "id": 67,
@@ -555,7 +823,11 @@
       "tests": 31,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 15,
+      "pass_rate": "51.6%"
     },
     {
       "id": 68,
@@ -563,7 +835,11 @@
       "tests": 31,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 16,
+      "pass_rate": "48.4%"
     },
     {
       "id": 69,
@@ -571,7 +847,11 @@
       "tests": 10,
       "status": "pending",
       "difficulty": 4,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "300–600",
+      "js_loc": "0–0",
+      "failed": 3,
+      "pass_rate": "70.0%"
     },
     {
       "id": 70,
@@ -579,7 +859,11 @@
       "tests": 14,
       "status": "pending",
       "difficulty": 2,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "50–100",
+      "js_loc": "0–0",
+      "failed": 6,
+      "pass_rate": "57.1%"
     },
     {
       "id": 71,
@@ -587,7 +871,11 @@
       "tests": 3411,
       "status": "pending",
       "difficulty": 6,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "600–1200",
+      "failed": 1968,
+      "pass_rate": "42.3%"
     },
     {
       "id": 72,
@@ -595,7 +883,11 @@
       "tests": 509,
       "status": "pending",
       "difficulty": 5,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "400–800",
+      "failed": 199,
+      "pass_rate": "60.9%"
     },
     {
       "id": 73,
@@ -603,7 +895,11 @@
       "tests": 51,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 21,
+      "pass_rate": "58.8%"
     },
     {
       "id": 74,
@@ -611,7 +907,11 @@
       "tests": 93,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 71,
+      "pass_rate": "23.7%"
     },
     {
       "id": 75,
@@ -619,7 +919,11 @@
       "tests": 94,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 46,
+      "pass_rate": "51.1%"
     },
     {
       "id": 76,
@@ -627,7 +931,11 @@
       "tests": 25,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 14,
+      "pass_rate": "44.0%"
     },
     {
       "id": 77,
@@ -635,7 +943,11 @@
       "tests": 22,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 22,
+      "pass_rate": "0.0%"
     },
     {
       "id": 78,
@@ -643,15 +955,23 @@
       "tests": 340,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 137,
+      "pass_rate": "59.7%"
     },
     {
       "id": 79,
       "path": "test/built-ins/BigInt",
       "tests": 77,
-      "status": "done",
+      "status": "pending",
       "difficulty": 2,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 50,
+      "pass_rate": "35.1%"
     },
     {
       "id": 80,
@@ -659,7 +979,11 @@
       "tests": 327,
       "status": "pending",
       "difficulty": 5,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "250–500",
+      "failed": 27,
+      "pass_rate": "91.7%"
     },
     {
       "id": 81,
@@ -667,7 +991,11 @@
       "tests": 594,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 491,
+      "pass_rate": "17.3%"
     },
     {
       "id": 82,
@@ -675,7 +1003,11 @@
       "tests": 1223,
       "status": "pending",
       "difficulty": 6,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "600–1200",
+      "failed": 668,
+      "pass_rate": "45.4%"
     },
     {
       "id": 83,
@@ -683,7 +1015,11 @@
       "tests": 98,
       "status": "pending",
       "difficulty": 5,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 46,
+      "pass_rate": "53.1%"
     },
     {
       "id": 84,
@@ -691,7 +1027,11 @@
       "tests": 1879,
       "status": "pending",
       "difficulty": 7,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–400",
+      "js_loc": "200–400",
+      "failed": 1086,
+      "pass_rate": "42.2%"
     },
     {
       "id": 85,
@@ -699,7 +1039,11 @@
       "tests": 3081,
       "status": "pending",
       "difficulty": 6,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "800–1600",
+      "failed": 2109,
+      "pass_rate": "31.5%"
     },
     {
       "id": 86,
@@ -707,7 +1051,11 @@
       "tests": 165,
       "status": "pending",
       "difficulty": 2,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 95,
+      "pass_rate": "42.4%"
     },
     {
       "id": 87,
@@ -715,7 +1063,11 @@
       "tests": 514,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 507,
+      "pass_rate": "1.4%"
     },
     {
       "id": 88,
@@ -723,7 +1075,11 @@
       "tests": 27,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 26,
+      "pass_rate": "3.7%"
     },
     {
       "id": 89,
@@ -731,7 +1087,11 @@
       "tests": 7,
       "status": "pending",
       "difficulty": 2,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "50–100",
+      "failed": 7,
+      "pass_rate": "0.0%"
     },
     {
       "id": 90,
@@ -739,7 +1099,11 @@
       "tests": 17,
       "status": "pending",
       "difficulty": 2,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "50–100",
+      "failed": 17,
+      "pass_rate": "0.0%"
     },
     {
       "id": 91,
@@ -747,7 +1111,11 @@
       "tests": 11,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 11,
+      "pass_rate": "0.0%"
     },
     {
       "id": 92,
@@ -755,7 +1123,11 @@
       "tests": 11,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 11,
+      "pass_rate": "0.0%"
     },
     {
       "id": 93,
@@ -763,7 +1135,11 @@
       "tests": 13,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 9,
+      "pass_rate": "30.8%"
     },
     {
       "id": 94,
@@ -771,23 +1147,35 @@
       "tests": 38,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 24,
+      "pass_rate": "36.8%"
     },
     {
       "id": 95,
       "path": "test/built-ins/GeneratorFunction",
       "tests": 23,
-      "status": "done",
+      "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 13,
+      "pass_rate": "43.5%"
     },
     {
       "id": 96,
       "path": "test/built-ins/GeneratorPrototype",
       "tests": 61,
-      "status": "done",
+      "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 42,
+      "pass_rate": "31.1%"
     },
     {
       "id": 97,
@@ -795,7 +1183,11 @@
       "tests": 23,
       "status": "pending",
       "difficulty": 7,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–500",
+      "js_loc": "0–0",
+      "failed": 13,
+      "pass_rate": "43.5%"
     },
     {
       "id": 98,
@@ -803,7 +1195,11 @@
       "tests": 48,
       "status": "pending",
       "difficulty": 7,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "300–600",
+      "js_loc": "0–0",
+      "failed": 20,
+      "pass_rate": "58.3%"
     },
     {
       "id": 99,
@@ -811,7 +1207,11 @@
       "tests": 18,
       "status": "pending",
       "difficulty": 5,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "100–200",
+      "js_loc": "0–0",
+      "failed": 12,
+      "pass_rate": "33.3%"
     },
     {
       "id": 100,
@@ -819,7 +1219,11 @@
       "tests": 221,
       "status": "pending",
       "difficulty": 5,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "100–200",
+      "js_loc": "100–200",
+      "failed": 187,
+      "pass_rate": "15.4%"
     },
     {
       "id": 101,
@@ -827,7 +1231,11 @@
       "tests": 104,
       "status": "pending",
       "difficulty": 5,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "100–200",
+      "js_loc": "100–200",
+      "failed": 66,
+      "pass_rate": "22.4%"
     },
     {
       "id": 102,
@@ -835,7 +1243,11 @@
       "tests": 1446,
       "status": "pending",
       "difficulty": 6,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–400",
+      "js_loc": "300–600",
+      "failed": 1363,
+      "pass_rate": "5.7%"
     },
     {
       "id": 103,
@@ -843,15 +1255,23 @@
       "tests": 738,
       "status": "pending",
       "difficulty": 6,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–400",
+      "js_loc": "200–400",
+      "failed": 484,
+      "pass_rate": "34.4%"
     },
     {
       "id": 104,
       "path": "test/built-ins/Uint8Array",
       "tests": 70,
-      "status": "done",
+      "status": "pending",
       "difficulty": 4,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "0–0",
+      "js_loc": "0–0",
+      "failed": 63,
+      "pass_rate": "10.0%"
     },
     {
       "id": 105,
@@ -859,7 +1279,11 @@
       "tests": 561,
       "status": "pending",
       "difficulty": 5,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "100–200",
+      "js_loc": "200–400",
+      "failed": 261,
+      "pass_rate": "36.5%"
     },
     {
       "id": 106,
@@ -867,7 +1291,11 @@
       "tests": 389,
       "status": "pending",
       "difficulty": 3,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "200–400",
+      "js_loc": "0–0",
+      "failed": 389,
+      "pass_rate": "0.0%"
     },
     {
       "id": 107,
@@ -875,7 +1303,11 @@
       "tests": 204,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 113,
+      "pass_rate": "44.6%"
     },
     {
       "id": 108,
@@ -883,7 +1315,11 @@
       "tests": 383,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "200–400",
+      "failed": 231,
+      "pass_rate": "39.7%"
     },
     {
       "id": 109,
@@ -891,7 +1327,11 @@
       "tests": 141,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 86,
+      "pass_rate": "39.0%"
     },
     {
       "id": 110,
@@ -899,7 +1339,11 @@
       "tests": 85,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 51,
+      "pass_rate": "40.0%"
     },
     {
       "id": 111,
@@ -907,7 +1351,11 @@
       "tests": 29,
       "status": "pending",
       "difficulty": 6,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "100–200",
+      "js_loc": "100–200",
+      "failed": 10,
+      "pass_rate": "65.5%"
     },
     {
       "id": 112,
@@ -915,7 +1363,11 @@
       "tests": 47,
       "status": "pending",
       "difficulty": 5,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 47,
+      "pass_rate": "0.0%"
     },
     {
       "id": 113,
@@ -923,7 +1375,11 @@
       "tests": 729,
       "status": "pending",
       "difficulty": 6,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "200–400",
+      "js_loc": "200–400",
+      "failed": 444,
+      "pass_rate": "39.1%"
     },
     {
       "id": 114,
@@ -931,7 +1387,11 @@
       "tests": 153,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 108,
+      "pass_rate": "29.4%"
     },
     {
       "id": 115,
@@ -939,7 +1399,11 @@
       "tests": 311,
       "status": "pending",
       "difficulty": 8,
-      "impl": "hybrid"
+      "impl": "hybrid",
+      "rust_loc": "500–1000",
+      "js_loc": "300–600",
+      "failed": 265,
+      "pass_rate": "14.8%"
     },
     {
       "id": 116,
@@ -947,7 +1411,11 @@
       "tests": 93,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 93,
+      "pass_rate": "0.0%"
     },
     {
       "id": 117,
@@ -955,7 +1423,11 @@
       "tests": 104,
       "status": "pending",
       "difficulty": 4,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "150–300",
+      "failed": 76,
+      "pass_rate": "26.9%"
     },
     {
       "id": 118,
@@ -963,7 +1435,11 @@
       "tests": 64,
       "status": "pending",
       "difficulty": 9,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "500–1000",
+      "js_loc": "0–0",
+      "failed": 64,
+      "pass_rate": "0.0%"
     },
     {
       "id": 119,
@@ -971,7 +1447,11 @@
       "tests": 8,
       "status": "pending",
       "difficulty": 3,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "100–200",
+      "failed": 8,
+      "pass_rate": "0.0%"
     },
     {
       "id": 120,
@@ -979,7 +1459,11 @@
       "tests": 4603,
       "status": "pending",
       "difficulty": 9,
-      "impl": "rust"
+      "impl": "rust",
+      "rust_loc": "500–1500",
+      "js_loc": "200–600",
+      "failed": 4603,
+      "pass_rate": "0.0%"
     },
     {
       "id": 121,
@@ -987,7 +1471,11 @@
       "tests": 1086,
       "status": "pending",
       "difficulty": 2,
-      "impl": "js"
+      "impl": "js",
+      "rust_loc": "0–0",
+      "js_loc": "300–600",
+      "failed": 1086,
+      "pass_rate": "0.0%"
     }
   ]
 }
