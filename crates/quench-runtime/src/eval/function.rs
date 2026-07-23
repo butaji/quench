@@ -316,11 +316,17 @@ pub(crate) fn bind_params(
                 None => Value::Undefined,
             };
 
-            // If we used TDZ, initialize the declared binding; otherwise define directly.
+            // If we used TDZ, initialize the declared binding or destructure the default.
             if use_tdz && param.default.is_some() {
-                call_env_rc
-                    .borrow_mut()
-                    .initialize_declared(&param.name, value);
+                if let Some(pattern) = &param.pattern {
+                    declare_pattern_bindings(pattern, call_env_rc);
+                    let target = binding_pattern_expression(pattern.clone());
+                    crate::eval::object::assign_to(&target, &value, call_env_rc)?;
+                } else {
+                    call_env_rc
+                        .borrow_mut()
+                        .initialize_declared(&param.name, value);
+                }
             } else if let Some(pattern) = &param.pattern {
                 declare_pattern_bindings(pattern, call_env_rc);
                 let target = binding_pattern_expression(pattern.clone());
