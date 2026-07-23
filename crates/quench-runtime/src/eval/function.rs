@@ -93,6 +93,11 @@ pub(crate) fn call_value_impl(
                 }
                 bind_params(&f, &f.params, &args, &call_env_rc)?;
 
+                let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
+                body_env_rc.borrow_mut().push_scope();
+                predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
+                predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
+
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
                     f.params.clone(),
@@ -100,7 +105,7 @@ pub(crate) fn call_value_impl(
                     f.strict,
                 );
                 gen_obj.args = Some(args);
-                gen_obj.call_env = Some(call_env_rc);
+                gen_obj.call_env = Some(body_env_rc);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
