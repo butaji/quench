@@ -259,6 +259,7 @@ fn strict_eq_class_different_identity() {
             super_class: None,
             body: vec![],
         },
+        None,
     )));
     let b = Value::Class(Box::new(crate::value::ClassValue::from_ast(
         &crate::ast::Class {
@@ -266,6 +267,7 @@ fn strict_eq_class_different_identity() {
             super_class: None,
             body: vec![],
         },
+        None,
     )));
     assert!(!strict_eq(&a, &b));
 }

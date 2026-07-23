@@ -112,8 +112,20 @@ pub fn instantiate_simple(
     if should_auto_super(class) {
         let sc = class.super_class.as_ref().unwrap();
         let sv = eval_expression(sc, env, false)?;
-        let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
+        let effective_this = call_super_or_default(&sv, args.clone(), &this_val, env)?;
         if let Value::Object(o) = &effective_this {
+            if let Value::Class(super_class) = &sv {
+                if !super_class.instance_fields.is_empty() {
+                    let super_env = Rc::new(RefCell::new(build_constructor_env(
+                        super_class.as_ref(),
+                        &args,
+                        &effective_this,
+                        env,
+                    )?));
+                    init_instance_fields(super_class.as_ref(), o, &super_env)?;
+                }
+                install_privates_on_object(super_class.as_ref(), o, env)?;
+            }
             install_privates_on_object(class, o, env)?;
         }
         return finalize_instance(effective_this);
@@ -132,7 +144,7 @@ pub fn instantiate_simple(
     finalize_instance(finish_ctor_result(result, &this_val, class, &call_env)?)
 }
 
-fn init_instance_fields(
+pub(crate) fn init_instance_fields(
     class: &ClassValue,
     instance_rc: &Rc<RefCell<Object>>,
     call_env: &Rc<RefCell<Environment>>,
