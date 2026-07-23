@@ -253,9 +253,15 @@ fn scope_expression(expr: &mut Expression, class_id: usize) {
                 scope_expression(arg, class_id);
             }
         }
-        Expression::ArrowFunction { params, body } => {
+        Expression::ArrowFunction {
+            params,
+            body,
+            is_async,
+            is_generator,
+        } => {
             scope_params(params, class_id);
             scope_arrow_body(body, class_id);
+            let _ = (is_async, is_generator);
         }
         Expression::FunctionExpression { params, body, .. } => {
             scope_params(params, class_id);
