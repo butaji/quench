@@ -132,7 +132,7 @@ pub fn eval_class_expr(
                     } else {
                         key_str
                     };
-                    new_value.set_static_field(&storage_key, field_value);
+                    new_value.set_static_field(&storage_key, field_value)?;
                     field_idx += 1;
                 }
             }
