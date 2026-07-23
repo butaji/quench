@@ -1,5 +1,9 @@
 # Review 2026-07-22 — object model
 
+> **Critical path:** R4 then R5 are Phase A **NOW** items in
+> `tasks/refactor-plan.md` / `tasks/10-ways-to-speed-up.md` — do these
+> before full R0. This audit is the detail source for those items.
+
 Audit of `src/value/**` + the eval/builtins paths that touch property
 storage. Verdict: three parallel property subsystems; the one actually
 used is the least spec-correct. Feeds R4 / R5 / R9 / R15 in

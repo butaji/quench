@@ -1,7 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 16,
-  "goal": "100% of test262, staged, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins (see docs/architecture.md and tasks/refactor-plan.md).",
+  "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
       "test/"
