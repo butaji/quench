@@ -249,6 +249,13 @@ pub fn eval_class_member(
                 );
                 return Err(js_err);
             }
+            if crate::value::is_private_name_key(prop_name) {
+                let (_, js_err) = create_js_error_with_type(
+                    "Cannot read private member from an object whose class did not declare it",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
             Ok(Value::Undefined)
         }
     }

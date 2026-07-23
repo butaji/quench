@@ -93,8 +93,12 @@ fn run_ctor_body(
     let prev_strict = is_strict_mode();
     set_strict_mode(true);
     predeclare_let_const(body, &mut call_env.borrow_mut());
-    let body_result = crate::eval::statement::eval_function_body_with_meta(body, call_env, false)?;
+    let previous_eval_env = crate::interpreter::get_current_eval_env();
+    crate::interpreter::set_current_eval_env(Some(Rc::clone(call_env)));
+    let body_result = crate::eval::statement::eval_function_body_with_meta(body, call_env, false);
+    crate::interpreter::set_current_eval_env(previous_eval_env);
     set_strict_mode(prev_strict);
+    let body_result = body_result?;
     Ok((body_result.value, body_result.explicit_return))
 }
 
@@ -2611,6 +2615,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::Number(44.0));
+    }
+
+    #[test]
+    fn static_private_field_eval_brand_check_on_foreign_class() {
+        let err = eval(
+            "class C { static #m = 44; static getWithEval() { return eval(\"this.#m\"); } } \
+             class D { static #m = 44; } \
+             C.getWithEval.call(D)",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
 
     #[test]

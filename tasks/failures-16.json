@@ -1,16 +1,6 @@
 {
-  "failed": 156,
+  "failed": 143,
   "groups": [
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/regular-subclassing.js"
-      ],
-      "reason": "Actual is not array-like",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/regular-subclassing.js"
-      ]
-    },
     {
       "count": 1,
       "paths": [
@@ -108,22 +98,6 @@
       ]
     },
     {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-ref-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-ref-arguments.js"
-      ],
-      "reason": "ReferenceError: arguments is not defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-ref-arguments.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-args-unmapped.js",
-        "/workspace/tests/test262/test/language/statements/class/params-dflt-gen-meth-static-ref-arguments.js"
-      ]
-    },
-    {
       "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/static-init-super-property.js",
@@ -143,6 +117,34 @@
       "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(24), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }, OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"A 'yield' expression is only allowed in a generator body.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(33), length: 5 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/GeneratorFunction/regular-subclassing.js"
+      ]
+    },
+    {
+      "count": 12,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js"
+      ],
+      "reason": "SyntaxError: Private field must be declared in an enclosing class",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js"
       ]
     },
     {
@@ -234,12 +236,10 @@
       ]
     },
     {
-      "count": 8,
+      "count": 6,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
@@ -248,9 +248,7 @@
       "reason": "Test262Error: Expected SyntaxError but got TypeError. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-2.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-4.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-7.js",
@@ -373,26 +371,6 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access to a private field\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. invalid access to a static private getter\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js"
       ]
     },
     {
@@ -642,9 +620,8 @@
       ]
     },
     {
-      "count": 8,
+      "count": 7,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js",
@@ -655,7 +632,6 @@
       ],
       "reason": "Test262Error: sameValue failed: true !== false",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Array/length.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js",
@@ -738,25 +714,15 @@
       ]
     },
     {
-      "count": 8,
+      "count": 3,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js"
       ],
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js"
       ]
@@ -808,16 +774,12 @@
       ]
     },
     {
-      "count": 3,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ],
       "reason": "TypeError: Cannot write private member to an object whose class did not declare it",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
       ]
     },
@@ -850,30 +812,6 @@
       ]
     },
     {
-      "count": 8,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-single.js"
-      ],
-      "reason": "TypeError: Value is not iterable",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/gen-private-method-static/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/yield-spread-arr-single.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/yield-spread-arr-single.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
@@ -894,7 +832,7 @@
       ]
     }
   ],
-  "passed": 4211,
+  "passed": 4224,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
