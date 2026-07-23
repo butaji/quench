@@ -29,19 +29,21 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4152** | **215** | **95.1%** | Destructuring private assign via assign_to; object rest LHS; nested outer private fields |
 | 2026-07-23 | **4181** | **186** | **95.7%** | Computed destructuring param keys; private getter/setter pairs; super private dedup; async arrow is_async |
 | 2026-07-23 | **4192** | **175** | **96.0%** | Derived explicit return; IsConstructor proxy/bound/async; yield* generators; static private method assign |
+| 2026-07-23 | **4207** | **160** | **96.3%** | Async return TCO fix; static constructor naming; NativeFunction super() |
+| 2026-07-23 | **4211** | **156** | **96.4%** | Lexical this-binding for super() in finally; try/catch CF restore |
 
-## Top remaining clusters (~175)
+## Top remaining clusters (~156)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 14 | Value is not a function, got undefined | Private ref/proxy / async harness |
-| 8 | Value is not iterable | yield-spread `[...yield]` mid-expr suspend |
-| 8 | sameValue / compareArray | Static+instance field ordering, proxies |
-| 8 | SyntaxError privatename eval | Direct eval early errors |
-| 6 | super is not a constructor | Builtin subclass super() |
-| 5 | Must call super before returning | Derived return in catch/finally |
-| 5 | static ctor named constructor | Early error vs valid grammar tests |
-| ~20 | Missing builtins (DataView, TypedArrays, …) | Stage-gated primitives |
+| 8 | yield-spread `[...yield]` | Mid-expr generator suspend in array spread |
+| 8 | sameValue true !== false | Private field/proxy ordering |
+| 8 | privatename eval earlyerr | Direct eval SyntaxError vs TypeError |
+| 8 | Builtin subclass own props | Array.length, Error.message assignment |
+| 8 | Private field on nested class / direct eval | Brand + eval visibility |
+| 5 | Expected exception not thrown | Primitive receiver, frozen objects, Proxy |
+| 5 | Expected TypeError not thrown | const binding, restricted props, arguments.callee |
+| ~20 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
 
 ## How to clear this stage (ASAP × min LOC)
 

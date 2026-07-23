@@ -7,6 +7,7 @@ use std::rc::Rc;
 use crate::ast::{
     ArrowBody, Class, ClassMember, Expression, ForInit, PropertyKey, PropertyValue, Statement,
 };
+use crate::value::JsError;
 
 thread_local! {
     static PARENT_CLASS_ID: Cell<Option<usize>> = const { Cell::new(None) };
@@ -27,16 +28,20 @@ pub fn scope_class_private_names(
     }
 }
 
-fn collect_declared_private_names(members: &[ClassMember]) -> HashSet<String> {
+pub(crate) fn collect_declared_private_names(members: &[ClassMember]) -> HashSet<String> {
     let mut names = HashSet::new();
     for member in members {
         if let Some(PropertyKey::Ident(s)) = member_private_key(member) {
-            if is_unscoped_private(s) {
+            if is_private_name(s) {
                 names.insert(bare_private_name(s));
             }
         }
     }
     names
+}
+
+fn is_private_name(s: &str) -> bool {
+    is_unscoped_private(s) || crate::value::is_private_name_key(s)
 }
 
 fn member_private_key(member: &ClassMember) -> Option<&PropertyKey> {
@@ -66,6 +71,142 @@ fn bare_private_name(s: &str) -> String {
 
 pub fn scope_script_private_names(body: &mut [Statement], class_id: usize) {
     scope_statements(body, class_id);
+}
+
+/// Direct eval in a class constructor/method: reject references to private names
+/// not declared in the enclosing class (and not inherited via `extends`).
+pub fn reject_undeclared_private_names_in_eval(
+    body: &[Statement],
+    declared: &HashSet<String>,
+) -> Result<(), JsError> {
+    if body
+        .iter()
+        .any(|s| stmt_references_undeclared_private(s, declared))
+    {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "Private field must be declared in an enclosing class",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
+    Ok(())
+}
+
+fn stmt_references_undeclared_private(stmt: &Statement, declared: &HashSet<String>) -> bool {
+    match stmt {
+        Statement::Expression(expr) | Statement::Return(Some(expr)) | Statement::Throw(expr) => {
+            expr_references_undeclared_private(expr, declared)
+        }
+        Statement::VarDeclaration {
+            init: Some(expr), ..
+        } => expr_references_undeclared_private(expr, declared),
+        Statement::Block(stmts) | Statement::SequenceDecls(stmts) => stmts
+            .iter()
+            .any(|s| stmt_references_undeclared_private(s, declared)),
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || stmt_references_undeclared_private(consequent, declared)
+                || alternate
+                    .as_ref()
+                    .is_some_and(|s| stmt_references_undeclared_private(s, declared))
+        }
+        Statement::While { condition, body }
+        | Statement::DoWhile {
+            condition, body, ..
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || stmt_references_undeclared_private(body, declared)
+        }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => {
+            init.as_ref()
+                .is_some_and(|i| for_init_references_undeclared_private(i, declared))
+                || condition
+                    .as_ref()
+                    .is_some_and(|e| expr_references_undeclared_private(e, declared))
+                || update
+                    .as_ref()
+                    .is_some_and(|e| expr_references_undeclared_private(e, declared))
+                || stmt_references_undeclared_private(body, declared)
+        }
+        Statement::Return(None) => false,
+        _ => false,
+    }
+}
+
+fn for_init_references_undeclared_private(init: &ForInit, declared: &HashSet<String>) -> bool {
+    match init {
+        ForInit::Expression(expr) => expr_references_undeclared_private(expr, declared),
+        ForInit::VarDeclaration { init, .. } => init
+            .as_ref()
+            .is_some_and(|e| expr_references_undeclared_private(e, declared)),
+    }
+}
+
+fn expr_references_undeclared_private(expr: &Expression, declared: &HashSet<String>) -> bool {
+    match expr {
+        Expression::Member {
+            object, property, ..
+        } => {
+            expr_references_undeclared_private(object, declared)
+                || private_key_undeclared(property, declared)
+        }
+        Expression::Assignment { left, right, .. }
+        | Expression::CompoundAssignment { left, right, .. }
+        | Expression::LogicalCompoundAssignment { left, right, .. } => {
+            expr_references_undeclared_private(left, declared)
+                || expr_references_undeclared_private(right, declared)
+        }
+        Expression::Call { callee, arguments } => {
+            expr_references_undeclared_private(callee, declared)
+                || arguments
+                    .iter()
+                    .any(|a| expr_references_undeclared_private(a, declared))
+        }
+        Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
+            expr_references_undeclared_private(argument, declared)
+        }
+        Expression::Binary { left, right, .. } => {
+            expr_references_undeclared_private(left, declared)
+                || expr_references_undeclared_private(right, declared)
+        }
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } => {
+            expr_references_undeclared_private(condition, declared)
+                || expr_references_undeclared_private(consequent, declared)
+                || expr_references_undeclared_private(alternate, declared)
+        }
+        Expression::Array(exprs) | Expression::Sequence(exprs) => exprs
+            .iter()
+            .any(|e| expr_references_undeclared_private(e, declared)),
+        Expression::Spread(inner) => expr_references_undeclared_private(inner, declared),
+        Expression::Yield(Some(inner)) | Expression::YieldDelegate(inner) => {
+            expr_references_undeclared_private(inner, declared)
+        }
+        _ => false,
+    }
+}
+
+fn private_key_undeclared(key: &PropertyKey, declared: &HashSet<String>) -> bool {
+    let PropertyKey::Ident(s) = key else {
+        return false;
+    };
+    if !is_unscoped_private(s) {
+        return false;
+    }
+    !declared.contains(&bare_private_name(s))
 }
 
 fn scope_class_member(member: &mut ClassMember, class_id: usize) {
