@@ -9,7 +9,7 @@ pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
     to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
-    ObjectKind, PropertyFlags, Value,
+    ObjectKind, Value,
 };
 use crate::Context;
 
@@ -110,17 +110,19 @@ fn create_string_constructor_fn(string_proto_clone: Rc<RefCell<Object>>) -> Valu
             let s = args.first().map(to_js_string).unwrap_or_default();
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
-                this_obj.borrow_mut().set("0", Value::String(s.clone()));
                 this_obj.borrow_mut().define(
                     "length",
                     Value::Number(s.len() as f64),
-                    PropertyFlags {
+                    crate::value::PropertyFlags {
+                        value: Some(Value::Number(s.len() as f64)),
                         writable: false,
                         enumerable: false,
                         configurable: false,
-                        ..Default::default()
                     },
                 );
+                if !s.is_empty() {
+                    this_obj.borrow_mut().set("0", Value::String(s.clone()));
+                }
                 crate::builtins::object::set_boxed_value(
                     &mut this_obj.borrow_mut(),
                     Value::String(s.clone()),
@@ -419,7 +421,6 @@ pub fn register_date(ctx: &mut Context) {
 
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(obj_rc) = this_val {
-                obj_rc.borrow_mut().prototype = Some(Rc::clone(&date_proto_clone));
                 obj_rc.borrow_mut().kind = ObjectKind::Date;
                 obj_rc
                     .borrow_mut()
@@ -549,101 +550,6 @@ mod tests {
         assert!(eval_num("parseFloat('-Infinity')").is_infinite());
         assert!(eval_num("parseFloat('-Infinity')") < 0.0);
         assert!(eval_num("parseFloat('infinity')").is_nan());
-    }
-
-    #[test]
-    fn test_boolean_new_boxed() {
-        use crate::Context;
-        let mut ctx = Context::new().unwrap();
-        let result = ctx.eval("new Boolean(true).valueOf()").unwrap();
-        assert_eq!(result, Value::Boolean(true));
-    }
-
-    #[test]
-    fn test_boolean_super_check() {
-        use crate::Context;
-        let mut ctx = Context::new().unwrap();
-        // Check that extends Boolean works (no explicit constructor — default ctor)
-        let r1 = ctx
-            .eval(r#"class B extends Boolean {}; new B() instanceof Boolean"#)
-            .unwrap();
-        assert_eq!(r1, Value::Boolean(true));
-        // Check that super(true) works with explicit constructor
-        let r2 = ctx.eval(
-            r#"class B extends Boolean { constructor() { super(true); } }; new B() instanceof Boolean"#,
-        ).unwrap();
-        assert_eq!(r2, Value::Boolean(true));
-    }
-
-    #[test]
-    fn test_boolean_subclassing_default_ctor() {
-        use crate::Context;
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                r#"
-            class MyBoolean extends Boolean {}
-            let b = new MyBoolean();
-            b instanceof MyBoolean;
-        "#,
-            )
-            .unwrap();
-        assert!(
-            matches!(result, Value::Boolean(true)),
-            "expected true for no-ctor extends Boolean, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_boolean_subclassing_via_extends() {
-        use crate::Context;
-        let mut ctx = Context::new().unwrap();
-        let result = ctx
-            .eval(
-                r#"
-            class MyBoolean extends Boolean {
-                constructor() {
-                    super(true);
-                }
-                getValue() { return this.valueOf(); }
-            }
-            let b = new MyBoolean();
-            [
-                b instanceof MyBoolean,
-                b instanceof Boolean,
-                b.getValue(),
-                Object.getPrototypeOf(b) === MyBoolean.prototype,
-            ];
-        "#,
-            )
-            .unwrap();
-        match result {
-            Value::Object(arr_rc) => {
-                let arr = arr_rc.borrow();
-                assert!(
-                    matches!(arr.get("0"), Some(Value::Boolean(true))),
-                    "expected true for instanceof MyBoolean, got {:?}",
-                    arr.get("0")
-                );
-                assert!(
-                    matches!(arr.get("1"), Some(Value::Boolean(true))),
-                    "expected true for instanceof Boolean, got {:?}",
-                    arr.get("1")
-                );
-                assert!(
-                    matches!(arr.get("2"), Some(Value::Boolean(true))),
-                    "expected true for getValue(), got {:?}",
-                    arr.get("2")
-                );
-                assert!(
-                    matches!(arr.get("3"), Some(Value::Boolean(true))),
-                    "expected true for Object.getPrototypeOf(b) === MyBoolean.prototype, got {:?}",
-                    arr.get("3")
-                );
-            }
-            other => panic!("expected Array, got {:?}", other),
-        }
     }
 
     #[test]

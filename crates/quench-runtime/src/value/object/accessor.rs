@@ -14,11 +14,19 @@ pub fn set_getter(
     body: std::rc::Rc<Vec<Statement>>,
     closure: std::rc::Rc<std::cell::RefCell<Environment>>,
     is_method: bool,
+    fn_name: Option<String>,
 ) {
     let strict = crate::interpreter::is_strict_mode();
     // Create and cache the ValueFunction immediately so that
     // getOwnPropertyDescriptor returns the same function object.
-    let mut func = ValueFunction::new(None, vec![], (*body).clone(), closure.clone(), false, false);
+    let mut func = ValueFunction::new(
+        fn_name,
+        vec![],
+        (*body).clone(),
+        closure.clone(),
+        false,
+        false,
+    );
     func.is_method = is_method;
     let func = crate::value::Value::Function(func);
     obj.getters.insert(
@@ -60,12 +68,13 @@ pub fn set_setter(
     body: std::rc::Rc<Vec<Statement>>,
     closure: std::rc::Rc<std::cell::RefCell<Environment>>,
     is_method: bool,
+    fn_name: Option<String>,
 ) {
     let strict = crate::interpreter::is_strict_mode();
     // Create and cache the ValueFunction immediately so that
     // getOwnPropertyDescriptor returns the same function object.
     let mut func = ValueFunction::new(
-        None,
+        fn_name,
         vec![param.clone()],
         (*body).clone(),
         closure.clone(),

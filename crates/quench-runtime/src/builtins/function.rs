@@ -9,17 +9,31 @@ use crate::value::{
 };
 use crate::Context;
 
-// Thread-local storage for Function.prototype and special function prototypes
+// Thread-local storage for Function.prototype (used by interpreter for function expressions)
 thread_local! {
     static FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
-    static GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
     static ASYNC_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
-    static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
+    static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
 }
 
 /// Get the Function.prototype object (for use by interpreter)
 pub fn get_function_prototype() -> Option<Rc<RefCell<Object>>> {
     FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
 /// Check if an object is Function.prototype (for special property access handling)
@@ -31,21 +45,6 @@ pub fn is_function_prototype(obj: &Rc<RefCell<Object>>) -> bool {
             false
         }
     })
-}
-
-/// Get the GeneratorFunction.prototype object (for %GeneratorPrototype% [[GetPrototypeOf]])
-pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
-}
-
-/// Get the AsyncFunction.prototype object (for %AsyncFunctionPrototype% [[GetPrototypeOf]])
-pub fn get_async_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
-}
-
-/// Get the AsyncGeneratorFunction.prototype object (for %AsyncGeneratorPrototype% [[GetPrototypeOf]])
-pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
-    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
 }
 
 /// Get the error message for restricted function properties
@@ -168,14 +167,69 @@ fn proto_bind(args: Vec<Value>) -> Result<Value, JsError> {
 // Function
 // ============================================================================
 
+#[derive(Clone, Copy)]
+enum FunctionCtorKind {
+    Ordinary,
+    Async,
+    Generator,
+    AsyncGenerator,
+}
+
+impl FunctionCtorKind {
+    fn parse_prefix(self) -> &'static str {
+        match self {
+            FunctionCtorKind::Ordinary => "function anonymous",
+            FunctionCtorKind::Async => "async function anonymous",
+            FunctionCtorKind::Generator => "function* anonymous",
+            FunctionCtorKind::AsyncGenerator => "async function* anonymous",
+        }
+    }
+
+    fn expected_flags(self) -> (bool, bool) {
+        match self {
+            FunctionCtorKind::Ordinary => (false, false),
+            FunctionCtorKind::Async => (true, false),
+            FunctionCtorKind::Generator => (false, true),
+            FunctionCtorKind::AsyncGenerator => (true, true),
+        }
+    }
+}
+
 pub fn register_function(ctx: &mut Context) {
     let function_proto = make_function_prototype();
     FUNCTION_PROTOTYPE.with(|fp| {
         *fp.borrow_mut() = Some(Rc::clone(&function_proto));
     });
 
-    let function_constructor =
-        make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    let async_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&async_function_proto_rc));
+    });
+
+    let generator_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&generator_function_proto_rc));
+    });
+
+    let async_generator_function_proto_rc = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        Rc::clone(&function_proto),
+    )));
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        *fp.borrow_mut() = Some(Rc::clone(&async_generator_function_proto_rc));
+    });
+
+    let function_constructor = make_function_constructor(
+        function_proto.clone(),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Ordinary,
+    );
     function_constructor.set_name("Function");
     let func_ctor = Value::NativeConstructor(Rc::new(function_constructor));
     // Set Function.prototype.constructor = Function
@@ -186,25 +240,48 @@ pub fn register_function(ctx: &mut Context) {
 
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
     // as native constructors that delegate to the Function constructor logic.
-    let async_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    let async_func_ctor = make_function_constructor(
+        Rc::clone(&async_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Async,
+    );
     async_func_ctor.set_name("AsyncFunction");
-    ctx.set_global(
-        "AsyncFunction".to_string(),
-        Value::NativeConstructor(Rc::new(async_func_ctor)),
+    let async_ctor_val = Value::NativeConstructor(Rc::new(async_func_ctor));
+    ASYNC_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut().set("constructor", async_ctor_val.clone());
+        }
+    });
+    ctx.set_global("AsyncFunction".to_string(), async_ctor_val);
+
+    let gen_func_ctor = make_function_constructor(
+        Rc::clone(&generator_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::Generator,
     );
-    let gen_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
     gen_func_ctor.set_name("GeneratorFunction");
-    ctx.set_global(
-        "GeneratorFunction".to_string(),
-        Value::NativeConstructor(Rc::new(gen_func_ctor)),
+    let gen_ctor_val = Value::NativeConstructor(Rc::new(gen_func_ctor));
+    GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut().set("constructor", gen_ctor_val.clone());
+        }
+    });
+    ctx.set_global("GeneratorFunction".to_string(), gen_ctor_val);
+
+    let async_gen_func_ctor = make_function_constructor(
+        Rc::clone(&async_generator_function_proto_rc),
+        Rc::clone(ctx.env()),
+        FunctionCtorKind::AsyncGenerator,
     );
-    let async_gen_func_ctor =
-        make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
     async_gen_func_ctor.set_name("AsyncGeneratorFunction");
-    ctx.set_global(
-        "AsyncGeneratorFunction".to_string(),
-        Value::NativeConstructor(Rc::new(async_gen_func_ctor)),
-    );
+    let async_gen_ctor_val = Value::NativeConstructor(Rc::new(async_gen_func_ctor));
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
+        if let Some(p) = fp.borrow().as_ref() {
+            p.borrow_mut()
+                .set("constructor", async_gen_ctor_val.clone());
+        }
+    });
+    ctx.set_global("AsyncGeneratorFunction".to_string(), async_gen_ctor_val);
 }
 
 fn make_function_prototype() -> Rc<RefCell<Object>> {
@@ -285,6 +362,7 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
 fn make_function_constructor(
     function_proto: Rc<RefCell<Object>>,
     global_env: Rc<RefCell<crate::env::Environment>>,
+    kind: FunctionCtorKind,
 ) -> NativeConstructor {
     NativeConstructor::new(
         move |args| {
@@ -296,7 +374,12 @@ fn make_function_constructor(
                 .map(to_js_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            let source = format!("function anonymous({}) {{\n{}\n}}", params_src, body_src);
+            let source = format!(
+                "{}({}) {{\n{}\n}}",
+                kind.parse_prefix(),
+                params_src,
+                body_src
+            );
             // Per ES spec §16.1, a hashbang comment (#! ...) is only valid at the
             // very beginning of source text. The Function constructor wraps the body
             // in `function anonymous() { ... }`, so a hashbang inside the body is
@@ -325,24 +408,32 @@ fn make_function_constructor(
                         is_generator,
                     }) = stmts.into_iter().next()
                     {
-                        {
-                            let mut func = ValueFunction::new(
-                                Some(name),
-                                params,
-                                body,
-                                Rc::clone(&global_env),
-                                is_async,
-                                is_generator,
-                            );
-                            if let Some(Value::Object(this_obj)) =
-                                crate::builtins::get_native_this()
-                            {
-                                if let Some(sub_proto) = this_obj.borrow().prototype.clone() {
-                                    func.set_instance_proto(sub_proto);
-                                }
-                            }
-                            Ok(Value::Function(func))
+                        let (expect_async, expect_generator) = kind.expected_flags();
+                        if is_async != expect_async || is_generator != expect_generator {
+                            return Err(JsError::new(
+                                "SyntaxError: Function constructor produced no function",
+                            ));
                         }
+                        let mut func = ValueFunction::new(
+                            Some(name),
+                            params,
+                            body,
+                            Rc::clone(&global_env),
+                            is_async,
+                            is_generator,
+                        );
+                        if matches!(
+                            kind,
+                            FunctionCtorKind::Generator | FunctionCtorKind::AsyncGenerator
+                        ) {
+                            func.set_empty_prototype(true);
+                        }
+                        if let Some(Value::Object(this_obj)) = crate::builtins::get_native_this() {
+                            if let Some(sub_proto) = this_obj.borrow().prototype.clone() {
+                                func.set_instance_proto(sub_proto);
+                            }
+                        }
+                        Ok(Value::Function(func))
                     } else {
                         Err(JsError::new(
                             "SyntaxError: Function constructor produced no function",

@@ -1098,7 +1098,7 @@ mod acc_stack {
     use crate::Context;
 
     fn sym(desc: &'static str) -> Value {
-        crate::builtins::symbol::new_symbol(desc)
+        crate::builtins::symbol::new_symbol(Some(desc))
     }
 
     /// Drain the thread-local stack to a clean state.

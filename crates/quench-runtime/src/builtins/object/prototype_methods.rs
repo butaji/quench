@@ -36,6 +36,11 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
         } else if let Value::Function(f) = &this_val {
             // ValueFunction stores properties in a HashMap
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
+                if key_str == "prototype" {
+                    return Ok(Value::Boolean(
+                        f.get_property("prototype").is_some() || f.has_prototype(),
+                    ));
+                }
                 if f.get_property(&key_str).is_some() {
                     return Ok(Value::Boolean(true));
                 }

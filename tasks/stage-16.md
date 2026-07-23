@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4298 pass / 69 fail (98.4%)** as of 2026-07-23.
+**4,367 tests** · **4362 pass / 5 fail (99.9%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -40,17 +40,24 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4282** | **85** | **98.1%** | Date/Number/ArrayBuffer builtin subclass auto-super, nested private field on parameter, eval_super_call NativeConstructor wrapper |
 | 2026-07-23 | **4286** | **81** | **98.1%** | super.prop in static field arrow assigns to class; minimal DataView builtin + subclass |
 | 2026-07-23 | **4298** | **69** | **98.4%** | finish_constructor on function super; AggregateError/SAB/WeakRef/BigInt64/Uint64; object literal spread + yield-spread-obj |
+| 2026-07-23 | **4300** | **67** | **98.5%** | Object destructure param ToObject for string primitives (static-init-arguments) |
+| 2026-07-23 | **4311** | **56** | **98.7%** | fn-name SetFunctionName (method/accessor); static name/length shadow; private static `#method` name; getOwnPropertyNames |
+| 2026-07-23 | **4318** | **49** | **98.9%** | Generator completion undefined unless return; class field SetFunctionName; arrow no spurious empty `.name` |
+| 2026-07-23 | **4329** | **38** | **99.1%** | Nested static private on Class; derived invalid return TypeError; static private setter brand |
+| 2026-07-23 | **4331** | **36** | **99.2%** | Nested direct eval `arguments` in deferred class-field arrows |
+| 2026-07-23 | **4332** | **35** | **99.2%** | Optional chain prefix before private field (`o?.c.#f`) |
+| 2026-07-23 | **4338** | **29** | **99.3%** | Builtin subclass auto-super; field key cache + intercalated ordering; sparse numeric keys; WeakMap/WeakSet subclass |
+| 2026-07-23 | **4346** | **21** | **99.5%** | For-of IteratorClose; static block/field sequencing; String subclass trim/length; frozen field TypeError |
+| 2026-07-23 | **4351** | **16** | **99.6%** | Proxy field defineProperty traps; super.x in ctor; RegExp lastIndex; TCO skip native callees; this-before-super ReferenceError |
+| 2026-07-23 | **4355** | **12** | **99.7%** | GeneratorFunction ctor (function* parse, empty prototype); extends-null constructorParent; class expr binding scope; symbol field storage; inside_super_call guard |
+| 2026-07-23 | **4362** | **5** | **99.9%** | SuperProperty GetThisBinding order; destructuring target before getter; ToPrimitive→Symbol property keys; Uint8 indexed coercion; verifyProperty Symbol hasOwn |
 
-## Top remaining clusters (~69)
+## Top remaining clusters (~12)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 7 | sameValue true !== false | Error subclass message own props |
-| 5 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
-| 5 | Expected Test262Error not thrown | Primitive receiver, frozen objects, Proxy |
-| 2 | Cannot destructure non-object value | static-init-arguments (param destructure ToObject) |
-| 2 | Actual [] expected [length,name,...] | static field / method definition order on class |
-| 8 | yield-spread-obj (private/async variants) | verify remaining private-gen spread cases |
+| ~3 | this-before-super / private field order | Refine ReferenceError vs TypeError; super-in-super-args |
+| ~9 | Single-test edge cases | See `tasks/failures-16.json` |
 
 ## How to clear this stage (ASAP × min LOC)
 

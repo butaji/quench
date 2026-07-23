@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use self::helpers::{
-    iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size, native_fn,
-    set_values,
+    init_map_object, iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size,
+    native_fn, set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -128,31 +128,22 @@ pub fn register_map_and_set(ctx: &mut Context) {
     }
     let map_proto_for_ctor = Rc::clone(&map_proto);
     let map_constructor = native_fn(move |args| {
-        // Use native_this when called via super() (class extends Map)
-        let (map_obj, map) =
-            if let Some(Value::Object(existing)) = crate::interpreter::get_native_this() {
-                existing.borrow_mut().kind = ObjectKind::Map;
-                let rc = Rc::clone(&existing);
-                let rc2 = Rc::clone(&existing);
-                (rc, rc2)
-            } else {
-                let obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
-                let rc = Rc::new(RefCell::new(obj));
-                let rc2 = Rc::clone(&rc);
-                (rc, rc2)
-            };
-        {
-            let mut m = map.borrow_mut();
-            let entries = Object::new_array(0);
-            m.set("_entries", Value::Object(Rc::new(RefCell::new(entries))));
-            m.set("size", Value::Number(0.0));
-        }
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let map = if let Value::Object(obj_rc) = this_val {
+            init_map_object(&obj_rc);
+            obj_rc
+        } else {
+            let map_obj = Object::with_prototype(ObjectKind::Map, Rc::clone(&map_proto_for_ctor));
+            let map = Rc::new(RefCell::new(map_obj));
+            init_map_object(&map);
+            map
+        };
         if let Some(src) = args.first() {
             if !matches!(src, Value::Undefined | Value::Null) {
                 map_populate(&map, src)?;
             }
         }
-        Ok(Value::Object(map_obj))
+        Ok(Value::Object(map))
     });
     if let Value::NativeFunction(nf) = &map_constructor {
         let _ = nf.set_property("prototype", Value::Object(map_proto));
@@ -487,5 +478,15 @@ mod tests {
         assert!(result.is_ok(), "new Map() should work: {:?}", result);
         let result = ctx.eval("Map()");
         assert!(result.is_ok(), "Map() should work: {:?}", result);
+    }
+
+    #[test]
+    fn test_map_subclass_populate_object_entry() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("class M extends Map {} var map = new M([{ 'foo': 'bar' }]);")
+            .unwrap();
+        assert_eq!(ctx.eval("map.size").unwrap(), Value::Number(1.0));
+        ctx.eval("map.set('bar', 'baz');").unwrap();
+        assert_eq!(ctx.eval("map.size").unwrap(), Value::Number(2.0));
     }
 }

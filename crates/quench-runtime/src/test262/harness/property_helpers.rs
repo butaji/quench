@@ -78,19 +78,27 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     let is_own = match &obj {
         Value::Object(obj_ref) => {
             let obj = obj_ref.borrow();
-            obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
+            if matches!(&name, Value::Symbol(_)) {
+                obj.has_symbol(&name)
+            } else {
+                obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
+            }
         }
         Value::Class(class_ref) => class_ref.has_static_own_property(&name_str),
         Value::Function(f) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
-                f.get_property(&key_str).is_some()
+                if key_str == "prototype" {
+                    f.get_property("prototype").is_some() || f.has_prototype()
+                } else {
+                    f.get_property(&key_str).is_some()
+                }
             } else {
                 false
             }
         }
         Value::NativeFunction(nf) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
-                nf.get_property(&key_str).is_some()
+                (key_str == "name" || key_str == "length") || nf.get_property(&key_str).is_some()
             } else {
                 false
             }
@@ -650,6 +658,49 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         try_inject_harness(&mut ctx).unwrap();
         ctx
+    }
+
+    #[test]
+    fn test_verify_property_fn_name_method_class_body() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var namedSym = Symbol('test262'); var anonSym = Symbol(); \
+             class A { id() {} [anonSym]() {} [namedSym]() {} static id() {} static [anonSym]() {} static [namedSym]() {} } \
+             verifyProperty(A.prototype.id, 'name', { value: 'id', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "first verifyProperty in fn-name-method: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_class_prototype_symbol_method_name() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var namedSym = Symbol('test262'); class A { [namedSym]() {} } \
+             verifyProperty(A.prototype[namedSym], 'name', { value: '[test262]', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty symbol method name should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_class_prototype_method_name() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "class A { id() {} } \
+             verifyProperty(A.prototype.id, 'name', { value: 'id', writable: false, enumerable: false, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty prototype method name should pass: {:?}",
+            result
+        );
     }
 
     #[test]

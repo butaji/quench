@@ -3,7 +3,7 @@
 use crate::ast::{ArrowBody, Expression, PropertyKey, Statement};
 use crate::env::Environment;
 use crate::eval::class::helpers::{
-    private_field_add, prop_key_to_string, storage_key_for_property,
+    accessor_function_name, private_field_add, prop_key_to_string, storage_key_for_property,
 };
 use crate::eval::expression::capture_env_for_closure;
 use crate::value::{ClassValue, JsError, Object, Value, ValueFunction};
@@ -102,11 +102,13 @@ pub fn install_instance_private_elements(
         }
         let storage_key = storage_key_for_property(name, &key_str);
         ensure_private_add(instance, &storage_key, PrivateInstallKind::Getter)?;
+        let fn_name = accessor_function_name(name, &key_str, &closure, "get")?;
         instance.borrow_mut().set_getter(
             &storage_key,
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
 
@@ -117,12 +119,14 @@ pub fn install_instance_private_elements(
         }
         let storage_key = storage_key_for_property(name, &key_str);
         ensure_private_add(instance, &storage_key, PrivateInstallKind::Setter)?;
+        let fn_name = accessor_function_name(name, &key_str, &closure, "set")?;
         instance.borrow_mut().set_setter(
             &storage_key,
             param.clone(),
             Rc::new(body.clone()),
             Rc::clone(&member_closure),
             true,
+            Some(fn_name),
         );
     }
     Ok(())
@@ -482,6 +486,16 @@ mod tests {
     fn direct_eval_arguments_in_class_field_throws_syntax_error() {
         let err = eval("class C { x = eval('arguments'); } new C();").unwrap_err();
         assert!(is_syntax_error(&err));
+    }
+
+    #[test]
+    fn nested_direct_eval_arguments_in_class_field_throws_syntax_error() {
+        let err = eval(
+            "class C { x = () => { var t = () => { eval('arguments'); }; t(); } } \
+             new C().x();",
+        )
+        .unwrap_err();
+        assert!(is_syntax_error(&err), "got {}", err.0);
     }
 
     #[test]

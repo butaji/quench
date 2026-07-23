@@ -89,7 +89,7 @@ pub fn assign_array_destructuring(
 }
 
 /// Obtain an iterator object from an iterable per ES GetIterator.
-fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
+pub fn obtain_iterator(o: &Rc<RefCell<Object>>) -> Result<Rc<RefCell<Object>>, JsError> {
     if o.borrow().get("next").is_some() {
         return Ok(Rc::clone(o));
     }
@@ -222,7 +222,7 @@ pub fn take_iterator_value(
 }
 
 /// Take the next iterator step, returning `(value, done)`.
-fn take_iterator_step(
+pub fn take_iterator_step(
     iterator: &Rc<RefCell<Object>>,
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
@@ -375,6 +375,7 @@ pub fn assign_object_destructuring(
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
             excluded.insert(key_str.clone());
+            crate::eval::object::touch_assignment_target(target, env)?;
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             crate::eval::object::assign_to(target, &prop_value, env)?;
         } else {
@@ -1154,6 +1155,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn destructuring_this_private_field_before_getter_throws_reference_error() {
+        let r = eval(
+            "class C extends class {} { #field; constructor() { var init = () => super(); \
+             var object = { get a() { init(); } }; ({a: this.#field} = object); } } new C()",
+        );
+        assert!(r.is_err());
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ReferenceError"),
+            "expected ReferenceError before getter runs, got {msg}"
+        );
     }
 
     #[test]

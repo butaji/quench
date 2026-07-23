@@ -22,7 +22,7 @@ fn lower_chain_recursive(
     match element {
         ast::ChainElement::StaticMemberExpression(member) => {
             // Build: prev?.prop or obj.prop (for first element)
-            let object_expr = lower_expr(&member.object)?;
+            let object_expr = lower_chain_base(&member.object)?;
             let property = PropertyKey::Ident(member.property.name.as_str().to_string());
 
             if let Some(prev) = prev_expr {
@@ -31,6 +31,19 @@ fn lower_chain_recursive(
                 let is_nullish = make_nullish_check(prev);
                 let member_access = Expression::Member {
                     object: Box::new(prev.clone()),
+                    property,
+                    computed: false,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else if member.optional {
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(&object_expr);
+                let member_access = Expression::Member {
+                    object: Box::new(object_expr),
                     property,
                     computed: false,
                 };
@@ -49,7 +62,7 @@ fn lower_chain_recursive(
             }
         }
         ast::ChainElement::ComputedMemberExpression(member) => {
-            let object_expr = lower_expr(&member.object)?;
+            let object_expr = lower_chain_base(&member.object)?;
             let prop_expr = lower_expr(&member.expression)?;
 
             if let Some(prev) = prev_expr {
@@ -57,6 +70,19 @@ fn lower_chain_recursive(
                 let is_nullish = make_nullish_check(prev);
                 let member_access = Expression::Member {
                     object: Box::new(prev.clone()),
+                    property: PropertyKey::Computed(Box::new(prop_expr)),
+                    computed: true,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else if member.optional {
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(&object_expr);
+                let member_access = Expression::Member {
+                    object: Box::new(object_expr),
                     property: PropertyKey::Computed(Box::new(prop_expr)),
                     computed: true,
                 };
@@ -115,7 +141,7 @@ fn lower_chain_recursive(
             })
         }
         ast::ChainElement::PrivateFieldExpression(member) => {
-            let object_expr = lower_expr(&member.object)?;
+            let base_expr = lower_chain_base(&member.object)?;
             let property =
                 PropertyKey::Ident(crate::value::private_name_key(member.field.name.as_str()));
 
@@ -133,15 +159,58 @@ fn lower_chain_recursive(
                     alternate: Box::new(member_access),
                 })
             } else {
-                Ok(Expression::Member {
-                    object: Box::new(object_expr),
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(&base_expr);
+                let member_access = Expression::Member {
+                    object: Box::new(base_expr),
                     property,
                     computed: false,
+                };
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(member_access),
                 })
             }
         }
         // TypeScript non-null assertion in optional chain
         ast::ChainElement::TSNonNullExpression(e) => lower_expr(&e.expression),
+    }
+}
+
+/// Lower the object side of a chain element, preserving `?.` on nested members.
+fn lower_chain_base(object: &ast::Expression) -> Result<Expression, LowerError> {
+    match object {
+        ast::Expression::StaticMemberExpression(member) if member.optional => {
+            let object_expr = lower_expr(&member.object)?;
+            let property = PropertyKey::Ident(member.property.name.as_str().to_string());
+            let member_access = Expression::Member {
+                object: Box::new(object_expr.clone()),
+                property,
+                computed: false,
+            };
+            Ok(Expression::Conditional {
+                condition: Box::new(make_nullish_check(&object_expr)),
+                consequent: Box::new(Expression::Undefined),
+                alternate: Box::new(member_access),
+            })
+        }
+        ast::Expression::ComputedMemberExpression(member) if member.optional => {
+            let object_expr = lower_expr(&member.object)?;
+            let prop_expr = lower_expr(&member.expression)?;
+            let member_access = Expression::Member {
+                object: Box::new(object_expr.clone()),
+                property: PropertyKey::Computed(Box::new(prop_expr)),
+                computed: true,
+            };
+            Ok(Expression::Conditional {
+                condition: Box::new(make_nullish_check(&object_expr)),
+                consequent: Box::new(Expression::Undefined),
+                alternate: Box::new(member_access),
+            })
+        }
+        ast::Expression::ChainExpression(chain) => lower_opt_chain(chain),
+        _ => lower_expr(object),
     }
 }
 

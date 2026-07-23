@@ -117,7 +117,7 @@ use std::rc::Rc;
 use regress::{Match, Regex};
 
 use crate::value::convert::to_js_string;
-use crate::value::{JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
+use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
 pub use string_methods::register_string_regex_methods;
@@ -181,8 +181,8 @@ fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
     proto.borrow_mut().set("ignoreCase", Value::Boolean(false));
     // Add multiline property (defaults to false)
     proto.borrow_mut().set("multiline", Value::Boolean(false));
-    // Note: lastIndex is NOT set on the prototype — it must be an own data
-    // property on each instance per ES §21.2.6.1 ({ writable: true, enumerable: false, configurable: false }).
+    // Add lastIndex property
+    proto.borrow_mut().set("lastIndex", Value::Number(0.0));
 }
 
 // ============================================================================
@@ -258,12 +258,12 @@ fn regexp_constructor_impl(
         obj.set("global", Value::Boolean(flags.contains('g')));
         obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
         obj.set("multiline", Value::Boolean(flags.contains('m')));
-        // lastIndex per ES §21.2.6.1: own data property, writable, non-enumerable, non-configurable
+        let last_index = Value::Number(0.0);
         obj.define(
             "lastIndex",
-            Value::Number(0.0),
-            PropertyFlags {
-                value: Some(Value::Number(0.0)),
+            last_index.clone(),
+            crate::value::PropertyFlags {
+                value: Some(last_index),
                 writable: true,
                 enumerable: false,
                 configurable: false,
@@ -281,12 +281,12 @@ fn regexp_constructor_impl(
         obj.set("global", Value::Boolean(flags.contains('g')));
         obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
         obj.set("multiline", Value::Boolean(flags.contains('m')));
-        // lastIndex per ES §21.2.6.1: own data property, writable, non-enumerable, non-configurable
+        let last_index = Value::Number(0.0);
         obj.define(
             "lastIndex",
-            Value::Number(0.0),
-            PropertyFlags {
-                value: Some(Value::Number(0.0)),
+            last_index.clone(),
+            crate::value::PropertyFlags {
+                value: Some(last_index),
                 writable: true,
                 enumerable: false,
                 configurable: false,
