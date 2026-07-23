@@ -445,6 +445,11 @@ pub fn finish_constructor(result: Value, this_val: &Value) -> Result<Value, JsEr
     }
 }
 
+fn call_super_callable(func: Value, args: Vec<Value>, this_val: &Value) -> Result<Value, JsError> {
+    let result = crate::eval::function::call_value_with_this(func, args, this_val.clone())?;
+    finish_constructor(result, this_val)
+}
+
 /// Call the super constructor or use default behavior; returns effective `this`.
 pub fn call_super_or_default(
     super_val: &Value,
@@ -473,11 +478,7 @@ pub fn call_super_or_default(
                     this_val.clone(),
                 )?;
             } else if let Some(Value::NativeConstructor(nc)) = o.borrow().get("constructor") {
-                crate::eval::function::call_value_with_this(
-                    Value::NativeConstructor(nc.clone()),
-                    args,
-                    this_val.clone(),
-                )
+                call_super_callable(Value::NativeConstructor(nc.clone()), args, this_val)
             } else {
                 Ok(this_val.clone())
             }
@@ -2994,6 +2995,23 @@ mod tests {
     }
 
     #[test]
+    fn object_literal_spread_copies_properties() {
+        let r = eval("({ ...{ x: 42 }, y: 1 }).x").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn generator_yield_spread_object() {
+        let r = eval(
+            "class C { *gen() { yield { ...yield, y: 1, ...yield yield }; } } \
+             var iter = C.prototype.gen(); iter.next(false); \
+             iter.next({ x: 42 }); iter.next({ x: 'lol' }); iter.next({ y: 39 }).value.x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn private_field_arrow_function_callable() {
         let r = eval(
             "class C { #m = () => 'test262'; method() { return this.#m(); } } new C().method()",
@@ -3221,6 +3239,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::String("Avalue".into()));
+    }
+
+    #[test]
+    fn class_method_on_extends_function_has_prototype_method() {
+        let ty =
+            eval("function B() {} class C extends B { m() { return 1; } } typeof C.prototype.m")
+                .unwrap();
+        assert_eq!(ty, Value::String("function".into()));
+    }
+
+    #[test]
+    fn class_with_setter_on_super_prototype_defines_method() {
+        eval(
+            "function B() {} \
+             B.prototype = { constructor: B, set m(v) { throw new Error('setter'); } }; \
+             class C extends B { m() { return 1; } }",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn class_with_setter_super_prototype_has_method_on_prototype() {
+        let ty = eval(
+            "function B() {} \
+             B.prototype = { constructor: B, set m(v) { throw new Error('setter'); } }; \
+             class C extends B { m() { return 1; } }; \
+             typeof C.prototype.m",
+        )
+        .unwrap();
+        assert_eq!(ty, Value::String("function".into()));
+    }
+
+    #[test]
+    fn class_method_overrides_prototype_setter_on_extends() {
+        let ty = eval(
+            "function B() {} \
+             B.prototype = { constructor: B, set m(v) { throw new Error('setter'); } }; \
+             class C extends B { m() { return 1; } }; \
+             typeof (new C()).m",
+        )
+        .unwrap();
+        assert_eq!(ty, Value::String("function".into()));
+        let r = eval(
+            "function B() {} \
+             B.prototype = { constructor: B, set m(v) { throw new Error('setter'); } }; \
+             class C extends B { m() { return 1; } }; \
+             new C().m()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
     }
 
     #[test]

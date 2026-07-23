@@ -471,6 +471,7 @@ fn scope_arrow_body(body: &mut ArrowBody, class_id: usize) {
 fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
     match val {
         PropertyValue::Value(expr) => scope_expression(expr, class_id),
+        PropertyValue::Spread(expr) => scope_expression(expr, class_id),
         PropertyValue::Getter { body, .. } | PropertyValue::Setter { body, .. } => {
             scope_statements(body, class_id);
         }

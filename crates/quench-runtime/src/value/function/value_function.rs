@@ -862,6 +862,9 @@ fn generate_source_text(f: &ValueFunction) -> String {
                                     .join("; ");
                                 format!("set {}({}) {{ {} }}", key_str, param, body_str)
                             }
+                            crate::ast::PropertyValue::Spread(e) => {
+                                format!("...{}", expr_to_string(e))
+                            }
                         }
                     })
                     .collect();

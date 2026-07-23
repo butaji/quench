@@ -46,6 +46,7 @@ pub fn register_error(ctx: &mut Context) {
     register_range_error(ctx, &error_proto_rc);
     register_eval_error(ctx, &error_proto_rc);
     register_uri_error(ctx, &error_proto_rc);
+    register_aggregate_error(ctx, &error_proto_rc);
 }
 
 fn create_error_proto(name: &str) -> Object {
@@ -176,4 +177,48 @@ fn register_uri_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
     let proto_rc = Rc::new(RefCell::new(proto));
     proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     register_error_constructor(ctx, "URIError", &proto_rc);
+}
+
+fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
+    let proto = create_error_proto("AggregateError");
+    let proto_rc = Rc::new(RefCell::new(proto));
+    proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
+    let proto_for_closure = Rc::clone(&proto_rc);
+    let constructor = NativeConstructor::new(
+        move |args| {
+            let set_fields = |obj: &mut Object| {
+                if let Some(errors_arg) = args.first() {
+                    obj.set("errors", errors_arg.clone());
+                }
+                if let Some(msg_arg) = args.get(1) {
+                    if !matches!(msg_arg, Value::Undefined) {
+                        obj.set("message", Value::String(to_js_string(msg_arg)));
+                    }
+                }
+            };
+            if let Some(Value::Object(error_rc)) = get_native_this() {
+                let mut obj = error_rc.borrow_mut();
+                if obj.prototype.is_none() {
+                    obj.prototype = Some(Rc::clone(&proto_for_closure));
+                }
+                set_fields(&mut obj);
+                obj.set("name", Value::String("AggregateError".to_string()));
+                drop(obj);
+                return Ok(Value::Object(error_rc));
+            }
+            let error_obj =
+                Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_for_closure));
+            let error_rc = Rc::new(RefCell::new(error_obj));
+            set_fields(&mut error_rc.borrow_mut());
+            error_rc
+                .borrow_mut()
+                .set("name", Value::String("AggregateError".to_string()));
+            Ok(Value::Object(error_rc))
+        },
+        Rc::clone(&proto_rc),
+    );
+    constructor.set_name("AggregateError");
+    let ctor = Value::NativeConstructor(Rc::new(constructor));
+    proto_rc.borrow_mut().set("constructor", ctor.clone());
+    ctx.set_global("AggregateError".to_string(), ctor);
 }
