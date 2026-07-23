@@ -1,5 +1,5 @@
 {
-  "failed": 160,
+  "failed": 156,
   "groups": [
     {
       "count": 1,
@@ -78,20 +78,12 @@
       ]
     },
     {
-      "count": 5,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of-arrow.js"
       ],
       "reason": "ReferenceError: Must call super constructor in derived class before returning",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-catch-finally.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-finally-super.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/derived-class-return-override-for-of-arrow.js"
       ]
     },
@@ -902,7 +894,7 @@
       ]
     }
   ],
-  "passed": 4207,
+  "passed": 4211,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
