@@ -1,5 +1,5 @@
 {
-  "failed": 810,
+  "failed": 754,
   "groups": [
     {
       "count": 1,
@@ -12,13 +12,33 @@
       ]
     },
     {
-      "count": 1,
+      "count": 14,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-static-private-methods-with-fields.js"
       ],
       "reason": "Cannot assign to property of non-object, got undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js"
       ]
     },
     {
@@ -748,32 +768,38 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private getter from an arbritary object\")",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-method-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-method-on-nested-class.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private method from an arbritary object\")",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-method-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-method-on-nested-class.js"
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private setter from an arbritary object\")",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-setter-on-nested-class.js"
       ]
     },
@@ -1258,6 +1284,16 @@
       ]
     },
     {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"\\\" !== \\\"#field\\\"",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
+      ]
+    },
+    {
       "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
@@ -1413,77 +1449,37 @@
       ]
     },
     {
-      "count": 70,
+      "count": 30,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/nested-private-indirect-eval-contains-arguments.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-indirect-eval-contains-arguments.js",
         "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-static-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-fields-proxy-default-handler-throws.js",
         "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/regular-subclassing.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== 1",
@@ -1491,11 +1487,11 @@
         "/workspace/tests/test262/test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer-alt.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-privatename-identifier-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer-alt-by-classname.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-static-privatename-identifier-initializer.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-privatename-identifier-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer-alt.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-privatename-identifier-initializer-alt.js"
       ]
     },
     {
@@ -1706,29 +1702,15 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"inner class\\\"",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 4,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"outer class\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-setter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
       ]
     },
     {
@@ -1739,16 +1721,6 @@
       "reason": "Test262Error: sameValue failed: undefined !== \\\"pass\\\"",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/privatefieldset-evaluation-order-3.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-scope-private.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"private\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-scope-private.js"
       ]
     },
     {
@@ -1798,35 +1770,6 @@
     {
       "count": 13,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-static-private-fields.js"
-      ],
-      "reason": "Test262Error: test 2\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-fields.js"
-      ]
-    },
-    {
-      "count": 13,
-      "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-private-names.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-private-names.js",
         "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-private-names.js",
@@ -1851,35 +1794,6 @@
         "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-private-names.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-private-names.js",
         "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-private-names.js"
-      ]
-    },
-    {
-      "count": 13,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-static-private-methods-with-fields.js"
-      ],
-      "reason": "Test262Error: test 8\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js"
       ]
     },
     {
@@ -1967,25 +1881,13 @@
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-anonymous-function-length.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-length.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/fields-anonymous-function-length.js"
       ],
       "reason": "TypeError: Cannot read property 'length' of undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-anonymous-function-length.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-length.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
-      ],
-      "reason": "TypeError: Cannot read property 'name' of undefined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-field-anonymous-function-name.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/fields-anonymous-function-length.js"
       ]
     },
     {
@@ -2200,21 +2102,19 @@
       ]
     },
     {
-      "count": 5,
+      "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-method-on-nested-class.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-function.js"
       ],
       "reason": "undefined is not a function",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-method-on-nested-class.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-function.js"
       ]
     },
     {
@@ -2242,7 +2142,7 @@
       ]
     }
   ],
-  "passed": 3557,
+  "passed": 3613,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

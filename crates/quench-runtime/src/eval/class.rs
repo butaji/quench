@@ -133,7 +133,12 @@ pub fn eval_class_expr(
                             key_str
                         )));
                     }
-                    new_value.set_static_field(&key_str, field_value);
+                    let storage_key = if key_str.starts_with('#') {
+                        crate::value::private_name_key(&key_str)
+                    } else {
+                        key_str
+                    };
+                    new_value.set_static_field(&storage_key, field_value);
                     field_idx += 1;
                 }
             }
