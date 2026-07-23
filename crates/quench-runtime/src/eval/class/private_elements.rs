@@ -364,6 +364,7 @@ fn walk_expr(
             variable,
             iterable,
             body,
+            ..
         } => expr_check(variable) || expr_check(iterable) || stmt_check(body),
         Expression::ForIn {
             variable,

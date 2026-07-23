@@ -563,9 +563,11 @@ pub fn assign_to_identifier(
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
-                return Err(JsError(
-                    "TypeError: Assignment to constant variable".to_string(),
-                ));
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    &format!("Assignment to constant variable '{}'", name),
+                    "TypeError",
+                );
+                return Err(js_err);
             }
         }
         if crate::interpreter::is_strict_mode() {
@@ -646,7 +648,7 @@ pub fn binding_pattern_expression(pattern: BindingElement) -> Expression {
     }
 }
 
-fn is_anonymous_function_definition(expr: &Expression) -> bool {
+pub fn is_anonymous_function_definition(expr: &Expression) -> bool {
     match expr {
         Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
             true
@@ -720,6 +722,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::String("arrow".into()));
+    }
+
+    #[test]
+    fn const_empty_object_destructure_null_throws_type_error() {
+        let err = eval("try { const {} = null; 'no throw'; } catch (e) { e.name }").unwrap();
+        assert_eq!(err, Value::String("TypeError".into()));
     }
 
     #[test]
