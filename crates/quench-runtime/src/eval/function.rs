@@ -74,14 +74,19 @@ pub(crate) fn call_value_impl(
                 gen_obj.args = Some(args);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if f.is_generator {
-                // Sync generator function: return a GeneratorObject (body not executed yet).
-                // Parameters are evaluated when generator.next() is first called.
-                let gen_obj = crate::value::GeneratorObject::new(
+                // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
+                // runs synchronously at [[Call]] before returning the generator object.
+                let eval_env = Environment::with_parent(Rc::clone(&f.closure));
+                let eval_env_rc = Rc::new(RefCell::new(eval_env));
+                bind_params(&f, &f.params, &args, &eval_env_rc, false)?;
+
+                let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
                     f.params.clone(),
                     Rc::clone(&f.closure),
                     f.strict,
                 );
+                gen_obj.args = Some(args);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
@@ -259,7 +264,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         crate::eval::statement::acc_stack_update_last(result.unwrap_or(Value::Undefined));
         let next_force_strict = tail.function.strict || check_use_strict(&tail.function.body);
         f = tail.function;
-        this_val = Value::Undefined;
+        this_val = tail.this_val;
         force_strict = next_force_strict;
         args = tail.arguments;
     }
@@ -320,11 +325,17 @@ pub(crate) fn bind_params(
                 None => Value::Undefined,
             };
 
-            // If we used TDZ, initialize the declared binding; otherwise define directly.
+            // If we used TDZ, initialize the declared binding or destructure the default.
             if use_tdz && param.default.is_some() {
-                call_env_rc
-                    .borrow_mut()
-                    .initialize_declared(&param.name, value);
+                if let Some(pattern) = &param.pattern {
+                    declare_pattern_bindings(pattern, call_env_rc);
+                    let target = binding_pattern_expression(pattern.clone());
+                    crate::eval::object::assign_to(&target, &value, call_env_rc)?;
+                } else {
+                    call_env_rc
+                        .borrow_mut()
+                        .initialize_declared(&param.name, value);
+                }
             } else if let Some(pattern) = &param.pattern {
                 declare_pattern_bindings(pattern, call_env_rc);
                 let target = binding_pattern_expression(pattern.clone());
@@ -343,6 +354,7 @@ fn binding_pattern_expression(pattern: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
         BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+        BindingElement::Rest(binding) => binding_pattern_expression(*binding),
         BindingElement::AssignmentTarget(expr) => expr,
     }
 }
@@ -361,6 +373,7 @@ fn declare_pattern_bindings(pattern: &BindingElement, env: &Rc<RefCell<Environme
             }
         }
         BindingElement::Default(binding, _) => declare_pattern_bindings(binding, env),
+        BindingElement::Rest(binding) => declare_pattern_bindings(binding, env),
         BindingElement::AssignmentTarget(_) => {}
     }
 }

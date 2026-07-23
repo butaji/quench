@@ -185,8 +185,8 @@ pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
                 },
                 _ => Param {
                     name: "arg".to_string(),
-                    default: None,
-                    pattern: crate::lower::pattern::lower_binding_elem(binding).ok(),
+                    default,
+                    pattern: crate::lower::pattern::lower_binding_elem(&assign.left).ok(),
                     rest: false,
                 },
             }

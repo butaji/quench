@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::set_boxed_value;
-use crate::value::{kind::ExoticKind, JsError, Object, ObjectKind, Value};
+use crate::value::{kind::ExoticKind, JsError, Object, ObjectKind, PropertyFlags, Value};
 
 /// Resolve a global constructor's `prototype` object via the current context.
 pub fn constructor_prototype(name: &str) -> Option<Rc<RefCell<Object>>> {

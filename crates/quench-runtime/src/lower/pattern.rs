@@ -13,6 +13,7 @@ pub fn binding_to_expr(binding: BindingElement) -> Expression {
         BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
         BindingElement::ObjectPattern(props) => Expression::ObjectPattern(props),
         BindingElement::Default(binding, _) => binding_to_expr(*binding),
+        BindingElement::Rest(binding) => binding_to_expr(*binding),
         BindingElement::AssignmentTarget(expr) => expr,
     }
 }
@@ -33,15 +34,19 @@ pub fn lower_binding_elem(pat: &ast::BindingPattern) -> Result<BindingElement, L
 }
 
 fn lower_array_pattern(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerError> {
-    let mut elements: Vec<BindingElement> = arr
-        .elements
-        .iter()
-        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .collect();
+    let mut elements: Vec<BindingElement> = Vec::new();
+    for elem in &arr.elements {
+        match elem {
+            Some(pat) => elements.push(lower_binding_elem(pat)?),
+            None => elements.push(BindingElement::Identifier("__hole".to_string())),
+        }
+    }
 
     // Handle trailing rest element
     if let Some(rest) = &arr.rest {
-        elements.push(lower_binding_elem(&rest.argument)?);
+        elements.push(BindingElement::Rest(Box::new(lower_binding_elem(
+            &rest.argument,
+        )?)));
     }
 
     Ok(BindingElement::ArrayPattern(elements))
@@ -170,8 +175,11 @@ pub fn lower_array_assignment_target(
     if let Some(rest) = &arr.rest {
         let rest_binding = lower_assignment_target(&rest.target)
             .ok()
-            .map(BindingElement::AssignmentTarget)
-            .or_else(|| lower_assignment_target_to_binding(&rest.target));
+            .map(|t| BindingElement::Rest(Box::new(BindingElement::AssignmentTarget(t))))
+            .or_else(|| {
+                lower_assignment_target_to_binding(&rest.target)
+                    .map(|b| BindingElement::Rest(Box::new(b)))
+            });
         if let Some(binding) = rest_binding {
             elements.push(binding);
         }

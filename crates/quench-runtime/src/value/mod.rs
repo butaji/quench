@@ -12,6 +12,7 @@ pub mod convert;
 pub mod error;
 pub mod function;
 pub mod generator;
+pub mod generator_replay;
 pub mod kind;
 pub mod object;
 pub mod primitive;
@@ -30,10 +31,10 @@ pub use function::{NativeConstructor, NativeFunction, ValueFunction};
 pub use generator::GeneratorObject;
 pub use kind::ObjectKind;
 pub use object::{
-    Desc, Getter, GetterBody, GetterStorage, Key, ObjData, Object, PropertyDescriptor,
-    PropertyFlags, Setter, SetterBody, SetterStorage, ThisMode, TypedArrayName,
+    Getter, GetterBody, GetterStorage, ObjData, Object, PropertyDescriptor, PropertyFlags, Setter,
+    SetterBody, SetterStorage, TypedArrayName,
 };
-pub use val::{ClassValue, Symbol, Value};
+pub use val::{private_name_key, ClassValue, Symbol, Value};
 
 // =============================================================================
 // Tests
