@@ -49,7 +49,7 @@ pub fn install_instance_private_elements(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if !key_str.starts_with('#') {
+        if !crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);
@@ -69,7 +69,7 @@ pub fn install_instance_private_elements(
 
     for (name, body) in &class.getters {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if !key_str.starts_with('#') {
+        if !crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);
@@ -84,7 +84,7 @@ pub fn install_instance_private_elements(
 
     for (name, param, body) in &class.setters {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if !key_str.starts_with('#') {
+        if !crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let storage_key = storage_key_for_property(name, &key_str);

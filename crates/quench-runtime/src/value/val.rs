@@ -34,6 +34,11 @@ pub fn scoped_private_name_key(class_id: usize, name: &str) -> String {
     format!("\0private:{class_id}:{bare}\0")
 }
 
+/// Whether `key` is a private name storage slot or `#`-prefixed source ident.
+pub fn is_private_element_key(key: &str) -> bool {
+    key.starts_with('#') || is_private_name_key(key)
+}
+
 /// Whether `key` is a [`private_name_key`] storage slot.
 pub fn is_private_name_key(key: &str) -> bool {
     key.starts_with("\0private:") && key.ends_with('\0')

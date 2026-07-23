@@ -477,7 +477,7 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if key_str.starts_with('#') {
+        if crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let _storage_key = storage_key_for_property(name, &key_str);
@@ -509,7 +509,7 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, body) in &class.getters {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if key_str.starts_with('#') {
+        if crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let key = storage_key_for_property(name, &key_str);
@@ -526,7 +526,7 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, param, body) in &class.setters {
         let key_str = prop_key_to_string(name, &closure, false)?;
-        if key_str.starts_with('#') {
+        if crate::value::is_private_element_key(&key_str) {
             continue;
         }
         let key = storage_key_for_property(name, &key_str);
@@ -560,6 +560,7 @@ pub fn create_class_prototype_helper_with_env(
 
 pub fn storage_key_for_property(name: &crate::ast::PropertyKey, evaluated: &str) -> String {
     match name {
+        crate::ast::PropertyKey::Ident(s) if crate::value::is_private_name_key(s) => s.clone(),
         crate::ast::PropertyKey::Ident(s) if s.starts_with('#') => {
             crate::value::private_name_key(s)
         }
@@ -568,7 +569,9 @@ pub fn storage_key_for_property(name: &crate::ast::PropertyKey, evaluated: &str)
 }
 
 pub fn class_member_storage_key(key: &str) -> String {
-    if key.starts_with('#') {
+    if crate::value::is_private_name_key(key) {
+        key.to_string()
+    } else if key.starts_with('#') {
         crate::value::private_name_key(key)
     } else {
         key.to_string()
@@ -2347,5 +2350,68 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::Number(44.0));
+    }
+
+    #[test]
+    fn outer_private_getter_works_without_nested_class_field() {
+        let r = eval(
+            "class C { get #m() { return 'outer'; } method() { return this.#m; } } new C().method()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("outer".into()));
+    }
+
+    #[test]
+    fn nested_class_shadow_outer_getter_still_works() {
+        let r = eval(
+            r#"
+            class C {
+              get #m() { return 'outer class'; }
+              method() { return this.#m; }
+              B = class { #m = 'test262'; };
+            }
+            let c = new C();
+            c.method();
+            "#,
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("outer class".into()));
+    }
+
+    #[test]
+    fn static_generator_method_array_destructure_param() {
+        let r = eval(
+            "class C { static *method([x, y, z]) { return x + y + z; } } \
+             C.method([1, 2, 3]).next().value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(6.0));
+    }
+
+    #[test]
+    fn array_prototype_symbol_iterator_generator_is_valid_iterator() {
+        let r = eval(
+            "Array.prototype[Symbol.iterator] = function* () { yield 1; yield 2; }; \
+             var pair = (function(){ var [a, b] = [99]; return [a, b]; })(); \
+             pair[0] + ',' + pair[1]",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("1,2".into()));
+    }
+
+    #[test]
+    fn static_generator_method_array_destructure_uses_array_iterator() {
+        eval(
+            "Array.prototype[Symbol.iterator] = function* () { \
+               if (this.length > 0) yield this[0]; \
+               if (this.length > 1) yield this[1]; \
+               if (this.length > 2) yield 42; \
+             }; \
+             class C { static *method([x, y, z]) { \
+               if (x !== 1 || y !== 2 || z !== 42) throw new Error('bad'); \
+             } } \
+             C.method([1, 2, 3]).next();",
+        )
+        .unwrap();
     }
 }
