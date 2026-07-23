@@ -250,7 +250,9 @@ pub fn eval_class_member(
 /// Check if a property key matches a name
 fn prop_key_matches(key: &crate::ast::PropertyKey, name: &str) -> bool {
     match key {
-        crate::ast::PropertyKey::Ident(s) => s == name,
+        crate::ast::PropertyKey::Ident(s) => {
+            s == name || (s.starts_with('#') && name == crate::value::private_name_key(s))
+        }
         crate::ast::PropertyKey::String(s) => s == name,
         crate::ast::PropertyKey::Number(n) => {
             // Parse name as f64 and compare numerically so "4" matches 4.0, "4." matches 4.0, etc.
