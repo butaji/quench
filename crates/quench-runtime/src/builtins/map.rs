@@ -100,10 +100,15 @@ fn map_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn map_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = map_entries(&this)
-        .map(|e| e.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(self::helpers::make_iterator(items))
+    let Some(entries) = map_entries(&this) else {
+        return Err(JsError::from(
+            "TypeError: Map.prototype iterator called on non-Map",
+        ));
+    };
+    Ok(self::helpers::make_live_index_iterator(
+        entries,
+        self::helpers::LiveIndexIteratorMode::Values,
+    ))
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {

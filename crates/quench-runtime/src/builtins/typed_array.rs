@@ -296,8 +296,10 @@ fn typed_array_values(_args: Vec<Value>) -> Result<Value, JsError> {
         );
         return Err(js_err);
     };
-    let elements = obj_rc.borrow().elements.clone();
-    Ok(crate::builtins::map::helpers::make_iterator(elements))
+    Ok(crate::builtins::map::helpers::make_live_index_iterator(
+        obj_rc,
+        crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
+    ))
 }
 
 /// Wire `%TypedArray%.prototype[Symbol.iterator]` after `Symbol` is registered.
@@ -450,6 +452,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Number(250.0));
+    }
+
+    #[test]
+    fn typed_array_for_of_sees_mutation_during_iteration() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let second = ctx
+            .eval(
+                "var array = new Uint8Array([3, 2, 4, 1]); var second = null; \
+                 var n = 0; \
+                 for (var x of array) { \
+                   if (n === 1) second = x; \
+                   array[1] = 64; \
+                   n++; \
+                 } \
+                 second",
+            )
+            .unwrap();
+        assert_eq!(second, Value::Number(64.0));
     }
 
     #[test]

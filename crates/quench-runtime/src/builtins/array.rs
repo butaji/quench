@@ -218,6 +218,16 @@ enum ArrayIndexIteratorMode {
     Entries,
 }
 
+impl From<ArrayIndexIteratorMode> for crate::builtins::map::helpers::LiveIndexIteratorMode {
+    fn from(mode: ArrayIndexIteratorMode) -> Self {
+        match mode {
+            ArrayIndexIteratorMode::Keys => Self::Keys,
+            ArrayIndexIteratorMode::Values => Self::Values,
+            ArrayIndexIteratorMode::Entries => Self::Entries,
+        }
+    }
+}
+
 fn make_array_index_iterator(mode: ArrayIndexIteratorMode) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let Value::Object(arr_rc) = this_val else {
@@ -227,35 +237,10 @@ fn make_array_index_iterator(mode: ArrayIndexIteratorMode) -> Result<Value, JsEr
         );
         return Err(js_err);
     };
-    let elements = arr_rc.borrow().elements.clone();
-    let len = elements.len();
-    let index = Rc::new(RefCell::new(0usize));
-    let next_fn = NativeFunction::new(move |_args| {
-        let mut result = Object::new(ObjectKind::Ordinary);
-        let mut i = index.borrow_mut();
-        if *i < len {
-            let value = match mode {
-                ArrayIndexIteratorMode::Keys => Value::Number(*i as f64),
-                ArrayIndexIteratorMode::Values => elements[*i].clone(),
-                ArrayIndexIteratorMode::Entries => {
-                    Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
-                        Value::Number(*i as f64),
-                        elements[*i].clone(),
-                    ]))))
-                }
-            };
-            result.set("value", value);
-            result.set("done", Value::Boolean(false));
-            *i += 1;
-        } else {
-            result.set("value", Value::Undefined);
-            result.set("done", Value::Boolean(true));
-        }
-        Ok(Value::Object(Rc::new(RefCell::new(result))))
-    });
-    let mut iter = Object::new(ObjectKind::Ordinary);
-    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
-    Ok(Value::Object(Rc::new(RefCell::new(iter))))
+    Ok(crate::builtins::map::helpers::make_live_index_iterator(
+        arr_rc,
+        mode.into(),
+    ))
 }
 
 fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {

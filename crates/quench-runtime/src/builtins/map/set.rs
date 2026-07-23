@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::helpers::{
-    init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
-    set_populate, set_values,
+    init_set_object, iterator_prop_key, make_live_index_iterator, map_update_size, native_fn,
+    set_has_value, set_populate, set_values, LiveIndexIteratorMode,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -68,10 +68,15 @@ fn set_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = set_values(&this)
-        .map(|v| v.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(make_iterator(items))
+    let Some(values) = set_values(&this) else {
+        return Err(JsError::from(
+            "TypeError: Set.prototype iterator called on non-Set",
+        ));
+    };
+    Ok(make_live_index_iterator(
+        values,
+        LiveIndexIteratorMode::Values,
+    ))
 }
 
 pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {

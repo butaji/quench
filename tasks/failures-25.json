@@ -1,5 +1,5 @@
 {
-  "failed": 142,
+  "failed": 128,
   "groups": [
     {
       "count": 4,
@@ -92,19 +92,13 @@
       ]
     },
     {
-      "count": 4,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js"
+        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js"
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js"
+        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js"
       ]
     },
     {
@@ -113,7 +107,7 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js"
       ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
+      "reason": "Test262Error: Expected TypeError but got Test262Error. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js"
@@ -134,13 +128,27 @@
     {
       "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/return-from-catch.js",
+        "/workspace/tests/test262/test/language/statements/for-of/return-from-try.js"
+      ],
+      "reason": "Test262Error: This code is unreachable (following `for..in` statement).\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/return-from-catch.js",
+        "/workspace/tests/test262/test/language/statements/for-of/return-from-try.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js"
+        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js",
+        "/workspace/tests/test262/test/language/statements/for-of/return.js"
       ],
       "reason": "Test262Error: This code is unreachable (following `for..of` statement).\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js"
+        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js",
+        "/workspace/tests/test262/test/language/statements/for-of/return.js"
       ]
     },
     {
@@ -210,55 +218,39 @@
       ]
     },
     {
-      "count": 3,
+      "count": 5,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-throw.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
       ],
       "reason": "Test262Error: sameValue failed: 0 !== 1",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-throw.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
       ]
     },
     {
-      "count": 8,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-contract.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/map-contract.js",
-        "/workspace/tests/test262/test/language/statements/for-of/set-contract.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js"
       ],
       "reason": "Test262Error: sameValue failed: 1 !== 0",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-contract.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/map-contract.js",
-        "/workspace/tests/test262/test/language/statements/for-of/set-contract.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-expand.js",
-        "/workspace/tests/test262/test/language/statements/for-of/map-expand.js",
-        "/workspace/tests/test262/test/language/statements/for-of/set-expand.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 1 !== 2",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-expand.js",
-        "/workspace/tests/test262/test/language/statements/for-of/map-expand.js",
-        "/workspace/tests/test262/test/language/statements/for-of/set-expand.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js"
       ]
     },
     {
@@ -272,23 +264,32 @@
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js"
       ],
       "reason": "Test262Error: sameValue failed: 11 !== 1",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js"
       ]
     },
     {
-      "count": 7,
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 13 !== 1",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js"
+      ]
+    },
+    {
+      "count": 8,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
@@ -299,55 +300,11 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/string-bmp.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 2 !== 3",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/string-bmp.js"
-      ]
-    },
-    {
-      "count": 9,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/float32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/float64array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int16array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int8array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint16array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint8array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint8clampedarray-mutate.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 2 !== 64",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/float32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/float64array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int16array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/int8array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint16array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint32array-mutate.js",
-        "/workspace/tests/test262/test/language/statements/for-of/uint8array-mutate.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/string-astral.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 3 !== 4",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/string-astral.js"
       ]
     },
     {
@@ -653,7 +610,7 @@
       ]
     }
   ],
-  "passed": 609,
+  "passed": 623,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},

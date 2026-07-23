@@ -245,12 +245,30 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             let mut g = gen.borrow_mut();
-            g.state = GeneratorState::Completed;
-            Ok(IteratorResult {
-                value: arg,
-                done: true,
+            if g.state == GeneratorState::Completed {
+                return Ok(IteratorResult {
+                    value: Value::Undefined,
+                    done: true,
+                }
+                .to_object());
             }
-            .to_object())
+            let suspended_start = g.state == GeneratorState::Suspended
+                && g.yield_index == 0
+                && g.pending_stmt.is_none();
+            if suspended_start {
+                g.state = GeneratorState::Completed;
+                g.call_env = None;
+                return Ok(IteratorResult {
+                    value: arg,
+                    done: true,
+                }
+                .to_object());
+            }
+            crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
+                arg.clone(),
+            ));
+            let result = g.next(Value::Undefined)?;
+            Ok(result.to_object())
         },
     )))
 }
@@ -598,6 +616,19 @@ mod tests {
             }
             _ => panic!("Expected array object"),
         }
+    }
+
+    #[test]
+    fn generator_return_runs_finally_once() {
+        let mut ctx = crate::Context::new().unwrap();
+        let count = ctx
+            .eval(
+                "var finallyCount = 0; \
+                 function* g() { try { yield; } finally { finallyCount += 1; } } \
+                 var gen = g(); gen.next(); gen.return(0); finallyCount",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(1.0));
     }
 
     #[test]

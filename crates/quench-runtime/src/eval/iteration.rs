@@ -86,7 +86,12 @@ fn abrupt_close(
     iterator: &Rc<RefCell<Object>>,
     completion: Result<Value, JsError>,
 ) -> Result<Value, JsError> {
-    if let Some(close_err) = call_iterator_return(iterator) {
+    let saved_cf = take_control_flow();
+    let close_err = call_iterator_return(iterator);
+    if let Some(cf) = saved_cf {
+        set_control_flow(cf);
+    }
+    if let Some(close_err) = close_err {
         return Err(close_err);
     }
     completion
@@ -183,19 +188,15 @@ fn run_for_of_iteration(
     match result {
         Ok(body_val) => match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
-                if loop_handles_break(&cf, &[]) {
-                    Ok(ForOfIterResult::Break(body_val))
-                } else {
-                    set_control_flow(cf);
-                    Ok(ForOfIterResult::Step(body_val))
-                }
+                set_control_flow(cf);
+                Ok(ForOfIterResult::Break(body_val))
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if loop_handles_continue(&cf, &[]) {
                     Ok(ForOfIterResult::Step(body_val))
                 } else {
                     set_control_flow(cf);
-                    Ok(ForOfIterResult::Step(body_val))
+                    Ok(ForOfIterResult::Break(body_val))
                 }
             }
             Some(ControlFlow::Return(val))
@@ -561,6 +562,242 @@ mod tests {
             err.to_string().contains("ReferenceError"),
             "expected ReferenceError, got {err}"
         );
+    }
+
+    #[test]
+    fn generator_first_next_yields_before_unreachable_throw() {
+        let mut ctx = new_ctx();
+        let done = ctx
+            .eval(
+                "function* values() { try { yield; throw new Error('x'); } finally {} } \
+                 var g = values(); \
+                 g.next().done",
+            )
+            .unwrap();
+        assert_eq!(done, Value::Boolean(false));
+    }
+
+    #[test]
+    fn for_of_generator_unreachable_throw_after_yield() {
+        let mut ctx = new_ctx();
+        let iteration_count = ctx
+            .eval(
+                "var iterationCount = 0; \
+                 function* values() { try { yield; throw new Error('unreachable'); } finally {} } \
+                 try { for (var x of values()) { iterationCount += 1; } } catch (e) {} \
+                 iterationCount",
+            )
+            .unwrap();
+        assert_eq!(iteration_count, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_generator_with_pre_yield_side_effect() {
+        let mut ctx = new_ctx();
+        let iteration_count = ctx
+            .eval(
+                "var startedCount = 0; var iterationCount = 0; \
+                 function* values() { startedCount += 1; try { yield; } finally {} } \
+                 try { for (var x of values()) { iterationCount += 1; throw 0; } } catch (e) {} \
+                 iterationCount",
+            )
+            .unwrap();
+        assert_eq!(iteration_count, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_generator_throw_closes_like_test262() {
+        let mut ctx = new_ctx();
+        let iteration_count = ctx
+            .eval(
+                "var startedCount = 0; var finallyCount = 0; var iterationCount = 0; \
+                 function* values() { \
+                   startedCount += 1; \
+                   try { yield; throw new Error('unreachable'); } \
+                   finally { finallyCount += 1; } \
+                 } \
+                 var iterable = values(); \
+                 try { \
+                   for (var x of iterable) { \
+                     if (startedCount !== 1) throw new Error('started'); \
+                     if (finallyCount !== 0) throw new Error('finally early'); \
+                     iterationCount += 1; \
+                     throw 0; \
+                   } \
+                 } catch (e) {} \
+                 iterationCount",
+            )
+            .unwrap();
+        assert_eq!(iteration_count, Value::Number(1.0));
+        let finally_count = ctx.eval("finallyCount").unwrap();
+        assert_eq!(finally_count, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_generator_throw_runs_finally_on_close() {
+        let mut ctx = new_ctx();
+        let finally = ctx
+            .eval(
+                "var finallyCount = 0; \
+                 function* values() { \
+                   try { yield; } finally { finallyCount += 1; } \
+                 } \
+                 try { for (var x of values()) { throw 0; } } catch (e) {} \
+                 finallyCount",
+            )
+            .unwrap();
+        assert_eq!(finally, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_unlabeled_break_exits_loop() {
+        let mut ctx = new_ctx();
+        let count = ctx
+            .eval(
+                "var count = 0; \
+                 for (var x of [1, 2, 3]) { count++; break; } \
+                 count",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_break_outer_label_without_try() {
+        let mut ctx = new_ctx();
+        let i = ctx
+            .eval(
+                "var i = 0; \
+                 outer: while (true) { \
+                   for (var x of [1]) { i++; break outer; } \
+                   throw new Error('after for-of'); \
+                 } \
+                 i",
+            )
+            .unwrap();
+        assert_eq!(i, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_break_outer_from_try_block() {
+        let mut ctx = new_ctx();
+        let i = ctx
+            .eval(
+                "var i = 0; \
+                 outer: while (true) { \
+                   for (var x of [1]) { \
+                     try { i++; break outer; } catch (e) {} \
+                     throw new Error('after try'); \
+                   } \
+                   throw new Error('after for-of'); \
+                 } \
+                 i",
+            )
+            .unwrap();
+        assert_eq!(i, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_break_outer_with_generator_no_try() {
+        let mut ctx = new_ctx();
+        let i = ctx
+            .eval(
+                "function* values() { yield 1; throw new Error('after yield'); } \
+                 var iterator = values(); var i = 0; \
+                 outer: while (true) { \
+                   for (var x of iterator) { i++; break outer; } \
+                   throw new Error('after for-of'); \
+                 } \
+                 i",
+            )
+            .unwrap();
+        assert_eq!(i, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_break_outer_label_closes_generator() {
+        let mut ctx = new_ctx();
+        let i = ctx
+            .eval(
+                "function* values() { yield 1; throw new Error('after yield'); } \
+                 var iterator = values(); var i = 0; \
+                 outer: while (true) { \
+                   for (var x of iterator) { \
+                     try { i++; break outer; } catch (e) {} \
+                     throw new Error('after try'); \
+                   } \
+                   throw new Error('after for-of'); \
+                 } \
+                 i",
+            )
+            .unwrap();
+        assert_eq!(i, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_break_from_finally_exits_loop() {
+        let mut ctx = new_ctx();
+        let i = ctx
+            .eval(
+                "function* values() { yield 1; throw new Error('after yield'); } \
+                 var iterator = values(); var i = 0; \
+                 for (var x of iterator) { \
+                   try {} finally { i++; break; throw new Error('after break'); } \
+                   throw new Error('after try'); \
+                 } \
+                 i",
+            )
+            .unwrap();
+        assert_eq!(i, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_return_from_try_in_iife() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "function* values() { yield 1; throw new Error('after yield'); } \
+                 var iterator = values(); \
+                 (function() { \
+                   for (var x of iterator) { \
+                     try { return 34; } catch (e) {} \
+                     throw new Error('after try'); \
+                   } \
+                   throw new Error('after for-of'); \
+                 })()",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(34.0));
+    }
+
+    #[test]
+    fn for_of_string_bmp_visits_all_characters() {
+        let mut ctx = new_ctx();
+        let count = ctx
+            .eval(
+                "var iterationCount = 0; \
+                 for (var value of 'abc') { iterationCount++; } \
+                 iterationCount",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(3.0));
+    }
+
+    #[test]
+    fn for_of_array_mutation_visible_during_iteration() {
+        let mut ctx = new_ctx();
+        let count = ctx
+            .eval(
+                "var array = [0, 1]; var iterationCount = 0; \
+                 for (var x of array) { \
+                   if (x !== 0) throw 0; \
+                   array.pop(); \
+                   iterationCount++; \
+                 } \
+                 iterationCount",
+            )
+            .unwrap();
+        assert_eq!(count, Value::Number(1.0));
     }
 
     #[test]

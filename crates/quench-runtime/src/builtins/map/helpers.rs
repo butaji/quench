@@ -115,6 +115,48 @@ pub fn make_iterator(items: Vec<Value>) -> Value {
     Value::Object(Rc::new(RefCell::new(iter)))
 }
 
+/// Iterator mode for live indexed element iteration.
+#[derive(Copy, Clone)]
+pub enum LiveIndexIteratorMode {
+    Keys,
+    Values,
+    Entries,
+}
+
+/// Build `{ next() }` reading indexed elements live from `arr_rc`.
+pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIteratorMode) -> Value {
+    let index = Rc::new(RefCell::new(0usize));
+    let arr = Rc::clone(&arr_rc);
+    let next_fn = NativeFunction::new(move |_args| {
+        let mut result = Object::new(ObjectKind::Ordinary);
+        let mut i = index.borrow_mut();
+        let borrowed = arr.borrow();
+        let len = borrowed.elements.len();
+        if *i < len {
+            let value = match mode {
+                LiveIndexIteratorMode::Keys => Value::Number(*i as f64),
+                LiveIndexIteratorMode::Values => borrowed.elements[*i].clone(),
+                LiveIndexIteratorMode::Entries => {
+                    Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
+                        Value::Number(*i as f64),
+                        borrowed.elements[*i].clone(),
+                    ]))))
+                }
+            };
+            result.set("value", value);
+            result.set("done", Value::Boolean(false));
+            *i += 1;
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Value::Object(Rc::new(RefCell::new(iter)))
+}
+
 /// Property key for the Symbol.iterator method
 pub fn iterator_prop_key() -> Option<String> {
     match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {

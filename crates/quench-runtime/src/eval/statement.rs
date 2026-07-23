@@ -144,6 +144,9 @@ pub fn eval_statements(
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(val);
+        }
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, empty blocks) should not replace the previous completion value.
         // Only update last_val when the statement produces a non-empty value.
@@ -1092,6 +1095,13 @@ fn eval_block(
     result
 }
 
+/// Merge control flow from a `finally` block with any flow suspended while it ran.
+fn restore_control_flow_after_finally(pending_cf: Option<ControlFlow>) {
+    if let Some(cf) = take_control_flow().or(pending_cf) {
+        set_control_flow(cf);
+    }
+}
+
 /// Evaluate a try-catch-finally statement
 fn eval_try(
     body: &Statement,
@@ -1120,6 +1130,9 @@ fn eval_try(
         Ok(try_val) => {
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(try_val);
+                }
                 // Suspend pending control flow while finally runs.
                 let pending_cf = take_control_flow();
 
@@ -1193,14 +1206,18 @@ fn eval_try(
             } else {
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
-                    let _pending_cf = take_control_flow();
+                    let pending_cf = take_control_flow();
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
-                            // Finally completed normally - rethrow
-                            let msg = to_js_string(&thrown_value);
-                            set_thrown_value(thrown_value);
-                            Err(JsError(msg))
+                            if take_control_flow().is_some() || pending_cf.is_some() {
+                                restore_control_flow_after_finally(pending_cf);
+                                Ok(Value::Undefined)
+                            } else {
+                                let msg = to_js_string(&thrown_value);
+                                set_thrown_value(thrown_value);
+                                Err(JsError(msg))
+                            }
                         }
                         Err(e) => Err(e), // Finally threw - propagate that instead
                     }
