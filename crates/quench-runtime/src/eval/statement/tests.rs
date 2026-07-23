@@ -22,6 +22,19 @@ mod return_statement {
             Value::Undefined
         );
     }
+
+    #[test]
+    fn static_getter_tail_return_super_not_deferred_without_trampoline() {
+        assert_eq!(
+            eval(
+                "class B { static m() { return 1; } } \
+                 class C extends B { static get x() { 0; return super.m(); } } \
+                 C.x"
+            )
+            .unwrap(),
+            Value::Number(1.0)
+        );
+    }
 }
 
 mod throw_statement {
