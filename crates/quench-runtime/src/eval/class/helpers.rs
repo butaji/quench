@@ -1,7 +1,7 @@
 //! Private helper functions for class operations.
 //! All functions here are internal helpers; public API lives in the parent `class.rs`.
 
-use crate::ast::{ArrowBody, Expression, Statement};
+use crate::ast::Statement;
 use crate::builtins;
 use crate::env::Environment;
 use crate::eval::expression::{capture_env_for_closure, eval_expression};
@@ -461,74 +461,7 @@ pub fn call_super_or_default(
 
 /// Check if the constructor body contains a super() call anywhere
 pub fn body_calls_super_call(body: &[Statement]) -> bool {
-    body.iter().any(stmt_contains_super_call)
-}
-
-fn stmt_contains_super_call(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::Expression(expr) => expr_contains_super_call(expr),
-        Statement::Block(stmts) => stmts.iter().any(stmt_contains_super_call),
-        Statement::If {
-            condition,
-            consequent,
-            alternate,
-        } => {
-            expr_contains_super_call(condition)
-                || stmt_contains_super_call(consequent)
-                || alternate
-                    .as_ref()
-                    .map(|a| stmt_contains_super_call(a))
-                    .unwrap_or(false)
-        }
-        Statement::While { body, .. }
-        | Statement::For { body, .. }
-        | Statement::ForIn { body, .. } => stmt_contains_super_call(body),
-        Statement::Try {
-            body,
-            handler,
-            finalizer,
-            ..
-        } => {
-            let in_handler = handler
-                .as_ref()
-                .is_some_and(|h| stmt_contains_super_call(h));
-            let in_finally = finalizer
-                .as_ref()
-                .is_some_and(|f| stmt_contains_super_call(f));
-            stmt_contains_super_call(body) || in_handler || in_finally
-        }
-        Statement::Return(Some(expr)) => expr_contains_super_call(expr),
-        _ => false,
-    }
-}
-
-fn expr_contains_super_call(expr: &Expression) -> bool {
-    match expr {
-        Expression::Identifier(id) => id == "super",
-        Expression::Call { callee, .. } => expr_contains_super_call(callee),
-        Expression::Member { object, .. } => expr_contains_super_call(object),
-        Expression::ArrowFunction { body, .. } => match body.as_ref() {
-            ArrowBody::Expression(e) => expr_contains_super_call(e),
-            ArrowBody::Block(stmts) => stmts.iter().any(stmt_contains_super_call),
-        },
-        Expression::Assignment { left, right, .. } => {
-            expr_contains_super_call(left) || expr_contains_super_call(right)
-        }
-        Expression::Binary { left, right, .. } => {
-            expr_contains_super_call(left) || expr_contains_super_call(right)
-        }
-        Expression::Unary { argument, .. } => expr_contains_super_call(argument),
-        Expression::Conditional {
-            condition,
-            consequent,
-            alternate,
-        } => {
-            expr_contains_super_call(condition)
-                || expr_contains_super_call(consequent)
-                || expr_contains_super_call(alternate)
-        }
-        _ => false,
-    }
+    super::private_elements::program_contains_super_call(body)
 }
 
 /// Create a simple arguments object
@@ -2634,5 +2567,21 @@ mod tests {
         } else {
             panic!("expected array, got {:?}", arr);
         }
+    }
+
+    #[test]
+    fn private_method_assignment_throws_type_error() {
+        let err =
+            eval("class C { #m() {} assign() { this.#m = 0; } } new C().assign()").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn private_field_visible_in_direct_eval() {
+        let r = eval(
+            "class C { #m = 44; getWithEval() { return eval(\"this.#m\"); } } new C().getWithEval()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(44.0));
     }
 }

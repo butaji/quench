@@ -14,10 +14,17 @@ use crate::value::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Returns true if expr is a Call expression — the only expression type
-/// that can appear in a proper tail position per ES §14.2.1.
+/// Returns true if expr is a Call expression eligible for tail-call optimization.
+/// Direct `eval()` calls are excluded — they must not be tail-called.
 pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
-    matches!(expr, Expression::Call { .. })
+    match expr {
+        Expression::Call { callee, .. } => !callee_is_direct_eval(callee),
+        _ => false,
+    }
+}
+
+fn callee_is_direct_eval(callee: &Expression) -> bool {
+    matches!(callee, Expression::Identifier(name) if name == "eval")
 }
 
 /// Tail-call signal produced by `eval_function_body` and consumed by the

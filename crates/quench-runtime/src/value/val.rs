@@ -24,9 +24,28 @@ pub fn private_name_key(name: &str) -> String {
     format!("\0private:{bare}\0")
 }
 
+/// Class-scoped private name storage key.
+pub fn scoped_private_name_key(class_id: usize, name: &str) -> String {
+    let bare = name
+        .strip_prefix('#')
+        .unwrap_or(name)
+        .trim_start_matches("\0private:")
+        .trim_end_matches('\0');
+    format!("\0private:{class_id}:{bare}\0")
+}
+
 /// Whether `key` is a [`private_name_key`] storage slot.
 pub fn is_private_name_key(key: &str) -> bool {
     key.starts_with("\0private:") && key.ends_with('\0')
+}
+
+/// Unscoped private name from the parser (before class id assignment).
+pub fn is_unscoped_private_name_key(key: &str) -> bool {
+    if !is_private_name_key(key) {
+        return false;
+    }
+    let inner = &key[9..key.len() - 1];
+    !inner.contains(':')
 }
 
 /// A class method: (name, params, body, is_async, is_generator)
@@ -172,6 +191,10 @@ impl ClassValue {
     /// Create a ClassValue from an AST Class node
     #[allow(dead_code)]
     pub fn from_ast(class: &Class) -> Self {
+        let id = CLASS_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut scoped_class = class.clone();
+        crate::eval::class::private_names::scope_class_private_names(&mut scoped_class, id);
+
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
         let mut has_explicit_constructor = false;
@@ -186,7 +209,7 @@ impl ClassValue {
         let mut static_blocks = Vec::new();
 
         fill_members_from_ast(
-            &class.body,
+            &scoped_class.body,
             &mut constructor_params,
             &mut constructor_body,
             &mut has_explicit_constructor,
@@ -202,8 +225,8 @@ impl ClassValue {
         );
 
         ClassValue {
-            id: CLASS_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            name: class.name.clone(),
+            id,
+            name: scoped_class.name.clone(),
             constructor_params,
             constructor_body,
             has_explicit_constructor,
@@ -216,8 +239,8 @@ impl ClassValue {
             instance_fields,
             static_fields,
             static_blocks,
-            ordered_members: class.body.clone(),
-            super_class: class.super_class.clone(),
+            ordered_members: scoped_class.body.clone(),
+            super_class: scoped_class.super_class.clone(),
             super_class_own_proto_cell: std::rc::Rc::new(std::cell::RefCell::new(None::<Value>)),
             prototype_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
             static_properties_cell: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
