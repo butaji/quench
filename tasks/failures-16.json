@@ -1,5 +1,5 @@
 {
-  "failed": 261,
+  "failed": 257,
   "groups": [
     {
       "count": 1,
@@ -226,13 +226,9 @@
       ]
     },
     {
-      "count": 8,
+      "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method-static/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
@@ -240,10 +236,6 @@
       "reason": "Test262Error: Expected ReferenceError to be thrown but no exception was thrown. \")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/gen-method-static/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method/dflt-params-ref-self.js",
-        "/workspace/tests/test262/test/language/statements/class/method-static/dflt-params-ref-self.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-assigned.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression-grouped.js",
         "/workspace/tests/test262/test/language/statements/class/name-binding/in-extends-expression.js"
@@ -1138,7 +1130,7 @@
       ]
     }
   ],
-  "passed": 4106,
+  "passed": 4110,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
