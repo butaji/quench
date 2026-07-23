@@ -739,6 +739,12 @@ mod tests {
     }
 
     #[test]
+    fn static_private_field_read_from_static_method() {
+        let r = eval("class C { static #$ = 1; static $() { return this.#$; } } C.$()").unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    #[test]
     fn static_private_method_not_has_own_property() {
         let r = eval(
             "class C { static async *#gen() {} static get gen() { return this.#gen; } } \
