@@ -47,6 +47,13 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     );
 
     proto.borrow_mut().set(
+        "toExponential",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            proto_to_exponential_impl(args)
+        }))),
+    );
+
+    proto.borrow_mut().set(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             // Per spec, Number.prototype.toString unwraps the boxed number and
@@ -116,6 +123,45 @@ fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
         n
     };
     Ok(Value::String(format!("{:.prec$}", n, prec = digits)))
+}
+
+fn proto_to_exponential_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
+    let n = to_number(&this_val);
+    let digits = args.first().map(|v| to_number(v) as i32).unwrap_or(0);
+    let digits = digits.clamp(0, 100) as usize;
+
+    if n.is_nan() {
+        return Ok(Value::String("NaN".to_string()));
+    }
+    if !n.is_finite() {
+        return Ok(Value::String(
+            if n.is_sign_positive() {
+                "Infinity".to_string()
+            } else {
+                "-Infinity".to_string()
+            }
+            .to_string(),
+        ));
+    }
+
+    let n = if n == 0.0 && n.is_sign_negative() {
+        -0.0f64
+    } else {
+        n
+    };
+    Ok(Value::String(format_exponential(n, digits)))
+}
+
+fn format_exponential(n: f64, digits: usize) -> String {
+    let mut s = format!("{:.prec$e}", n, prec = digits);
+    if let Some(idx) = s.find('e') {
+        let exp = &s[idx + 1..];
+        if !exp.starts_with('+') && !exp.starts_with('-') {
+            s = format!("{}+{}", &s[..=idx], exp);
+        }
+    }
+    s
 }
 
 fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {

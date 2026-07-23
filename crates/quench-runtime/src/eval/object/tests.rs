@@ -852,3 +852,75 @@ fn static_setter_return_does_not_leak_into_next_call() {
         "C[String(f())] must still reach the getter"
     );
 }
+
+#[test]
+fn private_setter_brand_check_on_foreign_object() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval(
+            "class C { set #m(v) { this._v = v; } access(o, v) { o.#m = v; } } \
+             let c = new C(); c.access({}, 'foo');",
+        )
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_direct_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { this.#field = 1; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_for_of_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval(
+            "class C { #field; m() { for (this.#field of [1]) ; } } \
+             C.prototype.m.call({});",
+        )
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_array_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { [this.#field] = [1]; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_array_rest_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { [...this.#field] = []; } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_object_rest_destructure_set_on_foreign_object_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval("class C { #field; m() { ({...this.#field} = {}); } } C.prototype.m.call({});")
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}
+
+#[test]
+fn private_field_set_on_foreign_class_instance_throws() {
+    let mut ctx = Context::new().unwrap();
+    let err = ctx
+        .eval(
+            "class Outer { #x = 42; innerclass() { return class { f() { this.#x = 1; } }; } } \
+             let Inner = new Outer().innerclass(); new Inner().f();",
+        )
+        .unwrap_err();
+    assert!(err.0.contains("TypeError"), "got {}", err.0);
+}

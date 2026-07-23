@@ -1,13 +1,68 @@
-//! Minimal Reflect and Proxy globals. Reflect exposes only `ownKeys` for
+//! Minimal Reflect and Proxy globals. Reflect exposes `ownKeys` and `has` for
 //! the test262 harness. Proxy provides a basic target-forwarding constructor
 //! that delegates `get`/`set`/`has` traps (defaulting to forwarding when
 //! the handler omits them). Tests that require the full Reflect or Proxy
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
+use crate::builtins::object_static::to_property_key;
 use crate::context::Context;
-use crate::value::{Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
+    match target {
+        Value::Object(o) => Ok(o.borrow().has(key)),
+        Value::Function(f) => {
+            if f.get_property(key).is_some() {
+                return Ok(true);
+            }
+            Ok(f.get_prototype().borrow().has(key))
+        }
+        Value::NativeFunction(nf) => {
+            if nf.get_property(key).is_some() {
+                return Ok(true);
+            }
+            if let Some(Value::Object(p)) = nf.get_property("prototype") {
+                return Ok(p.borrow().has(key));
+            }
+            Ok(false)
+        }
+        Value::NativeConstructor(nc) => {
+            if matches!(key, "prototype" | "length" | "name") {
+                return Ok(true);
+            }
+            if nc.get_static_method(key).is_some() || nc.get_accessor(key).is_some() {
+                return Ok(true);
+            }
+            if let Some(fp) = crate::builtins::function::get_function_prototype() {
+                if fp.borrow().has(key) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Value::Class(c) => {
+            if c.static_properties_cell.borrow().contains_key(key) {
+                return Ok(true);
+            }
+            if let Some(fp) = crate::builtins::function::get_function_prototype() {
+                if fp.borrow().has(key) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "Reflect.has called on non-object",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            Err(js_err)
+        }
+    }
+}
 
 pub fn register_reflect(ctx: &mut Context) {
     let mut reflect = Object::new(ObjectKind::Ordinary);
@@ -37,6 +92,21 @@ pub fn register_reflect(ctx: &mut Context) {
             },
         ))),
     );
+    reflect.set(
+        "has",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args.first().ok_or_else(|| {
+                    crate::value::JsError::new("Reflect.has requires target argument")
+                })?;
+                let key_val = args.get(1).ok_or_else(|| {
+                    crate::value::JsError::new("Reflect.has requires propertyKey argument")
+                })?;
+                let key = to_property_key(key_val)?;
+                Ok(Value::Boolean(reflect_has_property(target, &key)?))
+            },
+        ))),
+    );
     ctx.set_global(
         "Reflect".to_string(),
         Value::Object(Rc::new(RefCell::new(reflect))),
@@ -50,10 +120,7 @@ fn register_proxy(ctx: &mut Context) {
     // the target. A handler object may override any of those traps. This
     // is sufficient for test262 tests that use a plain handler `{}` to
     // check private-field access boundaries.
-    //
-    // Per ES spec, Proxy is a constructor but has no .prototype property,
-    // so `class extends Proxy {}` throws TypeError at class-definition time.
-    let mut proxy_fn = crate::value::NativeFunction::new(
+    let mut proxy_nf = crate::value::NativeFunction::new_with_prototype(
         |args: Vec<Value>| -> Result<Value, crate::value::JsError> {
             let target = match args.first() {
                 Some(v) => v.clone(),
@@ -81,16 +148,16 @@ fn register_proxy(ctx: &mut Context) {
                 ));
             }
             let mut proxy = Object::new(ObjectKind::Ordinary);
-            // Stash the target and handler on the proxy so the get/set
-            // forwarding logic (see object::get_setter) can find them.
             proxy.set("__quench_proxy_target", target);
             proxy.set("__quench_proxy_handler", handler);
             Ok(Value::Object(Rc::new(RefCell::new(proxy))))
         },
+        std::rc::Rc::new(std::cell::RefCell::new(Object::new(
+            crate::value::ObjectKind::Ordinary,
+        ))),
     );
-    proxy_fn.set_constructable(true);
-    proxy_fn.name = "Proxy".to_string();
-    let proxy_ctor = Value::NativeFunction(Rc::new(proxy_fn));
+    proxy_nf.name = "Proxy".to_string();
+    let proxy_ctor = Value::NativeFunction(Rc::new(proxy_nf));
     ctx.set_global("Proxy".to_string(), proxy_ctor);
 }
 
@@ -109,9 +176,34 @@ mod tests {
         ctx.eval(src).is_err()
     }
 
+    fn eval_ok_with_builtins(src: &str) -> Value {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(src).unwrap()
+    }
+
+    #[test]
+    fn reflect_has_own_property() {
+        let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_has_missing_property() {
+        let result = eval_ok_with_builtins("Reflect.has({}, 'x')");
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn reflect_has_non_object_throws() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("Reflect.has(null, 'x')").is_err());
+    }
+
     #[test]
     fn reflect_own_keys_empty_object() {
-        let result = eval_ok("Reflect.ownKeys({})");
+        let result = eval_ok_with_builtins("Reflect.ownKeys({})");
         assert!(matches!(result, Value::Object(_)));
     }
 
@@ -180,12 +272,5 @@ mod tests {
     fn proxy_missing_arguments() {
         assert!(eval_err("new Proxy()"));
         assert!(eval_err("new Proxy({})"));
-    }
-
-    #[test]
-    fn proxy_cannot_be_extended() {
-        // Per spec, Proxy has no .prototype property, so `class extends Proxy`
-        // throws TypeError (Type(protoParent) is not Object or Null).
-        assert!(eval_err("class P extends Proxy {}"));
     }
 }

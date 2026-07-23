@@ -329,6 +329,8 @@ fn test_to_bool_class_gen_sym_bigint() {
         static_getter_keys_cell: Rc::new(RefCell::new(Vec::new())),
         static_setter_keys_cell: Rc::new(RefCell::new(Vec::new())),
         extensible_cell: Rc::new(RefCell::new(true)),
+        private_element_cache: Rc::new(RefCell::new(HashMap::new())),
+        declared_private_names: HashSet::new(),
     }));
     assert!(to_bool(&cls_val));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
@@ -489,6 +491,8 @@ fn test_to_object_identity_preserved() {
         static_getter_keys_cell: Rc::new(RefCell::new(Vec::new())),
         static_setter_keys_cell: Rc::new(RefCell::new(Vec::new())),
         extensible_cell: Rc::new(RefCell::new(true)),
+        private_element_cache: Rc::new(RefCell::new(HashMap::new())),
+        declared_private_names: HashSet::new(),
     }));
     assert!(matches!(to_object(&cls_val), Value::Class(_)));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(

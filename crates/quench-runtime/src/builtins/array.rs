@@ -117,30 +117,29 @@ fn make_array_with_new(
     args: &[Value],
     proto: &Rc<RefCell<Object>>,
 ) -> Result<Value, JsError> {
-    obj_rc.borrow_mut().prototype = Some(Rc::clone(proto));
-    obj_rc.borrow_mut().kind = ObjectKind::Array;
-    if args.is_empty() {
-        obj_rc.borrow_mut().elements = vec![];
-        obj_rc.borrow_mut().set("length", Value::Number(0.0));
-    } else if args.len() == 1 {
+    let mut obj = obj_rc.borrow_mut();
+    if obj.prototype.is_none() {
+        obj.prototype = Some(Rc::clone(proto));
+    }
+    obj.kind = ObjectKind::Array;
+    if args.len() == 1 {
         if let Value::Number(n) = args[0] {
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;
-                obj_rc.borrow_mut().elements = vec![Value::Undefined; n as usize];
-                obj_rc.borrow_mut().set("length", Value::Number(n));
+                obj.elements = vec![Value::Undefined; n as usize];
+                obj.define_array_length(n);
             } else {
                 return Err(JsError("Invalid array length".to_string()));
             }
         } else {
-            obj_rc.borrow_mut().elements = vec![args[0].clone()];
-            obj_rc.borrow_mut().set("length", Value::Number(1.0));
+            obj.elements = vec![args[0].clone()];
+            obj.define_array_length(1.0);
         }
     } else if args.len() > 1 {
-        obj_rc.borrow_mut().elements = args.to_vec();
-        obj_rc
-            .borrow_mut()
-            .set("length", Value::Number(args.len() as f64));
+        obj.elements = args.to_vec();
+        obj.define_array_length(args.len() as f64);
     }
+    drop(obj);
     Ok(Value::Object(obj_rc))
 }
 

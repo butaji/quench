@@ -349,21 +349,105 @@ pub fn assign_object_destructuring(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let obj = match value {
+        Value::Null | Value::Undefined => {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot destructure non-object value",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         Value::Object(o) => o.clone(),
-        _ => return Err(JsError("Cannot destructure non-object value".to_string())),
+        other => {
+            let Value::Object(o) = crate::value::to_object(other) else {
+                return Err(JsError("Cannot destructure non-object value".to_string()));
+            };
+            o
+        }
     };
+    let mut excluded = std::collections::HashSet::new();
+    let mut rest_binding: Option<&BindingElement> = None;
+
     for (key, binding) in props {
+        if is_object_rest_key(key) {
+            rest_binding = Some(binding);
+            continue;
+        }
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
+            excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             crate::eval::object::assign_to(target, &prop_value, env)?;
         } else {
             let key_str = extract_destructure_key(key, env)?;
+            excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             assign_binding_elem(binding, &prop_value, env)?;
         }
     }
+
+    if let Some(binding) = rest_binding {
+        let rest_val = copy_enumerable_own_properties(&obj, &excluded, env)?;
+        assign_binding_elem(binding, &rest_val, env)?;
+    }
     Ok(())
+}
+
+fn is_object_rest_key(key: &PropertyKey) -> bool {
+    matches!(key, PropertyKey::Ident(s) if s == "...")
+}
+
+fn copy_enumerable_value(
+    obj: &Rc<RefCell<Object>>,
+    key: &str,
+    src: &Object,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(getter) = src.get_getter(key) {
+        return crate::eval::object::call_getter(obj, getter, env);
+    }
+    if let Some(idx) = crate::value::object::helpers::as_array_index(key) {
+        if idx < src.elements.len() && !src.holes.contains(&idx) {
+            return Ok(src.elements[idx].clone());
+        }
+    }
+    Ok(src.properties.get(key).cloned().unwrap_or(Value::Undefined))
+}
+
+fn copy_enumerable_own_properties(
+    obj: &Rc<RefCell<Object>>,
+    excluded: &std::collections::HashSet<String>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let mut rest = Object::new(ObjectKind::Ordinary);
+    let src = obj.borrow();
+    for i in 0..src.elements.len() {
+        if src.holes.contains(&i) {
+            continue;
+        }
+        let key = i.to_string();
+        if excluded.contains(&key) || !src.is_enumerable(&key) {
+            continue;
+        }
+        let val = copy_enumerable_value(obj, &key, &src, env)?;
+        rest.set(&key, val);
+    }
+    let mut keys: Vec<String> = src
+        .properties
+        .keys()
+        .chain(src.getters.keys())
+        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
+        .cloned()
+        .collect();
+    keys.sort();
+    keys.dedup();
+    for key in keys {
+        if excluded.contains(&key) || !src.is_enumerable(&key) {
+            continue;
+        }
+        let val = copy_enumerable_value(obj, &key, &src, env)?;
+        rest.set(&key, val);
+    }
+    Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
 
 /// Compute the string key for a property key.
@@ -430,35 +514,7 @@ fn assign_binding_elem_with_default(
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
-            if let Expression::Member {
-                object, property, ..
-            } = target
-            {
-                let lref_obj = eval_expression(object, env, false)?;
-                let key_string = match property {
-                    PropertyKey::Computed(expr) => {
-                        let key_value = eval_expression(expr, env, false)?;
-                        crate::value::to_js_string(&key_value)
-                    }
-                    PropertyKey::Ident(name) => name.clone(),
-                    PropertyKey::String(s) => s.clone(),
-                    PropertyKey::Number(n) => n.to_string(),
-                };
-                if let Value::Object(o) = lref_obj {
-                    if let Some(setter) = o.borrow().get_setter(&key_string) {
-                        crate::eval::object::call_setter(&o, setter, value.clone(), env)?;
-                    } else {
-                        o.borrow_mut().set(&key_string, value.clone());
-                    }
-                } else {
-                    return Err(JsError(
-                        "Cannot assign to property of non-object".to_string(),
-                    ));
-                }
-                Ok(())
-            } else {
-                crate::eval::object::assign_to(target, value, env)
-            }
+            crate::eval::object::assign_to(target, value, env)
         }
     }
 }
@@ -497,6 +553,11 @@ pub fn assign_to_identifier(
         }
         _ => value.clone(),
     };
+
+    if env.borrow().is_tdz(name) {
+        env.borrow_mut().initialize_declared(name, value);
+        return Ok(());
+    }
 
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
@@ -538,6 +599,50 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+/// Declare destructuring pattern bindings with the given declaration kind.
+pub fn declare_pattern_bindings_with_kind(
+    pattern: &BindingElement,
+    kind: VarKind,
+    env: &Rc<RefCell<Environment>>,
+) {
+    match pattern {
+        BindingElement::Identifier(name) => {
+            if name != "__hole" && !env.borrow().current_scope().borrow().has(name) {
+                env.borrow_mut().declare_var(name.clone(), kind);
+            }
+        }
+        BindingElement::ArrayPattern(elements) => {
+            for element in elements {
+                declare_pattern_bindings_with_kind(element, kind, env);
+            }
+        }
+        BindingElement::ObjectPattern(properties) => {
+            for (_, binding) in properties {
+                declare_pattern_bindings_with_kind(binding, kind, env);
+            }
+        }
+        BindingElement::Default(binding, _) => {
+            declare_pattern_bindings_with_kind(binding, kind, env);
+        }
+        BindingElement::Rest(binding) => {
+            declare_pattern_bindings_with_kind(binding, kind, env);
+        }
+        BindingElement::AssignmentTarget(_) => {}
+    }
+}
+
+/// Convert a binding pattern to an assignment target expression.
+pub fn binding_pattern_expression(pattern: BindingElement) -> Expression {
+    match pattern {
+        BindingElement::Identifier(name) => Expression::Identifier(name),
+        BindingElement::ArrayPattern(elements) => Expression::ArrayPattern(elements),
+        BindingElement::ObjectPattern(properties) => Expression::ObjectPattern(properties),
+        BindingElement::Default(binding, _) => binding_pattern_expression(*binding),
+        BindingElement::Rest(binding) => binding_pattern_expression(*binding),
+        BindingElement::AssignmentTarget(expr) => expr,
+    }
 }
 
 fn is_anonymous_function_definition(expr: &Expression) -> bool {
@@ -799,7 +904,7 @@ mod tests {
         let env = Rc::clone(ctx.env());
         let f = ValueFunction::new(None, params.clone(), vec![], Rc::clone(&env), false, false);
         let call_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(&env))));
-        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env, false).unwrap();
+        bind_params(&f, &params, std::slice::from_ref(&gen), &call_env).unwrap();
         assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("second").unwrap(), Value::Number(0.0));
     }
@@ -920,6 +1025,24 @@ mod tests {
         assert_eq!(r, Value::Number(5.0));
     }
 
+    #[test]
+    fn object_literal_rest_invokes_getter() {
+        let r = eval("var o = { get v() { return 2; } }; var {...rest} = o; rest.v").unwrap();
+        assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn object_rest_param_invokes_getter() {
+        let r = eval(
+            "class C { method({...rest}) { return rest.v; } } \
+             var count = 0; \
+             var o = { get v() { count++; return 2; } }; \
+             new C().method(o) + count",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
     // ─── compute_property_key ────────────────────────────────────────────────
 
     #[test]
@@ -1021,5 +1144,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(err, Value::String("GEN_PARAM_ERR".into()));
+    }
+
+    #[test]
+    fn object_destructure_param_string_argument_uses_to_object() {
+        let r = eval(
+            "var fnParam; (function({test262 = fnParam = arguments}) { \
+             fnParam = arguments; })('function'); fnParam[0]",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
+    fn object_destructure_param_computed_key_evaluated_at_call() {
+        let err = eval(
+            "function thrower() { throw new Error('COMPUTED_KEY_ERR'); } \
+             function f({ [thrower()]: x }) {} \
+             try { f({}); 'ok'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("COMPUTED_KEY_ERR".into()));
     }
 }

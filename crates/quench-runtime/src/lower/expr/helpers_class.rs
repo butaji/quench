@@ -83,7 +83,10 @@ fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerErro
             }
         }
         ast::MethodDefinitionKind::Set => {
-            let param = ps.first().map(|p| p.name.clone()).unwrap_or_default();
+            let param = ps
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| crate::ast::Param::new("_"));
             if is_static {
                 Ok(ClassMember::StaticSetter { name, param, body })
             } else {

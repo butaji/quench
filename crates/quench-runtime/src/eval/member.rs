@@ -5,6 +5,7 @@
 #![allow(clippy::complexity)]
 
 mod function_member;
+pub use function_member::{bound_callable_target, eval_callable_proto_method};
 mod native_member;
 mod object_member;
 mod string_member;
@@ -26,6 +27,9 @@ pub fn eval_member_access(
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    if crate::value::is_private_name_key(prop_name) {
+        return eval_private_member_get(obj_val, prop_name, env);
+    }
     match obj_val {
         Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => eval_string_member(s, prop_name, env),
@@ -142,6 +146,12 @@ pub fn eval_class_member(
             }
         }
         _ => {
+            if matches!(prop_name, "call" | "apply" | "bind") {
+                return eval_callable_proto_method(
+                    Value::Class(Box::new(class.clone())),
+                    prop_name,
+                );
+            }
             // Check static fields first
             if let Some(val) = class.get_static_field(prop_name) {
                 return Ok(val);
@@ -201,13 +211,20 @@ pub fn eval_class_member(
                     prop_key_to_string(name, &eval_env, false)?
                 };
                 if key_str == prop_name {
+                    if crate::value::is_private_name_key(prop_name) {
+                        let (_, js_err) = create_js_error_with_type(
+                            "Private accessor has no getter",
+                            "TypeError",
+                        );
+                        return Err(js_err);
+                    }
                     // Return a function that wraps the setter call.
-                    let param_name = param.clone();
+                    let param = param.clone();
                     let setter_body = body.clone();
                     let setter_closure = Rc::clone(&eval_env);
                     let mut setter_func = crate::value::ValueFunction::new(
                         Some(key_str),
-                        vec![crate::ast::Param::new(&param_name)],
+                        vec![param],
                         setter_body,
                         setter_closure,
                         false,
@@ -228,6 +245,13 @@ pub fn eval_class_member(
             if prop_name == "caller" || prop_name == "arguments" {
                 let (_, js_err) = create_js_error_with_type(
                     "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
+            if crate::value::is_private_name_key(prop_name) {
+                let (_, js_err) = create_js_error_with_type(
+                    "Cannot read private member from an object whose class did not declare it",
                     "TypeError",
                 );
                 return Err(js_err);
@@ -282,6 +306,24 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
         }
         Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
         _ => None,
+    }
+}
+
+fn eval_private_member_get(
+    obj_val: &Value,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match obj_val {
+        Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
+        Value::Class(class) => eval_class_member(class, prop_name, env),
+        _ => {
+            let (_, js_err) = create_js_error_with_type(
+                "Cannot read private member from an object whose class did not declare it",
+                "TypeError",
+            );
+            Err(js_err)
+        }
     }
 }
 

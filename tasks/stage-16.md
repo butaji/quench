@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-stages 00–15 done · **4,367 tests** · **29 stages / 2,154 tests done (4%)**.
+**4,367 tests** · **4298 pass / 69 fail (98.4%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -15,6 +15,42 @@ TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FAILED_JSON=tasks/failures-16.json \
 
 On 100% the runner prints `ALL STAGES COMPLETE — Stage 16: N/N`; that
 line is the gate to advance to stage 17.
+
+## Progress log
+
+| Date | Passed | Failed | % | Notes |
+|------|--------|--------|---|-------|
+| 2026-07-23 start | 4080 | 287 | 93.4% | Iterator destructuring, private eval/brand |
+| 2026-07-23 | 4110 | 257 | 94.1% | PatternDeclaration, default param TDZ |
+| 2026-07-23 | **4119** | **248** | **94.3%** | Reflect.has, private method `.name`, Array subclass instanceof |
+| 2026-07-23 | **4126** | **241** | **94.5%** | Error subclass super() preserves derived prototype |
+| 2026-07-23 | **4145** | **222** | **94.9%** | Symbol computed field keys; Object/Promise/Function subclass instanceof |
+| 2026-07-23 | **4147** | **220** | **95.0%** | for-of/for-in member+private LHS lowering (private field brand checks) |
+| 2026-07-23 | **4152** | **215** | **95.1%** | Destructuring private assign via assign_to; object rest LHS; nested outer private fields |
+| 2026-07-23 | **4181** | **186** | **95.7%** | Computed destructuring param keys; private getter/setter pairs; super private dedup; async arrow is_async |
+| 2026-07-23 | **4192** | **175** | **96.0%** | Derived explicit return; IsConstructor proxy/bound/async; yield* generators; static private method assign |
+| 2026-07-23 | **4207** | **160** | **96.3%** | Async return TCO fix; static constructor naming; NativeFunction super() |
+| 2026-07-23 | **4211** | **156** | **96.4%** | Lexical this-binding for super() in finally; try/catch CF restore |
+| 2026-07-23 | **4241** | **126** | **97.1%** | Private eval (scoped names, ctor env, static brand); yield-spread; gen args; Array length; class bind |
+| 2026-07-23 | **4248** | **119** | **97.3%** | Proxy get traps; ctor ControlFlow::Return leak; private fields on proxy target; __lookupGetter__ |
+| 2026-07-23 | **4259** | **108** | **97.5%** | hasParameterExpressions body env; setter Param defaults; eval undeclared-private SyntaxError |
+| 2026-07-23 | **4266** | **101** | **97.7%** | Generator method param/body env; direct eval AllPrivateNamesValid always |
+| 2026-07-23 | **4274** | **93** | **97.9%** | Const binding, private primitive get/put, super field target, arguments-callee, extends TDZ, Proxy/Symbol extends |
+| 2026-07-23 | **4278** | **89** | **98.0%** | Super in static blocks, super field init in call_super_constructor, super without extends, assignment lowering |
+| 2026-07-23 | **4282** | **85** | **98.1%** | Date/Number/ArrayBuffer builtin subclass auto-super, nested private field on parameter, eval_super_call NativeConstructor wrapper |
+| 2026-07-23 | **4286** | **81** | **98.1%** | super.prop in static field arrow assigns to class; minimal DataView builtin + subclass |
+| 2026-07-23 | **4298** | **69** | **98.4%** | finish_constructor on function super; AggregateError/SAB/WeakRef/BigInt64/Uint64; object literal spread + yield-spread-obj |
+
+## Top remaining clusters (~69)
+
+| ~Count | Cluster | Fix direction |
+|-------:|---------|---------------|
+| 7 | sameValue true !== false | Error subclass message own props |
+| 5 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
+| 5 | Expected Test262Error not thrown | Primitive receiver, frozen objects, Proxy |
+| 2 | Cannot destructure non-object value | static-init-arguments (param destructure ToObject) |
+| 2 | Actual [] expected [length,name,...] | static field / method definition order on class |
+| 8 | yield-spread-obj (private/async variants) | verify remaining private-gen spread cases |
 
 ## How to clear this stage (ASAP × min LOC)
 
@@ -52,5 +88,3 @@ Do not edit `tests/test262.rs` or anything under `tests/test262/`.
 - 2026-07-23 — Derived ctor fix (`has_explicit_constructor`): explicit `constructor() {}` without `super` → ReferenceError.
 - 2026-07-23 — QUICK digest (913 files sampled): **666 pass / 247 fail / 0 skip**. Top cluster: `TypeError: Cannot read property 'prototype' of undefined` (~228, yield-in-class). Stack overflow: `dstr/async-private-gen-meth-*`, `prototype-wiring.js` (fix recursion, not skip).
 - 2026-07-23 — **Yield-in-class computed keys** fixed: `generator_replay.rs` suspends mid-class-eval, replays completed yields on resume (`accessor-name-inst-computed-yield-expr.js` passes). Re-run full digest to measure cluster drop.
-- 2026-07-23 — **Generator env persistence** + `return yield` handling: cpn-class-decl yield cluster (4 files) passes.
-- 2026-07-23 — **Multi-level super()** fix in `call_super_constructor`: `set_super_class` + `set_this_value`; `prototype-wiring.js` passes (removed from crash skip list).

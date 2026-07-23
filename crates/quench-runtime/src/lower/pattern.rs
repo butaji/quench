@@ -52,6 +52,35 @@ fn lower_array_pattern(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerE
     Ok(BindingElement::ArrayPattern(elements))
 }
 
+/// Lower an OXC array pattern to a runtime binding element.
+pub fn lower_array_binding(arr: &ast::ArrayPattern) -> Result<BindingElement, LowerError> {
+    lower_array_pattern(arr)
+}
+
+/// Collect identifier names bound by a destructuring pattern (excluding holes).
+pub fn collect_pattern_identifiers(pattern: &BindingElement) -> Vec<String> {
+    match pattern {
+        BindingElement::Identifier(name) => {
+            if name != "__hole" {
+                vec![name.clone()]
+            } else {
+                vec![]
+            }
+        }
+        BindingElement::ArrayPattern(elements) => elements
+            .iter()
+            .flat_map(collect_pattern_identifiers)
+            .collect(),
+        BindingElement::ObjectPattern(props) => props
+            .iter()
+            .flat_map(|(_, binding)| collect_pattern_identifiers(binding))
+            .collect(),
+        BindingElement::Default(binding, _) => collect_pattern_identifiers(binding),
+        BindingElement::Rest(binding) => collect_pattern_identifiers(binding),
+        BindingElement::AssignmentTarget(_) => vec![],
+    }
+}
+
 pub fn lower_elem_pat(elem: &ast::BindingPattern) -> Option<BindingElement> {
     lower_binding_elem(elem).ok()
 }
@@ -149,11 +178,20 @@ fn expr_to_binding_elem(expr: &ast::Expression) -> Option<BindingElement> {
 pub fn lower_object_assignment_target(
     obj: &ast::ObjectAssignmentTarget,
 ) -> Result<BindingElement, LowerError> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj
+    let mut props: Vec<(PropertyKey, BindingElement)> = obj
         .properties
         .iter()
         .filter_map(|p| lower_assignment_target_prop(p))
         .collect();
+    if let Some(rest) = &obj.rest {
+        let rest_binding = lower_assignment_target(&rest.target)
+            .ok()
+            .map(BindingElement::AssignmentTarget)
+            .or_else(|| lower_assignment_target_to_binding(&rest.target));
+        if let Some(binding) = rest_binding {
+            props.push((PropertyKey::Ident("...".to_string()), binding));
+        }
+    }
     Ok(BindingElement::ObjectPattern(props))
 }
 
@@ -233,7 +271,11 @@ fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(b.raw.to_string())),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
-        _ => None,
+        _ => {
+            let expr = key.to_expression();
+            let lowered = lower_expr(expr).ok()?;
+            Some(PropertyKey::Computed(Box::new(lowered)))
+        }
     }
 }
 

@@ -53,6 +53,19 @@ pub fn is_unscoped_private_name_key(key: &str) -> bool {
     !inner.contains(':')
 }
 
+/// Source-visible name for a private method (`#m`) from storage or scoped key.
+pub fn private_method_display_name(key: &str) -> String {
+    if let Some(rest) = key.strip_prefix('#') {
+        return format!("#{rest}");
+    }
+    if is_private_name_key(key) {
+        let inner = &key[9..key.len() - 1];
+        let bare = inner.rsplit(':').next().unwrap_or(inner);
+        return format!("#{bare}");
+    }
+    key.to_string()
+}
+
 /// A class method: (name, params, body, is_async, is_generator)
 pub type ClassMethod = (
     PropertyKey,
@@ -151,9 +164,9 @@ pub struct ClassValue {
     /// Static getters (name -> body)
     pub static_getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     /// Instance setters (name -> (param, body))
-    pub setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    pub setters: Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     /// Static setters (name -> (param, body))
-    pub static_setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    pub static_setters: Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     /// Instance fields (name -> value expression)
     pub instance_fields: Vec<(PropertyKey, crate::ast::Expression)>,
     /// Static fields (name -> value expression)
@@ -190,15 +203,23 @@ pub struct ClassValue {
     pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     /// Whether new private static fields may be added (Object.preventExtensions).
     pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
+    /// Shared private method/accessor values installed on every instance.
+    pub(crate) private_element_cache: std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>,
+    /// Bare private names declared on this class (`#m` → `m`).
+    pub(crate) declared_private_names: std::collections::HashSet<String>,
 }
 
 impl ClassValue {
     /// Create a ClassValue from an AST Class node
     #[allow(dead_code)]
-    pub fn from_ast(class: &Class) -> Self {
+    pub fn from_ast(class: &Class, parent_class_id: Option<usize>) -> Self {
         let id = CLASS_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut scoped_class = class.clone();
-        crate::eval::class::private_names::scope_class_private_names(&mut scoped_class, id);
+        crate::eval::class::private_names::scope_class_private_names(
+            &mut scoped_class,
+            id,
+            parent_class_id,
+        );
 
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
@@ -229,6 +250,9 @@ impl ClassValue {
             &mut static_blocks,
         );
 
+        let declared_private_names =
+            crate::eval::class::private_names::collect_declared_private_names(&scoped_class.body);
+
         ClassValue {
             id,
             name: scoped_class.name.clone(),
@@ -256,6 +280,8 @@ impl ClassValue {
             static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
+            private_element_cache: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+            declared_private_names,
         }
     }
 
@@ -279,6 +305,10 @@ impl ClassValue {
     pub fn set_class_def_env(&self, env: Rc<RefCell<Environment>>) {
         let mut cell = self.class_def_env_cell.borrow_mut();
         *cell = Some(env);
+    }
+
+    pub fn class_id(&self) -> usize {
+        self.id
     }
 
     /// Get the class definition environment
@@ -410,20 +440,83 @@ impl ClassValue {
                 // Bind `this` to the class itself so `this._v = v` in the setter body
                 // writes to the class's own static properties, not a throwaway object.
                 let this_val = Value::Class(Box::new(self.clone()));
-                let mut call_env = Environment::with_parent(Rc::clone(&env));
-                call_env.current_scope().borrow_mut().set_this(this_val);
-                call_env.define(param.clone(), value);
-                let call_env = Rc::new(RefCell::new(call_env));
+                let call_env = Environment::with_parent(Rc::clone(&env));
+                call_env
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(this_val.clone());
+                let call_env_rc = Rc::new(RefCell::new(call_env));
+                let setter_fn = crate::value::ValueFunction::new(
+                    None,
+                    vec![param.clone()],
+                    body.clone(),
+                    Rc::clone(&env),
+                    false,
+                    false,
+                );
+                crate::eval::function::bind_params(
+                    &setter_fn,
+                    &setter_fn.params,
+                    &[value],
+                    &call_env_rc,
+                )?;
                 if !body.is_empty() {
+                    let body_env_rc = crate::eval::function::function_body_env(
+                        &call_env_rc,
+                        &setter_fn,
+                        &this_val,
+                        std::slice::from_ref(param),
+                    );
+                    body_env_rc.borrow_mut().push_scope();
+                    crate::interpreter::predeclare_var(body, &mut body_env_rc.borrow_mut());
+                    crate::interpreter::predeclare_let_const(body, &mut body_env_rc.borrow_mut());
                     let prev_strict = crate::interpreter::is_strict_mode();
-                    crate::interpreter::set_strict_mode(false);
-                    eval::statement::eval_function_body(body, &call_env, false)?;
-                    // A setter's completion is discarded per ES §9.1.9 — consume a
-                    // pending ControlFlow::Return so it can't leak into the next call.
+                    crate::interpreter::set_strict_mode(true);
+                    eval::statement::eval_function_body(body, &body_env_rc, false)?;
                     let _ = crate::interpreter::take_control_flow();
                     crate::interpreter::set_strict_mode(prev_strict);
                 }
                 return Ok(());
+            }
+        }
+
+        // No setter found — enforce PrivateSet before writing static storage.
+        if crate::value::is_private_name_key(name) {
+            if self.static_methods.iter().any(|(key, _, _, _, _)| {
+                crate::eval::class::helpers::prop_key_to_string(key, &env, false)
+                    .is_ok_and(|k| k == name)
+            }) {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Private method is not writable",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
+            if self.static_getters.iter().enumerate().any(|(i, (key, _))| {
+                let key_str = self
+                    .static_getter_key(i)
+                    .or_else(|| {
+                        crate::eval::class::helpers::prop_key_to_string(key, &env, false).ok()
+                    })
+                    .unwrap_or_default();
+                key_str == name
+            }) && !self
+                .static_setters
+                .iter()
+                .enumerate()
+                .any(|(i, (key, _, _))| {
+                    self.static_setter_key(i)
+                        .or_else(|| {
+                            crate::eval::class::helpers::prop_key_to_string(key, &env, false).ok()
+                        })
+                        .is_some_and(|k| k == name)
+                })
+            {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Private accessor has no setter",
+                    "TypeError",
+                );
+                return Err(js_err);
             }
         }
 
@@ -451,8 +544,8 @@ fn fill_members_from_ast(
     static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     static_getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
-    setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
-    static_setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    setters: &mut Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
+    static_setters: &mut Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     instance_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_blocks: &mut Vec<Vec<crate::ast::Statement>>,
@@ -791,7 +884,7 @@ mod tests {
         // Build a class with a static setter
         let setter_member = ClassMember::StaticSetter {
             name: PropertyKey::String("foo".to_string()),
-            param: "v".to_string(),
+            param: crate::ast::Param::new("v"),
             body: vec![],
         };
         let class = Class {
@@ -799,7 +892,7 @@ mod tests {
             super_class: None,
             body: vec![setter_member],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 
@@ -815,7 +908,7 @@ mod tests {
         // Build a class with a static setter that records the value
         let setter_member = ClassMember::StaticSetter {
             name: PropertyKey::String("foo".to_string()),
-            param: "v".to_string(),
+            param: crate::ast::Param::new("v"),
             body: vec![Statement::Empty],
         };
         let class = Class {
@@ -823,7 +916,7 @@ mod tests {
             super_class: None,
             body: vec![setter_member],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 
@@ -841,7 +934,7 @@ mod tests {
             super_class: None,
             body: vec![],
         };
-        let class_val = ClassValue::from_ast(&class);
+        let class_val = ClassValue::from_ast(&class, None);
         let env = make_env();
         class_val.set_class_def_env(Rc::clone(&env));
 

@@ -35,8 +35,9 @@ pub use object::{
     SetterBody, SetterStorage, TypedArrayName,
 };
 pub use val::{
-    is_private_element_key, is_private_name_key, is_unscoped_private_name_key, private_name_key,
-    scoped_private_name_key, ClassValue, Symbol, Value,
+    is_private_element_key, is_private_name_key, is_unscoped_private_name_key,
+    private_method_display_name, private_name_key, scoped_private_name_key, ClassValue, Symbol,
+    Value,
 };
 
 // =============================================================================
