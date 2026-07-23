@@ -197,6 +197,15 @@ mod tests {
     }
 
     #[test]
+    fn private_field_get_on_primitive_receiver_throws_type_error() {
+        let mut ctx = Context::new().unwrap();
+        let err = ctx
+            .eval("class C { #p = 1; m() { this.#p; } } C.prototype.m.call(15);")
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
     fn static_private_setter_only_get_throws_type_error() {
         let mut ctx = Context::new().unwrap();
         let err = ctx

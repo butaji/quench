@@ -27,6 +27,9 @@ pub fn eval_member_access(
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    if crate::value::is_private_name_key(prop_name) {
+        return eval_private_member_get(obj_val, prop_name, env);
+    }
     match obj_val {
         Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => eval_string_member(s, prop_name, env),
@@ -305,6 +308,24 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
         }
         Value::Class(_) => None,
         _ => None,
+    }
+}
+
+fn eval_private_member_get(
+    obj_val: &Value,
+    prop_name: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match obj_val {
+        Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
+        Value::Class(class) => eval_class_member(class, prop_name, env),
+        _ => {
+            let (_, js_err) = create_js_error_with_type(
+                "Cannot read private member from an object whose class did not declare it",
+                "TypeError",
+            );
+            Err(js_err)
+        }
     }
 }
 

@@ -122,8 +122,7 @@ pub fn instantiate_simple(
     )?));
 
     if should_auto_super(class) {
-        let sc = class.super_class.as_ref().unwrap();
-        let sv = eval_expression(sc, env, false)?;
+        let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args.clone(), &this_val, env)?;
         if let Value::Object(o) = &effective_this {
             let field_obj = crate::eval::object::private_field_object(o);
@@ -240,7 +239,7 @@ pub fn instantiate_with_fields(
     )?));
 
     if should_auto_super(class) {
-        let sv = eval_expression(class.super_class.as_ref().unwrap(), env, false)?;
+        let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
         if let Value::Object(o) = &effective_this {
             let field_obj = crate::eval::object::private_field_object(o);
@@ -283,6 +282,27 @@ pub fn instantiate_with_fields(
     )?)
 }
 
+/// Resolve the superclass constructor value, preferring the cache from class definition.
+pub fn resolve_super_class_value(
+    class: &ClassValue,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(def_env) = class.get_class_def_env() {
+        if let Some(cached) = def_env.borrow().get_super_class() {
+            return Ok(cached);
+        }
+    }
+    let sc = class
+        .super_class
+        .as_ref()
+        .ok_or_else(|| JsError("resolve_super_class_value: no super_class".into()))?;
+    let prev_strict = is_strict_mode();
+    set_strict_mode(true);
+    let val = eval_expression(sc, env, false)?;
+    set_strict_mode(prev_strict);
+    Ok(val)
+}
+
 /// Build constructor environment (params, arguments, super reference)
 pub fn build_constructor_env(
     class: &ClassValue,
@@ -290,14 +310,15 @@ pub fn build_constructor_env(
     this_val: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Environment, JsError> {
-    let mut call_env = Environment::with_parent(Rc::clone(env));
+    let parent = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
+    let mut call_env = Environment::with_parent(parent);
     call_env
         .current_scope()
         .borrow_mut()
         .set_this_value(this_val.clone());
 
-    if let Some(ref sc) = class.super_class {
-        let sv = eval_expression(sc, env, false)?;
+    if class.super_class.is_some() {
+        let sv = resolve_super_class_value(class, env)?;
         call_env.set_super_class(sv);
     }
     call_env.set_private_class_context(class.class_id(), class.declared_private_names.clone());
@@ -357,6 +378,11 @@ pub fn call_super_or_default(
         }
         Value::NativeConstructor(nc) => crate::eval::function::call_value_with_this(
             Value::NativeConstructor(nc.clone()),
+            args,
+            this_val.clone(),
+        ),
+        Value::Function(f) => crate::eval::function::call_value_with_this(
+            Value::Function(f.clone()),
             args,
             this_val.clone(),
         ),
@@ -2948,6 +2974,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::String("1,2".into()));
+    }
+
+    #[test]
+    fn class_name_binding_const_in_constructor_throws_type_error() {
+        let err = eval("class C { constructor() { C = 42; } } new C();").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_name_binding_const_in_method_throws_type_error() {
+        let err = eval("class C { m() { C = 42; } } new C().m();").unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_function_super_arguments_callee_throws() {
+        let err = eval("var D = class extends function() { arguments.callee; } {}; new D();")
+            .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn class_extends_function_get_prototype_arguments_throws() {
+        let err = eval(
+            "var D = class extends function() { arguments.callee; } {}; \
+             Object.getPrototypeOf(D).arguments;",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn private_field_add_duplicate_after_super_return_throws() {
+        let err = eval(
+            "class A { constructor(arg) { return arg; } } \
+             class C extends A { #x; constructor(arg) { super(arg); } } \
+             var o = new C(); \
+             new C(o);",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
     }
 
     #[test]
