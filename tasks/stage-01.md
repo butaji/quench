@@ -24,8 +24,8 @@ leave the test in. Do not edit `tests/test262.rs` or anything under
   undefined / boolean literals touch the eval value path. Pick the
   matching module before writing the reproducer.
 - This stage is pure parser/lowering work — no self-hosted JS builtin
-  is touched. The R0 self-hosting pivot (`tasks/refactor-plan.md`) is
-  orthogonal and can proceed in parallel without regressing literals.
+  is touched. Current execution order is Phases A–C in
+  `tasks/10-ways-to-speed-up.md` (R0 is Phase B, before built-ins).
 
 ## History
 

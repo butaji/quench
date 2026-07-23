@@ -351,6 +351,8 @@ pub enum BindingElement {
     ArrayPattern(Vec<BindingElement>),
     ObjectPattern(Vec<(PropertyKey, BindingElement)>),
     Default(Box<BindingElement>, Box<Expression>),
+    /// Array rest element: `...binding` inside `[a, ...rest]`.
+    Rest(Box<BindingElement>),
     /// Full assignment target as an expression (e.g. `target()[key]` inside an
     /// object destructuring pattern). Evaluated at the spec-mandated point
     /// and PutValue'd with the destructured value.

@@ -4,8 +4,6 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::env::Environment;
-use crate::eval::class::helpers::prop_key_to_string;
 use crate::value::object::helpers::PropertyFlags;
 use crate::value::same_value;
 use crate::{JsError, Value};
@@ -82,34 +80,7 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
             let obj = obj_ref.borrow();
             obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
         }
-        Value::Class(class_ref) => {
-            // Built-in class properties (name, prototype) are always own
-            // unless explicitly deleted.
-            if name_str == "name" || name_str == "prototype" {
-                !class_ref.deleted_properties.borrow().contains(&name_str)
-            } else {
-                let eval_env = class_ref
-                    .get_class_def_env()
-                    .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
-                // Static accessors exist on the class
-                let has_static_getter = class_ref.static_getters.iter().any(|(k, _)| {
-                    prop_key_to_string(k, &eval_env, false)
-                        .map(|k_str| k_str == name_str)
-                        .unwrap_or(false)
-                });
-                let has_static_setter = class_ref.static_setters.iter().any(|(k, _, _)| {
-                    prop_key_to_string(k, &eval_env, false)
-                        .map(|k_str| k_str == name_str)
-                        .unwrap_or(false)
-                });
-                // Static fields: stored in static_properties_cell
-                let has_static_field = class_ref
-                    .static_properties_cell
-                    .borrow()
-                    .contains_key(&name_str);
-                has_static_getter || has_static_setter || has_static_field
-            }
-        }
+        Value::Class(class_ref) => class_ref.has_static_own_property(&name_str),
         Value::Function(f) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
                 f.get_property(&key_str).is_some()
@@ -679,6 +650,20 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         try_inject_harness(&mut ctx).unwrap();
         ctx
+    }
+
+    #[test]
+    fn test_verify_property_class_static_method() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "class C { static m() { return 1; } } \
+             verifyProperty(C, 'm', { enumerable: false, configurable: true, writable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty class static method should pass: {:?}",
+            result
+        );
     }
 
     #[test]

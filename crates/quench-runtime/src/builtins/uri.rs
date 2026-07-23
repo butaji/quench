@@ -215,23 +215,6 @@ fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
 }
 
 pub fn register_uri(ctx: &mut Context) {
-    // eval(string)
-    ctx.register_native("eval", |args| {
-        let source = args
-            .first()
-            .map(|v| crate::value::to_js_string(v))
-            .unwrap_or_default();
-        let ctx_ptr = crate::context::CURRENT_CONTEXT.with(|cell| *cell.borrow());
-        match ctx_ptr {
-            Some(ptr) => {
-                // SAFETY: CURRENT_CONTEXT is set during eval
-                let ctx = unsafe { &mut *ptr };
-                ctx.eval(&source)
-            }
-            None => Ok(Value::Undefined),
-        }
-    });
-
     // parseInt(string, radix)
     ctx.register_native("parseInt", |args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);

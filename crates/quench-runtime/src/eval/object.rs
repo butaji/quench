@@ -48,9 +48,7 @@ pub fn extract_property_name(
             PropertyKey::Computed(e) => {
                 let val = eval_expression(e, env, in_arrow_function)?;
                 match &val {
-                    Value::Symbol(s) => {
-                        Ok(s.desc.clone().map(|d| d.to_string()).unwrap_or_default())
-                    }
+                    Value::Symbol(s) => Ok(s.property_key()),
                     _ => Ok(crate::value::to_js_string(&val)),
                 }
             }
@@ -390,6 +388,13 @@ pub(crate) fn assign_to_object(
 
     // Reject property sets on frozen objects.
     if crate::builtins::object_static::is_frozen_object(o) {
+        if crate::interpreter::is_strict_mode() {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot assign to read only property",
+                "TypeError",
+            );
+            return Err(js_err);
+        }
         return Ok(());
     }
 

@@ -130,11 +130,15 @@ fn lower_computed_member_expr(
     })
 }
 
+fn private_field_prop_key(name: &str) -> PropertyKey {
+    PropertyKey::Ident(crate::value::private_name_key(name))
+}
+
 fn lower_private_field_expr(
     member: &ast::PrivateFieldExpression,
 ) -> Result<Expression, LowerError> {
     let obj = lower_expr_inner(&member.object)?;
-    let property = PropertyKey::Ident(format!("#{}", member.field.name));
+    let property = private_field_prop_key(member.field.name.as_str());
     Ok(Expression::Member {
         object: Box::new(obj),
         property,
@@ -276,15 +280,6 @@ pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Express
             Ok(Expression::Identifier(ident.name.as_str().to_string()))
         }
         ast::AssignmentTarget::StaticMemberExpression(sm) => {
-            if matches!(sm.object, ast::Expression::Super(_)) {
-                // super.prop — keep as Identifier("super") so eval_member
-                // dispatches to eval_super_member / set_super_property.
-                return Ok(Expression::Member {
-                    object: Box::new(Expression::Identifier("super".to_string())),
-                    property: PropertyKey::Ident(sm.property.name.as_str().to_string()),
-                    computed: false,
-                });
-            }
             let obj = lower_expr_inner(&sm.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
@@ -304,7 +299,7 @@ pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Express
             let obj = lower_expr_inner(&pf.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
-                property: PropertyKey::Ident(format!("#{}", pf.field.name)),
+                property: private_field_prop_key(pf.field.name.as_str()),
                 computed: false,
             })
         }
@@ -344,7 +339,7 @@ pub fn lower_simple_assignment_target(
             let obj = lower_expr_inner(&pf.object)?;
             Ok(Expression::Member {
                 object: Box::new(obj),
-                property: PropertyKey::Ident(format!("#{}", pf.field.name)),
+                property: private_field_prop_key(pf.field.name.as_str()),
                 computed: false,
             })
         }

@@ -15,10 +15,7 @@ fn obj() -> Value {
 }
 
 fn sym(desc: &str) -> Value {
-    Value::Symbol(Rc::new(Symbol {
-        desc: Some(Rc::from(desc)),
-        global: false,
-    }))
+    Value::Symbol(Rc::new(Symbol::new(Some(Rc::from(desc)), false)))
 }
 
 fn big(n: i32) -> Value {

@@ -133,6 +133,20 @@ fn test_symbol_calls_are_unique() {
 }
 
 #[test]
+fn two_symbols_same_description_are_distinct_keys() {
+    let mut ctx = create_test_context();
+    reset_global_symbol_registry();
+    let result = ctx
+        .eval(
+            "var a = Symbol('x'), b = Symbol('x'); \
+             var o = {}; o[a] = 1; o[b] = 2; \
+             o[a] === 1 && o[b] === 2",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn test_symbol_for_identity() {
     let mut ctx = create_test_context();
     reset_global_symbol_registry();

@@ -48,10 +48,7 @@ fn next_symbol_desc() -> u64 {
 
 /// Create a new unique symbol value with the given description.
 pub fn new_symbol(desc: &str) -> Value {
-    Value::Symbol(Rc::new(ValSymbol {
-        desc: Some(Rc::from(desc)),
-        global: false,
-    }))
+    Value::Symbol(Rc::new(ValSymbol::new(Some(Rc::from(desc)), false)))
 }
 
 /// Store a well-known symbol in thread-local storage
@@ -95,10 +92,7 @@ fn symbol_for_impl(key: &str) -> Value {
             return existing.clone();
         }
         // Symbol.for stores with global: true and uses the key as description
-        let new_symbol = Value::Symbol(Rc::new(ValSymbol {
-            desc: Some(Rc::from(key)),
-            global: true,
-        }));
+        let new_symbol = Value::Symbol(Rc::new(ValSymbol::new(Some(Rc::from(key)), true)));
         reg.insert(key.to_string(), new_symbol.clone());
         new_symbol
     })

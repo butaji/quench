@@ -1,7 +1,6 @@
 //! Member access helpers.
 
 use crate::env::Environment;
-use crate::eval::expression::eval_expression;
 use crate::eval::string_methods::get_string_method;
 use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
@@ -25,28 +24,9 @@ pub fn get_member_function(
             crate::eval::member::eval_native_constructor_member(nc, prop_name)
         }
         Value::Class(class) => {
-            if let Some(val) = class.get_static_field(prop_name) {
+            let val = crate::eval::member::eval_member_access(obj_val, prop_name, env)?;
+            if !matches!(val, Value::Undefined) {
                 return Ok(val);
-            }
-            for (name, params, body, is_async, is_generator) in &class.static_methods {
-                if name_matches_prop(name, prop_name) {
-                    // Use class definition env so static methods have access to super_class.
-                    let closure_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                    let mut func = crate::value::ValueFunction::new(
-                        Some(prop_name.to_string()),
-                        params.clone(),
-                        body.clone(),
-                        closure_env,
-                        *is_async,
-                        *is_generator,
-                    );
-                    func.strict = true;
-                    return Ok(Value::Function(func));
-                }
-            }
-            if let Some(ref super_expr) = class.super_class {
-                let super_val = eval_expression(super_expr, env, false)?;
-                return crate::eval::member::eval_member_access(&super_val, prop_name, env);
             }
             let proto = crate::eval::class::get_or_create_class_prototype(class, env)?;
             crate::eval::member::eval_object_member(&proto, prop_name, Some(env))
@@ -91,7 +71,9 @@ pub fn get_member_function(
 /// Check if a property key matches a name.
 pub fn name_matches_prop(key: &crate::ast::PropertyKey, name: &str) -> bool {
     match key {
-        crate::ast::PropertyKey::Ident(s) => s == name,
+        crate::ast::PropertyKey::Ident(s) => {
+            s == name || (s.starts_with('#') && name == crate::value::private_name_key(s))
+        }
         crate::ast::PropertyKey::String(s) => s == name,
         crate::ast::PropertyKey::Number(n) => n.to_string() == name,
         crate::ast::PropertyKey::Computed(_) => false,
