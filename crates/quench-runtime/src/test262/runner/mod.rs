@@ -13,6 +13,22 @@ use crate::test262::host::{Test262Host, TestOutcome};
 pub use execute::run_single_test;
 use flags::RunnerFlags;
 
+/// Absolute test262 root (`tests/test262`), for subprocess runners whose cwd may differ.
+pub fn default_test262_dir() -> String {
+    if let Ok(dir) = std::env::var("TEST262_DIR") {
+        return dir;
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(&manifest);
+    repo_root
+        .join("tests/test262")
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Ordered stages (relative to test262/test/). Mirrors `tasks/index.json`.
 pub const STAGES: &[&str] = &[
     "test/harness",
