@@ -43,6 +43,25 @@ fn throw_uninitialized_this() -> Result<Value, JsError> {
     Err(js_err)
 }
 
+/// ReferenceError when derived ctor reads `this` before `super()`.
+pub(crate) fn throw_this_before_super() -> Result<Value, JsError> {
+    let (thrown_val, js_err) = crate::value::error::create_js_error_with_type(
+        "Must call super constructor in derived class before accessing 'this'",
+        "ReferenceError",
+    );
+    crate::value::error::set_thrown_value(thrown_val);
+    Err(js_err)
+}
+
+pub(crate) fn check_this_access_allowed(env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+    if let Some(class) = constructing_class_for_super() {
+        if class.super_class.is_some() && !crate::interpreter::is_this_binding_initialized(env) {
+            throw_this_before_super()?;
+        }
+    }
+    Ok(())
+}
+
 /// Finish a constructor: object returns win; derived + uninitialized this → ReferenceError.
 fn finish_ctor_result(
     result: Value,
@@ -125,8 +144,8 @@ pub fn instantiate_simple(
         let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args.clone(), &this_val, env)?;
         if let Value::Object(o) = &effective_this {
+            init_instance_fields(class, o, &call_env)?;
             let field_obj = crate::eval::object::private_field_object(o);
-            init_instance_fields(class, &field_obj, &call_env)?;
             install_privates_on_object(class, &field_obj, env)?;
         }
         return finalize_instance(effective_this);
@@ -153,9 +172,10 @@ pub fn instantiate_simple(
 
 pub(crate) fn init_instance_fields(
     class: &ClassValue,
-    instance_rc: &Rc<RefCell<Object>>,
+    receiver_rc: &Rc<RefCell<Object>>,
     call_env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    let private_target = crate::eval::object::private_field_object(receiver_rc);
     for (i, (name, value_expr)) in class.instance_fields.iter().enumerate() {
         crate::interpreter::set_eval_in_class_field(true);
         let mut field_val = eval_expression(value_expr, call_env, false)?;
@@ -165,11 +185,16 @@ pub(crate) fn init_instance_fields(
             None => prop_key_to_string(name, call_env, false)?,
         };
         set_function_name_for_field_initializer(&mut field_val, name, &key_str, value_expr);
-        private_field_add(
-            instance_rc,
-            &storage_key_for_property(name, &key_str),
-            field_val,
-        )?;
+        let storage_key = storage_key_for_property(name, &key_str);
+        if crate::value::is_private_name_key(&storage_key) {
+            private_field_add(&private_target, &storage_key, field_val)?;
+        } else {
+            crate::eval::object::create_data_property_or_throw(
+                receiver_rc,
+                &storage_key,
+                field_val,
+            )?;
+        }
     }
     Ok(())
 }
@@ -241,8 +266,8 @@ pub fn instantiate_with_fields(
         let sv = resolve_super_class_value(class, env)?;
         let effective_this = call_super_or_default(&sv, args, &this_val, env)?;
         if let Value::Object(o) = &effective_this {
+            init_instance_fields(class, o, &call_env)?;
             let field_obj = crate::eval::object::private_field_object(o);
-            init_instance_fields(class, &field_obj, &call_env)?;
             install_privates_on_object(class, &field_obj, env)?;
         }
         return finalize_instance(effective_this);
@@ -3252,6 +3277,29 @@ mod tests {
              var a = new A(); a.dontDoThis();",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn this_access_before_super_in_super_args_throws_reference_error() {
+        let err = eval(
+            "class Base {} class C extends Base { constructor() { super(this.x); } } new C();",
+        );
+        assert!(err.is_err(), "expected ReferenceError, got {:?}", err);
+        assert!(
+            err.unwrap_err().0.contains("ReferenceError"),
+            "expected ReferenceError message"
+        );
+    }
+
+    #[test]
+    fn super_prototype_property_in_derived_constructor() {
+        let r = eval(
+            "class B {} B.prototype.x = 42; \
+             var v; class C extends B { constructor() { super(); v = super.x; } } \
+             new C(); v",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
     }
 
     #[test]

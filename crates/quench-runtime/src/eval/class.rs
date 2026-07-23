@@ -295,10 +295,10 @@ pub fn call_super_constructor(
 
     if body.is_empty() {
         if let Value::Object(o) = &this_val {
-            let field_obj = crate::eval::object::private_field_object(o);
             if !class.instance_fields.is_empty() {
-                init_instance_fields(&class, &field_obj, &call_env)?;
+                init_instance_fields(&class, o, &call_env)?;
             }
+            let field_obj = crate::eval::object::private_field_object(o);
             install_instance_private_elements(&class, &field_obj, env)?;
         }
         return Ok(this_val);

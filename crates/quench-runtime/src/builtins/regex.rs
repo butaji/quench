@@ -258,7 +258,17 @@ fn regexp_constructor_impl(
         obj.set("global", Value::Boolean(flags.contains('g')));
         obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
         obj.set("multiline", Value::Boolean(flags.contains('m')));
-        obj.set("lastIndex", Value::Number(0.0));
+        let last_index = Value::Number(0.0);
+        obj.define(
+            "lastIndex",
+            last_index.clone(),
+            crate::value::PropertyFlags {
+                value: Some(last_index),
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            },
+        );
         obj.set("flags", Value::String(flags.clone()));
         obj.internal_regex = Some(compiled);
         Ok(Value::Object(Rc::clone(&obj_rc)))
@@ -271,7 +281,17 @@ fn regexp_constructor_impl(
         obj.set("global", Value::Boolean(flags.contains('g')));
         obj.set("ignoreCase", Value::Boolean(flags.contains('i')));
         obj.set("multiline", Value::Boolean(flags.contains('m')));
-        obj.set("lastIndex", Value::Number(0.0));
+        let last_index = Value::Number(0.0);
+        obj.define(
+            "lastIndex",
+            last_index.clone(),
+            crate::value::PropertyFlags {
+                value: Some(last_index),
+                writable: true,
+                enumerable: false,
+                configurable: false,
+            },
+        );
         obj.set("flags", Value::String(flags.clone()));
         obj.internal_regex = Some(compiled);
         obj.prototype = Some(Rc::clone(regexp_proto));

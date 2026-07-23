@@ -160,6 +160,10 @@ fn eval_super_call(
         Value::Object(o) => crate::eval::object::private_field_object(o),
         _ => return result,
     };
+    let receiver = match &current_this {
+        Value::Object(o) => Rc::clone(o),
+        _ => return result,
+    };
 
     // After super() succeeds, run pending field initializers (for derived
     // classes with instance fields) before returning to the constructor body.
@@ -177,11 +181,13 @@ fn eval_super_call(
                 Some(k) => k,
                 None => eval_property_key(&prop_key, env, in_arrow_function)?,
             };
-            crate::eval::class::helpers::private_field_add(
-                &field_target,
-                &crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str),
-                val,
-            )?;
+            let storage_key =
+                crate::eval::class::helpers::storage_key_for_property(&prop_key, &key_str);
+            if crate::value::is_private_name_key(&storage_key) {
+                crate::eval::class::helpers::private_field_add(&field_target, &storage_key, val)?;
+            } else {
+                crate::eval::object::create_data_property_or_throw(&receiver, &storage_key, val)?;
+            }
         }
     }
 
@@ -237,7 +243,11 @@ fn eval_super_member(
     // and fields on the superclass are resolved correctly.
     // Check the env chain: the static marker lives on class_def_env, which may
     // be an ancestor of the current env (e.g. call_env -> class_def_env).
-    let is_static = {
+    // Constructor bodies share class_def_env as parent but must use prototype
+    // resolution like instance methods.
+    let is_static = if crate::eval::class::helpers::constructing_class_for_super().is_some() {
+        false
+    } else {
         let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
         let mut found = false;
         while let Some(e) = current {
