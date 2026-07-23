@@ -117,3 +117,127 @@ pub fn register_string(_ctx: &mut Context) {
     // Note: String global is registered by date::register_type_converters
     // with proper constructor behavior for new String()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+    use crate::Value;
+
+    #[test]
+    fn test_string_subclass_explicit_super() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            class MyStr extends String {
+                constructor() {
+                    super("test262");
+                }
+            }
+            var s = new MyStr();
+            [s.hasOwnProperty("length"), s.toString(), s.length];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert!(
+                    matches!(arr.get("0"), Some(Value::Boolean(true))),
+                    "expected s.hasOwnProperty('length') to be true, got {:?}",
+                    arr.get("0")
+                );
+                assert!(
+                    matches!(arr.get("1"), Some(Value::String(s)) if s == "test262"),
+                    "expected s.toString() to be 'test262', got {:?}",
+                    arr.get("1")
+                );
+                assert!(
+                    matches!(arr.get("2"), Some(Value::Number(n)) if (n - 7.0).abs() < 1e-10),
+                    "expected s.length to be 7, got {:?}",
+                    arr.get("2")
+                );
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_string_subclass_no_args() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            class S extends String {}
+            var s = new S();
+            [s.hasOwnProperty("length"), s.length];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert!(
+                    matches!(arr.get("0"), Some(Value::Boolean(true))),
+                    "expected s.hasOwnProperty('length') to be true, got {:?}",
+                    arr.get("0")
+                );
+                assert!(
+                    matches!(arr.get("1"), Some(Value::Number(n)) if (n - 0.0).abs() < 1e-10),
+                    "expected s.length to be 0, got {:?}",
+                    arr.get("1")
+                );
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_string_subclass_trim() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            class S extends String {}
+            var s = new S(' test262 ');
+            s.trim();
+        "#,
+            )
+            .unwrap();
+        assert_eq!(r, Value::String("test262".to_string()));
+    }
+
+    #[test]
+    fn test_string_new_length_own_property() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+                r#"
+            var s = new String("test262");
+            [s.hasOwnProperty("length"), s.length, s.toString()];
+        "#,
+            )
+            .unwrap();
+        match r {
+            Value::Object(arr_rc) => {
+                let arr = arr_rc.borrow();
+                assert!(
+                    matches!(arr.get("0"), Some(Value::Boolean(true))),
+                    "expected s.hasOwnProperty('length') to be true, got {:?}",
+                    arr.get("0")
+                );
+                assert!(
+                    matches!(arr.get("1"), Some(Value::Number(n)) if (n - 7.0).abs() < 1e-10),
+                    "expected s.length to be 7, got {:?}",
+                    arr.get("1")
+                );
+                assert!(
+                    matches!(arr.get("2"), Some(Value::String(s)) if s == "test262"),
+                    "expected s.toString() to be 'test262', got {:?}",
+                    arr.get("2")
+                );
+            }
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+}
