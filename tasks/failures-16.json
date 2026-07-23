@@ -1,18 +1,6 @@
 {
-  "failed": 69,
+  "failed": 67,
   "groups": [
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-functions.js",
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-methods.js"
-      ],
-      "reason": "Cannot destructure non-object value",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-functions.js",
-        "/workspace/tests/test262/test/language/statements/class/static-init-arguments-methods.js"
-      ]
-    },
     {
       "count": 1,
       "paths": [
@@ -532,7 +520,7 @@
       ]
     }
   ],
-  "passed": 4298,
+  "passed": 4300,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
