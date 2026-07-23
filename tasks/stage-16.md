@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4329 pass / 38 fail (99.1%)** as of 2026-07-23.
+**4,367 tests** · **4331 pass / 36 fail (99.2%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -43,9 +43,10 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4300** | **67** | **98.5%** | Object destructure param ToObject for string primitives (static-init-arguments) |
 | 2026-07-23 | **4311** | **56** | **98.7%** | fn-name SetFunctionName (method/accessor); static name/length shadow; private static `#method` name; getOwnPropertyNames |
 | 2026-07-23 | **4318** | **49** | **98.9%** | Generator completion undefined unless return; class field SetFunctionName; arrow no spurious empty `.name` |
-| 2026-07-23 | **4329** | **38** | **99.1%** | Nested static private on Class; derived invalid return TypeError; static private setter brand; nested eval `arguments` |
+| 2026-07-23 | **4329** | **38** | **99.1%** | Nested static private on Class; derived invalid return TypeError; static private setter brand |
+| 2026-07-23 | **4331** | **36** | **99.2%** | Nested direct eval `arguments` in deferred class-field arrows |
 
-## Top remaining clusters (~38)
+## Top remaining clusters (~36)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
