@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4318 pass / 49 fail (98.9%)** as of 2026-07-23.
+**4,367 tests** · **4329 pass / 38 fail (99.1%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -43,17 +43,15 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4300** | **67** | **98.5%** | Object destructure param ToObject for string primitives (static-init-arguments) |
 | 2026-07-23 | **4311** | **56** | **98.7%** | fn-name SetFunctionName (method/accessor); static name/length shadow; private static `#method` name; getOwnPropertyNames |
 | 2026-07-23 | **4318** | **49** | **98.9%** | Generator completion undefined unless return; class field SetFunctionName; arrow no spurious empty `.name` |
+| 2026-07-23 | **4329** | **38** | **99.1%** | Nested static private on Class; derived invalid return TypeError; static private setter brand; nested eval `arguments` |
 
-## Top remaining clusters (~49)
+## Top remaining clusters (~38)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 4 | Cannot read private member from undeclared class | Nested class private static access |
-| 3 | Expected TypeError got ReferenceError | Derived ctor catch/super return override |
-| 2 | Expected SyntaxError not thrown | Nested direct eval `arguments` in class |
 | 2 | Expected Test262Error not thrown | Proxy field observability, derived for-of return |
-| 2 | Expected TypeError not thrown | Private static setter shadow on nested class |
 | 2 | sameValue false !== true | this-access-restriction, RegExp subclass |
+| ~34 | Single-test edge cases | See `tasks/failures-16.json` |
 
 ## How to clear this stage (ASAP × min LOC)
 
