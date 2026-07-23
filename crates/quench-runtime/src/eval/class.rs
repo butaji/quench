@@ -335,7 +335,7 @@ pub fn get_or_create_class_prototype(
 
     let proto_rc = create_class_prototype_helper_with_env(class, env)?;
 
-    {
+    if !crate::value::generator_replay::yield_pending() {
         let mut cell = class.prototype_cell.borrow_mut();
         *cell = Some(Rc::clone(&proto_rc));
     }
