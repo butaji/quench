@@ -44,16 +44,6 @@ pub fn eval_class_expr(
             .current_scope()
             .borrow_mut()
             .declare_var(name.to_string(), VarKind::Const);
-        let class_val = Value::Class(Box::new(new_value.clone()));
-        scope_env
-            .borrow_mut()
-            .current_scope()
-            .borrow_mut()
-            .initialize_declared(name, class_val);
-        // Also initialize in env (parent scope) so static blocks can access
-        // the class name before eval_class_decl calls env.define().
-        env.borrow_mut()
-            .define(name.to_string(), Value::Class(Box::new(new_value.clone())));
         scope_env
     } else {
         Rc::clone(env)
@@ -62,6 +52,7 @@ pub fn eval_class_expr(
     // Set super_class on class_scope so static method closures capture it.
     // Must happen BEFORE get_or_create_class_prototype (which evaluates the class body).
     // Evaluate the superclass expression ONCE and cache for reuse.
+    // Class name binding stays in TDZ until heritage evaluation completes (ES §15.7.14).
     class_scope.borrow_mut().set_private_class_context(
         new_value.class_id(),
         new_value.declared_private_names.clone(),
@@ -79,6 +70,16 @@ pub fn eval_class_expr(
     } else {
         None
     };
+
+    if let Some(name) = class_name {
+        let class_val = Value::Class(Box::new(new_value.clone()));
+        class_scope
+            .borrow_mut()
+            .current_scope()
+            .borrow_mut()
+            .initialize_declared(name, class_val.clone());
+        env.borrow_mut().define(name.to_string(), class_val);
+    }
 
     let _ = get_or_create_class_prototype(&new_value, &class_scope)?;
     if crate::value::generator_replay::yield_pending() {
