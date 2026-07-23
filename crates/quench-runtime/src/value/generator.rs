@@ -89,6 +89,11 @@ impl GeneratorObject {
             .borrow_mut()
             .set_this(global_this);
         if let Some(ref args) = self.args {
+            let args_obj =
+                crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+            call_env
+                .borrow_mut()
+                .define("arguments".to_string(), args_obj);
             let stub = crate::value::ValueFunction::new(
                 None,
                 self.params.clone(),

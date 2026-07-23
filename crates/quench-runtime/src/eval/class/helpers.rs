@@ -288,6 +288,7 @@ pub fn build_constructor_env(
         let sv = eval_expression(sc, env, false)?;
         call_env.set_super_class(sv);
     }
+    call_env.set_private_class_context(class.class_id(), class.declared_private_names.clone());
 
     for (i, param) in class.constructor_params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
@@ -2610,6 +2611,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::Number(44.0));
+    }
+
+    #[test]
+    fn undeclared_private_in_constructor_eval_throws_syntax_error() {
+        let err = eval("class C { constructor() { eval(\"this.#x\"); } } new C()").unwrap_err();
+        assert!(err.0.contains("SyntaxError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn array_subclass_length_descriptor_is_writable() {
+        let r = eval(
+            "class Ar extends Array {} Object.getOwnPropertyDescriptor(new Ar('a','b'), 'length').writable",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn generator_method_default_param_reads_arguments() {
+        let r = eval(
+            "var ok = false; class C { *m(x = arguments[2], y = arguments[3], z) { \
+             ok = x === 'third' && y === 'fourth' && z === 'third'; } } \
+             C.prototype.m(undefined, undefined, 'third', 'fourth').next(); ok",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn generator_yield_spread_array_single() {
+        let r = eval(
+            "class C { *gen() { yield [...yield]; } } var iter = C.prototype.gen(); \
+             iter.next(false); iter.next(['a','b','c']).value[1]",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("b".into()));
     }
 
     #[test]

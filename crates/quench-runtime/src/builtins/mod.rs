@@ -111,8 +111,7 @@ impl Object {
     pub(crate) fn new_array_from(items: Vec<Value>) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = items.clone();
-        obj.properties
-            .insert("length".to_string(), Value::Number(items.len() as f64));
+        obj.define_array_length(items.len() as f64);
         if let Some(proto) = crate::builtins::array::get_array_prototype() {
             obj.prototype = Some(proto);
         }

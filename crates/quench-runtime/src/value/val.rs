@@ -205,6 +205,8 @@ pub struct ClassValue {
     pub(crate) extensible_cell: std::rc::Rc<std::cell::RefCell<bool>>,
     /// Shared private method/accessor values installed on every instance.
     pub(crate) private_element_cache: std::rc::Rc<std::cell::RefCell<HashMap<String, Value>>>,
+    /// Bare private names declared on this class (`#m` → `m`).
+    pub(crate) declared_private_names: std::collections::HashSet<String>,
 }
 
 impl ClassValue {
@@ -248,6 +250,9 @@ impl ClassValue {
             &mut static_blocks,
         );
 
+        let declared_private_names =
+            crate::eval::class::private_names::collect_declared_private_names(&scoped_class.body);
+
         ClassValue {
             id,
             name: scoped_class.name.clone(),
@@ -276,6 +281,7 @@ impl ClassValue {
             static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             extensible_cell: std::rc::Rc::new(std::cell::RefCell::new(true)),
             private_element_cache: std::rc::Rc::new(std::cell::RefCell::new(HashMap::new())),
+            declared_private_names,
         }
     }
 

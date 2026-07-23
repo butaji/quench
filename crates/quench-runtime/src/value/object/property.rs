@@ -16,6 +16,7 @@ use crate::value::object::helpers::{
 };
 use crate::value::object::keys::{own_keys, own_property_names};
 use crate::value::Object;
+use crate::value::ObjectKind;
 use crate::value::Value;
 
 // ─── Property get/set ──────────────────────────────────────────────────────────
@@ -67,9 +68,28 @@ impl Object {
                 "length".to_string(),
                 Value::Number(self.elements.len() as f64),
             );
+        } else if key == "length" && self.kind == ObjectKind::Array {
+            self.set_array_length_value(value);
         } else {
             self.properties.insert(key.to_string(), value);
         }
+    }
+
+    /// Assign `length` on an Array exotic object (truncate/extend elements).
+    pub fn set_array_length_value(&mut self, value: Value) {
+        let new_len = crate::value::to_number(&value).max(0.0) as usize;
+        if self.elements.len() > new_len {
+            self.elements.truncate(new_len);
+            self.properties.retain(|k, _| {
+                k.parse::<usize>()
+                    .map(|i| i < new_len)
+                    .unwrap_or(true)
+            });
+            self.holes.retain(|i| *i < new_len);
+        } else {
+            self.elements.resize(new_len, Value::Undefined);
+        }
+        self.define_array_length(new_len as f64);
     }
 
     /// Set a function property on a Value stored in this object.

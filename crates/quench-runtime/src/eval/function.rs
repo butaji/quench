@@ -84,6 +84,13 @@ pub(crate) fn call_value_impl(
                         .set_this(this_val.clone());
                 }
                 let call_env_rc = Rc::new(RefCell::new(call_env));
+                if !f.is_arrow {
+                    let args_obj =
+                        crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+                    call_env_rc
+                        .borrow_mut()
+                        .define("arguments".to_string(), args_obj);
+                }
                 bind_params(&f, &f.params, &args, &call_env_rc)?;
 
                 let mut gen_obj = crate::value::GeneratorObject::new(

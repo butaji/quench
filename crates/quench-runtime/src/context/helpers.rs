@@ -67,6 +67,18 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     if crate::interpreter::is_direct_eval() {
         if let Some(eval_env) = crate::interpreter::get_current_eval_env() {
             if let Some(class_id) = eval_env.borrow().private_class_id() {
+                let declared = eval_env.borrow().declared_private_names();
+                let ast::Program::Script(body) = &program;
+                if let Err(js_err) =
+                    crate::eval::class::private_names::reject_undeclared_private_names_in_eval(
+                        body, &declared,
+                    )
+                {
+                    CURRENT_CONTEXT.with(|cell| {
+                        *cell.borrow_mut() = prev_ctx;
+                    });
+                    return Err(js_err);
+                }
                 let ast::Program::Script(body) = &mut program;
                 crate::eval::class::private_names::scope_script_private_names(body, class_id);
             }

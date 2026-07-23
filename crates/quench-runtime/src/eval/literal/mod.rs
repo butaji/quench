@@ -241,8 +241,14 @@ pub fn eval_array_literal(
     for elem_expr in elements.iter() {
         match elem_expr {
             Expression::Spread(spread_expr) => {
-                let spread_val =
-                    crate::eval::expression::eval_expression(spread_expr, env, in_arrow_function)?;
+                let spread_val = after_expr_eval(crate::eval::expression::eval_expression(
+                    spread_expr,
+                    env,
+                    in_arrow_function,
+                ))?;
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(Value::Object(Rc::new(RefCell::new(arr))));
+                }
                 let items = get_iterator(&spread_val)?;
                 for item in items {
                     let idx = arr.elements.len();
@@ -254,14 +260,17 @@ pub fn eval_array_literal(
                 let idx = arr.elements.len();
                 arr.elements.push(Value::Undefined);
                 arr.holes.insert(idx);
-                arr.properties.insert(
-                    "length".to_string(),
-                    Value::Number(arr.elements.len() as f64),
-                );
+                arr.define_array_length(arr.elements.len() as f64);
             }
             _ => {
-                let value =
-                    crate::eval::expression::eval_expression(elem_expr, env, in_arrow_function)?;
+                let value = after_expr_eval(crate::eval::expression::eval_expression(
+                    elem_expr,
+                    env,
+                    in_arrow_function,
+                ))?;
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(Value::Object(Rc::new(RefCell::new(arr))));
+                }
                 let idx = arr.elements.len();
                 arr.set(&idx.to_string(), value);
             }
@@ -271,6 +280,14 @@ pub fn eval_array_literal(
         arr.prototype = Some(prototype);
     }
     Ok(Value::Object(Rc::new(RefCell::new(arr))))
+}
+
+fn after_expr_eval(result: Result<Value, JsError>) -> Result<Value, JsError> {
+    let val = result?;
+    if crate::interpreter::peek_generator_yield() {
+        return Ok(Value::Undefined);
+    }
+    Ok(val)
 }
 
 /// Get the super class value from the environment (public for use by expression.rs)
