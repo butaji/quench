@@ -1,5 +1,5 @@
 {
-  "failed": 88,
+  "failed": 75,
   "groups": [
     {
       "count": 4,
@@ -38,16 +38,6 @@
       ]
     },
     {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-order.js"
-      ],
-      "reason": "Test262Error: Actual [a, Symbol(foo), z] and expected [1, z, a, Symbol(foo)] should have the same contents. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-order.js"
-      ]
-    },
-    {
       "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-let.js",
@@ -57,38 +47,6 @@
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-let.js",
         "/workspace/tests/test262/test/language/statements/for-of/head-using-bound-names-fordecl-tdz.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js"
-      ],
-      "reason": "Test262Error: Expected Test262Error but got ReturnError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js"
-      ]
-    },
-    {
-      "count": 6,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/body-dstr-assign-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/body-put-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-lref-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-throw-get-method-non-callable.js"
-      ],
-      "reason": "Test262Error: Expected Test262Error but got TypeError. \")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/body-dstr-assign-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/body-put-error.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-lref-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-throw-get-method-non-callable.js"
       ]
     },
     {
@@ -120,18 +78,6 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-number.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-symbol-val.js"
-      ],
-      "reason": "Test262Error: Expected true but got false\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-number.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-symbol-val.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-fn-name-arrow.js"
@@ -142,52 +88,42 @@
       ]
     },
     {
-      "count": 2,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
-      ],
-      "reason": "Test262Error: sameValue failed: 0 !== 1",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-lref-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js"
       ],
       "reason": "Test262Error: sameValue failed: 1 !== 0",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-thrw-close.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-lref-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-done-attr.js"
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close.js"
       ],
       "reason": "Test262Error: sameValue failed: 11 !== 0",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-thrw-close.js"
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js"
       ],
       "reason": "Test262Error: sameValue failed: 11 !== 1",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js"
       ]
     },
@@ -202,12 +138,9 @@
       ]
     },
     {
-      "count": 7,
+      "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
@@ -215,9 +148,6 @@
       "reason": "Test262Error: sameValue failed: 2 !== 1",
       "samples": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
@@ -250,23 +180,19 @@
       ]
     },
     {
-      "count": 1,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-str-val.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"foo\\\" !== \\\"f\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-rest-str-val.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-evaluation.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-target-yield-expr.js"
       ]
@@ -442,7 +368,7 @@
       ]
     }
   ],
-  "passed": 663,
+  "passed": 676,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},

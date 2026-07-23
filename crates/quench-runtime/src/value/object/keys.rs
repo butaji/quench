@@ -86,9 +86,12 @@ fn array_indices(obj: &crate::value::Object) -> Vec<String> {
         let mut numeric: Vec<(usize, String)> = obj
             .properties
             .keys()
+            .chain(obj.getters.keys())
+            .chain(obj.setters.keys())
             .filter_map(|k| as_array_index(k).map(|i| (i, k.clone())))
             .collect();
         numeric.sort_by_key(|(i, _)| *i);
+        numeric.dedup_by(|a, b| a.1 == b.1);
         numeric.into_iter().map(|(_, k)| k).collect()
     }
 }

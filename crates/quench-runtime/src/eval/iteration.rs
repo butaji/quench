@@ -91,10 +91,15 @@ fn abrupt_close(
     if let Some(cf) = saved_cf {
         set_control_flow(cf);
     }
-    if let Some(close_err) = close_err {
-        return Err(close_err);
+    match completion {
+        Err(e) => Err(e),
+        Ok(val) => {
+            if let Some(close_err) = close_err {
+                return Err(close_err);
+            }
+            Ok(val)
+        }
     }
-    completion
 }
 
 enum ForOfIterResult {
@@ -768,6 +773,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, Value::Number(34.0));
+    }
+
+    #[test]
+    fn for_of_destructure_assign_error_closes_iterator() {
+        let mut ctx = new_ctx();
+        let counts = ctx
+            .eval(
+                "var callCount = 0; var iterationCount = 0; \
+                 var iterable = {}; var x = { set attr(_) { throw new Error('Test262'); } }; \
+                 iterable[Symbol.iterator] = function() { \
+                   return { \
+                     next: function() { return { done: false, value: [0] }; }, \
+                     return: function() { callCount += 1; } \
+                   }; \
+                 }; \
+                 var errName = ''; \
+                 try { for ([x.attr] of iterable) { iterationCount += 1; } } \
+                 catch (e) { errName = e.name; } \
+                 JSON.stringify([callCount, iterationCount, errName])",
+            )
+            .unwrap();
+        assert_eq!(counts, Value::String("[1,0,\"Error\"]".to_string()));
+    }
+
+    #[test]
+    fn for_of_body_throw_wins_over_non_callable_iterator_return() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval(
+                "var msg = ''; \
+                 var iterable = {}; \
+                 iterable[Symbol.iterator] = function() { \
+                   return { \
+                     next: function() { return { done: false, value: null }; }, \
+                     return: 'str' \
+                   }; \
+                 }; \
+                 try { \
+                   for (var x of iterable) { throw new Error('body'); } \
+                 } catch (e) { msg = e.message; } \
+                 msg",
+            )
+            .unwrap();
+        assert_eq!(err, Value::String("body".to_string()));
     }
 
     #[test]

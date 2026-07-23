@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -190,17 +190,19 @@ fn array_with_iterator_impl(
             }
             return Ok(());
         }
+        if let BindingElement::AssignmentTarget(target) = binding {
+            if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
+                let _ = call_iterator_return(iterator);
+                return Err(error);
+            }
+        }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
         iterator_done = done;
         if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
-            let close_throw = call_iterator_return(iterator);
-            if original.is_some() {
-                if let Some(thrown) = original {
-                    crate::value::set_thrown_value(thrown);
-                }
-            } else if let Some(close) = close_throw {
-                return Err(close);
+            let _ = call_iterator_return(iterator);
+            if let Some(thrown) = original {
+                crate::value::set_thrown_value(thrown);
             }
             return Err(error);
         }
@@ -255,6 +257,30 @@ pub fn take_iterator_value(
     take_iterator_step(iterator, index, env).map(|(value, _)| value)
 }
 
+/// Cached [[NextMethod]] for an iterator record (non-enumerable internal slot).
+const ITERATOR_NEXT_METHOD: &str = "\0iterNextMethod";
+
+fn cached_iterator_next_method(
+    iterator: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(cached) = iterator.borrow().get_own(ITERATOR_NEXT_METHOD) {
+        return Ok(cached);
+    }
+    let next_fn = crate::eval::member::eval_object_member(iterator, "next", Some(env))?;
+    iterator.borrow_mut().define(
+        ITERATOR_NEXT_METHOD,
+        next_fn.clone(),
+        PropertyFlags {
+            value: Some(next_fn.clone()),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    Ok(next_fn)
+}
+
 /// Take the next iterator step, returning `(value, done)`.
 pub fn take_iterator_step(
     iterator: &Rc<RefCell<Object>>,
@@ -276,10 +302,10 @@ pub fn take_iterator_step(
         *index += 1;
         return Ok((value.unwrap_or(Value::Undefined), false));
     }
-    let next_value = iterator.borrow().get("next");
-    let Some(next_fn) = next_value else {
+    let next_fn = cached_iterator_next_method(iterator, env)?;
+    if matches!(next_fn, Value::Undefined) {
         return Ok((Value::Undefined, true));
-    };
+    }
     let iter_this = Value::Object(Rc::clone(iterator));
     let result = match next_fn {
         Value::Object(obj) => crate::eval::function::call_value_with_this(
@@ -330,13 +356,19 @@ fn invoke_iterator_return(
 ) -> IteratorReturnResult {
     let saved_throw = crate::value::take_thrown_value();
     let result = invoke_iterator_return_inner(iterator, iter_this);
-    match &result {
-        IteratorReturnResult::Throw(_) => result,
-        _ => {
+    match result {
+        IteratorReturnResult::Throw(_) if saved_throw.is_some() => {
             if let Some(thrown) = saved_throw {
                 crate::value::set_thrown_value(thrown);
             }
-            result
+            IteratorReturnResult::Skipped
+        }
+        IteratorReturnResult::Throw(err) => IteratorReturnResult::Throw(err),
+        other => {
+            if let Some(thrown) = saved_throw {
+                crate::value::set_thrown_value(thrown);
+            }
+            other
         }
     }
 }
@@ -418,10 +450,14 @@ fn iterator_close_type_error(val: Value) -> Option<JsError> {
     if matches!(val, Value::Object(_)) {
         return None;
     }
+    let saved_throw = crate::value::take_thrown_value();
     let (_, js_err) = crate::value::error::create_js_error_with_type(
         "Iterator result interface is not an object",
         "TypeError",
     );
+    if let Some(thrown) = saved_throw {
+        crate::value::set_thrown_value(thrown);
+    }
     Some(js_err)
 }
 
@@ -526,39 +562,61 @@ fn copy_enumerable_value(
     Ok(src.properties.get(key).cloned().unwrap_or(Value::Undefined))
 }
 
+fn copy_key_to_rest(rest: &mut Object, key: &str, val: Value) {
+    if key.contains('\0') {
+        rest.set_symbol(key, val);
+    } else {
+        rest.set(key, val);
+    }
+}
+
+fn string_exotic_source_string(obj: &Object) -> Option<String> {
+    if obj.exotic_kind != Some(crate::value::kind::ExoticKind::String) {
+        return None;
+    }
+    if let Some(Value::String(s)) = obj.get("_value") {
+        return Some(s);
+    }
+    if obj.properties.contains_key("1") {
+        return None;
+    }
+    if let Some(Value::String(s)) = obj.get("0") {
+        return Some(s);
+    }
+    if obj.elements.len() == 1 {
+        if let Value::String(s) = &obj.elements[0] {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
 fn copy_enumerable_own_properties(
     obj: &Rc<RefCell<Object>>,
     excluded: &std::collections::HashSet<String>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let mut rest = Object::new(ObjectKind::Ordinary);
-    let src = obj.borrow();
-    for i in 0..src.elements.len() {
-        if src.holes.contains(&i) {
-            continue;
-        }
-        let key = i.to_string();
-        if excluded.contains(&key) || !src.is_enumerable(&key) {
-            continue;
-        }
-        let val = copy_enumerable_value(obj, &key, &src, env)?;
-        rest.set(&key, val);
+    if let Some(prototype) = crate::builtins::get_object_prototype() {
+        rest.prototype = Some(prototype);
     }
-    let mut keys: Vec<String> = src
-        .properties
-        .keys()
-        .chain(src.getters.keys())
-        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
-        .cloned()
-        .collect();
-    keys.sort();
-    keys.dedup();
-    for key in keys {
-        if excluded.contains(&key) || !src.is_enumerable(&key) {
-            continue;
+    let src = obj.borrow();
+    if let Some(s) = string_exotic_source_string(&src) {
+        for (i, ch) in s.chars().enumerate() {
+            let key = i.to_string();
+            if excluded.contains(&key) {
+                continue;
+            }
+            copy_key_to_rest(&mut rest, &key, Value::String(ch.to_string()));
         }
-        let val = copy_enumerable_value(obj, &key, &src, env)?;
-        rest.set(&key, val);
+    } else {
+        for key in crate::value::object::enumerable_own_keys(&src) {
+            if excluded.contains(&key) {
+                continue;
+            }
+            let val = copy_enumerable_value(obj, &key, &src, env)?;
+            copy_key_to_rest(&mut rest, &key, val);
+        }
     }
     Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
@@ -1231,6 +1289,106 @@ mod tests {
     fn object_literal_rest_invokes_getter() {
         let r = eval("var o = { get v() { return 2; } }; var {...rest} = o; rest.v").unwrap();
         assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn iterator_next_accessor_invoked_per_step() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let loads = ctx
+            .eval(
+                "var loadNextCount = 0, iterationCount = 0; \
+                 var iterable = {}, iterator = {}; \
+                 iterable[Symbol.iterator] = function() { return iterator; }; \
+                 function next() { \
+                   if (iterationCount) return { done: true }; \
+                   return { value: 45, done: false }; \
+                 } \
+                 Object.defineProperty(iterator, 'next', { \
+                   get: function() { loadNextCount++; return next; }, \
+                   configurable: true \
+                 }); \
+                 for (var x of iterable) { \
+                   Object.defineProperty(iterator, 'next', { \
+                     get: function() { throw new Error('too early'); } \
+                   }); \
+                   iterationCount++; \
+                 } \
+                 JSON.stringify([iterationCount, loadNextCount])",
+            )
+            .unwrap();
+        assert_eq!(loads, Value::String("[1,1]".to_string()));
+    }
+
+    #[test]
+    fn array_destructure_ref_eval_before_iterator_next() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let counts = ctx
+            .eval(
+                "var nextCount = 0, returnCount = 0; \
+                 var iterable = {}; \
+                 var iterator = { \
+                   next: function() { nextCount += 1; return { done: true }; }, \
+                   return: function() { returnCount += 1; } \
+                 }; \
+                 iterable[Symbol.iterator] = function() { return iterator; }; \
+                 var thrower = function() { throw new Error('Test262'); }; \
+                 try { for ([ {}[thrower()] ] of [iterable]) {} } catch (_) {} \
+                 JSON.stringify([nextCount, returnCount])",
+            )
+            .unwrap();
+        assert_eq!(counts, Value::String("[0,1]".to_string()));
+    }
+
+    #[test]
+    fn object_rest_for_of_number_is_instanceof_object() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let ok = ctx
+            .eval(
+                "var rest, ok = false; \
+                 for ({...rest} of [51]) { ok = rest instanceof Object; } \
+                 ok",
+            )
+            .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_rest_for_of_string_indexes_per_code_unit() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let chars = ctx
+            .eval(
+                "var rest; \
+                 for ({...rest} of ['foo']) {} \
+                 JSON.stringify([rest['0'], rest['1'], rest['2']])",
+            )
+            .unwrap();
+        assert_eq!(chars, Value::String("[\"f\",\"o\",\"o\"]".to_string()));
+    }
+
+    #[test]
+    fn object_rest_for_of_enumerates_in_own_key_order() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let calls = ctx
+            .eval(
+                "var calls = []; \
+                 var o = { get z() { calls.push('z'); }, get a() { calls.push('a'); } }; \
+                 Object.defineProperty(o, 1, { get: function() { calls.push(1); }, enumerable: true }); \
+                 Object.defineProperty(o, Symbol('foo'), { \
+                   get: function() { calls.push('Symbol(foo)'); }, enumerable: true \
+                 }); \
+                 for ({...rest} of [o]) {} \
+                 JSON.stringify(calls)",
+            )
+            .unwrap();
+        assert_eq!(
+            calls,
+            Value::String("[1,\"z\",\"a\",\"Symbol(foo)\"]".to_string())
+        );
     }
 
     #[test]
