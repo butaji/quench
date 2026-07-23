@@ -959,6 +959,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                 variable,
                 iterable,
                 body,
+                ..
             } => {
                 format!(
                     "for ({} of {}) {}",

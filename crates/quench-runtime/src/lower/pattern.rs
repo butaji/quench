@@ -57,6 +57,11 @@ pub fn lower_array_binding(arr: &ast::ArrayPattern) -> Result<BindingElement, Lo
     lower_array_pattern(arr)
 }
 
+/// Lower an OXC object pattern to a runtime binding element.
+pub fn lower_object_binding(obj: &ast::ObjectPattern) -> Result<BindingElement, LowerError> {
+    lower_object_pattern(obj)
+}
+
 /// Collect identifier names bound by a destructuring pattern (excluding holes).
 pub fn collect_pattern_identifiers(pattern: &BindingElement) -> Vec<String> {
     match pattern {

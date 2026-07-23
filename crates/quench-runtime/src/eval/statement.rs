@@ -4,8 +4,9 @@ use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::interpreter::{
-    add_label, collect_var_names_recursive, has_label, pop_label_scope, predeclare_let_const,
-    push_label_scope, set_control_flow, take_control_flow, ControlFlow,
+    add_label, collect_var_names_recursive, has_label, loop_handles_break, loop_handles_continue,
+    pop_label_scope, predeclare_let_const, push_label_scope, set_control_flow, take_control_flow,
+    ControlFlow,
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
@@ -177,7 +178,7 @@ pub fn eval_statements(
                 return Ok(val);
             }
             // Propagate break/continue so enclosing loops can observe them.
-            Some(cf @ (ControlFlow::Break | ControlFlow::Continue)) => {
+            Some(cf @ (ControlFlow::Break(_) | ControlFlow::Continue(_))) => {
                 set_control_flow(cf);
                 return Ok(last_val);
             }
@@ -289,8 +290,8 @@ fn eval_function_body_impl(
                 return Ok(val);
             }
             Some(
-                cf @ (ControlFlow::Break
-                | ControlFlow::Continue
+                cf @ (ControlFlow::Break(_)
+                | ControlFlow::Continue(_)
                 | ControlFlow::Yield(_)
                 | ControlFlow::YieldDelegate(_)),
             ) => {
@@ -437,7 +438,15 @@ pub fn eval_statement(
             condition,
             update,
             body,
-        } => eval_for(init, condition, update, body, env, in_arrow_function),
+        } => eval_for(
+            init,
+            condition,
+            update,
+            body,
+            env,
+            in_arrow_function,
+            vec![],
+        ),
         Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
         Statement::SequenceDecls(stmts) => {
             // Evaluate var declarations in sequence without creating a new scope
@@ -476,6 +485,25 @@ pub fn eval_statement(
                 pop_label_scope();
                 return result;
             }
+            if let Statement::For {
+                init,
+                condition,
+                update,
+                body: inner_body,
+            } = body.as_ref()
+            {
+                let result = eval_for(
+                    init,
+                    condition,
+                    update,
+                    inner_body,
+                    env,
+                    in_arrow_function,
+                    vec![label.clone()],
+                );
+                pop_label_scope();
+                return result;
+            }
             let result = eval_statement(body, env, false, in_arrow_function);
             pop_label_scope();
             result
@@ -491,7 +519,7 @@ pub fn eval_statement(
                     return Err(js_err);
                 }
             }
-            set_control_flow(ControlFlow::Break);
+            set_control_flow(ControlFlow::Break(label.clone()));
             Ok(Value::Undefined)
         }
         Statement::Continue(label) => {
@@ -505,7 +533,7 @@ pub fn eval_statement(
                     return Err(js_err);
                 }
             }
-            set_control_flow(ControlFlow::Continue);
+            set_control_flow(ControlFlow::Continue(label.clone()));
             Ok(Value::Undefined)
         }
         Statement::Try {
@@ -657,11 +685,9 @@ fn eval_var_decl(
     } else {
         Value::Undefined
     };
-    // Per ES §13.3.3 SetFunctionName: when a VariableDeclaration's
-    // initializer evaluates to a function expression that has no name,
-    // bind the variable's name as the function's `name`.
-    if let Value::Function(ref mut f) = value {
-        if f.name.is_none() {
+    // Per ES §13.3.3 SetFunctionName: only when IsAnonymousFunctionDefinition(Initializer).
+    if let (Some(expr), Value::Function(ref mut f)) = (init, &mut value) {
+        if f.name.is_none() && crate::eval::object::is_anonymous_function_definition(expr) {
             f.name = Some(name.to_string());
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
@@ -722,11 +748,25 @@ fn eval_while(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let loop_labels: [String; 0] = [];
     while to_bool(&eval_expression(condition, env, in_arrow_function)?) {
         take_control_flow();
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
-            Some(ControlFlow::Break) => break,
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, &loop_labels) {
+                    break;
+                }
+                set_control_flow(cf);
+                break;
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if loop_handles_continue(&cf, &loop_labels) {
+                    continue;
+                }
+                set_control_flow(cf);
+                break;
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -736,7 +776,6 @@ fn eval_while(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
@@ -755,7 +794,7 @@ fn eval_do_while(
     for lbl in &labels {
         add_label(lbl);
     }
-    let result = eval_do_while_impl(body, condition, env, in_arrow_function);
+    let result = eval_do_while_impl(body, condition, &labels, env, in_arrow_function);
     pop_label_scope();
     result
 }
@@ -763,6 +802,7 @@ fn eval_do_while(
 fn eval_do_while_impl(
     body: &Statement,
     condition: &Expression,
+    loop_labels: &[String],
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -770,7 +810,19 @@ fn eval_do_while_impl(
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
-            Some(ControlFlow::Break) => break,
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, loop_labels) {
+                    break;
+                }
+                set_control_flow(cf);
+                break;
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if !loop_handles_continue(&cf, loop_labels) {
+                    set_control_flow(cf);
+                    break;
+                }
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -779,7 +831,6 @@ fn eval_do_while_impl(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
             None => {}
         }
         // Check condition; if false, return the body completion value
@@ -797,7 +848,16 @@ fn eval_for(
     body: &Statement,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
+    loop_labels: Vec<String>,
 ) -> Result<Value, JsError> {
+    let loop_scope = matches!(
+        init,
+        Some(ForInit::VarDeclaration { kind, .. })
+            if matches!(kind, VarKind::Let | VarKind::Const)
+    );
+    if loop_scope {
+        env.borrow_mut().push_scope();
+    }
     if let Some(for_init) = init {
         match for_init {
             ForInit::Expression(expr) => {
@@ -824,22 +884,48 @@ fn eval_for(
         take_control_flow();
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
-            Some(ControlFlow::Break) => break,
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, &loop_labels) {
+                    break;
+                }
+                if loop_scope {
+                    env.borrow_mut().pop_scope();
+                }
+                set_control_flow(cf);
+                return Ok(Value::Undefined);
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if !loop_handles_continue(&cf, &loop_labels) {
+                    if loop_scope {
+                        env.borrow_mut().pop_scope();
+                    }
+                    set_control_flow(cf);
+                    return Ok(Value::Undefined);
+                }
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
+                if loop_scope {
+                    env.borrow_mut().pop_scope();
+                }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             // YieldDelegate: also propagate as Return (the generator handles it)
             Some(ControlFlow::YieldDelegate(val)) => {
+                if loop_scope {
+                    env.borrow_mut().pop_scope();
+                }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
             None => {}
         }
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
         }
+    }
+    if loop_scope {
+        env.borrow_mut().pop_scope();
     }
     Ok(Value::Undefined)
 }
@@ -1064,7 +1150,20 @@ fn eval_for_in_stmt(
         assign_to(variable, &Value::String(key), env)?;
         let _ = eval_statement(body, env, false, in_arrow_function)?;
         match take_control_flow() {
-            Some(ControlFlow::Break) => break,
+            Some(cf @ ControlFlow::Break(_)) => {
+                if loop_handles_break(&cf, &[]) {
+                    break;
+                }
+                set_control_flow(cf);
+                break;
+            }
+            Some(cf @ ControlFlow::Continue(_)) => {
+                if loop_handles_continue(&cf, &[]) {
+                    continue;
+                }
+                set_control_flow(cf);
+                break;
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -1074,7 +1173,6 @@ fn eval_for_in_stmt(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
-            Some(ControlFlow::Continue) => {}
             None => {}
         }
     }
