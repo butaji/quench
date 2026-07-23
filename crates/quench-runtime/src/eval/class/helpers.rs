@@ -372,7 +372,9 @@ pub fn call_super_or_default(
             args,
             this_val.clone(),
         ),
-        Value::NativeFunction(nf) if nf.name == "Symbol" || nf.name == "ArrayBuffer" => {
+        Value::NativeFunction(nf)
+            if matches!(nf.name.as_str(), "Symbol" | "ArrayBuffer" | "DataView") =>
+        {
             crate::eval::function::call_value_with_this(
                 Value::NativeFunction(nf.clone()),
                 args,
@@ -3041,6 +3043,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, Value::String("Avalue".into()));
+    }
+
+    #[test]
+    fn super_in_arrow_field_initializer_assigns_to_instance() {
+        let r = eval(
+            "class C { func = () => { super.prop = 'test262'; } } \
+             let c = new C(); c.func(); c.prop",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
+    fn super_in_arrow_static_field_initializer_assigns_to_class() {
+        let r = eval(
+            "class C { static staticFunc = () => { super.staticProp = 'static test262'; } } \
+             C.staticFunc(); C.staticProp",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("static test262".into()));
     }
 
     #[test]

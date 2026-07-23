@@ -5,6 +5,7 @@ pub mod array;
 pub mod array_buffer;
 pub mod bigint;
 pub mod console;
+pub mod data_view;
 pub mod date;
 pub mod error;
 pub mod function;
@@ -156,6 +157,7 @@ pub fn register_builtins(ctx: &mut Context) {
     reflect::register_reflect(ctx);
     // ArrayBuffer and typed-array constructors are needed by harness utilities.
     array_buffer::register_array_buffer(ctx);
+    data_view::register_data_view(ctx);
     typed_array::register_typed_arrays(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
