@@ -664,15 +664,13 @@ fn assign_binding_elem_with_default(
     }
 }
 
-/// Assign a value to an identifier (variable reference).
-pub fn assign_to_identifier(
+fn prepare_identifier_binding_value(
     name: &str,
     value: &Value,
-    env: &Rc<RefCell<Environment>>,
     default_expr: Option<&Expression>,
-) -> Result<(), JsError> {
-    let value = match value {
-        Value::Function(ref f)
+) -> Value {
+    match value {
+        Value::Function(f)
             if f.name.is_none() && default_expr.is_some_and(is_anonymous_function_definition) =>
         {
             let mut cloned = f.clone();
@@ -680,7 +678,7 @@ pub fn assign_to_identifier(
             let _ = cloned.set_property("name", Value::String(name.to_string()));
             Value::Function(cloned)
         }
-        Value::Class(ref c) => {
+        Value::Class(c) => {
             let has_name = c.name.is_some()
                 || c.static_methods.iter().any(|(k, _, _, _, _)| match k {
                     crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => {
@@ -697,7 +695,17 @@ pub fn assign_to_identifier(
             }
         }
         _ => value.clone(),
-    };
+    }
+}
+
+/// Assign a value to an identifier (variable reference).
+pub fn assign_to_identifier(
+    name: &str,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
+    let value = prepare_identifier_binding_value(name, value, default_expr);
 
     if env.borrow().is_tdz(name) {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -767,11 +775,12 @@ pub fn init_to_identifier(
     env: &Rc<RefCell<Environment>>,
     default_expr: Option<&Expression>,
 ) -> Result<(), JsError> {
+    let value = prepare_identifier_binding_value(name, value, default_expr);
     if env.borrow().is_tdz(name) {
-        env.borrow_mut().initialize_declared(name, value.clone());
+        env.borrow_mut().initialize_declared(name, value);
         return Ok(());
     }
-    assign_to_identifier(name, value, env, default_expr)
+    assign_to_identifier(name, &value, env, default_expr)
 }
 
 /// Declare destructuring pattern bindings with the given declaration kind.
@@ -881,6 +890,20 @@ mod tests {
     fn destructure_default_array_literal() {
         let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
         assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn for_of_const_destructure_default_arrow_gets_binding_name() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let name = ctx
+            .eval(
+                "var iterCount = 0; var fnName = ''; \
+                 for (const [arrow = () => {}] of [[]]) { fnName = arrow.name; iterCount++; } \
+                 fnName",
+            )
+            .unwrap();
+        assert_eq!(name, Value::String("arrow".into()));
     }
 
     #[test]

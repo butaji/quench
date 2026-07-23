@@ -1,5 +1,5 @@
 {
-  "failed": 128,
+  "failed": 108,
   "groups": [
     {
       "count": 4,
@@ -92,13 +92,19 @@
       ]
     },
     {
-      "count": 1,
+      "count": 4,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js"
+        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js"
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js"
+        "/workspace/tests/test262/test/language/statements/for-of/array-key-get-error.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js",
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js"
       ]
     },
     {
@@ -126,88 +132,6 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-try.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (following `for..in` statement).\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-try.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (following `for..of` statement).\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-try.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/break-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-finally.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (following `try` statement).\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/break-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label-from-finally.js",
-        "/workspace/tests/test262/test/language/statements/for-of/return-from-finally.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-try.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (following `yield` statement).\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-catch.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label-from-try.js",
-        "/workspace/tests/test262/test/language/statements/for-of/break-label.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (inside while).\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/continue-label.js"
-      ]
-    },
-    {
-      "count": 3,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-break.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-continue.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-return.js"
-      ],
-      "reason": "Test262Error: This code is unreachable (within `try` block)\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-break.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-continue.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-return.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-fn-name-arrow.js"
@@ -218,19 +142,13 @@
       ]
     },
     {
-      "count": 5,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-throw.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
       ],
       "reason": "Test262Error: sameValue failed: 0 !== 1",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-err.js",
-        "/workspace/tests/test262/test/language/statements/for-of/generator-close-via-throw.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-as-proxy.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-reference.js"
       ]
@@ -276,20 +194,19 @@
     {
       "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js"
       ],
       "reason": "Test262Error: sameValue failed: 13 !== 1",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close-err.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js"
       ]
     },
     {
-      "count": 8,
+      "count": 7,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
@@ -300,7 +217,6 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-target-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
@@ -548,17 +464,13 @@
       ]
     },
     {
-      "count": 3,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-return.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js"
       ],
       "reason": "TypeError: Iterator result interface is not an object",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-return.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-throw-get-method-is-null.js"
       ]
     },
     {
@@ -610,7 +522,7 @@
       ]
     }
   ],
-  "passed": 623,
+  "passed": 643,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},
