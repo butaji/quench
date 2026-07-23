@@ -165,6 +165,8 @@ pub fn object_prevent_extensions(args: Vec<Value>) -> Result<Value, JsError> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(o) = &obj {
         o.borrow_mut().extensible = false;
+    } else if let Value::Class(class) = &obj {
+        class.set_extensible(false);
     }
     Ok(obj)
 }
@@ -179,7 +181,7 @@ pub fn object_is_extensible(args: Vec<Value>) -> Result<Value, JsError> {
         Some(Value::Function(_)) => Ok(Value::Boolean(true)),
         Some(Value::NativeFunction(_)) => Ok(Value::Boolean(true)),
         Some(Value::NativeConstructor(_)) => Ok(Value::Boolean(true)),
-        Some(Value::Class(_)) => Ok(Value::Boolean(true)),
+        Some(Value::Class(class)) => Ok(Value::Boolean(class.is_extensible())),
         // Primitives are always non-extensible
         Some(_) => Ok(Value::Boolean(false)),
         None => Ok(Value::Boolean(false)),

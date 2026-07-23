@@ -55,19 +55,24 @@ pub fn eval_expression(
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
         Expression::Yield(expr) => {
-            if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
-                return Ok(replayed);
+            let value = match expr {
+                Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
+                None => {
+                    if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
+                        return Ok(replayed);
+                    }
+                    Value::Undefined
+                }
+            };
+            if crate::interpreter::peek_generator_yield() {
+                return Ok(Value::Undefined);
+            }
+            if expr.is_some() {
+                if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
+                    return Ok(replayed);
+                }
             }
             let resume_val = crate::interpreter::take_generator_resume_value();
-            if !crate::value::generator_replay::should_suspend_on_fresh_yield() {
-                crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
-                return Ok(resume_val);
-            }
-            let value = if let Some(e) = expr {
-                crate::eval::expression::eval_expression(e, env, in_arrow_function)?
-            } else {
-                Value::Undefined
-            };
             crate::interpreter::set_generator_yield(value.clone());
             crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
             Ok(resume_val)

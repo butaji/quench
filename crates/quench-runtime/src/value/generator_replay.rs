@@ -71,13 +71,25 @@ pub fn should_suspend_on_fresh_yield() -> bool {
 pub fn try_replay_yield() -> Option<Value> {
     REPLAY.with(|cell| {
         let mut g = cell.borrow_mut();
-        if g.cursor < g.yields_to_replay {
-            let v = g.stored_resumes[g.cursor].clone();
-            g.cursor += 1;
-            Some(v)
-        } else {
-            None
+        if g.cursor >= g.yields_to_replay {
+            return None;
         }
+        let idx = g.cursor;
+        g.cursor += 1;
+        let v = if is_resuming_pending_yield() && idx + 1 == g.yields_to_replay {
+            crate::interpreter::take_generator_resume_value()
+        } else {
+            g.stored_resumes
+                .get(idx)
+                .cloned()
+                .unwrap_or(Value::Undefined)
+        };
+        if idx >= g.stored_resumes.len() {
+            g.stored_resumes.push(v.clone());
+        } else {
+            g.stored_resumes[idx] = v.clone();
+        }
+        Some(v)
     })
 }
 
@@ -95,8 +107,10 @@ pub fn record_fresh_yield_resume(resume: Value) {
 pub fn commit_suspend(stored: &mut Vec<Value>) {
     REPLAY.with(|cell| {
         let mut g = cell.borrow_mut();
-        stored.append(&mut g.stored_resumes);
-        g.last_fresh_resume = None;
+        *stored = g.stored_resumes.clone();
+        if let Some(r) = g.last_fresh_resume.take() {
+            stored.push(r);
+        }
         g.yields_this_run = 0;
         g.cursor = 0;
     });
@@ -105,7 +119,7 @@ pub fn commit_suspend(stored: &mut Vec<Value>) {
 pub fn commit_completed_yields(stored: &mut Vec<Value>) {
     REPLAY.with(|cell| {
         let mut g = cell.borrow_mut();
-        stored.append(&mut g.stored_resumes);
+        *stored = g.stored_resumes.clone();
         if let Some(r) = g.last_fresh_resume.take() {
             stored.push(r);
         }
