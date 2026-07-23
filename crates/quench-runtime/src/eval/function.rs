@@ -76,9 +76,15 @@ pub(crate) fn call_value_impl(
             } else if f.is_generator {
                 // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
                 // runs synchronously at [[Call]] before returning the generator object.
-                let eval_env = Environment::with_parent(Rc::clone(&f.closure));
-                let eval_env_rc = Rc::new(RefCell::new(eval_env));
-                bind_params(&f, &f.params, &args, &eval_env_rc, false)?;
+                let call_env = Environment::with_parent(Rc::clone(&f.closure));
+                if !f.is_arrow {
+                    call_env
+                        .current_scope()
+                        .borrow_mut()
+                        .set_this(this_val.clone());
+                }
+                let call_env_rc = Rc::new(RefCell::new(call_env));
+                bind_params(&f, &f.params, &args, &call_env_rc, false)?;
 
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
@@ -87,6 +93,7 @@ pub(crate) fn call_value_impl(
                     f.strict,
                 );
                 gen_obj.args = Some(args);
+                gen_obj.call_env = Some(call_env_rc);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
