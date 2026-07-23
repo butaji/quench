@@ -745,6 +745,26 @@ mod tests {
     }
 
     #[test]
+    fn static_private_field_write_from_static_private_method() {
+        let r = eval(
+            "class C { static #xVal; static #x(v) { this.#xVal = v; return this.#xVal; } \
+             static call() { return this.#x(42); } } C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
+    fn tail_return_member_call_preserves_this() {
+        let r = eval(
+            "class C { static m() { return typeof this; } static call() { return this.m(); } } \
+             C.call()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("function".into()));
+    }
+
+    #[test]
     fn static_private_method_not_has_own_property() {
         let r = eval(
             "class C { static async *#gen() {} static get gen() { return this.#gen; } } \

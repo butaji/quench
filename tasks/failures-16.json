@@ -1,5 +1,5 @@
 {
-  "failed": 754,
+  "failed": 698,
   "groups": [
     {
       "count": 1,
@@ -12,33 +12,13 @@
       ]
     },
     {
-      "count": 14,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-static-private-methods-with-fields.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
       ],
       "reason": "Cannot assign to property of non-object, got undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-static-private-methods-with-fields.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-static-private-methods-with-fields.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/super-access-from-arrow-func-on-field.js"
       ]
     },
     {
@@ -116,13 +96,15 @@
       ]
     },
     {
-      "count": 2,
+      "count": 3,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js",
         "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
       ],
       "reason": "ReferenceError: ReferenceError: Cannot access 'o' before initialization",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-brand-check.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-brand-check.js",
         "/workspace/tests/test262/test/language/statements/class/elements/super-access-inside-a-private-method.js"
       ]
@@ -427,10 +409,8 @@
       ]
     },
     {
-      "count": 84,
+      "count": 64,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-init-iter-get-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-init-throws.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-iter-step-err.js",
@@ -448,8 +428,6 @@
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-obj-ptrn-prop-id-get-value-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-ary-init-iter-get-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-ary-ptrn-elem-id-init-throws.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-dflt-ary-ptrn-elem-id-iter-step-err.js",
@@ -467,40 +445,24 @@
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-static-obj-ptrn-prop-id-get-value-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-rest-id-iter-val-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-prop-id-get-value-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-rest-id-iter-val-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-prop-id-get-value-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-ary-ptrn-rest-id-iter-val-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-prop-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-prop-id-get-value-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-ary-ptrn-rest-id-iter-val-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-id-get-value-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-prop-eval-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-prop-id-get-value-err.js",
@@ -516,14 +478,14 @@
       ],
       "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-ary-ptrn-rest-id-iter-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-ary-ptrn-rest-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-init-iter-get-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-init-throws.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-iter-step-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-iter-val-err.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-elision-step-err.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-elision-next-err.js"
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-elision-next-err.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-iter-step-err.js",
+        "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-iter-val-err.js"
       ]
     },
     {
@@ -667,6 +629,26 @@
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-init-null.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-init-undefined.js",
         "/workspace/tests/test262/test/language/statements/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-ary-value-null.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-method-and-instance-method-brand-check.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed instance private method from C\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-method-and-instance-method-brand-check.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-referenced-from-static-method.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Accessed private method from an object which did not contain it\")",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/elements/private-method-referenced-from-static-method.js"
       ]
     },
     {
@@ -1807,48 +1789,6 @@
       ]
     },
     {
-      "count": 26,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-definitions-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/multiple-stacked-definitions-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-no-sc-line-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/new-sc-line-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/regular-definitions-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/same-line-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/wrapped-in-sc-rs-private-method.js"
-      ],
-      "reason": "TypeError: Cannot read property '\\0private:$_\\0' of undefined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-method-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-gen-rs-private-method.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-private-method-alt.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/after-same-line-static-method-rs-private-method.js"
-      ]
-    },
-    {
       "count": 16,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-rest-val-obj.js",
@@ -2142,7 +2082,7 @@
       ]
     }
   ],
-  "passed": 3613,
+  "passed": 3669,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

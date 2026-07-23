@@ -131,7 +131,7 @@ pub fn assign_array_with_iterator(
     let mut index = 0;
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
-            let rest_array = collect_remaining_array(iterator, &mut index);
+            let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
                 call_iterator_return(iterator);
                 return Err(error);
@@ -163,7 +163,11 @@ pub fn assign_array_with_iterator(
 }
 
 /// Collect all remaining elements from an array or iterator starting at `index`.
-fn collect_remaining_array(iterator: &Rc<RefCell<Object>>, index: &mut usize) -> Value {
+fn collect_remaining_array(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
         let remaining = {
             let borrowed = iterator.borrow();
@@ -174,17 +178,21 @@ fn collect_remaining_array(iterator: &Rc<RefCell<Object>>, index: &mut usize) ->
             }
         };
         *index = iterator.borrow().elements.len();
-        return Value::Object(Rc::new(RefCell::new(Object::new_array_from(remaining))));
+        return Ok(Value::Object(Rc::new(RefCell::new(
+            Object::new_array_from(remaining),
+        ))));
     }
     let mut items = Vec::new();
     loop {
-        match take_iterator_value(iterator, index, &Rc::new(RefCell::new(Environment::new()))) {
+        match take_iterator_value(iterator, index, env) {
             Ok(Value::Undefined) => break,
             Ok(v) => items.push(v),
-            Err(_) => break,
+            Err(error) => return Err(error),
         }
     }
-    Value::Object(Rc::new(RefCell::new(Object::new_array_from(items))))
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(items),
+    ))))
 }
 
 /// Take the next value from an iterator (or array-like).
@@ -623,6 +631,33 @@ mod tests {
         bind_params(&f, &params, std::slice::from_ref(&gen), &call_env, false).unwrap();
         assert_eq!(ctx.eval("first").unwrap(), Value::Number(1.0));
         assert_eq!(ctx.eval("second").unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn rest_pattern_forwards_iterator_step_error() {
+        let err = eval(
+            "try { \
+               (function([...x]) {})(function*() { throw new Error('step'); }()); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
+    }
+
+    #[test]
+    fn async_gen_method_rest_forwards_iterator_step_error() {
+        let err = eval(
+            "try { \
+               (function() { \
+                 class C { async *method([...x]) {} } \
+                 C.prototype.method(function*() { throw new Error('step'); }()); \
+               })(); \
+               'no throw'; \
+             } catch (e) { e.message }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("step".into()));
     }
 
     #[test]

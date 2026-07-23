@@ -30,13 +30,16 @@ pub struct TailCallSignal {
     pub function: ValueFunction,
     /// The evaluated arguments.
     pub arguments: Vec<Value>,
+    /// `this` binding for member-expression tail calls; otherwise `Undefined`.
+    pub this_val: Value,
 }
 
 impl TailCallSignal {
-    pub fn new(function: ValueFunction, arguments: Vec<Value>) -> Self {
+    pub fn new(function: ValueFunction, arguments: Vec<Value>, this_val: Value) -> Self {
         Self {
             function,
             arguments,
+            this_val,
         }
     }
 }
@@ -264,13 +267,22 @@ fn handle_tail_call(
 ) -> Result<(), JsError> {
     if let Some(e) = expr.as_ref() {
         if let Expression::Call { callee, arguments } = e.as_ref() {
-            let callee_val = eval_expression(callee, env, in_arrow_function)?;
             let args: Vec<Value> = arguments
                 .iter()
                 .map(|arg| eval_expression(arg, env, in_arrow_function))
                 .collect::<Result<Vec<_>, _>>()?;
+            let (callee_val, this_val) = match callee.as_ref() {
+                Expression::Member { .. } => {
+                    let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
+                    (func, this)
+                }
+                _ => (
+                    eval_expression(callee, env, in_arrow_function)?,
+                    Value::Undefined,
+                ),
+            };
             let function = resolve_callee_to_function(callee_val)?;
-            set_tail_call_signal(TailCallSignal::new(function, args));
+            set_tail_call_signal(TailCallSignal::new(function, args, this_val));
         }
     }
     Ok(())
