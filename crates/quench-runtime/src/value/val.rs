@@ -164,9 +164,9 @@ pub struct ClassValue {
     /// Static getters (name -> body)
     pub static_getters: Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     /// Instance setters (name -> (param, body))
-    pub setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    pub setters: Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     /// Static setters (name -> (param, body))
-    pub static_setters: Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    pub static_setters: Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     /// Instance fields (name -> value expression)
     pub instance_fields: Vec<(PropertyKey, crate::ast::Expression)>,
     /// Static fields (name -> value expression)
@@ -440,16 +440,39 @@ impl ClassValue {
                 // Bind `this` to the class itself so `this._v = v` in the setter body
                 // writes to the class's own static properties, not a throwaway object.
                 let this_val = Value::Class(Box::new(self.clone()));
-                let mut call_env = Environment::with_parent(Rc::clone(&env));
-                call_env.current_scope().borrow_mut().set_this(this_val);
-                call_env.define(param.clone(), value);
-                let call_env = Rc::new(RefCell::new(call_env));
+                let call_env = Environment::with_parent(Rc::clone(&env));
+                call_env
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(this_val.clone());
+                let call_env_rc = Rc::new(RefCell::new(call_env));
+                let setter_fn = crate::value::ValueFunction::new(
+                    None,
+                    vec![param.clone()],
+                    body.clone(),
+                    Rc::clone(&env),
+                    false,
+                    false,
+                );
+                crate::eval::function::bind_params(
+                    &setter_fn,
+                    &setter_fn.params,
+                    &[value],
+                    &call_env_rc,
+                )?;
                 if !body.is_empty() {
+                    let body_env_rc = crate::eval::function::function_body_env(
+                        &call_env_rc,
+                        &setter_fn,
+                        &this_val,
+                        std::slice::from_ref(param),
+                    );
+                    body_env_rc.borrow_mut().push_scope();
+                    crate::interpreter::predeclare_var(body, &mut body_env_rc.borrow_mut());
+                    crate::interpreter::predeclare_let_const(body, &mut body_env_rc.borrow_mut());
                     let prev_strict = crate::interpreter::is_strict_mode();
-                    crate::interpreter::set_strict_mode(false);
-                    eval::statement::eval_function_body(body, &call_env, false)?;
-                    // A setter's completion is discarded per ES §9.1.9 — consume a
-                    // pending ControlFlow::Return so it can't leak into the next call.
+                    crate::interpreter::set_strict_mode(true);
+                    eval::statement::eval_function_body(body, &body_env_rc, false)?;
                     let _ = crate::interpreter::take_control_flow();
                     crate::interpreter::set_strict_mode(prev_strict);
                 }
@@ -521,8 +544,8 @@ fn fill_members_from_ast(
     static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
     static_getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
-    setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
-    static_setters: &mut Vec<(PropertyKey, String, Vec<crate::ast::Statement>)>,
+    setters: &mut Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
+    static_setters: &mut Vec<(PropertyKey, crate::ast::Param, Vec<crate::ast::Statement>)>,
     instance_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_fields: &mut Vec<(PropertyKey, crate::ast::Expression)>,
     static_blocks: &mut Vec<Vec<crate::ast::Statement>>,
@@ -861,7 +884,7 @@ mod tests {
         // Build a class with a static setter
         let setter_member = ClassMember::StaticSetter {
             name: PropertyKey::String("foo".to_string()),
-            param: "v".to_string(),
+            param: crate::ast::Param::new("v"),
             body: vec![],
         };
         let class = Class {
@@ -885,7 +908,7 @@ mod tests {
         // Build a class with a static setter that records the value
         let setter_member = ClassMember::StaticSetter {
             name: PropertyKey::String("foo".to_string()),
-            param: "v".to_string(),
+            param: crate::ast::Param::new("v"),
             body: vec![Statement::Empty],
         };
         let class = Class {
