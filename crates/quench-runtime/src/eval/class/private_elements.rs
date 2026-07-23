@@ -499,6 +499,19 @@ mod tests {
     }
 
     #[test]
+    fn nested_indirect_eval_arguments_in_class_field_sees_outer_var() {
+        let r = eval(
+            "var arguments = 1; \
+             class C { \
+               x = () => { var t = () => (0, eval)('arguments;'); return t(); }; \
+             } \
+             new C().x()",
+        )
+        .unwrap();
+        assert_eq!(r, crate::value::Value::Number(1.0));
+    }
+
+    #[test]
     fn indirect_eval_new_target_in_class_field_throws_syntax_error() {
         let err = eval("class C { x = (0, eval)('new.target'); } new C();").unwrap_err();
         assert!(is_syntax_error(&err));
