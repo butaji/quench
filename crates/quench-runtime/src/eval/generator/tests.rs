@@ -41,6 +41,28 @@ mod generator_tests {
     }
 
     #[test]
+    fn generator_expression_statement_completes_undefined() {
+        let r = eval("function* g() { ({ yield: 1 }); } g().next().value").unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    #[test]
+    fn generator_yield_in_array_then_completes_undefined() {
+        let r = eval(
+            "function* g() { [yield 1]; } \
+             var gen = g(); gen.next(); gen.next().value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Undefined);
+    }
+
+    #[test]
+    fn generator_explicit_return_value() {
+        let r = eval("function* g() { return 42; } g().next().value").unwrap();
+        assert_eq!(r, Value::Number(42.0));
+    }
+
+    #[test]
     fn generator_return_done() {
         let r = eval("function* g() { return 42; } g().next().done").unwrap();
         assert_eq!(r, Value::Boolean(true));
