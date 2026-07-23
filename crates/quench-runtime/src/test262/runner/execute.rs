@@ -119,6 +119,9 @@ fn build_script(
     }
 }
 
+/// Default stack for per-test worker threads (avoids overflow on deep class tests).
+const TEST_THREAD_STACK: usize = 16 * 1024 * 1024;
+
 fn run_with_timeout(
     script: &str,
     is_module: bool,
@@ -131,16 +134,24 @@ fn run_with_timeout(
     let script = script.to_owned();
     let tp = test_path.to_owned();
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tp;
-        let mut inner = QuenchHost::new();
-        let result = if is_module {
-            inner.run_module_script(&script)
-        } else {
-            inner.run_script(&script)
+    let spawn = std::thread::Builder::new()
+        .stack_size(TEST_THREAD_STACK)
+        .spawn(move || {
+            let _ = tp;
+            let mut inner = QuenchHost::new();
+            let result = if is_module {
+                inner.run_module_script(&script)
+            } else {
+                inner.run_script(&script)
+            };
+            let _ = tx.send(check_outcome(&meta, result));
+        });
+    if spawn.is_err() {
+        return TestOutcome::Fail {
+            reason: "failed to spawn test thread".into(),
         };
-        let _ = tx.send(check_outcome(&meta, result));
-    });
+    }
+    let _handle = spawn.unwrap();
     match rx.recv_timeout(timeout) {
         Ok(outcome) => outcome,
         Err(mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
@@ -158,6 +169,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let bin = run_test_binary();
     let output = std::process::Command::new(&bin)
         .arg(&path)
+        .env("TEST262_NOSKIP", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output();
