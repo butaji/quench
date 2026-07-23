@@ -22,18 +22,21 @@ Phase A — clear language stages (now → ~stage 70)
   A2. R5 object-model correctness   (unblocks class + Object + eval)
   A3. Stage-16 class via S2 digest  (root-cause clusters, not per-test)
   A4. R17 oxc_semantic early errors (language half, high tests/LOC)
-  A5. Remaining language stages     (for-of, expressions, …)
+  A5. S8 url over urlencoding       (URL Standard; before modules)
+  A6. Remaining language stages     (for-of, expressions, …)
       — grow R1 only for ops you touch
 
 Phase B — before grinding built-ins (~stage 71 Object)
   B1. Finish R1 (%ops% owns impls, not re-exports)
   B2. R0 self-host builtins in JS   (Object first, then dependency order)
   B3. R2 one iterator protocol      (with R0 Iterator.js)
+  B4. R3 chrono for Date core       (builtins/core/date.rs)
 
 Phase C — built-ins → annexB → Temporal
   C1. Built-ins stages in JS        (never re-expand Rust builtins)
-  C2. S4 async→generator            (for-await-of / Promise / Async*)
-  C3. Temporal last                 (evaluate temporal_rs; S7)
+  C2. S4 async→generator            (for-await-of / Promise / Async*; verify swc first)
+  C3. R18 regex Unicode escapes     (RegExp \p{}; before stage 84)
+  C4. Temporal last                 (temporal_rs + ICU4X; stage 120)
 ```
 
 Do **not** pause stage 16 for a full R0 migration. R0’s throughput
@@ -68,13 +71,31 @@ errors. Hand-rolling in `lower/` is thousands of LOC; OXC already
 implements them. Route parse → `oxc_semantic` → SyntaxError before
 lowering (R17; `DEPENDENCIES.md` row in the same diff).
 
-## S4 — OXC `async-to-generator` transform *(medium-high, Phase C)*
+## S4 — Async-to-generator transform *(medium-high, Phase C)*
 
 Generators already pass (stage 27 `done`). Async stages
 (`async-generator`, `for-await-of` 1,234, `await-using`) plus `Promise`
 729 + `AsyncFunction`/`AsyncGenerator*` reduce to generators + a job
-queue if the transform runs at lower time. Verify `oxc_transformer`
-semantics match ES before committing.
+queue if the transform runs at lower time.
+
+**Confirmed (2026-07-23):** `oxc_transformer` does NOT have an
+async-to-generator transform — it handles TypeScript stripping, JSX,
+React, decorators, and ES2026→ES2015 lowering only.
+`swc_ecma_compat_es2017::async_to_generator` (docs.rs confirmed) has the
+transform. The risk is adding the full `swc_ecma_*` dependency stack (~10+
+crates) alongside existing `oxc` (0.47), creating a second heavyweight
+parser dependency.
+
+Verification steps:
+1. Does `swc_ecma_compat_es2017` work standalone (without the full swc
+   parser), or does it require `swc_ecma_parser` as a peer?
+2. Does it conflict with the current `oxc` version in `Cargo.toml`?
+3. Run a subset of `for-await-of` (stage 40) tests against the transform
+   output before committing.
+
+If swc conflicts: fall back to hand-rolling async eval nodes in `eval/`
+(~500 LOC, low risk). Boa (the reference Rust JS engine) uses a hand-rolled
+async executor and achieves 94.12% test262 without a swc dependency.
 
 ## S5 — Parallel in-stage runner + failure digest tooling *(medium — active)*
 
@@ -99,7 +120,23 @@ test262 is the spec-behavior suite; duplicating it is waste.
 
 Policy (`DEPENDENCIES.md`): regress, chrono, num-bigint, serde_json,
 urlencoding, oxc. **Long pole: `Temporal` (4,603)** — staged last.
-Evaluate `temporal_rs` before hand-rolling anything.
+
+`temporal_rs` confirmed production-grade (2026-07-23 research):
+- Used by **Boa** (94.12% test262), **Kiesel**, and **V8/Chrome 144**
+- 8 types: `ZonedDateTime`, `Instant`, `PlainDateTime`, `PlainDate`,
+  `PlainTime`, `Duration`, `Calendar`, `TimeZone`
+- ICU4X for calendar/timezone math; Diplomat for C++/Rust FFI
+- ES Stage 4 (2026-03-11); spec stable
+- `DEPENDENCIES.md` row in the same diff as Temporal stage start.
+- Evaluate API surface vs. ES spec version before committing.
+
+## S8 — `url` over `urlencoding` *(low effort, early Phase A/B)*
+
+`urlencoding` only does `%`-encoding. ES modules need full URL resolution:
+scheme parsing, path normalization, `data:` URLs, bare specifier resolution.
+`url` (rust-url) implements the URL Standard and covers all of these.
+Small diff: replace `urlencoding` dep with `url`; update `builtins/core/uri.rs`.
+Do before stage 53 (`modules`).
 
 ## Rejected / low value
 
@@ -115,6 +152,15 @@ Evaluate `temporal_rs` before hand-rolling anything.
 - *Per-stage checkpoint/skip lists* — "no checkpoints, no skips"; a
   skip list is a lie that compounds.
 - *Grinding Object/Array/String in Rust* — deleted by R0.
+- *oxc_transformer for async* — confirmed (2026-07-23) it has no
+  async-to-generator; S4 now targets `swc_ecma_compat_es2017` with
+  validation gates.
+- *tokio for async* — overkill for a microtask queue; smol or
+  hand-rolled is correct scope.
+- *fancy-regex / re2 for RegExp* — too limited for ES2024 `\p{}`
+  escapes; see R18 and `DEPENDENCIES.md`.
+- *wasmtime for ShadowRealm* — ShadowRealm is a JS-level isolated
+  global, not a WASM sandbox.
 
 ## CI regression gate
 

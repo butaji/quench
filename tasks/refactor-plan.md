@@ -20,12 +20,14 @@ repo-wide split sweeps ahead of failing test262 clusters.
 | Builtins Rust LOC | ~14k |
 | JS builtins | **0** — R0 not started |
 | `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + thin `%ops%` wrapper; not yet the single owner |
-| Target after migration | **~8–12k Rust** + **~3–5k JS** |
+| Target after migration | **~8–12k Rust** + **~19k JS** |
 | Current stage | 16 `class` (4,367 tests) |
+| Crate strategy | `DEPENDENCIES.md` — verified 2026-07-23 |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
 are snapshots; re-locate by symbol name before editing. Object-model
-audit: `tasks/review-2026-07-22-object-model.md`.
+audit: `tasks/review-2026-07-22-object-model.md`. Crate candidates:
+`DEPENDENCIES.md`.
 
 ## Critical path (ASAP × min LOC)
 
@@ -102,10 +104,13 @@ Do **not** wait for R0 — language stages need this now.
 ## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A)*
 
 High tests-per-LOC for the language half. Hand-rolling early errors in
-`lower/` is thousands of LOC.
+`lower/` is thousands of LOC. `oxc_semantic` confirmed in `docs.rs/oxc`
+under the main oxc crate — verify if a feature flag is needed or if
+`ctx.semantic()` is already available from existing `oxc` usage.
 
-- [ ] `DEPENDENCIES.md` row for `oxc_semantic` / `oxc_diagnostics` in
-      the same diff.
+- [ ] Verify `oxc_semantic` API in current `oxc` version (0.47): does
+      `Parser::parse` → `SemanticAnalysis::build` give early errors?
+- [ ] `DEPENDENCIES.md` row if a new feature or version is needed.
 - [ ] `#[test]`: duplicate `let` in one block → catchable `SyntaxError`.
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
@@ -170,12 +175,14 @@ duplicate) in Phase A without waiting for full R0.
 ## R3 — `chrono`-backed Date core  *(PHASE-B / with Date.js)*
 
 `builtins/date.rs` hand-rolls leap-year math under `chrono_*` names but
-never imports `chrono`.
+never imports `chrono` (confirmed via grep: zero `use chrono` hits). R3
+implements the fix documented in `DEPENDENCIES.md`.
 
 - [ ] `builtins/core/date.rs`: `UtcTimestamp`, `YmdToMs`, `MsToYmd` over
       `chrono::NaiveDate` + `chrono::Utc`.
 - [ ] `builtins/Date.js` thin shell.
 - [ ] `#[test]` for `Date.UTC` covering leap years + pre-1970.
+- [ ] `DEPENDENCIES.md` row for the upgrade (if any).
 
 ~50 LOC saved.
 
@@ -256,13 +263,31 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 
 ---
 
+## R18 — RegExp Unicode property escapes  *(LATER / stage 84)*
+
+`regress` (ES2018, confirmed in `DEPENDENCIES.md`) does NOT support
+Unicode property escapes `\p{}` (docs.rs regress: "features which have
+yet to be implemented: Unicode property escapes like `\p{Sc}`"). Stage 84
+tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
+
+- [ ] Evaluate: does `regex` crate with `unicode-perl` feature cover all
+      ES2024 `\p{}` syntax? Does it also cover ES2018 backreferences,
+      lookbehind, and dotAll?
+- [ ] If yes: add `regex` to `Cargo.toml` alongside `regress`; or replace
+      `regress` if the feature set is a superset.
+- [ ] `DEPENDENCIES.md` row in the same diff.
+- [ ] `#[test]` for `\p{Emoji}` matching, `\p{Script=Latin}`,
+      `\p{General_Category=Number}`.
+
+---
+
 ## Sequencing (summary)
 
 ```
 NOW:     R4 ✓ → R5 ✓ → stage 16 (S2) → R17 → language stages
          R1 incremental on every op touch
          S5 harness (parallel digest, failed-only rerun) — active
-PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js)
+PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js) → R18
 LATER:   R6 R8 R9 R10 R11 R14 R16 as stages/digests demand
          R15 on every touch; repo-wide sweep after R0/R5
 ```
