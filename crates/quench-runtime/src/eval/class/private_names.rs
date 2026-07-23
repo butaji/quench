@@ -518,4 +518,54 @@ mod tests {
         let r = Context::new().unwrap().eval(src).unwrap();
         assert_eq!(r, crate::value::Value::Boolean(true));
     }
+
+    #[test]
+    fn nested_class_field_accessor_reads_outer_private_on_parameter() {
+        let src = "class C { #outer = 'test262'; \
+                   B = class { method(o) { return o.#outer; } }; } \
+                   let c = new C(); let b = new c.B(); b.method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_first_of_two_without_own_private() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   dummy = 1; } \
+                   let c = new C(); (new c.B_withoutPrivateField()).method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_field_two_variants_first_only() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   B_withPrivateField = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); (new c.B_withoutPrivateField()).method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
+
+    #[test]
+    fn nested_class_field_two_variants_like_test262() {
+        let src = "class C { #outer = 'test262'; \
+                   B_withoutPrivateField = class { method(o) { return o.#outer; } }; \
+                   B_withPrivateField = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); \
+                   (new c.B_withoutPrivateField()).method(c) === 'test262' && \
+                   (new c.B_withPrivateField()).method(c) === 'test262'";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn nested_class_with_own_private_reads_outer_private_on_parameter() {
+        let src = "class C { #outer = 'test262'; \
+                   B = class { #inner = 42; method(o) { return o.#outer; } }; } \
+                   let c = new C(); let b = new c.B(); b.method(c)";
+        let r = Context::new().unwrap().eval(src).unwrap();
+        assert_eq!(r, crate::value::Value::String("test262".into()));
+    }
 }
