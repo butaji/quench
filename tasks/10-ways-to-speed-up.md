@@ -76,11 +76,19 @@ Generators already pass (stage 27 `done`). Async stages
 queue if the transform runs at lower time. Verify `oxc_transformer`
 semantics match ES before committing.
 
-## S5 — Parallel in-stage runner + failure digest tooling *(medium)*
+## S5 — Parallel in-stage runner + failure digest tooling *(medium — active)*
 
 Stages stay a sequential gate; tests *within* a stage are independent —
 run on all cores. Pair with S2: machine-readable digests
-(`tasks/failures-*.md` generated, not hand-maintained).
+(`tasks/failures-N.json`), failed-only rerun, QUICK triage.
+
+**Landed (2026-07-23):** runner split (`runner/{collect,execute,digest,flags}`),
+parallel digest, explicit skips, JSON output, `TEST262_FAILED_JSON`,
+prebuilt `run-test` isolation, shared `run_single_test` path.
+Detail: `tasks/harness-roadmap.md`.
+
+**Next:** cluster filter, digest diff script, progress fields in
+`index.json`, zero crash-file skips.
 
 ## S6 — Disciplined unit tests *(ongoing practice)*
 

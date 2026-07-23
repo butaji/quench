@@ -9,12 +9,11 @@
 //!
 //! Env: TEST262_DIR=<path-to-test262>
 
-use std::path::PathBuf;
-use quench_runtime::{Context, builtins, test262::harness::{try_inject_harness, HarnessLoader}};
 use quench_runtime::test262::metadata::Test262Metadata;
-use quench_runtime::value::Value;
+use quench_runtime::test262::runner::run_single_test;
+use quench_runtime::test262::{HarnessLoader, QuenchHost, TestOutcome};
 
-fn main() {
+fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let mut strict = false;
     let mut module = false;

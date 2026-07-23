@@ -279,6 +279,8 @@ diff /tmp/before.txt /tmp/after.txt
 - `TEST262_FIRST_N=<N>` — only run first N tests
 - `RUST_BACKTRACE=1` — stack traces on panics
 
+See also `tasks/harness-roadmap.md` for the full harness speed roadmap.
+
 ## Improving the Tools
 
 These tools should evolve as you use them. Every time you run a digest, ask:
