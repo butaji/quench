@@ -412,6 +412,9 @@ pub fn create_class_prototype_helper_with_env(
         } else {
             eval_expression(super_class, env, false)?
         };
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+        }
         if !matches!(&super_class_val, Value::Null) && !is_constructor_value(&super_class_val) {
             return Err(JsError(
                 "TypeError: superclass must be a constructor".to_string(),
@@ -453,6 +456,9 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, params, body, is_async, is_generator) in &class.methods {
         let key_str = prop_key_to_string(name, &closure, false)?;
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         let mut func = ValueFunction::new(
             Some(key_str.clone()),
             params.clone(),
@@ -478,6 +484,9 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, body) in &class.getters {
         let key = prop_key_to_string(name, &closure, false)?;
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         proto.set_getter(
             &key,
             Rc::new(body.clone()),
@@ -488,6 +497,9 @@ pub fn create_class_prototype_helper_with_env(
 
     for (name, param, body) in &class.setters {
         let key = prop_key_to_string(name, &closure, false)?;
+        if crate::value::generator_replay::yield_pending() {
+            return Ok(Rc::new(RefCell::new(proto)));
+        }
         proto.set_setter(
             &key,
             param.clone(),
@@ -525,6 +537,9 @@ pub fn prop_key_to_string(
         crate::ast::PropertyKey::Number(n) => Ok(crate::value::number_to_string(*n)),
         crate::ast::PropertyKey::Computed(expr) => {
             let val = eval_expression(expr, env, in_arrow)?;
+            if crate::value::generator_replay::yield_pending() {
+                return Ok(String::new());
+            }
             let prim = crate::value::to_primitive(&val, Some("string"))?;
             Ok(crate::value::to_js_string(&prim))
         }
@@ -694,6 +709,33 @@ mod tests {
     fn class_method_number_key() {
         let r = eval("class C { 42() { return 3; } } C.prototype[42].name").unwrap();
         assert_eq!(r, Value::String("42".into()));
+    }
+
+    #[test]
+    fn class_accessor_computed_yield_in_generator() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            r#"
+            var yieldSet, C, iter;
+            function* g() {
+              class C_ {
+                get [yield]() { return 'get yield'; }
+                set [yield](param) { yieldSet = param; }
+              }
+              C = C_;
+            }
+            iter = g();
+            iter.next();
+            iter.next('first');
+            iter.next('second');
+        "#,
+        )
+        .unwrap();
+        let r = ctx.eval("C.prototype.first").unwrap();
+        assert_eq!(r, Value::String("get yield".into()));
+        ctx.eval("C.prototype.second = 'set yield'").unwrap();
+        let r2 = ctx.eval("yieldSet").unwrap();
+        assert_eq!(r2, Value::String("set yield".into()));
     }
 
     // ─── super in methods ────────────────────────────────────────────────────
