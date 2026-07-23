@@ -53,6 +53,17 @@ pub fn is_unscoped_private_name_key(key: &str) -> bool {
     !inner.contains(':')
 }
 
+/// Class id embedded in a scoped [`scoped_private_name_key`], if any.
+pub fn private_name_declaring_class_id(key: &str) -> Option<usize> {
+    if !is_private_name_key(key) {
+        return None;
+    }
+    let inner = &key[9..key.len() - 1];
+    inner
+        .split_once(':')
+        .and_then(|(id_str, _)| id_str.parse().ok())
+}
+
 /// Source-visible name for a private method (`#m`) from storage or scoped key.
 pub fn private_method_display_name(key: &str) -> String {
     if let Some(rest) = key.strip_prefix('#') {
