@@ -28,12 +28,14 @@
       ]
     },
     {
-      "count": 1,
+      "count": 2,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-type.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-value-attr.js"
       ],
       "reason": "ReferenceError: firstIterResult is not defined",
       "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-type.js",
         "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-value-attr.js"
       ]
     },
@@ -140,7 +142,7 @@
       ]
     },
     {
-      "count": 9,
+      "count": 8,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-iter-nrml-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-elision-iter-nrml-close-null.js",
@@ -149,8 +151,7 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elision-iter-nrml-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-empty-iter-close-null.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close-null.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-object.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-next-result-type.js"
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-non-object.js"
       ],
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
       "samples": [
@@ -340,7 +341,7 @@
       ]
     },
     {
-      "count": 8,
+      "count": 7,
       "paths": [
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-init-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-elem-nested-array-yield-expr.js",
@@ -348,8 +349,7 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
       ],
       "reason": "Test262Error: sameValue failed: 2 !== 1",
       "samples": [
@@ -359,8 +359,7 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/array-rest-yield-expr.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-elem-init-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js",
-        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
+        "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-prop-nested-array-yield-expr.js"
       ]
     },
     {
@@ -660,6 +659,16 @@
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-fn-name-cover.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-fn-name-fn.js",
         "/workspace/tests/test262/test/language/statements/for-of/dstr/obj-id-init-fn-name-gen.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
+      ],
+      "reason": "TypeError: Iterator result interface is not an object",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/for-of/iterator-close-via-continue.js"
       ]
     },
     {

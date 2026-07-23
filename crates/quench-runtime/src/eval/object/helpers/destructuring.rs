@@ -291,7 +291,11 @@ pub fn take_iterator_step(
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
-        return Ok((Value::Undefined, true));
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Iterator result interface is not an object",
+            "TypeError",
+        );
+        return Err(js_err);
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
     if matches!(done, Value::Boolean(true)) {
@@ -1207,6 +1211,22 @@ mod tests {
     fn assign_to_undeclared_strict_throws() {
         let r = eval("'use strict'; z = 1");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn iterator_next_non_object_result_throws_type_error() {
+        let err = eval(
+            "var iterable = {};
+             iterable[Symbol.iterator] = function() {
+               return { next: function() { return true; } };
+             };
+             for (var x of iterable) {}",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("TypeError"),
+            "expected TypeError, got {err}"
+        );
     }
 
     // ─── string is iterable for destructuring ────────────────────────────────

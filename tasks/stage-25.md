@@ -17,6 +17,7 @@ See `tasks/failures-25.json` for failure clusters.
 - **Var+pattern hoist:** `lower_for_of_stmt` uses `lower_for_in_var_pattern_hoist` for `var` destructuring heads.
 - **BindingInitialization vs assignment:** `init_to` / TDZ-safe `assign_to_identifier` (assignment throws on TDZ; for-of/for-in lexical heads use `init_to`).
 - **TypedArray iteration:** `%TypedArray%.prototype[Symbol.iterator]` + `values` (fixes float32array/arguments-mapped cluster).
+- **IteratorNext validation:** non-object `next()` result throws `TypeError` (fixes iterator-next-result-type / dstr *-close-null cluster).
 
 ## Remaining clusters (top)
 
