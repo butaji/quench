@@ -1,5 +1,5 @@
 {
-  "failed": 486,
+  "failed": 449,
   "groups": [
     {
       "count": 1,
@@ -197,16 +197,6 @@
         "/workspace/tests/test262/test/language/statements/class/elements/nested-private-derived-cls-direct-eval-contains-superproperty-2.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-derived-cls-direct-eval-contains-superproperty-2.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-hash-constructor-is-a-valid-name.js"
-      ],
-      "reason": "Test262Error: #constructor should be an own property\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-hash-constructor-is-a-valid-name.js"
       ]
     },
     {
@@ -1066,54 +1056,6 @@
       ]
     },
     {
-      "count": 32,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/meth-static-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/private-meth-static-obj-ptrn-id-init-fn-name-arrow.js"
-      ],
-      "reason": "Test262Error: sameValue failed: \\\"\\\" !== \\\"arrow\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-id-init-fn-name-arrow.js",
-        "/workspace/tests/test262/test/language/statements/class/dstr/gen-meth-static-obj-ptrn-id-init-fn-name-arrow.js"
-      ]
-    },
-    {
       "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-async-generator-method-name.js",
@@ -1198,17 +1140,13 @@
       ]
     },
     {
-      "count": 4,
+      "count": 2,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-clobbered-by-computed-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-clobbered-by-computed-property.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
       ],
       "reason": "Test262Error: sameValue failed: false !== true",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-clobbered-by-computed-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-clobbered-by-computed-property.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/class-definition-parent-proto-null.js"
       ]
@@ -1502,18 +1440,6 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-is-not-clobbered-by-computed-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-is-not-clobbered-by-computed-property.js"
-      ],
-      "reason": "TypeError: Private field already defined",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-is-not-clobbered-by-computed-property.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-is-not-clobbered-by-computed-property.js"
-      ]
-    },
-    {
       "count": 11,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-accessor-name/inst-private-escape-sequence-ZWJ.js",
@@ -1734,7 +1660,7 @@
       ]
     }
   ],
-  "passed": 3881,
+  "passed": 3918,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
