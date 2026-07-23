@@ -320,6 +320,16 @@ pub fn eval_new(
     let prev_new_target = crate::interpreter::get_new_target();
     crate::interpreter::set_new_target(Some(constructor_val.clone()));
 
+    // Bound class constructor: `new Subclass.bind(thisArg, ...fixed)()`
+    if let Some((Value::Class(class), _bound_this, mut bound_args)) =
+        crate::eval::member::bound_callable_target(&constructor_val)
+    {
+        bound_args.extend(args);
+        let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), bound_args, env);
+        crate::interpreter::set_new_target(prev_new_target);
+        return r;
+    }
+
     // Handle class instantiation
     if let Value::Class(class) = &constructor_val {
         let r = instantiate_class_from_ast_with_env(class.as_ref().clone(), args, env);
