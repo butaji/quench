@@ -124,7 +124,6 @@ pub fn instantiate_simple(
                     )?));
                     init_instance_fields(super_class.as_ref(), o, &super_env)?;
                 }
-                install_privates_on_object(super_class.as_ref(), o, env)?;
             }
             install_privates_on_object(class, o, env)?;
         }
