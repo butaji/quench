@@ -282,6 +282,8 @@ pub enum Expression {
         variable: Box<Expression>,
         iterable: Box<Expression>,
         body: Box<Statement>,
+        /// Per-iteration lexical binding for `for (let/const x of ...)`.
+        loop_binding: Option<VarKind>,
     },
     /// For-in loop: for (x in object) { ... }
     ForIn {
