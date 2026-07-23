@@ -119,7 +119,10 @@ fn make_array_with_new(
 ) -> Result<Value, JsError> {
     obj_rc.borrow_mut().prototype = Some(Rc::clone(proto));
     obj_rc.borrow_mut().kind = ObjectKind::Array;
-    if args.len() == 1 {
+    if args.is_empty() {
+        obj_rc.borrow_mut().elements = vec![];
+        obj_rc.borrow_mut().set("length", Value::Number(0.0));
+    } else if args.len() == 1 {
         if let Value::Number(n) = args[0] {
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;

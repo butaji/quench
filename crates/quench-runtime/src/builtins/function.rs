@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::value::object::helpers::PropertyFlags;
 use crate::value::{
     to_js_string, to_number_unchecked, JsError, NativeConstructor, NativeFunction, Object,
     ObjectKind, Value, ValueFunction,
@@ -152,7 +153,7 @@ pub fn register_function(ctx: &mut Context) {
     });
 
     let function_constructor =
-        make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+        make_function_constructor("", function_proto.clone(), Rc::clone(ctx.env()));
     function_constructor.set_name("Function");
     let func_ctor = Value::NativeConstructor(Rc::new(function_constructor));
     // Set Function.prototype.constructor = Function
@@ -162,21 +163,22 @@ pub fn register_function(ctx: &mut Context) {
     ctx.set_global("Function".to_string(), func_ctor);
 
     // Register AsyncFunction, GeneratorFunction, AsyncGeneratorFunction
-    // as native constructors that delegate to the Function constructor logic.
-    let async_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    // as native constructors that delegate to the Function constructor logic
+    // but generate the correct source text per kind.
+    let async_func_ctor = make_function_constructor("async ", function_proto.clone(), Rc::clone(ctx.env()));
     async_func_ctor.set_name("AsyncFunction");
     ctx.set_global(
         "AsyncFunction".to_string(),
         Value::NativeConstructor(Rc::new(async_func_ctor)),
     );
-    let gen_func_ctor = make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+    let gen_func_ctor = make_function_constructor("*", function_proto.clone(), Rc::clone(ctx.env()));
     gen_func_ctor.set_name("GeneratorFunction");
     ctx.set_global(
         "GeneratorFunction".to_string(),
         Value::NativeConstructor(Rc::new(gen_func_ctor)),
     );
     let async_gen_func_ctor =
-        make_function_constructor(function_proto.clone(), Rc::clone(ctx.env()));
+        make_function_constructor("async *", function_proto.clone(), Rc::clone(ctx.env()));
     async_gen_func_ctor.set_name("AsyncGeneratorFunction");
     ctx.set_global(
         "AsyncGeneratorFunction".to_string(),
@@ -260,20 +262,29 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
 }
 
 fn make_function_constructor(
+    kind: &str,
     function_proto: Rc<RefCell<Object>>,
     global_env: Rc<RefCell<crate::env::Environment>>,
 ) -> NativeConstructor {
+    let kind_owned = kind.to_string();
     NativeConstructor::new(
         move |args| {
             // new Function(arg1, ..., argN, body): compile a real function
-            // whose closure is the global scope
+            // whose closure is the global scope.
+            // The `kind` prefix determines whether the function is a generator,
+            // async, or async-generator function.
+            //   ""        → function anonymous(...) { body }
+            //   "*"       → function* anonymous(...) { body }
+            //   "async "  → async function anonymous(...) { body }
+            //   "async *" → async function* anonymous(...) { body }
             let body_src = args.last().map(to_js_string).unwrap_or_default();
             let params_src = args[..args.len().saturating_sub(1)]
                 .iter()
                 .map(to_js_string)
                 .collect::<Vec<_>>()
                 .join(",");
-            let source = format!("function anonymous({}) {{\n{}\n}}", params_src, body_src);
+            let source =
+                format!("function{} anonymous({}) {{\n{}\n}}", kind_owned, params_src, body_src);
             // Per ES spec §16.1, a hashbang comment (#! ...) is only valid at the
             // very beginning of source text. The Function constructor wraps the body
             // in `function anonymous() { ... }`, so a hashbang inside the body is
@@ -302,8 +313,9 @@ fn make_function_constructor(
                         is_generator,
                     }) = stmts.into_iter().next()
                     {
+                        let param_count = params.len();
                         let func = Value::Function(ValueFunction::new(
-                            Some(name),
+                            Some(name.clone()),
                             params,
                             body,
                             Rc::clone(&global_env),
@@ -315,9 +327,55 @@ fn make_function_constructor(
                         // on the existing object's internal slots instead of creating
                         // a new Value::Function. This preserves the derived class's
                         // prototype chain on the object.
-                        if let Some(Value::Object(existing)) = crate::interpreter::get_native_this()
+                        if let Some(Value::Object(existing)) =
+                            crate::interpreter::get_native_this()
                         {
                             existing.borrow_mut().slots.insert("[[Call]]", func);
+                            {
+                                let mut obj = existing.borrow_mut();
+                                // Set .length as own property (writable: false, enumerable: false, configurable: true)
+                                obj.define(
+                                    "length",
+                                    Value::Number(param_count as f64),
+                                    PropertyFlags {
+                                        value: None,
+                                        writable: false,
+                                        enumerable: false,
+                                        configurable: true,
+                                    },
+                                );
+                                // Set .name as own property ("anonymous") per CreateDynamicFunction
+                                obj.define(
+                                    "name",
+                                    Value::String(name.clone()),
+                                    PropertyFlags {
+                                        value: None,
+                                        writable: false,
+                                        enumerable: false,
+                                        configurable: true,
+                                    },
+                                );
+                                // Set .prototype for non-Async functions (Normal, Generator, AsyncGenerator)
+                                // Async functions (kind starts with "async " but not "async *") get no .prototype
+                                if kind_owned.is_empty() || kind_owned == "*" || kind_owned == "async *" {
+                                    let mut proto = Object::new(ObjectKind::Ordinary);
+                                    // Set the prototype of this object to Object.prototype
+                                    // so that methods like hasOwnProperty work.
+                                    if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+                                        proto.prototype = Some(obj_proto);
+                                    }
+                                    obj.define(
+                                        "prototype",
+                                        Value::Object(Rc::new(RefCell::new(proto))),
+                                        PropertyFlags {
+                                            value: None,
+                                            writable: true,
+                                            enumerable: false,
+                                            configurable: false,
+                                        },
+                                    );
+                                }
+                            }
                             Ok(Value::Object(existing))
                         } else {
                             Ok(func)
@@ -446,6 +504,82 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("Function('a', 'return a')(3)").unwrap();
         assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn test_class_extends_function_has_length_own_prop() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class Fn extends Function {}
+                 var fn = new Fn('a', 'b', 'return a + b');
+                 Object.getOwnPropertyDescriptor(fn, 'length').value;",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Number(2.0));
+        let desc = ctx
+            .eval(
+                "class Fn extends Function {}
+                 var fn = new Fn('a', 'b', 'return a + b');
+                 Object.getOwnPropertyDescriptor(fn, 'length');",
+            )
+            .unwrap();
+        if let Value::Object(o) = desc {
+            assert_eq!(o.borrow().get("writable"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("enumerable"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("configurable"), Some(Value::Boolean(true)));
+        } else {
+            panic!("expected object descriptor");
+        }
+    }
+
+    #[test]
+    fn test_class_extends_function_has_name_own_prop() {
+        let mut ctx = Context::new().unwrap();
+        let desc = ctx
+            .eval(
+                "class Fn extends Function {}
+                 var fn = new Fn('a', 'b', 'return a + b');
+                 Object.getOwnPropertyDescriptor(fn, 'name');",
+            )
+            .unwrap();
+        if let Value::Object(o) = desc {
+            assert_eq!(
+                o.borrow().get("value"),
+                Some(Value::String("anonymous".to_string()))
+            );
+            assert_eq!(o.borrow().get("writable"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("enumerable"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("configurable"), Some(Value::Boolean(true)));
+        } else {
+            panic!("expected object descriptor, got {:?}", desc);
+        }
+    }
+
+    #[test]
+    fn test_class_extends_generatorfunction_has_prototype() {
+        let mut ctx = Context::new().unwrap();
+        // Everything in one eval to avoid scoping issues
+        let r = ctx
+            .eval(
+                "class GFn extends GeneratorFunction {}
+                 var gfn = new GFn(';');
+                 [Object.keys(gfn.prototype).length,
+                  gfn.prototype.hasOwnProperty('constructor'),
+                  Object.getOwnPropertyDescriptor(gfn, 'prototype').writable,
+                  Object.getOwnPropertyDescriptor(gfn, 'prototype').enumerable,
+                  Object.getOwnPropertyDescriptor(gfn, 'prototype').configurable];",
+            )
+            .unwrap();
+        if let Value::Object(o) = r {
+            assert_eq!(o.borrow().get("0"), Some(Value::Number(0.0)));
+            assert_eq!(o.borrow().get("1"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("2"), Some(Value::Boolean(true)));
+            assert_eq!(o.borrow().get("3"), Some(Value::Boolean(false)));
+            assert_eq!(o.borrow().get("4"), Some(Value::Boolean(false)));
+        } else {
+            panic!("expected array, got {:?}", r);
+        }
     }
 
     #[test]
