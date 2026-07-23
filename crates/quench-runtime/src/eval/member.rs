@@ -142,19 +142,6 @@ pub fn eval_class_member(
             let proto = get_class_prototype_cached(class, env)?;
             Ok(Value::Object(proto))
         }
-        "length" => {
-            // Per ES spec, the `length` property of a class constructor
-            // is the number of formal parameters of the constructor.
-            Ok(Value::Number(class.constructor_params.len() as f64))
-        }
-        "name" => {
-            // "name" is configurable; if deleted, return undefined
-            if class.deleted_properties.borrow().contains("name") {
-                Ok(Value::Undefined)
-            } else {
-                Ok(Value::String(class.name.clone().unwrap_or_default()))
-            }
-        }
         _ => {
             if matches!(prop_name, "call" | "apply" | "bind") {
                 return eval_callable_proto_method(
@@ -223,7 +210,7 @@ pub fn eval_class_member(
                 }
             }
             // Check static setters
-            for (i, (name, param, body)) in class.static_setters.iter().enumerate() {
+            for (i, (name, _param, _body)) in class.static_setters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
                 let key_str = if let Some(key) = class.static_setter_key(i) {
                     key
@@ -238,21 +225,22 @@ pub fn eval_class_member(
                         );
                         return Err(js_err);
                     }
-                    // Return a function that wraps the setter call.
-                    let param = param.clone();
-                    let setter_body = body.clone();
-                    let setter_closure = Rc::clone(&eval_env);
-                    let mut setter_func = crate::value::ValueFunction::new(
-                        Some(key_str),
-                        vec![param],
-                        setter_body,
-                        setter_closure,
-                        false,
-                        false,
-                    );
-                    setter_func.strict = true;
-                    return Ok(Value::Function(setter_func));
+                    // Setter-only: [[Get]] returns undefined (assignment uses set_static_property).
+                    return Ok(Value::Undefined);
                 }
+            }
+            // Intrinsic constructor properties (shadowed by static members above)
+            match prop_name {
+                "length" => {
+                    return Ok(Value::Number(class.constructor_params.len() as f64));
+                }
+                "name" => {
+                    if class.deleted_properties.borrow().contains("name") {
+                        return Ok(Value::Undefined);
+                    }
+                    return Ok(Value::String(class.name.clone().unwrap_or_default()));
+                }
+                _ => {}
             }
             // Look up the superclass chain for inherited static members
             if let Some(ref super_expr) = class.super_class {
