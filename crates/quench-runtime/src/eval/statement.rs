@@ -988,9 +988,8 @@ fn eval_try(
         Ok(try_val) => {
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
-                // Check for pending control flow before finally
+                // Suspend pending control flow while finally runs.
                 let pending_cf = take_control_flow();
-                drop(pending_cf);
 
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
                 match fin_result {
@@ -1010,7 +1009,6 @@ fn eval_try(
                                 _ => {}
                             }
                         }
-                        // Return the try value if no control flow override
                         Ok(try_val)
                     }
                     Err(e) => Err(e), // Finally threw - propagate
@@ -1035,8 +1033,6 @@ fn eval_try(
                 // Run finally if present
                 if let Some(fin) = finalizer {
                     let pending_cf = take_control_flow();
-                    drop(pending_cf);
-
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
@@ -1055,7 +1051,6 @@ fn eval_try(
                                     _ => {}
                                 }
                             }
-                            // Return catch result if no control flow override
                             catch_result
                         }
                         Err(e) => Err(e), // Finally threw
@@ -1066,9 +1061,7 @@ fn eval_try(
             } else {
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
-                    let pending_cf = take_control_flow();
-                    drop(pending_cf);
-
+                    let _pending_cf = take_control_flow();
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {

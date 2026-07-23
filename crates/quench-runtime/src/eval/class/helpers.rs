@@ -58,12 +58,7 @@ fn finish_ctor_result(
         | Value::NativeConstructor(_) => Ok(result),
         _ => {
             if class.super_class.is_some() {
-                if !call_env
-                    .borrow()
-                    .current_scope()
-                    .borrow()
-                    .is_this_initialized()
-                {
+                if !crate::interpreter::is_this_binding_initialized(call_env) {
                     return throw_uninitialized_this();
                 }
                 if explicit_return && !matches!(result, Value::Undefined) {
@@ -2714,6 +2709,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn derived_return_in_try_finally_super_initializes_this() {
+        let r = eval(
+            "class C extends class {} { constructor() { try { return; } finally { super(); } } } \
+             typeof new C()",
+        );
+        assert_eq!(r.unwrap(), Value::String("object".into()));
+    }
+
+    #[test]
+    fn derived_finally_super_without_return_initializes_this() {
+        let r = eval(
+            "class C extends class {} { constructor() { try {} finally { super(); } } } \
+             typeof new C()",
+        );
+        assert_eq!(r.unwrap(), Value::String("object".into()));
+    }
+
+    #[test]
+    fn derived_finally_super_side_effect_before_mark() {
+        assert_eq!(
+            eval(
+                "var n=0; class C extends class {} { constructor() { try {} finally { n=1; \
+                 super(); n=2; } } } try { new C(); } catch(e) {} n",
+            )
+            .unwrap(),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn derived_return_in_catch_finally_super_initializes_this() {
+        let r = eval(
+            "class C extends class {} { constructor() { try { throw null; } catch(e) { return; } \
+             finally { super(); } } } typeof new C()",
+        );
+        assert_eq!(r.unwrap(), Value::String("object".into()));
     }
 
     #[test]

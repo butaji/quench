@@ -1,5 +1,5 @@
 {
-  "failed": 175,
+  "failed": 160,
   "groups": [
     {
       "count": 1,
@@ -502,6 +502,16 @@
     {
       "count": 1,
       "paths": [
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 2 !== 10",
+      "samples": [
+        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/this-access-restriction-2.js"
       ],
       "reason": "Test262Error: sameValue failed: 3 !== 1",
@@ -820,10 +830,8 @@
       ]
     },
     {
-      "count": 14,
+      "count": 12,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
@@ -839,14 +847,14 @@
       ],
       "reason": "TypeError: Value is not a function, got undefined",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-arrow-function.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-as-async-function.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-getter-is-not-a-own-property.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-setter-is-not-a-own-property.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatefield-on-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privategetter-on-proxy.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatemethods-on-proxy.js",
-        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js"
+        "/workspace/tests/test262/test/language/statements/class/scope-setter-paramsbody-var-open.js",
+        "/workspace/tests/test262/test/language/statements/class/scope-static-setter-paramsbody-var-open.js",
+        "/workspace/tests/test262/test/language/statements/class/subclass/binding.js"
       ]
     },
     {
@@ -874,66 +882,6 @@
       ]
     },
     {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-computed-var-propname-constructor.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-propname-constructor.js"
-      ],
-      "reason": "TypeError: static class field may not be named 'constructor'",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-computed-var-propname-constructor.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/fields-computed-name-static-propname-constructor.js"
-      ]
-    },
-    {
-      "count": 5,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js"
-      ],
-      "reason": "TypeError: static class method may not be named 'constructor'",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js"
-      ]
-    },
-    {
-      "count": 6,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakMap/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakSet/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
-      ],
-      "reason": "TypeError: super is not a constructor",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Map/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Set/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakMap/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/WeakSet/super-must-be-called.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtins.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/super-must-be-called.js"
-      ],
-      "reason": "TypeError: super is not a constructor (Testing with Float64Array and makePassthrough.)",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/TypedArray/super-must-be-called.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/prototype-getter.js"
@@ -954,7 +902,7 @@
       ]
     }
   ],
-  "passed": 4192,
+  "passed": 4207,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
