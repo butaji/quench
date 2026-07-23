@@ -19,7 +19,13 @@ pub trait Test262Host: Send {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum TestOutcome {
     Pass,
-    Fail { reason: String },
+    Fail {
+        reason: String,
+    },
+    /// Documented skip — never counted as a pass.
+    Skip {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for TestOutcome {
@@ -27,6 +33,7 @@ impl std::fmt::Display for TestOutcome {
         match self {
             TestOutcome::Pass => write!(f, "PASS"),
             TestOutcome::Fail { reason } => write!(f, "FAIL: {}", reason),
+            TestOutcome::Skip { reason } => write!(f, "SKIP: {}", reason),
         }
     }
 }
@@ -73,6 +80,15 @@ impl Test262Host for QuenchHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outcome_skip_is_not_pass() {
+        let s = TestOutcome::Skip {
+            reason: "known crash".into(),
+        };
+        assert_ne!(s, TestOutcome::Pass);
+        assert!(s.to_string().starts_with("SKIP:"));
+    }
 
     #[test]
     fn quench_host_runs_and_throws() {
