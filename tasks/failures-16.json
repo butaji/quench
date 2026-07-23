@@ -1,5 +1,5 @@
 {
-  "failed": 143,
+  "failed": 126,
   "groups": [
     {
       "count": 1,
@@ -120,34 +120,6 @@
       ]
     },
     {
-      "count": 12,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-setter-visible-to-direct-eval.js"
-      ],
-      "reason": "SyntaxError: Private field must be declared in an enclosing class",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-getter-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-method-visible-to-direct-eval.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval-on-initializer.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-setter-visible-to-direct-eval.js"
-      ]
-    },
-    {
       "count": 1,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/intercalated-static-non-static-computed-fields.js"
@@ -236,9 +208,8 @@
       ]
     },
     {
-      "count": 6,
+      "count": 5,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
@@ -247,7 +218,6 @@
       ],
       "reason": "Test262Error: Expected SyntaxError but got TypeError. \")",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-1.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-3.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-5.js",
         "/workspace/tests/test262/test/language/statements/class/elements/privatename-not-valid-eval-earlyerr-6.js",
@@ -335,30 +305,6 @@
       "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Frozen objects can't be changed\")",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/class-field-on-frozen-objects.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private field from an arbritary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-field-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-field-on-nested-class.js"
-      ]
-    },
-    {
-      "count": 2,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
-      ],
-      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. accessed private getter from an arbritary object\")",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-shadowed-by-getter-on-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-shadowed-by-getter-on-nested-class.js"
       ]
     },
     {
@@ -672,25 +618,13 @@
       ]
     },
     {
-      "count": 2,
+      "count": 1,
       "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
       ],
       "reason": "Test262Error: sameValue failed: undefined !== \\\"Test262\\\"",
       "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-setter-access-on-inner-class.js"
-      ]
-    },
-    {
-      "count": 1,
-      "paths": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
-      ],
-      "reason": "Test262Error: sameValue failed: undefined !== \\\"outer class\\\"",
-      "samples": [
-        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js"
       ]
     },
     {
@@ -714,17 +648,21 @@
       ]
     },
     {
-      "count": 3,
+      "count": 5,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ],
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js"
+        "/workspace/tests/test262/test/language/statements/class/elements/privatefieldget-success-3.js",
+        "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
       ]
     },
     {
@@ -832,7 +770,7 @@
       ]
     }
   ],
-  "passed": 4224,
+  "passed": 4241,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},

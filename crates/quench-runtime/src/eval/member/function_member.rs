@@ -1,8 +1,10 @@
 //! Function member access evaluation
 
 use crate::value::{
-    create_js_error_with_type, set_thrown_value, JsError, NativeFunction, Value, ValueFunction,
+    create_js_error_with_type, set_thrown_value, JsError, NativeFunction, Object, Value,
+    ValueFunction,
 };
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Evaluate member access on a JS function
@@ -33,9 +35,9 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
         "length" => eval_function_length(f),
         "prototype" => Ok(Value::Object(f.get_prototype())),
-        "call" => eval_function_call_method(f),
-        "apply" => eval_function_apply_method(f),
-        "bind" => eval_function_bind_method(f),
+        "call" => eval_callable_call_method(Value::Function(f.clone())),
+        "apply" => eval_callable_apply_method(Value::Function(f.clone())),
+        "bind" => eval_callable_bind_method(Value::Function(f.clone())),
         _ => {
             // Per ES spec, property lookup on a function object follows the
             // [[Prototype]] chain, which for all functions is Function.prototype.
@@ -64,17 +66,97 @@ fn eval_function_length(f: &ValueFunction) -> Result<Value, JsError> {
     Ok(Value::Number(count as f64))
 }
 
+/// Function.prototype.call / apply / bind for any callable (`Value::Function` or `Value::Class`).
+pub fn eval_callable_proto_method(target: Value, prop_name: &str) -> Result<Value, JsError> {
+    match prop_name {
+        "call" => eval_callable_call_method(target),
+        "apply" => eval_callable_apply_method(target),
+        "bind" => eval_callable_bind_method(target),
+        _ => Ok(Value::Undefined),
+    }
+}
+
+fn callable_name(target: &Value) -> String {
+    match target {
+        Value::Function(f) => f.name.clone().unwrap_or_default(),
+        Value::Class(c) => c.name.clone().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn callable_length(target: &Value) -> usize {
+    match target {
+        Value::Function(f) => {
+            let mut count = 0;
+            for p in &f.params {
+                if p.default.is_some() {
+                    break;
+                }
+                count += 1;
+            }
+            count
+        }
+        Value::Class(c) => c.constructor_params.len(),
+        _ => 0,
+    }
+}
+
+fn store_bound_metadata(
+    bound: &NativeFunction,
+    target: &Value,
+    bound_this: &Value,
+    bound_args: &[Value],
+) {
+    let _ = bound.set_property("__quench_bound_target", target.clone());
+    let _ = bound.set_property("__quench_bound_this", bound_this.clone());
+    let mut arr = Object::new(crate::value::ObjectKind::Ordinary);
+    for (i, arg) in bound_args.iter().enumerate() {
+        arr.elements.resize(i + 1, Value::Undefined);
+        arr.elements[i] = arg.clone();
+    }
+    let _ = bound.set_property(
+        "__quench_bound_args",
+        Value::Object(Rc::new(RefCell::new(arr))),
+    );
+}
+
+pub fn bound_callable_target(func: &Value) -> Option<(Value, Value, Vec<Value>)> {
+    let Value::NativeFunction(nf) = func else {
+        return None;
+    };
+    let target = nf.get_property("__quench_bound_target")?;
+    let bound_this = nf
+        .get_property("__quench_bound_this")
+        .unwrap_or(Value::Undefined);
+    let bound_args = nf
+        .get_property("__quench_bound_args")
+        .and_then(|v| {
+            if let Value::Object(o) = v {
+                let o = o.borrow();
+                Some(
+                    (0..o.elements.len())
+                        .filter_map(|i| o.elements.get(i).cloned())
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    Some((target, bound_this, bound_args))
+}
+
 /// Handle Function.prototype.call
-fn eval_function_call_method(f: &ValueFunction) -> Result<Value, JsError> {
-    let func_clone = f.clone();
+pub fn eval_callable_call_method(target: Value) -> Result<Value, JsError> {
+    let target_for_call = target.clone();
     Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
         move |args: Vec<Value>| {
-            crate::interpreter::set_native_this(Value::Function(func_clone.clone()));
+            crate::interpreter::set_native_this(target_for_call.clone());
             let this_val = args.first().cloned().unwrap_or(Value::Undefined);
             crate::interpreter::set_this_value(this_val.clone());
             let remaining_args: Vec<Value> = args.into_iter().skip(1).collect();
             let result = crate::eval::call_value_with_this(
-                Value::Function(func_clone.clone()),
+                target_for_call.clone(),
                 remaining_args,
                 this_val,
             );
@@ -86,15 +168,14 @@ fn eval_function_call_method(f: &ValueFunction) -> Result<Value, JsError> {
 }
 
 /// Handle Function.prototype.apply
-fn eval_function_apply_method(f: &ValueFunction) -> Result<Value, JsError> {
-    let func_clone = f.clone();
+pub fn eval_callable_apply_method(target: Value) -> Result<Value, JsError> {
+    let target_for_call = target.clone();
     Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
         move |args: Vec<Value>| {
-            crate::interpreter::set_native_this(Value::Function(func_clone.clone()));
+            crate::interpreter::set_native_this(target_for_call.clone());
             let this_val = args.first().cloned().unwrap_or(Value::Undefined);
             crate::interpreter::set_this_value(this_val.clone());
-            let args_array = args.get(1);
-            let spread_args = if let Some(Value::Object(o)) = args_array {
+            let spread_args = if let Some(Value::Object(o)) = args.get(1) {
                 let o = o.borrow();
                 (0..o.elements.len())
                     .filter_map(|i| o.elements.get(i).cloned())
@@ -102,11 +183,8 @@ fn eval_function_apply_method(f: &ValueFunction) -> Result<Value, JsError> {
             } else {
                 Vec::new()
             };
-            let result = crate::eval::call_value_with_this(
-                Value::Function(func_clone.clone()),
-                spread_args,
-                this_val,
-            );
+            let result =
+                crate::eval::call_value_with_this(target_for_call.clone(), spread_args, this_val);
             crate::interpreter::take_native_this();
             crate::interpreter::take_this_value();
             result
@@ -115,31 +193,40 @@ fn eval_function_apply_method(f: &ValueFunction) -> Result<Value, JsError> {
 }
 
 /// Handle Function.prototype.bind
-fn eval_function_bind_method(f: &ValueFunction) -> Result<Value, JsError> {
-    let func_clone = f.clone();
-    let bound_name = format!("bound {}", f.name.clone().unwrap_or_default());
+pub fn eval_callable_bind_method(target: Value) -> Result<Value, JsError> {
+    let target_for_bind = target.clone();
+    let bound_name = format!("bound {}", callable_name(&target));
+    let bound_len = callable_length(&target);
     Ok(Value::NativeFunction(Rc::new(NativeFunction::new(
         move |args: Vec<Value>| {
-            crate::interpreter::set_native_this(Value::Function(func_clone.clone()));
+            crate::interpreter::set_native_this(target_for_bind.clone());
             let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
             crate::interpreter::set_this_value(bound_this.clone());
             let bound_args: Vec<Value> = args.iter().skip(1).cloned().collect();
-            let target_func = func_clone.clone();
+            let inner_target = target_for_bind.clone();
             let name_for_inner = bound_name.clone();
+            let inner_bound_this = bound_this.clone();
+            let inner_bound_args = bound_args.clone();
             let bound_func = NativeFunction::new(move |call_args: Vec<Value>| {
-                crate::interpreter::set_native_this(Value::Function(target_func.clone()));
-                crate::interpreter::set_this_value(bound_this.clone());
-                let all_args: Vec<Value> = bound_args.iter().cloned().chain(call_args).collect();
+                crate::interpreter::set_native_this(inner_target.clone());
+                crate::interpreter::set_this_value(inner_bound_this.clone());
+                let all_args: Vec<Value> =
+                    inner_bound_args.iter().cloned().chain(call_args).collect();
                 let result = crate::eval::call_value_with_this(
-                    Value::Function(target_func.clone()),
+                    inner_target.clone(),
                     all_args,
-                    bound_this.clone(),
+                    inner_bound_this.clone(),
                 );
                 crate::interpreter::take_native_this();
                 crate::interpreter::take_this_value();
                 result
             });
             let _ = bound_func.set_property("name", Value::String(name_for_inner));
+            let _ = bound_func.set_property(
+                "length",
+                Value::Number(bound_len.saturating_sub(bound_args.len()) as f64),
+            );
+            store_bound_metadata(&bound_func, &target_for_bind, &bound_this, &bound_args);
             crate::interpreter::take_native_this();
             crate::interpreter::take_this_value();
             Ok(Value::NativeFunction(Rc::new(bound_func)))

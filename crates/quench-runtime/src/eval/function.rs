@@ -113,19 +113,25 @@ pub(crate) fn call_value_impl(
         Value::Object(o) => call_object_as_constructor(o, args, this_val),
         Value::Class(class) => {
             if this_val != Value::Undefined {
-                crate::eval::class::call_super_constructor(
-                    *class,
-                    args,
-                    this_val,
-                    &Rc::new(RefCell::new(Environment::new())),
-                )
-            } else {
+                if crate::eval::class::helpers::constructing_class_for_super().is_some() {
+                    return crate::eval::class::call_super_constructor(
+                        *class,
+                        args,
+                        this_val,
+                        &Rc::new(RefCell::new(Environment::new())),
+                    );
+                }
                 let (_, js_err) = crate::value::error::create_js_error_with_type(
                     "Class constructor cannot be invoked without 'new'",
                     "TypeError",
                 );
-                Err(js_err)
+                return Err(js_err);
             }
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Class constructor cannot be invoked without 'new'",
+                "TypeError",
+            );
+            Err(js_err)
         }
         _ => {
             let msg = format!("Value is not a function, got {:?}", func);

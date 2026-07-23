@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4211 pass / 156 fail (96.4%)** as of 2026-07-23.
+**4,367 tests** · **4241 pass / 126 fail (97.1%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -31,16 +31,16 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4192** | **175** | **96.0%** | Derived explicit return; IsConstructor proxy/bound/async; yield* generators; static private method assign |
 | 2026-07-23 | **4207** | **160** | **96.3%** | Async return TCO fix; static constructor naming; NativeFunction super() |
 | 2026-07-23 | **4211** | **156** | **96.4%** | Lexical this-binding for super() in finally; try/catch CF restore |
+| 2026-07-23 | **4241** | **126** | **97.1%** | Private eval (scoped names, ctor env, static brand); yield-spread; gen args; Array length; class bind |
 
-## Top remaining clusters (~156)
+## Top remaining clusters (~126)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 8 | yield-spread `[...yield]` | Mid-expr generator suspend in array spread |
-| 8 | sameValue true !== false | Private field/proxy ordering |
-| 8 | privatename eval earlyerr | Direct eval SyntaxError vs TypeError |
-| 8 | Builtin subclass own props | Array.length, Error.message assignment |
-| 8 | Private field on nested class / direct eval | Brand + eval visibility |
+| 12 | Value is not a function (proxy/private own-prop) | Class Function.prototype inherit; private on Proxy target |
+| 7 | sameValue true !== false | Private field/proxy ordering |
+| 6 | Expected SyntaxError got TypeError | Eval early errors in field initializers |
+| ~15 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
 | 5 | Expected exception not thrown | Primitive receiver, frozen objects, Proxy |
 | 5 | Expected TypeError not thrown | const binding, restricted props, arguments.callee |
 | ~20 | Missing builtins | DataView, TypedArrays, AggregateError, WeakRef, … |
