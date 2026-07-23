@@ -372,7 +372,7 @@ pub fn call_super_or_default(
             args,
             this_val.clone(),
         ),
-        Value::NativeFunction(nf) if nf.name == "Symbol" => {
+        Value::NativeFunction(nf) if nf.name == "Symbol" || nf.name == "ArrayBuffer" => {
             crate::eval::function::call_value_with_this(
                 Value::NativeFunction(nf.clone()),
                 args,
@@ -3104,5 +3104,46 @@ mod tests {
              C.method([1, 2, 3]).next();",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn derived_subclass_date_explicit_super() {
+        let r = eval(
+            "class D extends Date { constructor(y,m,d) { super(y,m,d); } } new D(1859, 10, 24)",
+        )
+        .unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn derived_subclass_date_auto_super() {
+        let ctor = eval("typeof Date.constructor").unwrap();
+        assert_eq!(ctor, Value::String("function".into()));
+        let r = eval("class D extends Date {} new D(1859, 10, 24)").unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn derived_subclass_date_get_full_year() {
+        let year = eval("class D extends Date {} new D(1859, 10, 24).getFullYear()").unwrap();
+        assert_eq!(year, Value::Number(1859.0));
+    }
+
+    #[test]
+    fn derived_subclass_number_auto_super() {
+        let r = eval("class N extends Number {} new N(42).toFixed(2)").unwrap();
+        assert_eq!(r, Value::String("42.00".into()));
+    }
+
+    #[test]
+    fn derived_subclass_number_to_exponential() {
+        let r = eval("class N extends Number {} new N(42).toExponential(2)").unwrap();
+        assert_eq!(r, Value::String("4.20e+1".into()));
+    }
+
+    #[test]
+    fn derived_subclass_array_buffer_auto_super() {
+        let r = eval("class AB extends ArrayBuffer {} new AB(4).byteLength").unwrap();
+        assert_eq!(r, Value::Number(4.0));
     }
 }

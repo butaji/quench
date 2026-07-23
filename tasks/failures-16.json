@@ -1,5 +1,5 @@
 {
-  "failed": 89,
+  "failed": 85,
   "groups": [
     {
       "count": 1,
@@ -560,10 +560,9 @@
       ]
     },
     {
-      "count": 5,
+      "count": 4,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
@@ -571,7 +570,6 @@
       "reason": "TypeError: Cannot read private member from an object whose class did not declare it",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/elements/grammar-private-field-optional-chaining.js",
-        "/workspace/tests/test262/test/language/statements/class/elements/private-field-on-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-field-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/private-static-method-usage-inside-nested-class.js",
         "/workspace/tests/test262/test/language/statements/class/elements/static-private-getter-access-on-inner-class.js"
@@ -624,20 +622,14 @@
       ]
     },
     {
-      "count": 5,
+      "count": 2,
       "paths": [
         "/workspace/tests/test262/test/language/statements/class/definition/side-effects-in-property-define.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/superclass-prototype-setter-method-override.js"
       ],
       "reason": "TypeError: Value is not a function, got undefined",
       "samples": [
         "/workspace/tests/test262/test/language/statements/class/definition/side-effects-in-property-define.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js",
-        "/workspace/tests/test262/test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js",
         "/workspace/tests/test262/test/language/statements/class/subclass/superclass-prototype-setter-method-override.js"
       ]
     },
@@ -652,7 +644,7 @@
       ]
     }
   ],
-  "passed": 4278,
+  "passed": 4282,
   "path": "test/language/statements/class",
   "skipped": 0,
   "skips": {},
