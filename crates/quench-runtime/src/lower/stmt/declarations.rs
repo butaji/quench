@@ -17,6 +17,31 @@ pub fn lower_decl(decl: &ast::Declaration) -> Option<Statement> {
 }
 
 #[allow(clippy::complexity)]
+/// Hoist `var` binding names from a for-in pattern head without initializing.
+pub fn lower_for_in_var_pattern_hoist(var_decl: &ast::VariableDeclaration) -> Option<Statement> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut decls = Vec::new();
+    for binding in &var_decl.declarations {
+        let pattern = crate::lower::pattern::lower_binding_elem(&binding.id).ok()?;
+        for name in crate::lower::pattern::collect_pattern_identifiers(&pattern) {
+            if seen.insert(name.clone()) {
+                decls.push(Statement::VarDeclaration {
+                    kind: VarKind::Var,
+                    name,
+                    init: None,
+                });
+            }
+        }
+    }
+    match decls.len() {
+        0 => None,
+        1 => Some(decls.into_iter().next().unwrap()),
+        _ => Some(Statement::SequenceDecls(decls)),
+    }
+}
+
 pub fn lower_var_decl(var_decl: &ast::VariableDeclaration) -> Option<Statement> {
     lower_var_decl_impl(var_decl, None)
 }

@@ -376,6 +376,7 @@ fn walk_expr(
             variable,
             object,
             body,
+            ..
         } => expr_check(variable) || expr_check(object) || stmt_check(body),
         Expression::Yield(inner) => inner.as_ref().is_some_and(|e| expr_check(e)),
         Expression::YieldDelegate(inner) => expr_check(inner),

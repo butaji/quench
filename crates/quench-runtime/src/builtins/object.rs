@@ -123,10 +123,10 @@ pub fn register_object(ctx: &mut Context) {
 
     constructor.set_name("Object");
     let object_ctor = Value::NativeConstructor(Rc::new(constructor));
-    // Set Object.prototype.constructor = Object
+    // Set Object.prototype.constructor = Object (non-enumerable)
     object_proto_rc
         .borrow_mut()
-        .set("constructor", object_ctor.clone());
+        .set_builtin_method("constructor", object_ctor.clone());
     ctx.set_global("Object".to_string(), object_ctor);
 }
 
@@ -154,7 +154,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     };
 
     // Object.prototype.toString
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -164,7 +164,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.valueOf
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -182,7 +182,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.hasOwnProperty
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "hasOwnProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_has_own_property,
@@ -190,7 +190,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.isPrototypeOf
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "isPrototypeOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_is_prototype_of,
@@ -198,19 +198,19 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     // Object.prototype.propertyIsEnumerable
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "propertyIsEnumerable",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_property_is_enumerable,
         ))),
     );
 
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "__lookupGetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_getter))),
     );
 
-    object_proto_rc.borrow_mut().set(
+    object_proto_rc.borrow_mut().set_builtin_method(
         "__lookupSetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_setter))),
     );

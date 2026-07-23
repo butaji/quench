@@ -24,7 +24,7 @@ pub use accessor::{
     define_accessor, get_getter, get_setter, get_setter_func, has_getter, has_setter, set_getter,
     set_getter_func, set_setter, set_setter_func,
 };
-pub use keys::{own_keys, own_property_names};
+pub use keys::{enumerate_for_in_keys, own_keys, own_property_names};
 
 // ─── Object impl ───────────────────────────────────────────────────────────────
 

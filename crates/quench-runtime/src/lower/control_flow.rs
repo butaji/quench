@@ -78,22 +78,32 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
     let iterable = lower_expr(&for_in_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_in_stmt.body).unwrap_or(Statement::Empty));
 
-    // When the left side is a VariableDeclaration, also emit the var/let/const
-    // declaration so the binding is created in the environment.
-    // For patterns, pass the iterable so the pattern can access elements from it.
-    let var_decl_stmt =
+    let (var_decl_stmt, loop_binding) =
         if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_in_stmt.left {
+            let kind = match decl.kind {
+                ast::VariableDeclarationKind::Var => VarKind::Var,
+                ast::VariableDeclarationKind::Let => VarKind::Let,
+                ast::VariableDeclarationKind::Const => VarKind::Const,
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
+                    return None;
+                }
+            };
             let has_pattern = decl
                 .declarations
                 .iter()
                 .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
-            if has_pattern {
-                crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+            if matches!(kind, VarKind::Var) {
+                let vd = if has_pattern {
+                    crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
+                } else {
+                    crate::lower::stmt::lower_var_decl(decl)
+                };
+                (vd, None)
             } else {
-                crate::lower::stmt::lower_var_decl(decl)
+                (None, Some(kind))
             }
         } else {
-            None
+            (None, None)
         };
 
     let variable = lower_for_lhs(&for_in_stmt.left)?;
@@ -101,6 +111,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
         variable: Box::new(variable),
         object: Box::new(iterable),
         body,
+        loop_binding,
     }));
 
     // If there's a var/let/const declaration, wrap in a block so it runs first

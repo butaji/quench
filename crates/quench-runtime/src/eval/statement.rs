@@ -724,8 +724,9 @@ fn eval_var_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
     let already_declared = env.borrow().current_scope().borrow().has(name);
-    if !already_declared {
+    if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let mut value = if let Some(expr) = init {

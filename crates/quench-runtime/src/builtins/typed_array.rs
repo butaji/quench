@@ -419,4 +419,23 @@ mod tests {
             .unwrap();
         assert_eq!(r, Value::Number(250.0));
     }
+
+    #[test]
+    fn typed_array_buffer_view_sets_idx_length() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        ctx.eval("globalThis.__ta = new Uint8Array(new ArrayBuffer(8), 0, 3);")
+            .unwrap();
+        let ta = ctx.get_global("__ta").expect("global __ta");
+        let Value::Object(ref o) = ta else {
+            panic!("expected object");
+        };
+        let length = match o.borrow().data {
+            ObjData::Idx { length, .. } => length,
+            ref other => panic!("expected Idx data, got {other:?}"),
+        };
+        assert_eq!(length, 3);
+        let keys = crate::eval::iteration::get_enumerable_keys(&ta).unwrap();
+        assert_eq!(keys, vec!["0", "1", "2"]);
+    }
 }
