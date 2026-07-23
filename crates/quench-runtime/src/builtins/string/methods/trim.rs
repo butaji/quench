@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::this_js_string;
 use crate::value::{NativeFunction, Object, Value};
 
 fn install_trim_method(proto: &Rc<RefCell<Object>>, name: &str, trim_fn: fn(&str) -> &str) {

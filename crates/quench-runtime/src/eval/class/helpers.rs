@@ -3718,6 +3718,35 @@ mod tests {
     }
 
     #[test]
+    fn static_init_block_field_sequence() {
+        let r = eval(
+            "var sequence = []; \
+             class C { \
+               static x = sequence.push('first field'); \
+               static { sequence.push('first block'); } \
+               static x = sequence.push('second field'); \
+               static { sequence.push('second block'); } \
+             } \
+             sequence",
+        )
+        .unwrap();
+        let Value::Object(arr) = r else {
+            panic!("expected array")
+        };
+        let obj = arr.borrow();
+        assert_eq!(obj.get("0"), Some(Value::String("first field".into())));
+        assert_eq!(obj.get("1"), Some(Value::String("first block".into())));
+        assert_eq!(obj.get("2"), Some(Value::String("second field".into())));
+        assert_eq!(obj.get("3"), Some(Value::String("second block".into())));
+    }
+
+    #[test]
+    fn derived_subclass_string_trim() {
+        let r = eval("class S extends String {} new S(' test262 ').trim()").unwrap();
+        assert_eq!(r, Value::String("test262".into()));
+    }
+
+    #[test]
     fn intercalated_static_instance_computed_fields() {
         let r = eval(
             "let i = 0; class C { [i++] = i++; static [i++] = i++; [i++] = i++; } \
