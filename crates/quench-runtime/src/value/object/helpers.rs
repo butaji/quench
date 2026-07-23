@@ -7,13 +7,12 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use regress::Regex;
-use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use crate::env::Environment;
 pub use crate::value::kind::{ExoticKind, ObjectKind};
-pub use crate::value::{Symbol, Value};
+pub use crate::value::Value;
 
-// ─── Key & Array Utilities ────────────────────────────────────────────────────
+// ─── Array index utilities ────────────────────────────────────────────────────
 
 /// Maximum number of dense array elements.
 pub const MAX_ARRAY_ELEMENTS: usize = 1 << 20;
@@ -33,35 +32,6 @@ pub fn is_array_index(s: &str) -> bool {
     as_array_index(s).is_some()
 }
 
-/// Convert a string property key to a `Key`, canonicalizing array indices.
-pub fn as_key(s: &str) -> Key {
-    if s.len() == 1 && s.as_bytes()[0].is_ascii_digit() {
-        return Key::Idx((s.as_bytes()[0] - b'0') as u32);
-    }
-    if let Ok(n) = s.parse::<u32>() {
-        if n <= 4294967294 && s == n.to_string() {
-            return Key::Idx(n);
-        }
-    }
-    Key::Str(Rc::from(s))
-}
-
-// ─── Runtime Property Key ─────────────────────────────────────────────────────
-
-/// Runtime property key — canonicalizes array indices to `Idx(u32)`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Key {
-    Str(Rc<str>),
-    Idx(u32),
-    Sym(Rc<Symbol>),
-}
-
-impl From<&str> for Key {
-    fn from(s: &str) -> Self {
-        as_key(s)
-    }
-}
-
 // ─── Exotic-specific State ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,13 +47,6 @@ pub enum TypedArrayName {
     Float64,
     BigInt64,
     BigUint64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ThisMode {
-    Lexical,
-    Strict,
-    Global,
 }
 
 /// Exotic-specific typed state.
@@ -109,29 +72,6 @@ pub enum ObjData {
 }
 
 // ─── Property Descriptors ─────────────────────────────────────────────────────
-
-/// TComp: ECMA-262 6.2.5 PropertyDescriptor — minimal, exact.
-#[derive(Debug, Clone, Default)]
-pub struct Desc {
-    pub value: Option<Value>,
-    pub writable: Option<bool>,
-    pub get: Option<Value>,
-    pub set: Option<Value>,
-    pub enumerable: Option<bool>,
-    pub configurable: Option<bool>,
-}
-
-impl Desc {
-    pub fn is_data(&self) -> bool {
-        self.value.is_some() || self.writable.is_some()
-    }
-    pub fn is_accessor(&self) -> bool {
-        self.get.is_some() || self.set.is_some()
-    }
-    pub fn is_generic(&self) -> bool {
-        !self.is_data() && !self.is_accessor()
-    }
-}
 
 /// Property descriptor flags per ECMAScript spec.
 #[derive(Debug, Clone, Default)]
@@ -236,31 +176,6 @@ pub struct SetterStorage {
     pub strict: bool,
 }
 
-// ─── Internal Slots ───────────────────────────────────────────────────────────
-
-/// Runtime internal slots storage.
-pub type Slots = FxHashMap<&'static str, Value>;
-
-// ─── VTable ───────────────────────────────────────────────────────────────────
-
-/// 11 internal methods + 2 function extras — the spec's object interface.
-#[allow(clippy::type_complexity)]
-pub struct VTable {
-    pub get_prototype_of: fn(&Object) -> Option<Rc<RefCell<Object>>>,
-    pub set_prototype_of: fn(&mut Object, Option<Rc<RefCell<Object>>>) -> bool,
-    pub is_extensible: fn(&Object) -> bool,
-    pub prevent_extensions: fn(&mut Object) -> bool,
-    pub get_own_property: fn(&Object, &Key) -> Option<Desc>,
-    pub define_own_property: fn(&mut Object, &Key, &Desc) -> bool,
-    pub has_property: fn(&Object, &Key) -> bool,
-    pub get: fn(&Object, &Key, Value) -> Value,
-    pub set: fn(&mut Object, &Key, Value, Value) -> bool,
-    pub delete: fn(&mut Object, &Key) -> bool,
-    pub own_property_keys: fn(&Object) -> Vec<Key>,
-    pub call: Option<fn(&Object, Value, Vec<Value>) -> Result<Value, crate::value::JsError>>,
-    pub construct: Option<fn(&Object, Vec<Value>, Value) -> Result<Value, crate::value::JsError>>,
-}
-
 // ─── Object ────────────────────────────────────────────────────────────────────
 
 /// JavaScript object with prototype chain support.
@@ -281,10 +196,7 @@ pub struct Object {
     pub symbol_properties: IndexMap<String, Value>,
     pub holes: HashSet<usize>,
     pub extensible: bool,
-    pub props: IndexMap<Key, Desc, FxBuildHasher>,
-    pub slots: Slots,
     pub data: ObjData,
-    pub vtable: &'static VTable,
 }
 
 impl fmt::Debug for Object {
@@ -361,53 +273,6 @@ impl Default for PromiseObjectData {
 mod tests {
     use super::*;
 
-    // ─── Key / as_key / is_array_index ─────────────────────────────────────────
-
-    #[test]
-    fn property_key_from_number() {
-        let key = as_key("42");
-        assert_eq!(key, Key::Idx(42));
-    }
-
-    #[test]
-    fn property_key_from_string() {
-        let key = as_key("foo");
-        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "foo"));
-    }
-
-    #[test]
-    fn property_key_from_single_digit() {
-        let key = as_key("7");
-        assert_eq!(key, Key::Idx(7));
-    }
-
-    #[test]
-    fn property_key_from_non_canonical_numeric() {
-        let key = as_key("007");
-        // Non-canonical form (with leading zeros) should be stored as string
-        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "007"));
-    }
-
-    #[test]
-    fn property_key_from_large_index() {
-        // 4294967295 (2^32 - 1) is not a valid array index per spec, stored as string
-        let key = as_key("4294967295");
-        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "4294967295"));
-    }
-
-    #[test]
-    fn property_key_from_too_large_index() {
-        // 4294967296 is beyond valid index, stored as string
-        let key = as_key("4294967296");
-        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "4294967296"));
-    }
-
-    #[test]
-    fn property_key_special_chars() {
-        let key = as_key("foo-bar");
-        assert!(matches!(key, Key::Str(ref s) if s.as_ref() == "foo-bar"));
-    }
-
     #[test]
     fn is_array_index_valid() {
         assert!(is_array_index("0"));
@@ -421,19 +286,5 @@ mod tests {
         assert!(!is_array_index("-1"));
         assert!(!is_array_index("abc"));
         assert!(!is_array_index("4294967296"));
-    }
-
-    #[test]
-    fn key_eq() {
-        assert_eq!(as_key("42"), Key::Idx(42));
-        assert_eq!(as_key("foo"), Key::Str("foo".into()));
-        assert_ne!(as_key("42"), as_key("43"));
-    }
-
-    #[test]
-    fn key_clone() {
-        let key = as_key("test");
-        let cloned = key.clone();
-        assert_eq!(key, cloned);
     }
 }

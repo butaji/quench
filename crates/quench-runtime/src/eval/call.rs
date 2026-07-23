@@ -118,15 +118,15 @@ fn eval_super_call(
         .iter()
         .any(|s| s.borrow().is_this_initialized())
     {
-            let (thrown_val, _) = crate::value::error::create_js_error_with_type(
-                "super() called after `this` was already initialized",
-                "ReferenceError",
-            );
-            crate::value::error::set_thrown_value(thrown_val);
-            return Err(JsError(
-                "ReferenceError: super() called after `this` was already initialized".to_string(),
-            ));
-        }
+        let (thrown_val, _) = crate::value::error::create_js_error_with_type(
+            "super() called after `this` was already initialized",
+            "ReferenceError",
+        );
+        crate::value::error::set_thrown_value(thrown_val);
+        return Err(JsError(
+            "ReferenceError: super() called after `this` was already initialized".to_string(),
+        ));
+    }
 
     // Mark `this` as initialized on the current scope now that super()
     // succeeded, per ES §13.2.6.1 SuperCall step 7.
@@ -325,9 +325,9 @@ pub fn eval_new(
     // UNLESS it's a bound function (bound functions delegate [[Construct]] to the target).
     if let Value::NativeFunction(ref nf) = actual_constructor {
         let has_prototype = nf.prototype.borrow().is_some();
-        let is_bound = nf.get_property("name").is_some_and(|v| {
-            matches!(&v, Value::String(n) if n.starts_with("bound "))
-        });
+        let is_bound = nf
+            .get_property("name")
+            .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
         if !has_prototype && !is_bound {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
