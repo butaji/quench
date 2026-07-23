@@ -884,6 +884,20 @@ mod tests {
     }
 
     #[test]
+    fn class_multilevel_super_constructor_chain() {
+        let r = eval(
+            r#"
+            class Base { constructor(x) { this.foobar = x; } }
+            class Subclass extends Base { constructor(x) { super(x); } }
+            class Subclass2 extends Subclass { constructor() { super(5, 6, 7); } }
+            new Subclass2().foobar
+            "#,
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(5.0));
+    }
+
+    #[test]
     fn class_prototype_wiring_derived_constructors() {
         let r = eval(
             r#"

@@ -258,7 +258,12 @@ pub fn call_super_constructor(
     call_env
         .current_scope()
         .borrow_mut()
-        .set_this(this_val.clone());
+        .set_this_value(this_val.clone());
+
+    if let Some(ref sc) = class.super_class {
+        let sv = crate::eval::expression::eval_expression(sc, env, false)?;
+        call_env.set_super_class(sv);
+    }
 
     for (i, param) in _params.iter().enumerate() {
         let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
