@@ -203,6 +203,9 @@ pub fn assign_to_member(
             if let Value::Object(o) = this_val {
                 return assign_to_object(&o, &prop_name, value, env);
             }
+            if let Value::Class(class) = this_val {
+                return class.set_static_field(&prop_name, value.clone());
+            }
             return Err(JsError(format!(
                 "Cannot assign to property of non-object, got {:?}",
                 this_val
