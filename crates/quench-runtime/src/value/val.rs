@@ -150,6 +150,9 @@ pub struct ClassValue {
     /// for static accessors with the correct lexical scope.
     pub(crate) class_def_env_cell:
         std::rc::Rc<std::cell::RefCell<Option<Rc<RefCell<Environment>>>>>,
+    /// Keys resolved during class definition for static getters/setters (by index).
+    pub(crate) static_getter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub(crate) static_setter_keys_cell: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 impl ClassValue {
@@ -209,7 +212,25 @@ impl ClassValue {
                 std::collections::HashSet::new(),
             )),
             class_def_env_cell: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            static_getter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            static_setter_keys_cell: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         }
+    }
+
+    pub fn push_static_getter_key(&self, key: String) {
+        self.static_getter_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn push_static_setter_key(&self, key: String) {
+        self.static_setter_keys_cell.borrow_mut().push(key);
+    }
+
+    pub fn static_getter_key(&self, index: usize) -> Option<String> {
+        self.static_getter_keys_cell.borrow().get(index).cloned()
+    }
+
+    pub fn static_setter_key(&self, index: usize) -> Option<String> {
+        self.static_setter_keys_cell.borrow().get(index).cloned()
     }
 
     /// Set the class definition environment (used for evaluating computed property keys in static accessors)
@@ -256,8 +277,12 @@ impl ClassValue {
             Some(e) => e,
             None => return false,
         };
-        for (key, _param, _body) in &self.static_setters {
-            let key_str = crate::eval::class::helpers::prop_key_to_string(key, env, false);
+        for (i, (key, _param, _body)) in self.static_setters.iter().enumerate() {
+            let key_str = if let Some(cached) = self.static_setter_key(i) {
+                Ok(cached)
+            } else {
+                crate::eval::class::helpers::prop_key_to_string(key, env, false)
+            };
             if key_str.is_ok_and(|k| k == name) {
                 return true;
             }
@@ -279,8 +304,12 @@ impl ClassValue {
             .map(Rc::clone)
             .unwrap_or_else(|| Rc::clone(env));
 
-        for (key, param, body) in &self.static_setters {
-            let key_str = crate::eval::class::helpers::prop_key_to_string(key, &env, false)?;
+        for (i, (key, param, body)) in self.static_setters.iter().enumerate() {
+            let key_str = if let Some(cached) = self.static_setter_key(i) {
+                cached
+            } else {
+                crate::eval::class::helpers::prop_key_to_string(key, &env, false)?
+            };
             if key_str == name {
                 // Bind `this` to the class itself so `this._v = v` in the setter body
                 // writes to the class's own static properties, not a throwaway object.

@@ -44,22 +44,32 @@ pub fn eval_member_access(
                         .static_methods
                         .iter()
                         .any(|(n, _, _, _, _)| prop_key_matches(n, prop_name))
-                    || class.static_getters.iter().any(|(n, _)| {
-                        class
-                            .get_class_def_env()
-                            .and_then(|env| {
-                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
-                            })
-                            .is_some_and(|s| s == prop_name)
+                    || class.static_getters.iter().enumerate().any(|(i, (n, _))| {
+                        class.static_getter_key(i).is_some_and(|s| s == prop_name)
+                            || class
+                                .get_class_def_env()
+                                .and_then(|env| {
+                                    crate::eval::class::helpers::prop_key_to_string(n, &env, false)
+                                        .ok()
+                                })
+                                .is_some_and(|s| s == prop_name)
                     })
-                    || class.static_setters.iter().any(|(n, _, _)| {
-                        class
-                            .get_class_def_env()
-                            .and_then(|env| {
-                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
-                            })
-                            .is_some_and(|s| s == prop_name)
-                    });
+                    || class
+                        .static_setters
+                        .iter()
+                        .enumerate()
+                        .any(|(i, (n, _, _))| {
+                            class.static_setter_key(i).is_some_and(|s| s == prop_name)
+                                || class
+                                    .get_class_def_env()
+                                    .and_then(|env| {
+                                        crate::eval::class::helpers::prop_key_to_string(
+                                            n, &env, false,
+                                        )
+                                        .ok()
+                                    })
+                                    .is_some_and(|s| s == prop_name)
+                        });
                 if !has_static {
                     let (_, js_err) = create_js_error_with_type(
                         "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
@@ -165,11 +175,13 @@ pub fn eval_class_member(
                 }
             }
             // Check static getters
-            for (name, body) in &class.static_getters {
-                // Use the class definition environment to evaluate computed property keys,
-                // so that variables in the class scope are visible.
+            for (i, (name, body)) in class.static_getters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                let key_str = if let Some(key) = class.static_getter_key(i) {
+                    key
+                } else {
+                    prop_key_to_string(name, &eval_env, false)?
+                };
                 if key_str == prop_name {
                     // Per ES spec, static method `this` is the class constructor itself.
                     // Directly evaluate the getter body with `this` bound to the Class.
@@ -191,9 +203,13 @@ pub fn eval_class_member(
                 }
             }
             // Check static setters
-            for (name, param, body) in &class.static_setters {
+            for (i, (name, param, body)) in class.static_setters.iter().enumerate() {
                 let eval_env = class.get_class_def_env().unwrap_or_else(|| Rc::clone(env));
-                let key_str = prop_key_to_string(name, &eval_env, false)?;
+                let key_str = if let Some(key) = class.static_setter_key(i) {
+                    key
+                } else {
+                    prop_key_to_string(name, &eval_env, false)?
+                };
                 if key_str == prop_name {
                     // Return a function that wraps the setter call.
                     let param_name = param.clone();
