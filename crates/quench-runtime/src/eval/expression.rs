@@ -180,20 +180,12 @@ pub fn eval_expression(
             let right_val = eval_expression(right, env, in_arrow_function)?;
             // Handle super.property = value — uses super [[Set]] semantics.
             if let Expression::Member {
-                object,
-                property,
-                computed,
+                object, property, ..
             } = left.as_ref()
             {
                 if let Expression::Identifier(name) = object.as_ref() {
                     if name == "super" {
-                        return set_super_property(
-                            property,
-                            *computed,
-                            right_val,
-                            env,
-                            in_arrow_function,
-                        );
+                        return set_super_property(property, right_val, env, in_arrow_function);
                     }
                 }
             }
