@@ -1,7 +1,7 @@
 # Stage 16 — test/language/statements/class
 
 **Status:** in_progress · **Path:** `test/language/statements/class` ·
-**4,367 tests** · **4181 pass / 186 fail (95.7%)** as of 2026-07-23.
+**4,367 tests** · **4192 pass / 175 fail (96.0%)** as of 2026-07-23.
 
 ```bash
 # Full digest (parallel; writes tasks/failures-16.json with TEST262_JSON=1)
@@ -28,18 +28,19 @@ line is the gate to advance to stage 17.
 | 2026-07-23 | **4147** | **220** | **95.0%** | for-of/for-in member+private LHS lowering (private field brand checks) |
 | 2026-07-23 | **4152** | **215** | **95.1%** | Destructuring private assign via assign_to; object rest LHS; nested outer private fields |
 | 2026-07-23 | **4181** | **186** | **95.7%** | Computed destructuring param keys; private getter/setter pairs; super private dedup; async arrow is_async |
+| 2026-07-23 | **4192** | **175** | **96.0%** | Derived explicit return; IsConstructor proxy/bound/async; yield* generators; static private method assign |
 
-## Top remaining clusters (~186)
+## Top remaining clusters (~175)
 
 | ~Count | Cluster | Fix direction |
 |-------:|---------|---------------|
-| 14 | Expected TypeError not thrown | Brand, frozen, static private |
 | 14 | Value is not a function, got undefined | Private ref/proxy / async harness |
-| 9 | Value is not iterable | yield* spread |
-| 8 | Expected SyntaxError (privatename eval) | Direct eval early errors |
-| 8 | sameValue failed: true !== false | Various |
-| 8 | Cannot read private member (nested) | Nested class brand |
-| 6 | super is not a constructor | Builtin subclass |
+| 8 | Value is not iterable | yield-spread `[...yield]` mid-expr suspend |
+| 8 | sameValue / compareArray | Static+instance field ordering, proxies |
+| 8 | SyntaxError privatename eval | Direct eval early errors |
+| 6 | super is not a constructor | Builtin subclass super() |
+| 5 | Must call super before returning | Derived return in catch/finally |
+| 5 | static ctor named constructor | Early error vs valid grammar tests |
 | ~20 | Missing builtins (DataView, TypedArrays, …) | Stage-gated primitives |
 
 ## How to clear this stage (ASAP × min LOC)
@@ -78,5 +79,3 @@ Do not edit `tests/test262.rs` or anything under `tests/test262/`.
 - 2026-07-23 — Derived ctor fix (`has_explicit_constructor`): explicit `constructor() {}` without `super` → ReferenceError.
 - 2026-07-23 — QUICK digest (913 files sampled): **666 pass / 247 fail / 0 skip**. Top cluster: `TypeError: Cannot read property 'prototype' of undefined` (~228, yield-in-class). Stack overflow: `dstr/async-private-gen-meth-*`, `prototype-wiring.js` (fix recursion, not skip).
 - 2026-07-23 — **Yield-in-class computed keys** fixed: `generator_replay.rs` suspends mid-class-eval, replays completed yields on resume (`accessor-name-inst-computed-yield-expr.js` passes). Re-run full digest to measure cluster drop.
-- 2026-07-23 — **Generator env persistence** + `return yield` handling: cpn-class-decl yield cluster (4 files) passes.
-- 2026-07-23 — **Multi-level super()** fix in `call_super_constructor`: `set_super_class` + `set_this_value`; `prototype-wiring.js` passes (removed from crash skip list).
