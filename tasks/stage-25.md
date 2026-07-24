@@ -35,4 +35,12 @@ See `tasks/failures-25.json` for failure clusters.
 
 ## Follow-ups before merge
 
+- **Build gate (blocks everything):** `tests/for_of_yield_repro.rs` is
+  missing `use quench_runtime::test262::Test262Host;` (E0599 ×4);
+  `src/lower/expr/helpers_expr.rs:133` warns under `-D warnings`.
+  `cargo test -p quench-runtime` + `cargo clippy --all-targets` must be
+  green before this branch merges.
 - Split `eval/iteration.rs` (>500 lines) per linter R12.
+- Verify `builtins/core/ops_wrapper.rs` eval-based tests — `%ops%` is
+  not a valid JS identifier; see R1 known defect in
+  `tasks/refactor-plan.md`.

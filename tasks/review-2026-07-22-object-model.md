@@ -1,5 +1,10 @@
 # Review 2026-07-22 — object model
 
+> **Historical snapshot (2026-07-24 note):** R4 is done; the R5 spec-bug
+> fixes landed (commit `28bc28b7`); the full IndexMap collapse is still
+> open in `tasks/refactor-plan.md` §R5. File:line references below are
+> stale — re-locate by symbol name.
+
 > **Critical path:** R4 then R5 are Phase A **NOW** items in
 > `tasks/refactor-plan.md` / `tasks/10-ways-to-speed-up.md` — do these
 > before full R0. This audit is the detail source for those items.

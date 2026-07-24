@@ -138,8 +138,19 @@ demonstrably fires for that case.
 ## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
-as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
-private copies remain in `builtins/*.rs` and `eval/`.
+as a scaffold (re-exports + frozen `%ops%` with only `toPrimitive`,
+`toNumber`, `toPropertyKey`). Not yet the single owner — private copies
+remain in `builtins/*.rs` and `eval/`.
+
+**Known defect (audit 2026-07-24):** the object is registered as a
+global literally named `%ops%`, but `%` is not a valid JS identifier
+character — JS can only reach it as `globalThis["%ops%"]`, and any test
+or builtin evaluating `"%ops%.foo(...)"` as source should fail oxc
+parsing. Until parse-time resolution lands, reference it via
+`globalThis["%ops%"]` in JS/tests, or rename the binding to a valid
+intrinsic name (e.g. `$ops`). Verify the `ops_wrapper` eval-based tests
+when the build gate is fixed; if red, switch them to the string-key
+form in the same diff.
 
 - [ ] Own the implementations in `eval/ops.rs` (or thin wrappers that
       are the only call path): `to_primitive`, `to_property_key`,
@@ -151,7 +162,8 @@ private copies remain in `builtins/*.rs` and `eval/`.
       `throw_type_error`.
 - [ ] One `#[test]` per op when it becomes owned here.
 - [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
-      (never user-visible).
+      (never user-visible). When this lands, sync the AGENTS.md
+      `%ops%` convention line with the implemented mechanism.
 - [ ] On touch: replace the local duplicate; do not leave two owners.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of
       the ops list above remain outside `eval/ops.rs`.
@@ -239,6 +251,11 @@ R0.
 After R4/R1/R0 reduce the surface: dead convert helpers, unused
 `Getter`/`Setter*` types, `ObjData` variants never constructed,
 `intl.rs` (out of scope — delete), one-line wrappers, etc.
+
+Repo debris spotted in the 2026-07-24 audit (delete in the sweep):
+`tasks/repro_overflow.rs`, `tasks/run_all_stage16.sh` (stage-16-era
+leftovers), `tools/debug-test.js` (untracked debug script — AGENTS.md:
+no debug code), and the unwired `patches/oxc_parser` copy (R23).
 
 ~620 LOC saved. Opportunistic on touch; no dedicated queue jump.
 
