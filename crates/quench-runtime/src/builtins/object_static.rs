@@ -243,15 +243,18 @@ pub fn object_create(args: Vec<Value>) -> Result<Value, JsError> {
             ))
         }
     };
-    let mut obj = if let Some(p) = proto {
+    let obj = if let Some(p) = proto {
         Object::with_prototype(ObjectKind::Ordinary, p)
     } else {
         Object::new(ObjectKind::Ordinary)
     };
     if let Some(Value::Object(props_obj)) = args.get(1) {
-        for (k, v) in props_obj.borrow().properties.iter() {
-            obj.set(k, v.clone());
+        let obj_val = Value::Object(Rc::new(RefCell::new(obj)));
+        let props = props_obj.borrow().properties.clone();
+        for (k, desc_val) in props {
+            object_define_property(vec![obj_val.clone(), Value::String(k), desc_val])?;
         }
+        return Ok(obj_val);
     }
     Ok(Value::Object(Rc::new(RefCell::new(obj))))
 }

@@ -129,7 +129,10 @@ fn register_proxy(ctx: &mut Context) {
     // the target. A handler object may override any of those traps. This
     // is sufficient for test262 tests that use a plain handler `{}` to
     // check private-field access boundaries.
-    let mut proxy_nf = crate::value::NativeFunction::new_with_prototype(
+    //
+    // Per ES spec, Proxy is a constructor but has no .prototype property,
+    // so `class extends Proxy {}` throws TypeError at class-definition time.
+    let mut proxy_fn = crate::value::NativeFunction::new(
         |args: Vec<Value>| -> Result<Value, crate::value::JsError> {
             let target = match args.first() {
                 Some(v) => v.clone(),
@@ -157,16 +160,16 @@ fn register_proxy(ctx: &mut Context) {
                 ));
             }
             let mut proxy = Object::new(ObjectKind::Ordinary);
+            // Stash the target and handler on the proxy so the get/set
+            // forwarding logic (see object::get_setter) can find them.
             proxy.set("__quench_proxy_target", target);
             proxy.set("__quench_proxy_handler", handler);
             Ok(Value::Object(Rc::new(RefCell::new(proxy))))
         },
-        std::rc::Rc::new(std::cell::RefCell::new(Object::new(
-            crate::value::ObjectKind::Ordinary,
-        ))),
     );
-    proxy_nf.name = "Proxy".to_string();
-    let proxy_ctor = Value::NativeFunction(Rc::new(proxy_nf));
+    proxy_fn.set_constructable(true);
+    proxy_fn.name = "Proxy".to_string();
+    let proxy_ctor = Value::NativeFunction(Rc::new(proxy_fn));
     ctx.set_global("Proxy".to_string(), proxy_ctor);
 }
 
@@ -289,5 +292,12 @@ mod tests {
     fn proxy_missing_arguments() {
         assert!(eval_err("new Proxy()"));
         assert!(eval_err("new Proxy({})"));
+    }
+
+    #[test]
+    fn proxy_cannot_be_extended() {
+        // Per spec, Proxy has no .prototype property, so `class extends Proxy`
+        // throws TypeError (Type(protoParent) is not Object or Null).
+        assert!(eval_err("class P extends Proxy {}"));
     }
 }

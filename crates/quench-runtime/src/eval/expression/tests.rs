@@ -57,8 +57,11 @@ fn test_do_while_desugaring() {
 }
 
 #[test]
-fn test_for_in_object_pattern_throws() {
-    assert!(eval("for ({a} in {a: 1}) {}").is_err());
+fn test_for_in_object_pattern_destructures_key() {
+    assert_eq!(
+        eval("var v; for ([x] in {key: 1}) { v = x; } v").unwrap(),
+        Value::String("k".to_string())
+    );
 }
 
 #[test]

@@ -286,6 +286,12 @@ fn for_init_check(
     match init {
         crate::ast::ForInit::Expression(expr) => expr_check(expr),
         crate::ast::ForInit::VarDeclaration { init, .. } => init.as_ref().is_some_and(expr_check),
+        crate::ast::ForInit::PatternDeclaration { init, .. } => {
+            init.as_ref().is_some_and(expr_check)
+        }
+        crate::ast::ForInit::DeclarationList { decls, .. } => decls
+            .iter()
+            .any(|decl| decl.init.as_ref().is_some_and(expr_check)),
     }
 }
 
@@ -370,6 +376,7 @@ fn walk_expr(
             variable,
             object,
             body,
+            ..
         } => expr_check(variable) || expr_check(object) || stmt_check(body),
         Expression::Yield(inner) => inner.as_ref().is_some_and(|e| expr_check(e)),
         Expression::YieldDelegate(inner) => expr_check(inner),

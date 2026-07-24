@@ -268,8 +268,6 @@ fn construct_typed_array(
     Ok(Value::Object(object_rc))
 }
 
-// ─── TypedArray prototype methods ───────────────────────────────────────────────
-
 fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let Value::Object(obj_rc) = this else {
@@ -287,6 +285,42 @@ fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     Ok(Value::Undefined)
+}
+
+fn typed_array_values(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
+    let Value::Object(obj_rc) = this else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "TypedArray.prototype.values called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    Ok(crate::builtins::map::helpers::make_live_index_iterator(
+        obj_rc,
+        crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
+    ))
+}
+
+/// Wire `%TypedArray%.prototype[Symbol.iterator]` after `Symbol` is registered.
+pub fn register_typed_array_iterator() {
+    let Some(typed_array_proto) = get_typed_array_prototype() else {
+        return;
+    };
+    let Some(Value::Symbol(sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    else {
+        return;
+    };
+    let key = sym.property_key();
+    typed_array_proto.borrow_mut().set_builtin_method(
+        &key,
+        Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
+    );
+    typed_array_proto.borrow_mut().set_builtin_method(
+        "values",
+        Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
+    );
 }
 
 #[cfg(test)]
@@ -418,5 +452,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Number(250.0));
+    }
+
+    #[test]
+    fn typed_array_for_of_sees_mutation_during_iteration() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let second = ctx
+            .eval(
+                "var array = new Uint8Array([3, 2, 4, 1]); var second = null; \
+                 var n = 0; \
+                 for (var x of array) { \
+                   if (n === 1) second = x; \
+                   array[1] = 64; \
+                   n++; \
+                 } \
+                 second",
+            )
+            .unwrap();
+        assert_eq!(second, Value::Number(64.0));
+    }
+
+    #[test]
+    fn typed_array_for_of_iterates_elements() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let len = ctx
+            .eval(
+                "var ta = new Uint8Array([1,2,3]); var n = 0; \
+                 for (var x of ta) { n += 1; } n",
+            )
+            .unwrap();
+        assert_eq!(len, Value::Number(3.0));
+    }
+
+    #[test]
+    fn typed_array_buffer_view_sets_idx_length() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        ctx.eval("globalThis.__ta = new Uint8Array(new ArrayBuffer(8), 0, 3);")
+            .unwrap();
+        let ta = ctx.get_global("__ta").expect("global __ta");
+        let Value::Object(ref o) = ta else {
+            panic!("expected object");
+        };
+        let length = match o.borrow().data {
+            ObjData::Idx { length, .. } => length,
+            ref other => panic!("expected Idx data, got {other:?}"),
+        };
+        assert_eq!(length, 3);
+        let keys = crate::eval::iteration::get_enumerable_keys(&ta).unwrap();
+        assert_eq!(keys, vec!["0", "1", "2"]);
     }
 }

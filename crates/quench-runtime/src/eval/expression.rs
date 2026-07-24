@@ -15,6 +15,7 @@ use crate::eval::literal::{
 pub use crate::eval::literal::{eval_property_key, get_super_value};
 use crate::eval::operators::eval_binary_op;
 pub use crate::eval::statement::eval_statements;
+use crate::eval::statement::set_on_global_this;
 use crate::value::{to_bool, JsError, Value, ValueFunction};
 use num_bigint::BigInt;
 use std::cell::RefCell;
@@ -78,14 +79,7 @@ pub fn eval_expression(
             Ok(resume_val)
         }
         Expression::YieldDelegate(expr) => {
-            let iterable = crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
-            let items = crate::eval::iteration::get_iterator(&iterable)?;
-            let mut last_result = Value::Undefined;
-            for next_val in items {
-                crate::interpreter::set_generator_yield(next_val);
-                last_result = crate::interpreter::take_generator_resume_value();
-            }
-            Ok(last_result)
+            crate::eval::iteration::eval_yield_delegate(expr, env, in_arrow_function)
         }
         Expression::Identifier(name) => eval_identifier(name, env, in_arrow_function),
         Expression::Object(props) => eval_object_literal(props, env, in_arrow_function),
@@ -179,12 +173,20 @@ pub fn eval_expression(
             let right_val = eval_expression(right, env, in_arrow_function)?;
             // Handle super.property = value — uses super [[Set]] semantics.
             if let Expression::Member {
-                object, property, ..
+                object,
+                property,
+                computed,
             } = left.as_ref()
             {
                 if let Expression::Identifier(name) = object.as_ref() {
                     if name == "super" {
-                        return set_super_property(property, right_val, env, in_arrow_function);
+                        return set_super_property(
+                            property,
+                            *computed,
+                            right_val,
+                            env,
+                            in_arrow_function,
+                        );
                     }
                 }
             }
@@ -253,6 +255,12 @@ pub fn eval_expression(
                         return Err(error);
                     }
                     crate::eval::object::assign_to(left, &right_val, env)?;
+                }
+                if matches!(scope.borrow().get_kind(name), Some(VarKind::Var) | None)
+                    && scope.borrow().is_object_binding()
+                    && env.borrow().get_parent().is_none()
+                {
+                    set_on_global_this(env, name, right_val.clone());
                 }
                 return Ok(right_val);
             }
@@ -380,7 +388,15 @@ pub fn eval_expression(
             variable,
             object,
             body,
-        } => eval_for_in(variable, object, body, env, in_arrow_function),
+            loop_binding,
+        } => eval_for_in(
+            variable,
+            object,
+            body,
+            *loop_binding,
+            env,
+            in_arrow_function,
+        ),
         Expression::JsxElement {
             tag,
             props,

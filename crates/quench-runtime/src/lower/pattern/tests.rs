@@ -439,6 +439,27 @@ fn lower_for_in_object_destructure() {
 }
 
 #[test]
+fn lower_for_of_object_id_init_default() {
+    let stmts = parse_statements("for ({ a = 1 } of iter) {}");
+    let for_of = match &stmts[0] {
+        Statement::Expression(e) => match e.as_ref() {
+            Expression::ForOf { variable, .. } => variable.as_ref(),
+            _ => panic!("expected ForOf, got {:?}", e),
+        },
+        _ => panic!("expected Expression(ForOf), got {:?}", stmts[0]),
+    };
+    match for_of {
+        Expression::ObjectPattern(props) => {
+            assert!(matches!(
+                &props[0].1,
+                BindingElement::Default(_, init) if matches!(init.as_ref(), Expression::Number(n) if *n == 1.0)
+            ));
+        }
+        _ => panic!("expected ObjectPattern, got {:?}", for_of),
+    }
+}
+
+#[test]
 fn lower_for_of_array_destructure() {
     let stmts = parse_statements("for ([a] of iter) {}");
     let for_of = match &stmts[0] {
@@ -584,6 +605,48 @@ fn runtime_destructure_in_for_of() {
         )
         .unwrap();
     assert_eq!(r, crate::value::Value::Number(21.0));
+}
+
+#[test]
+fn lower_for_of_rest_nested_array_pattern() {
+    let stmts = parse_statements("for (let [...[x, y, z]] of iter) {}");
+    let for_of = match &stmts[0] {
+        Statement::Expression(e) => match e.as_ref() {
+            Expression::ForOf { variable, .. } => variable.as_ref(),
+            _ => panic!("expected ForOf, got {:?}", e),
+        },
+        _ => panic!("expected Expression(ForOf), got {:?}", stmts[0]),
+    };
+    match for_of {
+        Expression::ArrayPattern(elems) => {
+            assert_eq!(elems.len(), 1);
+            match &elems[0] {
+                BindingElement::Rest(inner) => match inner.as_ref() {
+                    BindingElement::ArrayPattern(nested) => {
+                        assert_eq!(nested.len(), 3);
+                    }
+                    other => panic!("expected nested ArrayPattern, got {:?}", other),
+                },
+                other => panic!("expected Rest, got {:?}", other),
+            }
+        }
+        _ => panic!("expected ArrayPattern, got {:?}", for_of),
+    }
+}
+
+#[test]
+fn runtime_for_of_rest_nested_array_pattern() {
+    let ctx = &mut crate::Context::new().unwrap();
+    crate::builtins::register_builtins(ctx);
+    let r = ctx
+        .eval(
+            "var iterCount = 0; \
+             for (let [...[x, y, z]] of [[3, 4, 5]]) { \
+               iterCount += (x === 3 && y === 4 && z === 5) ? 1 : 0; \
+             } iterCount",
+        )
+        .unwrap();
+    assert_eq!(r, crate::value::Value::Number(1.0));
 }
 
 #[test]

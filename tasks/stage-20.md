@@ -1,7 +1,7 @@
 # Stage 20 — test/language/statements/do-while
 
-**Status:** in_progress · **Path:** `test/language/statements/do-while` ·
-**36 tests** · **29 pass / 7 fail (80.6%)** as of 2026-07-23.
+**Status:** done · **Path:** `test/language/statements/do-while` ·
+**36 tests** · **36 pass / 0 fail (100%)** as of 2026-07-23.
 
 ```bash
 TEST262_STAGE=20 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
@@ -12,16 +12,19 @@ TEST262_STAGE=20 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 
 | Date | Passed | Failed | % | Notes |
 |------|--------|--------|---|-------|
-| 2026-07-23 | **29** | **7** | **80.6%** | Baseline after stage 18 |
+| 2026-07-23 | 29 | 7 | 80.6% | Baseline |
+| 2026-07-23 | **36** | **0** | **100%** | do-while completion/hoisting/TCO; string split literal |
 
-## Top remaining clusters (7)
+## Fixes landed
 
-| Count | Cluster | Fix direction |
-|------:|---------|---------------|
-| 3 | `ReferenceError: __in__do__IN__after__break` | do-while + for-in interaction after labeled break |
-| 1 | `__odds === 0` (expected 5) | do-while loop body / completion |
-| 1 | `__evaluated === undefined` | expression completion in do-while |
-| 1 | `cptn-abrupt-empty` completion value | abrupt completion / empty completion |
-| 1 | `tco-body.js` stack overflow | tail-call optimization in do-while body |
+1. **Var hoisting in do-while** — `collect_var_names_recursive` recurses `DoWhile`/`Labeled`; `eval_do_while_impl` calls `predeclare_var` on body.
+2. **Break completion** — return body completion value on break (cptn-abrupt-empty, S12.6.1_A5).
+3. **Tail call in do-while body** — `eval_function_body` detects tail `return` inside last-stmt `DoWhile`.
+4. **`String.prototype.split` string separator** — literal split, not `Regex::new('.')` (fixes S12.6.1_A8 decimal detection).
 
-See `tasks/failures-20.json`.
+## Reproducers kept
+
+- `eval::statement::tests::do_while_statement::do_while_with_nested_labeled_break`
+- `eval::statement::tests::do_while_statement::do_while_break_returns_block_completion`
+- `builtins::regex::string_methods::tests::split_string_separator_is_literal_not_regex`
+- `interpreter::helpers::tests::test_collect_var_names_in_do_while`

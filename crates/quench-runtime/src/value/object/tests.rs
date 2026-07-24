@@ -616,3 +616,19 @@ fn ordinary_sparse_numeric_keys_no_intermediate_holes() {
     assert_eq!(obj.get_own("1"), None);
     assert_eq!(obj.get_own("2"), Some(Value::Number(5.0)));
 }
+
+#[test]
+fn enumerate_for_in_follows_prototype_field() {
+    use crate::value::object::enumerate_for_in_keys;
+
+    let mut o = Object::new(ObjectKind::Ordinary);
+    o.set("p1", Value::Number(1.0));
+    o.set("p2", Value::Number(2.0));
+    o.set("p3", Value::Number(3.0));
+    let mut proto = Object::new(ObjectKind::Ordinary);
+    proto.set("p4", Value::Number(1.0));
+    let proto_rc = Rc::new(RefCell::new(proto));
+    o.prototype = Some(Rc::clone(&proto_rc));
+    let keys = enumerate_for_in_keys(&Rc::new(RefCell::new(o)));
+    assert_eq!(keys, vec!["p1", "p2", "p3", "p4"]);
+}

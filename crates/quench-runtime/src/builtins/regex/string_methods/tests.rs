@@ -105,3 +105,11 @@ fn test_replace_all_with_substitution() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), Value::String("(ab)(ab)".to_string()));
 }
+
+#[test]
+fn split_string_separator_is_literal_not_regex() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let result = ctx.eval("'0.5'.split('.').length").unwrap();
+    assert_eq!(result, Value::Number(2.0));
+}

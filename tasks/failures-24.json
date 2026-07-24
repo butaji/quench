@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 115,
+  "path": "test/language/statements/for-in",
+  "skipped": 0,
+  "skips": {},
+  "stage": 24,
+  "total": 115
+}

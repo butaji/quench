@@ -71,11 +71,12 @@ pub fn eval_class_expr(
         class_scope.borrow_mut().set_super_class(val.clone());
         Some(val)
     } else {
-        if let Some(obj_proto) = crate::builtins::get_object_prototype() {
-            class_scope
-                .borrow_mut()
-                .set_super_class(Value::Object(obj_proto));
-        }
+        // For base classes (no extends), set super_class to the class itself.
+        // This must happen BEFORE get_or_create_class_prototype so that
+        // captured closures for methods can resolve `super` through the
+        // prototype chain (class.prototype -> Object.prototype -> ...).
+        let self_val = Value::Class(Box::new(new_value.clone()));
+        class_scope.borrow_mut().set_super_class(self_val);
         None
     };
 
@@ -144,6 +145,25 @@ pub fn eval_class_expr(
                     new_value.push_static_field_key(key_str);
                     static_field_idx += 1;
                 }
+                let key_str = match new_value.static_field_key(static_field_idx) {
+                    Some(k) => k,
+                    None => prop_key_to_string(name, &child_env, true)?,
+                };
+                crate::eval::class::helpers::set_function_name_for_field_initializer(
+                    &mut field_value,
+                    name,
+                    &key_str,
+                    value_expr,
+                );
+                let storage_key = if crate::value::is_private_name_key(&key_str) {
+                    key_str
+                } else if key_str.starts_with('#') {
+                    crate::value::private_name_key(&key_str)
+                } else {
+                    key_str
+                };
+                new_value.set_static_field(&storage_key, field_value)?;
+                static_field_idx += 1;
             }
             crate::ast::ClassMember::StaticMethod { name, .. } => {
                 let key_str = prop_key_to_string(name, &class_scope, true)?;
@@ -237,6 +257,14 @@ pub fn eval_class_expr(
                     .current_scope()
                     .borrow_mut()
                     .set_this(class_value.clone());
+                // Copy super_class from class_scope so super.property in the static
+                // init block can resolve through the correct superclass value.
+                if let Some(super_val) = class_scope.borrow().get_super_class() {
+                    block_env.borrow_mut().set_super_class(super_val);
+                }
+                // Static init blocks are static class bodies — super accesses the
+                // superclass constructor's own properties (not the prototype chain).
+                block_env.borrow_mut().set_static_class_body();
                 let prev_strict = crate::interpreter::is_strict_mode();
                 crate::interpreter::set_strict_mode(true);
                 let _ = crate::eval::statement::eval_function_body(body, &block_env, false)?;

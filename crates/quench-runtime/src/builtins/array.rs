@@ -98,9 +98,9 @@ pub fn register_array(ctx: &mut Context) {
         }))),
     );
 
-    // Set Array.prototype.constructor = the NativeConstructor
+    // Set Array.prototype.constructor = the NativeConstructor (non-enumerable)
     let array_constructor_rc = Rc::new(array_constructor.clone());
-    array_proto_rc.borrow_mut().set(
+    array_proto_rc.borrow_mut().set_builtin_method(
         "constructor",
         Value::NativeConstructor(Rc::clone(&array_constructor_rc)),
     );
@@ -196,7 +196,7 @@ pub fn register_array_iterator() {
     let iter_fn = NativeFunction::new(array_values_iterator);
     array_proto
         .borrow_mut()
-        .set(&key, Value::NativeFunction(Rc::new(iter_fn)));
+        .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
 }
 
 fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {

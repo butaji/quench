@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -64,6 +64,24 @@ pub fn assign_array_destructuring(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    array_destructuring_impl(bindings, value, env, false)
+}
+
+/// Initialize for-of/for-in lexical array destructuring bindings.
+pub fn init_array_destructuring(
+    bindings: &[BindingElement],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    array_destructuring_impl(bindings, value, env, true)
+}
+
+fn array_destructuring_impl(
+    bindings: &[BindingElement],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     if let Value::String(s) = value {
         let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
         let len = chars.len();
@@ -71,21 +89,21 @@ pub fn assign_array_destructuring(
         arr.elements = chars;
         arr.properties
             .insert("length".to_string(), Value::Number(len as f64));
-        return assign_array_with_iterator(bindings, &Rc::new(RefCell::new(arr)), env);
+        return array_with_iterator_impl(bindings, &Rc::new(RefCell::new(arr)), env, init);
     }
     let Value::Object(arr_rc) = value else {
         if let Value::Generator(gen) = value {
             let iter = crate::value::generator::generator_as_iterator_object(Rc::clone(gen));
-            return assign_array_with_iterator(bindings, &iter, env);
+            return array_with_iterator_impl(bindings, &iter, env, init);
         }
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
     if arr_rc.borrow().kind == ObjectKind::Array {
         let iter = obtain_iterator(arr_rc)?;
-        return assign_array_with_iterator(bindings, &iter, env);
+        return array_with_iterator_impl(bindings, &iter, env, init);
     }
     let iter = obtain_iterator(arr_rc)?;
-    assign_array_with_iterator(bindings, &iter, env)
+    array_with_iterator_impl(bindings, &iter, env, init)
 }
 
 /// Obtain an iterator object from an iterable per ES GetIterator.
@@ -145,28 +163,52 @@ pub fn assign_array_with_iterator(
     iterator: &Rc<RefCell<Object>>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    array_with_iterator_impl(bindings, iterator, env, false)
+}
+
+fn array_with_iterator_impl(
+    bindings: &[BindingElement],
+    iterator: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
+) -> Result<(), JsError> {
     let mut index = 0;
     let mut iterator_done = false;
+    let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
+        if init {
+            init_binding_elem(binding, val, env)
+        } else {
+            assign_binding_elem(binding, val, env)
+        }
+    };
     for binding in bindings {
         if let BindingElement::Rest(inner) = binding {
+            if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
+                if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
+                    let _ = call_iterator_return(iterator);
+                    return Err(error);
+                }
+            }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
-            if let Err(error) = assign_binding_elem(inner, &rest_array, env) {
+            if let Err(error) = apply(inner, &rest_array) {
                 call_iterator_return(iterator);
                 return Err(error);
             }
             return Ok(());
         }
+        if let BindingElement::AssignmentTarget(target) = binding {
+            if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
+                let _ = call_iterator_return(iterator);
+                return Err(error);
+            }
+        }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
         iterator_done = done;
-        if let Err(error) = assign_binding_elem(binding, &elem_value, env) {
+        if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
-            let close_throw = call_iterator_return(iterator);
-            if original.is_some() {
-                if let Some(thrown) = original {
-                    crate::value::set_thrown_value(thrown);
-                }
-            } else if let Some(close) = close_throw {
-                return Err(close);
+            let _ = call_iterator_return(iterator);
+            if let Some(thrown) = original {
+                crate::value::set_thrown_value(thrown);
             }
             return Err(error);
         }
@@ -221,6 +263,30 @@ pub fn take_iterator_value(
     take_iterator_step(iterator, index, env).map(|(value, _)| value)
 }
 
+/// Cached [[NextMethod]] for an iterator record (non-enumerable internal slot).
+const ITERATOR_NEXT_METHOD: &str = "\0iterNextMethod";
+
+fn cached_iterator_next_method(
+    iterator: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if let Some(cached) = iterator.borrow().get_own(ITERATOR_NEXT_METHOD) {
+        return Ok(cached);
+    }
+    let next_fn = crate::eval::member::eval_object_member(iterator, "next", Some(env))?;
+    iterator.borrow_mut().define(
+        ITERATOR_NEXT_METHOD,
+        next_fn.clone(),
+        PropertyFlags {
+            value: Some(next_fn.clone()),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    Ok(next_fn)
+}
+
 /// Take the next iterator step, returning `(value, done)`.
 pub fn take_iterator_step(
     iterator: &Rc<RefCell<Object>>,
@@ -228,7 +294,7 @@ pub fn take_iterator_step(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
-        let result = {
+        let value = {
             let borrowed = iterator.borrow();
             if *index < borrowed.elements.len() {
                 Some(borrowed.elements[*index].clone())
@@ -236,14 +302,16 @@ pub fn take_iterator_step(
                 borrowed.properties.get(&index.to_string()).cloned()
             }
         };
+        if value.is_none() && *index >= iterator.borrow().elements.len() {
+            return Ok((Value::Undefined, true));
+        }
         *index += 1;
-        let exhausted = *index >= iterator.borrow().elements.len();
-        return Ok((result.unwrap_or(Value::Undefined), exhausted));
+        return Ok((value.unwrap_or(Value::Undefined), false));
     }
-    let next_value = iterator.borrow().get("next");
-    let Some(next_fn) = next_value else {
+    let next_fn = cached_iterator_next_method(iterator, env)?;
+    if matches!(next_fn, Value::Undefined) {
         return Ok((Value::Undefined, true));
-    };
+    }
     let iter_this = Value::Object(Rc::clone(iterator));
     let result = match next_fn {
         Value::Object(obj) => crate::eval::function::call_value_with_this(
@@ -257,26 +325,71 @@ pub fn take_iterator_step(
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
     let Value::Object(result_obj) = result else {
-        return Ok((Value::Undefined, true));
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Iterator result interface is not an object",
+            "TypeError",
+        );
+        return Err(js_err);
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
-    if matches!(done, Value::Boolean(true)) {
+    if crate::value::to_bool(&done) {
         return Ok((Value::Undefined, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
     Ok((value, false))
 }
 
-/// Call iterator.return, returning an error if it throws.
+/// Call iterator.return, returning an error if it throws or returns a non-Object.
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
+    let return_call = invoke_iterator_return(iterator, iter_this);
+    match return_call {
+        IteratorReturnResult::Skipped => None,
+        IteratorReturnResult::Throw(err) => Some(err),
+        IteratorReturnResult::Value(val) => iterator_close_type_error(val),
+    }
+}
+
+enum IteratorReturnResult {
+    Skipped,
+    Throw(JsError),
+    Value(Value),
+}
+
+fn invoke_iterator_return(
+    iterator: &Rc<RefCell<Object>>,
+    iter_this: Value,
+) -> IteratorReturnResult {
+    let saved_throw = crate::value::take_thrown_value();
+    let result = invoke_iterator_return_inner(iterator, iter_this);
+    match result {
+        IteratorReturnResult::Throw(_) if saved_throw.is_some() => {
+            if let Some(thrown) = saved_throw {
+                crate::value::set_thrown_value(thrown);
+            }
+            IteratorReturnResult::Skipped
+        }
+        IteratorReturnResult::Throw(err) => IteratorReturnResult::Throw(err),
+        other => {
+            if let Some(thrown) = saved_throw {
+                crate::value::set_thrown_value(thrown);
+            }
+            other
+        }
+    }
+}
+
+fn invoke_iterator_return_inner(
+    iterator: &Rc<RefCell<Object>>,
+    iter_this: Value,
+) -> IteratorReturnResult {
     let binding = iterator.borrow();
     if let Some(getter) = binding.get_getter("return") {
         let params: Vec<crate::ast::Param> = Vec::new();
         let body: Vec<crate::ast::Statement> = (*getter.body).clone();
         let closure = getter.closure.clone();
         drop(binding);
-        let _ = crate::eval::function::call_value_with_this(
+        return finish_iterator_return_call(crate::eval::function::call_value_with_this(
             crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
                 params,
                 Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
@@ -284,11 +397,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             )),
             vec![],
             iter_this,
-        );
-        if let Some(thrown) = crate::value::take_thrown_value() {
-            return Some(JsError(crate::value::to_js_string(&thrown)));
-        }
-        return None;
+        ));
     }
     let return_value = binding.get("return");
     let callable = match return_value {
@@ -296,7 +405,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
         Some(Value::Function(_)) => true,
         Some(Value::NativeFunction(_)) => true,
         Some(Value::NativeConstructor(_)) => true,
-        Some(Value::Undefined) | None => return None,
+        Some(Value::Undefined) | None => return IteratorReturnResult::Skipped,
         _ => false,
     };
     drop(binding);
@@ -305,7 +414,7 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             "iterator.return is not a function",
             "TypeError",
         );
-        return Some(js_err);
+        return IteratorReturnResult::Throw(js_err);
     }
     let return_value = return_value.unwrap();
     let (body, closure) = {
@@ -316,30 +425,46 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
             None => (None, None),
         }
     };
-    let (body, closure) = match (body, closure) {
-        (Some(body), Some(closure)) => (body, closure),
-        (_, _) => {
-            let _ = crate::eval::function::call_value_with_this(return_value, vec![], iter_this);
-            if let Some(thrown) = crate::value::take_thrown_value() {
-                return Some(JsError(crate::value::to_js_string(&thrown)));
-            }
-            return None;
+    match (body, closure) {
+        (Some(body), Some(closure)) => {
+            finish_iterator_return_call(crate::eval::function::call_value_with_this(
+                crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
+                    Vec::new(),
+                    Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
+                    closure,
+                )),
+                vec![],
+                iter_this,
+            ))
         }
-    };
-    let params: Vec<crate::ast::Param> = Vec::new();
-    let _ = crate::eval::function::call_value_with_this(
-        crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
-            params,
-            Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
-            closure,
+        (_, _) => finish_iterator_return_call(crate::eval::function::call_value_with_this(
+            return_value,
+            vec![],
+            iter_this,
         )),
-        vec![],
-        iter_this,
-    );
-    if let Some(thrown) = crate::value::take_thrown_value() {
-        return Some(JsError(crate::value::to_js_string(&thrown)));
     }
-    None
+}
+
+fn finish_iterator_return_call(result: Result<Value, JsError>) -> IteratorReturnResult {
+    match result {
+        Ok(val) => IteratorReturnResult::Value(val),
+        Err(err) => IteratorReturnResult::Throw(err),
+    }
+}
+
+fn iterator_close_type_error(val: Value) -> Option<JsError> {
+    if matches!(val, Value::Object(_)) {
+        return None;
+    }
+    let saved_throw = crate::value::take_thrown_value();
+    let (_, js_err) = crate::value::error::create_js_error_with_type(
+        "Iterator result interface is not an object",
+        "TypeError",
+    );
+    if let Some(thrown) = saved_throw {
+        crate::value::set_thrown_value(thrown);
+    }
+    Some(js_err)
 }
 
 /// Assign to an object destructuring pattern.
@@ -347,6 +472,24 @@ pub fn assign_object_destructuring(
     props: &[(PropertyKey, BindingElement)],
     value: &Value,
     env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    object_destructuring_impl(props, value, env, false)
+}
+
+/// Initialize for-of/for-in lexical object destructuring bindings.
+pub fn init_object_destructuring(
+    props: &[(PropertyKey, BindingElement)],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    object_destructuring_impl(props, value, env, true)
+}
+
+fn object_destructuring_impl(
+    props: &[(PropertyKey, BindingElement)],
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    init: bool,
 ) -> Result<(), JsError> {
     let obj = match value {
         Value::Null | Value::Undefined => {
@@ -366,6 +509,13 @@ pub fn assign_object_destructuring(
     };
     let mut excluded = std::collections::HashSet::new();
     let mut rest_binding: Option<&BindingElement> = None;
+    let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
+        if init {
+            init_binding_elem(binding, val, env)
+        } else {
+            assign_binding_elem(binding, val, env)
+        }
+    };
 
     for (key, binding) in props {
         if is_object_rest_key(key) {
@@ -377,18 +527,22 @@ pub fn assign_object_destructuring(
             excluded.insert(key_str.clone());
             crate::eval::object::touch_assignment_target(target, env)?;
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
-            crate::eval::object::assign_to(target, &prop_value, env)?;
+            if init {
+                crate::eval::object::init_to(target, &prop_value, env)?;
+            } else {
+                crate::eval::object::assign_to(target, &prop_value, env)?;
+            }
         } else {
             let key_str = extract_destructure_key(key, env)?;
             excluded.insert(key_str.clone());
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
-            assign_binding_elem(binding, &prop_value, env)?;
+            apply(binding, &prop_value)?;
         }
     }
 
     if let Some(binding) = rest_binding {
         let rest_val = copy_enumerable_own_properties(&obj, &excluded, env)?;
-        assign_binding_elem(binding, &rest_val, env)?;
+        apply(binding, &rest_val)?;
     }
     Ok(())
 }
@@ -414,39 +568,61 @@ fn copy_enumerable_value(
     Ok(src.properties.get(key).cloned().unwrap_or(Value::Undefined))
 }
 
+fn copy_key_to_rest(rest: &mut Object, key: &str, val: Value) {
+    if key.contains('\0') {
+        rest.set_symbol(key, val);
+    } else {
+        rest.set(key, val);
+    }
+}
+
+fn string_exotic_source_string(obj: &Object) -> Option<String> {
+    if obj.exotic_kind != Some(crate::value::kind::ExoticKind::String) {
+        return None;
+    }
+    if let Some(Value::String(s)) = obj.get("_value") {
+        return Some(s);
+    }
+    if obj.properties.contains_key("1") {
+        return None;
+    }
+    if let Some(Value::String(s)) = obj.get("0") {
+        return Some(s);
+    }
+    if obj.elements.len() == 1 {
+        if let Value::String(s) = &obj.elements[0] {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
 fn copy_enumerable_own_properties(
     obj: &Rc<RefCell<Object>>,
     excluded: &std::collections::HashSet<String>,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let mut rest = Object::new(ObjectKind::Ordinary);
-    let src = obj.borrow();
-    for i in 0..src.elements.len() {
-        if src.holes.contains(&i) {
-            continue;
-        }
-        let key = i.to_string();
-        if excluded.contains(&key) || !src.is_enumerable(&key) {
-            continue;
-        }
-        let val = copy_enumerable_value(obj, &key, &src, env)?;
-        rest.set(&key, val);
+    if let Some(prototype) = crate::builtins::get_object_prototype() {
+        rest.prototype = Some(prototype);
     }
-    let mut keys: Vec<String> = src
-        .properties
-        .keys()
-        .chain(src.getters.keys())
-        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
-        .cloned()
-        .collect();
-    keys.sort();
-    keys.dedup();
-    for key in keys {
-        if excluded.contains(&key) || !src.is_enumerable(&key) {
-            continue;
+    let src = obj.borrow();
+    if let Some(s) = string_exotic_source_string(&src) {
+        for (i, ch) in s.chars().enumerate() {
+            let key = i.to_string();
+            if excluded.contains(&key) {
+                continue;
+            }
+            copy_key_to_rest(&mut rest, &key, Value::String(ch.to_string()));
         }
-        let val = copy_enumerable_value(obj, &key, &src, env)?;
-        rest.set(&key, val);
+    } else {
+        for key in crate::value::object::enumerable_own_keys(&src) {
+            if excluded.contains(&key) {
+                continue;
+            }
+            let val = copy_enumerable_value(obj, &key, &src, env)?;
+            copy_key_to_rest(&mut rest, &key, val);
+        }
     }
     Ok(Value::Object(Rc::new(RefCell::new(rest))))
 }
@@ -488,7 +664,16 @@ pub fn assign_binding_elem(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    assign_binding_elem_with_default(binding, value, env, None)
+    assign_binding_elem_with_default(binding, value, env, None, false)
+}
+
+/// Initialize a declared binding element (for-of/for-in lexical head).
+pub fn init_binding_elem(
+    binding: &BindingElement,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    assign_binding_elem_with_default(binding, value, env, None, true)
 }
 
 fn assign_binding_elem_with_default(
@@ -496,12 +681,31 @@ fn assign_binding_elem_with_default(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
     default_expr: Option<&Expression>,
+    init: bool,
 ) -> Result<(), JsError> {
     match binding {
         BindingElement::Identifier(name) if name == "__hole" => Ok(()),
-        BindingElement::Identifier(name) => assign_to_identifier(name, value, env, default_expr),
-        BindingElement::ArrayPattern(bindings) => assign_array_destructuring(bindings, value, env),
-        BindingElement::ObjectPattern(props) => assign_object_destructuring(props, value, env),
+        BindingElement::Identifier(name) => {
+            if init {
+                init_to_identifier(name, value, env, default_expr)
+            } else {
+                assign_to_identifier(name, value, env, default_expr)
+            }
+        }
+        BindingElement::ArrayPattern(bindings) => {
+            if init {
+                init_array_destructuring(bindings, value, env)
+            } else {
+                assign_array_destructuring(bindings, value, env)
+            }
+        }
+        BindingElement::ObjectPattern(props) => {
+            if init {
+                init_object_destructuring(props, value, env)
+            } else {
+                assign_object_destructuring(props, value, env)
+            }
+        }
         BindingElement::Default(binding, default) => {
             let (value, name_default) = if matches!(value, Value::Undefined) {
                 (
@@ -511,24 +715,26 @@ fn assign_binding_elem_with_default(
             } else {
                 (value.clone(), None)
             };
-            assign_binding_elem_with_default(binding, &value, env, name_default)
+            assign_binding_elem_with_default(binding, &value, env, name_default, init)
         }
         BindingElement::Rest(_) => Ok(()),
         BindingElement::AssignmentTarget(target) => {
-            crate::eval::object::assign_to(target, value, env)
+            if init {
+                crate::eval::object::init_to(target, value, env)
+            } else {
+                crate::eval::object::assign_to(target, value, env)
+            }
         }
     }
 }
 
-/// Assign a value to an identifier (variable reference).
-pub fn assign_to_identifier(
+fn prepare_identifier_binding_value(
     name: &str,
     value: &Value,
-    env: &Rc<RefCell<Environment>>,
     default_expr: Option<&Expression>,
-) -> Result<(), JsError> {
-    let value = match value {
-        Value::Function(ref f)
+) -> Value {
+    match value {
+        Value::Function(f)
             if f.name.is_none() && default_expr.is_some_and(is_anonymous_function_definition) =>
         {
             let mut cloned = f.clone();
@@ -536,7 +742,7 @@ pub fn assign_to_identifier(
             let _ = cloned.set_property("name", Value::String(name.to_string()));
             Value::Function(cloned)
         }
-        Value::Class(ref c) => {
+        Value::Class(c) => {
             let has_name = c.name.is_some()
                 || c.static_methods.iter().any(|(k, _, _, _, _)| match k {
                     crate::ast::PropertyKey::Ident(s) | crate::ast::PropertyKey::String(s) => {
@@ -553,7 +759,28 @@ pub fn assign_to_identifier(
             }
         }
         _ => value.clone(),
-    };
+    }
+}
+
+/// Assign a value to an identifier (variable reference).
+pub fn assign_to_identifier(
+    name: &str,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
+    let value = prepare_identifier_binding_value(name, value, default_expr);
+
+    if env.borrow().is_tdz(name) {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            &format!(
+                "ReferenceError: Cannot access '{}' before initialization",
+                name
+            ),
+            "ReferenceError",
+        );
+        return Err(js_err);
+    }
 
     if env.borrow().is_tdz(name) {
         env.borrow_mut().initialize_declared(name, value);
@@ -583,7 +810,13 @@ pub fn assign_to_identifier(
                 }
             }
         }
-        env.borrow_mut().set(name, value);
+        if !env.borrow_mut().set(name, value) && crate::interpreter::is_strict_mode() {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                &format!("{} is not defined", name),
+                "ReferenceError",
+            );
+            return Err(js_err);
+        }
     } else {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -602,6 +835,21 @@ pub fn assign_to_identifier(
         }
     }
     Ok(())
+}
+
+/// Initialize a declared binding (for-of/for-in lexical head), including TDZ slots.
+pub fn init_to_identifier(
+    name: &str,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    default_expr: Option<&Expression>,
+) -> Result<(), JsError> {
+    let value = prepare_identifier_binding_value(name, value, default_expr);
+    if env.borrow().is_tdz(name) {
+        env.borrow_mut().initialize_declared(name, value);
+        return Ok(());
+    }
+    assign_to_identifier(name, &value, env, default_expr)
 }
 
 /// Declare destructuring pattern bindings with the given declaration kind.
@@ -711,6 +959,20 @@ mod tests {
     fn destructure_default_array_literal() {
         let r = eval("function f([v] = [99]) { return v; } f()").unwrap();
         assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn for_of_const_destructure_default_arrow_gets_binding_name() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let name = ctx
+            .eval(
+                "var iterCount = 0; var fnName = ''; \
+                 for (const [arrow = () => {}] of [[]]) { fnName = arrow.name; iterCount++; } \
+                 fnName",
+            )
+            .unwrap();
+        assert_eq!(name, Value::String("arrow".into()));
     }
 
     #[test]
@@ -1035,9 +1297,179 @@ mod tests {
     }
 
     #[test]
+    fn for_of_object_id_init_assignment_missing() {
+        let r = eval(
+            "var x, counter = 0; \
+             for ({ x = 1 } of [{}]) { counter += 1; } \
+             JSON.stringify([x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_assignment_undef() {
+        let r = eval(
+            "var x, counter = 0; \
+             for ({ x = 1 } of [{ x: undefined }]) { counter += 1; } \
+             JSON.stringify([x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_order() {
+        let r = eval(
+            "var x = 0, a, b, counter = 0; \
+             for ({ a = x += 1, b = x *= 2 } of [{}]) { counter += 1; } \
+             JSON.stringify([a, b, x, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,2,2,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_evaluation_skips_present_property() {
+        let r = eval(
+            "var flag1 = false, flag2 = false, x, y, counter = 0; \
+             for ({ x = flag1 = true, y = flag2 = true } of [{ y: 1 }]) { counter += 1; } \
+             JSON.stringify([flag1, flag2, y, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[true,false,1,1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_fn_name() {
+        let r = eval(
+            "var fn, counter = 0; \
+             for ({ fn = function() {} } of [{}]) { counter += 1; } \
+             JSON.stringify([fn.name, counter])",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[\"fn\",1]".into()));
+    }
+
+    #[test]
+    fn for_of_object_id_init_yield_expr() {
+        let r = eval(
+            "var iter = (function*() { \
+               var counter = 0, x; \
+               for ({ x = yield } of [{}]) { counter += 1; } \
+               return JSON.stringify([counter, x]); \
+             })(); \
+             iter.next(); \
+             iter.next(3).value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("[1,3]".into()));
+    }
+
+    #[test]
     fn object_literal_rest_invokes_getter() {
         let r = eval("var o = { get v() { return 2; } }; var {...rest} = o; rest.v").unwrap();
         assert_eq!(r, Value::Number(2.0));
+    }
+
+    #[test]
+    fn iterator_next_accessor_invoked_per_step() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let loads = ctx
+            .eval(
+                "var loadNextCount = 0, iterationCount = 0; \
+                 var iterable = {}, iterator = {}; \
+                 iterable[Symbol.iterator] = function() { return iterator; }; \
+                 function next() { \
+                   if (iterationCount) return { done: true }; \
+                   return { value: 45, done: false }; \
+                 } \
+                 Object.defineProperty(iterator, 'next', { \
+                   get: function() { loadNextCount++; return next; }, \
+                   configurable: true \
+                 }); \
+                 for (var x of iterable) { \
+                   Object.defineProperty(iterator, 'next', { \
+                     get: function() { throw new Error('too early'); } \
+                   }); \
+                   iterationCount++; \
+                 } \
+                 JSON.stringify([iterationCount, loadNextCount])",
+            )
+            .unwrap();
+        assert_eq!(loads, Value::String("[1,1]".to_string()));
+    }
+
+    #[test]
+    fn array_destructure_ref_eval_before_iterator_next() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let counts = ctx
+            .eval(
+                "var nextCount = 0, returnCount = 0; \
+                 var iterable = {}; \
+                 var iterator = { \
+                   next: function() { nextCount += 1; return { done: true }; }, \
+                   return: function() { returnCount += 1; } \
+                 }; \
+                 iterable[Symbol.iterator] = function() { return iterator; }; \
+                 var thrower = function() { throw new Error('Test262'); }; \
+                 try { for ([ {}[thrower()] ] of [iterable]) {} } catch (_) {} \
+                 JSON.stringify([nextCount, returnCount])",
+            )
+            .unwrap();
+        assert_eq!(counts, Value::String("[0,1]".to_string()));
+    }
+
+    #[test]
+    fn object_rest_for_of_number_is_instanceof_object() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let ok = ctx
+            .eval(
+                "var rest, ok = false; \
+                 for ({...rest} of [51]) { ok = rest instanceof Object; } \
+                 ok",
+            )
+            .unwrap();
+        assert_eq!(ok, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_rest_for_of_string_indexes_per_code_unit() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let chars = ctx
+            .eval(
+                "var rest; \
+                 for ({...rest} of ['foo']) {} \
+                 JSON.stringify([rest['0'], rest['1'], rest['2']])",
+            )
+            .unwrap();
+        assert_eq!(chars, Value::String("[\"f\",\"o\",\"o\"]".to_string()));
+    }
+
+    #[test]
+    fn object_rest_for_of_enumerates_in_own_key_order() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let calls = ctx
+            .eval(
+                "var calls = []; \
+                 var o = { get z() { calls.push('z'); }, get a() { calls.push('a'); } }; \
+                 Object.defineProperty(o, 1, { get: function() { calls.push(1); }, enumerable: true }); \
+                 Object.defineProperty(o, Symbol('foo'), { \
+                   get: function() { calls.push('Symbol(foo)'); }, enumerable: true \
+                 }); \
+                 for ({...rest} of [o]) {} \
+                 JSON.stringify(calls)",
+            )
+            .unwrap();
+        assert_eq!(
+            calls,
+            Value::String("[1,\"z\",\"a\",\"Symbol(foo)\"]".to_string())
+        );
     }
 
     #[test]
@@ -1086,6 +1518,64 @@ mod tests {
     fn assign_to_undeclared_strict_throws() {
         let r = eval("'use strict'; z = 1");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn stale_throw_does_not_block_iterator_return_invocation() {
+        use super::call_iterator_return;
+
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let iter_val = ctx
+            .eval(
+                "globalThis.__rc = 0; ({ \
+                   next: function(){ return {done:true}; }, \
+                   return: function(){ globalThis.__rc += 1; return {}; } \
+                 })",
+            )
+            .unwrap();
+        let Value::Object(iter) = iter_val else {
+            panic!("expected object iterator");
+        };
+        crate::value::set_thrown_value(Value::Number(0.0));
+        assert!(call_iterator_return(&iter).is_none());
+        let count = ctx.eval("globalThis.__rc").unwrap();
+        assert_eq!(count, Value::Number(1.0));
+    }
+
+    #[test]
+    fn iterator_close_non_object_return_throws_type_error() {
+        let err = eval(
+            "var iterable = {};
+             iterable[Symbol.iterator] = function() {
+               return {
+                 next: function() { return { done: true }; },
+                 return: function() { return null; }
+               };
+             };
+             for ([] of [iterable]) {}",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("TypeError"),
+            "expected TypeError, got {err}"
+        );
+    }
+
+    #[test]
+    fn iterator_next_non_object_result_throws_type_error() {
+        let err = eval(
+            "var iterable = {};
+             iterable[Symbol.iterator] = function() {
+               return { next: function() { return true; } };
+             };
+             for (var x of iterable) {}",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("TypeError"),
+            "expected TypeError, got {err}"
+        );
     }
 
     // ─── string is iterable for destructuring ────────────────────────────────

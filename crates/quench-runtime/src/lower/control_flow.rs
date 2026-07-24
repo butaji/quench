@@ -4,11 +4,13 @@
 
 use super::expr::lower_expr;
 use super::pattern::{
-    binding_to_expr, lower_array_assignment_target, lower_elem_pat, lower_object_assignment_target,
-    lower_object_pat_prop,
+    binding_to_expr, lower_array_assignment_target, lower_binding_elem,
+    lower_object_assignment_target,
 };
 use super::stmt::lower_stmt;
-use crate::ast::{BinaryOp, BindingElement, Expression, ForInit, PropertyKey, Statement, VarKind};
+use crate::ast::{
+    BinaryOp, BindingElement, Expression, ForInit, ForInitDecl, PropertyKey, Statement, VarKind,
+};
 use oxc::ast::ast;
 
 /// Lower an if statement
@@ -76,22 +78,32 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
     let iterable = lower_expr(&for_in_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_in_stmt.body).unwrap_or(Statement::Empty));
 
-    // When the left side is a VariableDeclaration, also emit the var/let/const
-    // declaration so the binding is created in the environment.
-    // For patterns, pass the iterable so the pattern can access elements from it.
-    let var_decl_stmt =
+    let (var_decl_stmt, loop_binding) =
         if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_in_stmt.left {
+            let kind = match decl.kind {
+                ast::VariableDeclarationKind::Var => VarKind::Var,
+                ast::VariableDeclarationKind::Let => VarKind::Let,
+                ast::VariableDeclarationKind::Const => VarKind::Const,
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
+                    return None;
+                }
+            };
             let has_pattern = decl
                 .declarations
                 .iter()
                 .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
-            if has_pattern {
-                crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+            if matches!(kind, VarKind::Var) {
+                let vd = if has_pattern {
+                    crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
+                } else {
+                    crate::lower::stmt::lower_var_decl(decl)
+                };
+                (vd, None)
             } else {
-                crate::lower::stmt::lower_var_decl(decl)
+                (None, Some(kind))
             }
         } else {
-            None
+            (None, None)
         };
 
     let variable = lower_for_lhs(&for_in_stmt.left)?;
@@ -99,6 +111,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
         variable: Box::new(variable),
         object: Box::new(iterable),
         body,
+        loop_binding,
     }));
 
     // If there's a var/let/const declaration, wrap in a block so it runs first
@@ -130,7 +143,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
                 .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
             if matches!(kind, VarKind::Var) {
                 let vd = if has_pattern {
-                    crate::lower::stmt::lower_var_decl_impl(decl, Some(iterable.clone()))
+                    crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
                 } else {
                     crate::lower::stmt::lower_var_decl(decl)
                 };
@@ -262,33 +275,63 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
 pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
     match init {
         ast::ForStatementInit::VariableDeclaration(decl) => {
-            let first = decl.declarations.first()?;
             let kind = match decl.kind {
                 ast::VariableDeclarationKind::Var => VarKind::Var,
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
-                // Using/AwaitUsing not supported in this runtime
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
                     return None;
                 }
             };
-            let name = match &first.id.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
-                    ident.name.as_str().to_string()
+            if decl.declarations.len() > 1 {
+                let mut decls = Vec::with_capacity(decl.declarations.len());
+                for d in &decl.declarations {
+                    decls.push(lower_for_init_decl(d, kind)?);
                 }
-                _ => return None,
-            };
-            let init = first.init.as_ref().and_then(|e| lower_expr(e).ok());
-            Some(ForInit::VarDeclaration { kind, name, init })
+                return Some(ForInit::DeclarationList { kind, decls });
+            }
+            let first = decl.declarations.first()?;
+            lower_for_init_decl(first, kind).map(|item| {
+                if let Some(name) = item.name {
+                    ForInit::VarDeclaration {
+                        kind,
+                        name,
+                        init: item.init,
+                    }
+                } else {
+                    ForInit::PatternDeclaration {
+                        kind,
+                        pattern: item.pattern.expect("non-identifier decl has pattern"),
+                        init: item.init,
+                    }
+                }
+            })
         }
-        // ForStatementInit inherits Expression variants via macro
         _ => {
-            // Try to match as expression
             if let Some(expr) = init.as_expression() {
                 Some(ForInit::Expression(Box::new(lower_expr(expr).ok()?)))
             } else {
                 None
             }
+        }
+    }
+}
+
+fn lower_for_init_decl(decl: &ast::VariableDeclarator, _kind: VarKind) -> Option<ForInitDecl> {
+    let init = decl.init.as_ref().and_then(|e| lower_expr(e).ok());
+    match &decl.id.kind {
+        ast::BindingPatternKind::BindingIdentifier(ident) => Some(ForInitDecl {
+            name: Some(ident.name.as_str().to_string()),
+            pattern: None,
+            init,
+        }),
+        _ => {
+            let pattern = lower_binding_elem(&decl.id).ok()?;
+            Some(ForInitDecl {
+                name: None,
+                pattern: Some(pattern),
+                init,
+            })
         }
     }
 }
@@ -356,22 +399,17 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
 }
 
 fn lower_array_lhs(arr: &ast::ArrayPattern) -> Option<Expression> {
-    let elements: Vec<BindingElement> = arr
-        .elements
-        .iter()
-        .filter_map(|e| e.as_ref().and_then(lower_elem_pat))
-        .chain(arr.rest.as_ref().and_then(|r| lower_elem_pat(&r.argument)))
-        .collect();
-    Some(Expression::ArrayPattern(elements))
+    match crate::lower::pattern::lower_array_binding(arr).ok()? {
+        BindingElement::ArrayPattern(elements) => Some(Expression::ArrayPattern(elements)),
+        _ => None,
+    }
 }
 
 fn lower_object_lhs(obj: &ast::ObjectPattern) -> Option<Expression> {
-    let props: Vec<(PropertyKey, BindingElement)> = obj
-        .properties
-        .iter()
-        .filter_map(lower_object_pat_prop)
-        .collect();
-    Some(Expression::ObjectPattern(props))
+    match crate::lower::pattern::lower_object_binding(obj).ok()? {
+        BindingElement::ObjectPattern(props) => Some(Expression::ObjectPattern(props)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

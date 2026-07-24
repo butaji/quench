@@ -48,22 +48,32 @@ pub fn eval_member_access(
                         .static_methods
                         .iter()
                         .any(|(n, _, _, _, _)| prop_key_matches(n, prop_name))
-                    || class.static_getters.iter().any(|(n, _)| {
-                        class
-                            .get_class_def_env()
-                            .and_then(|env| {
-                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
-                            })
-                            .is_some_and(|s| s == prop_name)
+                    || class.static_getters.iter().enumerate().any(|(i, (n, _))| {
+                        class.static_getter_key(i).is_some_and(|s| s == prop_name)
+                            || class
+                                .get_class_def_env()
+                                .and_then(|env| {
+                                    crate::eval::class::helpers::prop_key_to_string(n, &env, false)
+                                        .ok()
+                                })
+                                .is_some_and(|s| s == prop_name)
                     })
-                    || class.static_setters.iter().any(|(n, _, _)| {
-                        class
-                            .get_class_def_env()
-                            .and_then(|env| {
-                                crate::eval::class::helpers::prop_key_to_string(n, &env, false).ok()
-                            })
-                            .is_some_and(|s| s == prop_name)
-                    });
+                    || class
+                        .static_setters
+                        .iter()
+                        .enumerate()
+                        .any(|(i, (n, _, _))| {
+                            class.static_setter_key(i).is_some_and(|s| s == prop_name)
+                                || class
+                                    .get_class_def_env()
+                                    .and_then(|env| {
+                                        crate::eval::class::helpers::prop_key_to_string(
+                                            n, &env, false,
+                                        )
+                                        .ok()
+                                    })
+                                    .is_some_and(|s| s == prop_name)
+                        });
                 if !has_static {
                     let (_, js_err) = create_js_error_with_type(
                         "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",

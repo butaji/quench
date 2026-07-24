@@ -37,6 +37,20 @@ impl Object {
         self.properties.get(key).cloned()
     }
 
+    /// Set a built-in method (non-enumerable, writable, configurable).
+    pub fn set_builtin_method(&mut self, key: &str, value: Value) {
+        self.properties.insert(key.to_string(), value.clone());
+        self.descriptors.insert(
+            key.to_string(),
+            PropertyFlags {
+                value: Some(value),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+
     /// Set a property value (own only, respects writable flag).
     /// Per ES §10.1.6 [[Set]]: new properties are only added if the object is extensible.
     pub fn set(&mut self, key: &str, value: Value) {
