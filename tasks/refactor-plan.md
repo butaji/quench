@@ -134,6 +134,9 @@ demonstrably fires for that case.
       the newly-caught failure count on the stage-25 digest.
 - [ ] Delete redundant hand-rolled checks only where coverage is proven
       by the step above.
+- [ ] Delete `src/strict_reserved.rs` once oxc_semantic is proven to
+      catch strict-mode reserved-word bindings (it is exactly the kind
+      of hand-rolled early error R17 exists to replace).
 
 ## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
 
@@ -474,6 +477,32 @@ anyone auditing the tree cannot tell which parser source is real.
       parser patch is ever actually needed — at which point it must be
       wired via `[patch.crates-io]` with a `DEPENDENCIES.md` note).
 
+## R24 — Delete TypeScript + JSX support entirely  *(NOW, after build gate, diff=2)*
+
+**Decision (2026-07-24): quench is a JavaScript runtime, period.** All
+Ink / JSX / TypeScript compatibility is removed — no feature gate, no
+compat shim. test262 exercises neither, and keeping them costs surface
+in `ast.rs`, `lower/`, and `eval/` that every future stage must route
+around.
+
+Deletion surface (~900 LOC):
+
+- `parser.rs`: `parse_ts` (dead-marked), `parse_typescript`,
+  `parse_jsx`, `strip_imports_exports`, the TS/JSX parser tests, and
+  `with_jsx(true)` from `parse_script`. Collapse the remaining entry
+  points into one `parse_with(source, SourceType)`.
+- `context/mod.rs`: `parse_typescript`, `eval_typescript`.
+- `lower/jsx.rs` (186 LOC), `eval/jsx.rs` + `eval/jsx/` (404 incl.
+  tests), the 18 JSX references / AST variants in `ast.rs`, and every
+  `lower/` + `eval/` match arm on them.
+- `Cargo.toml` description: drop "Ink terminal UI framework" — the
+  crate is a JavaScript runtime.
+
+- [ ] Refactor pin first (AGENTS.md): `#[test]` that `1 + 1` and a JSX-
+      free program still parse/eval after the AST variants are gone.
+- [ ] Full `cargo test -p quench-runtime` + clippy green; stage-25
+      digest must not regress.
+
 ---
 
 ## Sequencing (summary)
@@ -482,6 +511,7 @@ anyone auditing the tree cannot tell which parser source is real.
 NOW:     fix build gate (for_of_yield_repro import; see Status) →
          stage 25 for-of (S2 digest, 53 fails) → R17 → language stages
          R23 delete patches/oxc_parser (1 command, no risk)
+         R24 delete TS/JSX (~900 LOC; shrinks lower/eval surface)
          R1 incremental on every op touch
          S5 harness (parallel digest, failed-only rerun) — active
 PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js) → R18

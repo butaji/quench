@@ -26,6 +26,9 @@ conformance and far smaller.
 - **Single parser.** No second parser stack (swc) may enter the
   pipeline; transforms that require one are rejected (see S4 in
   `tasks/10-ways-to-speed-up.md`).
+- **JavaScript only.** No TypeScript, no JSX, no Ink compatibility —
+  removed entirely in R24 (2026-07-24 decision). Quench is a JS
+  runtime; anything ECMA-262 does not need is deleted, not gated.
 
 ## Rust core
 
