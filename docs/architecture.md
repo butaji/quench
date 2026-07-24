@@ -6,6 +6,27 @@
 LOC of equivalent Rust and easier to keep spec-faithful, so anything
 that can be JS is JS.
 
+## Execution model — OXC + tree-walker (fixed)
+
+OXC parses source; the interpreter **tree-walks** the lowered internal
+AST. No bytecode compiler, no VM — a tree-walker is sufficient for
+conformance and far smaller.
+
+- **Keep the internal AST** (`ast.rs` + `lower/`, ~6.2k LOC). It
+  decouples eval from oxc's lifetime-parameterized arena AST and lets
+  eval values stay `Rc`-based. Evaluating directly on the oxc AST would
+  delete those ~6.2k LOC but rewrite ~25k LOC of working `eval/` code
+  and couple every eval node to oxc `Box<'a, _>` types — a mid-flight
+  rewrite that risks the 63.7% already passing for a ~8% LOC saving.
+  **Rejected for now**; revisit only if `lower/` becomes the measured
+  bottleneck.
+- **Early errors run on the oxc AST pre-lower** (R17, `oxc_semantic`) —
+  no conflict with the internal-AST walker; semantic checks happen
+  before lowering.
+- **Single parser.** No second parser stack (swc) may enter the
+  pipeline; transforms that require one are rejected (see S4 in
+  `tasks/10-ways-to-speed-up.md`).
+
 ## Rust core
 
 Smallest set the builtins cannot be written without.
@@ -57,10 +78,15 @@ per `Realm` by `builtins/bootstrap.rs`.
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a
-`NativeFunction`. JS destructures it at parse time (never user-visible):
+`NativeFunction`. Target: JS destructures it at parse time (never
+user-visible). **Current state (scaffold, R1):** only `toPrimitive`,
+`toNumber`, `toPropertyKey` are exposed, and the object is registered
+as a plain global binding named `%ops%` — `%` is not a valid JS
+identifier character, so it is reachable only as `globalThis["%ops%"]`
+until R1 lands parse-time resolution.
 
 ```js
-// builtins/Array.js (excerpt)
+// builtins/Array.js (excerpt, target state after R1)
 const { IsCallable, ToObject, ThrowTypeError } = %ops%;
 
 Array.prototype.map = function (callback, thisArg) {
@@ -103,7 +129,7 @@ Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
 Hand-rolled copies — including `chrono_*` helpers that never import
 `chrono` — are forbidden.
 
-## Value representation — NaN boxing *(R11 target)*
+## Value representation — NaN boxing *(R20 target)*
 
 JS values (`JsValue`) fit in a single `u64` via NaN boxing — the same
 technique used by QuickJS (C), JSC, V8, and Boa v0.21+.
@@ -126,15 +152,17 @@ Boa v0.21 (October 2025) switched to NaN boxing and reports measurable
 runtime and memory improvements over their older enum approach. Reference:
 <https://boajs.dev/blog/2025/10/22/boa-release-21>.
 
-**Do NOT start this until R0 is complete.** The Value representation
-change touches every call site; R0 gives us a clean JS-layer boundary to
-verify correctness afterward. Boa did the same: NaN boxing was added as a
-feature-flagged feature alongside the existing enum (`jsvalue-enum`).
+**Start only in Phase B** — after R5 has made the property store
+correct (NaN boxing must pair with the correct store) and after R0 has
+given us the clean JS-layer boundary to verify correctness afterward.
+The Value representation change touches every call site. Boa did the
+same: NaN boxing was added as a feature-flagged feature alongside the
+existing enum (`jsvalue-enum`).
 
 Rust `unsafe` is confined to the `value/` module. No unsafe leaks into
 `eval/` or `builtins/`.
 
-## Memory — bumpalo arena allocation *(R10 target)*
+## Memory — bumpalo arena allocation *(R19 target)*
 
 `bumpalo` (244M+ crate downloads) is the standard arena allocator for Rust
 JS engines. It provides fast short-lived allocations without per-object
@@ -158,16 +186,23 @@ optimize later.
 
 Add `DEPENDENCIES.md` row in the same diff as the first arena use.
 
-## Strings — atom table interning *(R12 target)*
+## Strings — atom table interning *(R21 target)*
 
 Identifier strings, keywords, property names, and spec-intrinsic strings are
-interned: stored once, compared by pointer equality. The `fnv` crate
-provides a high-quality FnvHashMap for the atom table.
+interned: stored once, compared by pointer equality. Hashing uses the
+already-vendored `rustc-hash` (`FxHashMap`) — do **not** add `fnv` (its
+latest release is 1.0.7 and `rustc-hash` is both faster and already a
+dependency).
 
 ```toml
 # Cargo.toml
-fnv = "2"
+string_interner = "0.20"
 ```
+
+Note: `src/interner.rs` already contains a hand-rolled `StringInterner`
+stored on `Context` — with **zero call sites** outside its own module.
+R21 deletes it in favor of the crate (AGENTS.md: prefer a crate over
+hand-rolling; dead code is a bug).
 
 - `string_interner` crate is an alternative (handles arbitrary strings,
   not just identifiers).

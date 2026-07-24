@@ -3,6 +3,37 @@
 Goal: minimize wall-clock from “failing stage” → “root cause fixed” → “100%”.
 Strategy context: `tasks/10-ways-to-speed-up.md` (S2 digest, S5 harness).
 
+## Harness fidelity — overriding test262 is forbidden (debt: nonzero today)
+
+The conformance number is only meaningful if the runner executes
+test262's **own** harness files verbatim. Any native reimplementation,
+no-op patch, stripped function, or skipped include can mask failures or
+fabricate passes. Rules:
+
+1. Never edit files under `tests/test262/` (AGENTS.md).
+2. Never substitute, patch, strip, or skip their content at load time.
+3. Existing overrides are debt (table below). Each needs a tracked
+   removal path: make the runtime capable of running the official file,
+   then delete the override. Target: **zero overrides**.
+4. New overrides are rejected at review, same as a skip list entry.
+
+Current overrides (audit 2026-07-24, `src/test262/harness/`):
+
+| Override | Location | Why it exists (claimed) | Removal criterion |
+|---|---|---|---|
+| `deepEqual.js` replaced by no-op (native `assert.deepEqual` kept) | `harness/mod.rs` `load()` | "original JS overwrites with buggy impl" | Native deepEqual proven byte-equivalent to official JS, then load the file |
+| `isConstructor.js` include skipped (native `isConstructor`) | `harness/mod.rs` `build_script()` | JS wrapper's `typeof f.prototype` check fails | Fix function-prototype `typeof` semantics, run official file |
+| `verifyProperty` stripped from `propertyHelper.js` | `harness/mod.rs` `strip_js_function()` | native handles Symbol-keyed accessor restoration | Native verifyProperty proven equivalent; delete the strip |
+| `sta.js` never loaded; native `$ERROR`/`Test262Error` constructor | `harness/mod.rs` `inject_test262_error` | bootstrap order | Evaluate official `sta.js` verbatim |
+| `assert.js` never evaluated; native `assert` object | `harness/mod.rs` `try_inject_harness`, `assert_helpers.rs` (1,155 LOC) | historical | Evaluate official `assert.js`; keep natives only as perf fast-path behind equivalence tests |
+| `propertyHelper.js` natives | `harness/property_helpers.rs` (947 LOC) | historical | Same as above |
+| `$262.agent` stub | `harness/host262.rs` | agent tests can't run single-threaded | Fail those tests loudly instead of stubbing, or implement agents |
+| 9 crash-file path skips | `skip.rs` `CRASH_FILES` | stack overflow kills the process | Fix recursion/depth; skip count → 0 (tracked below) |
+
+The native-assert duplication is also pure LOC cost: ~2,100 lines of
+`assert_helpers.rs` + `property_helpers.rs` reimplement what test262
+ships as JS — the opposite of the self-hosting strategy.
+
 ## Loop we optimize
 
 ```
@@ -28,7 +59,7 @@ Every harness change must shorten that loop or make cluster choice more accurate
 | Crash files run isolated + `NOSKIP` in digest (not skipped) | **done** | Toward zero skips |
 | `run-test` = `run_single_test` (strict/module/negative) | **done** | Debug matches harness |
 | Better error normalization (strict prefix, Test262Error) | **done** | Sharper clusters |
-| Crash-file path skips (10 files) | **debt** | Goal: zero skips |
+| Crash-file path skips (9 files) | **debt** | Goal: zero skips |
 | `advance-stage.sh` `$STAGE` bug | **done** | |
 | Stage progress in `index.json` (`passed`/`failed`) | **todo** | Dashboard |
 | Cluster filter (`TEST262_CLUSTER=ReferenceError`) | **todo** | Fix one root cause |
@@ -90,5 +121,7 @@ cargo run -p run-test -- tests/test262/test/language/statements/class/…/test.j
 
 - Parallel **stage** execution (hides regressions; rejected in S5).
 - Feature skip lists (Symbol, BigInt, …) — failures must stay visible.
+- **More harness overrides of test262 files** — see §Harness fidelity;
+  overrides are debt to remove, never a fix technique.
 - Duplicating test262 assertions as unit tests.
 - Hand-maintained failure markdown (JSON is source of truth).

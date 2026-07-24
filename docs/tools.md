@@ -9,20 +9,20 @@ cargo run --bin run-test -- [--strict] [--stack] [--show-script] tests/test262/.
 # Inspect test metadata without running
 cargo run --bin inspect-test -- [--source] tests/test262/.../test.js
 
-# Run stage and show ALL failures grouped by root cause
-TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+# Run a stage — digest mode, ALL failures grouped by root cause
+TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
 # Run a single stage (stops at first failure)
-TEST262_STAGE=16 cargo test -p quench-runtime --test test262
+TEST262_STAGE=16 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
 # Run all stages (stops at first failure)
-ALL_STAGES=1 cargo test -p quench-runtime --test test262
+ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
 # Process-isolated: survives stack overflows (slower)
 TEST262_STAGE=16 bash tools/run-each.sh
 
-# Run and show just pass/fail summary
-TEST262_STAGE=16 TEST262_QUICK=1 cargo test -p quench-runtime --test test262
+# Quick triage: stop after N unique failure groups
+TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
 # Run all stages in digest mode, produce report
 bash tools/digest-all.sh
@@ -33,8 +33,11 @@ bash tools/stage-status.sh
 # Check if current stage is 100% and advance
 TEST262_STAGE=16 bash tools/advance-stage.sh
 
-# Machine-readable JSON output
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+# Machine-readable JSON digest → tasks/failures-N.json
+TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+
+# Re-run only the failures from a previous JSON digest
+TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FAILED_JSON=tasks/failures-16.json cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
 ## Tool Reference
@@ -103,10 +106,10 @@ Runs ALL tests in a stage (or all stages), collects every failure, and groups th
 
 ```bash
 # Digest a single stage
-TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
 # Digest all stages  
-ALL_STAGES=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+ALL_STAGES=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
 Output shows groups like:
@@ -121,45 +124,49 @@ Output shows groups like:
 
 Fix the most numerous group first for maximum impact.
 
-**Diagnostic env-vars that work with digest:**
+**Diagnostic env-vars that work with digest (verified against `src/test262/runner/`):**
 
 | Env Var | Effect |
 |---------|--------|
-| `TEST262_SHOW_SCRIPT=1` | Dump full generated JS script for each failing test |
-| `TEST262_DUMP_FAILURES=<path>` | Save list of all failing tests to a file after digest |
-| `TEST262_RERUN_FAILURES=<path>` | Only run tests listed in a previous failure file |
-| `TEST262_FIRST_N=<N>` | Only run first N tests (ultra-fast smoke test) |
+| `TEST262_JSON=1` | Write the digest as JSON to `tasks/failures-N.json` |
+| `TEST262_FAILED_JSON=<path>` | Re-run only the tests listed in a previous JSON digest |
+| `TEST262_QUICK=1` | Stop after `TEST262_QUICK_LIMIT` (default 20) unique failure groups |
+| `TEST262_ISOLATED=1` | Subprocess per test — survives crashes/stack overflows |
+| `TEST262_INPROCESS=1` | Force fast in-process digest (unsafe on crash-prone stages) |
+| `TEST262_NOSKIP=1` | Also run the known-crash skip-list files |
+| `TEST262_PARALLEL=1` / `TEST262_SERIAL=1` | In-process parallel workers on/off |
 
 **Examples:**
 
 ```bash
-# Show generated script for failing tests
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_SHOW_SCRIPT=1 cargo test
+# Save a JSON baseline
+TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
-# Save failure list for later iteration
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
+# After the fix — re-run only previous failures (fast!)
+TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FAILED_JSON=tasks/failures-16.json cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
-# Re-run only previously failed tests (fast!)
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
-
-# Quick smoke test — first 10 tests only
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FIRST_N=10 cargo test
+# Crash-safe full stage (build run-test once first)
+cargo build -p run-test
+TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_ISOLATED=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-### 4. `TEST262_QUICK=1` — Quick Summary Mode
+Single-test script/stack dumping lives on the `run-test` binary
+(`--show-script`, `--stack`), not on digest env-vars.
 
-Shows just the pass/fail counts without per-test details.
+### 4. `TEST262_QUICK=1` — Quick Triage Mode
+
+Stops the digest after `TEST262_QUICK_LIMIT` (default 20) unique failure groups.
 
 ```
-TEST262_STAGE=16 TEST262_QUICK=1 TEST262_DIGEST=1 cargo test
+TEST262_STAGE=16 TEST262_QUICK=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
 ### 5. `TEST262_JSON=1` — Machine-Readable Output
 
-Produces JSON with failure groups for external processing (diffing, baselines, alerts).
+Writes the digest JSON to `tasks/failures-N.json` for external processing (diffing, baselines, alerts) and for failed-only reruns via `TEST262_FAILED_JSON`.
 
 ```bash
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > stage16.json
+TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
 ### 6. `tools/run-each.sh` — Process-Isolated Runner
@@ -207,15 +214,13 @@ Every test has a 10-second timeout. Tests that hang are reported as "Must be opt
 
 1. Run digest on the current stage:
    ```bash
-   TEST262_STAGE=16 TEST262_DIGEST=1 cargo test
+   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
    ```
 2. Identify the largest failure group (e.g., "42 tests: Expected ReferenceError")
 3. Fix the root cause (one fix may unlock 10-100+ tests)
-4. Save failure list and re-run only those:
+4. Re-run only the previous failures:
    ```bash
-   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
-   # ... apply fix ...
-   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
+   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FAILED_JSON=tasks/failures-16.json cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
    ```
 5. When stage reaches 100%, auto-advance:
    ```bash
@@ -251,35 +256,48 @@ bash tools/stage-status.sh
 
 ```bash
 # Before fix
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > before.json
+TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+cp tasks/failures-16.json /tmp/before.json
 
 # After fix
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > after.json
+TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+cp tasks/failures-16.json /tmp/after.json
 
 # Diff (requires jq)
-diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
-
-# Or use failure file for exact test lists:
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/before.txt cargo test
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/after.txt cargo test
-diff /tmp/before.txt /tmp/after.txt
+diff <(jq --sort-keys . /tmp/before.json) <(jq --sort-keys . /tmp/after.json)
 ```
 
 ## Config
+
+Env-vars actually read by the runner (`src/test262/runner/flags.rs` — anything not listed here does not exist):
 
 - `TEST262_DIR` — path to test262 checkout (default: `tests/test262`)
 - `TEST262_STAGE=N` — run only stage N
 - `ALL_STAGES=1` — run all stages sequentially
 - `TEST262_DIGEST=1` — collect all failures, don't stop at first
-- `TEST262_QUICK=1` — minimal output, just counts
-- `TEST262_JSON=1` — machine-readable JSON output
-- `TEST262_SHOW_SCRIPT=1` — dump generated JS script on failure
-- `TEST262_DUMP_FAILURES=<path>` — save failure list to file
-- `TEST262_RERUN_FAILURES=<path>` — re-run only listed tests
-- `TEST262_FIRST_N=<N>` — only run first N tests
+- `TEST262_JSON=1` — write JSON digest to `tasks/failures-N.json`
+- `TEST262_FAILED_JSON=<path>` — re-run only tests from a previous JSON digest
+- `TEST262_QUICK=1` — stop after N unique failure groups
+- `TEST262_QUICK_LIMIT=<N>` — group limit for QUICK (default 20)
+- `TEST262_PARALLEL=1` / `TEST262_SERIAL=1` — parallel workers on/off
+- `TEST262_ISOLATED=1` — subprocess per test
+- `TEST262_INPROCESS=1` — opt into fast in-process digest
+- `TEST262_NOSKIP=1` — run known-crash skip-list files
 - `RUST_BACKTRACE=1` — stack traces on panics
 
 See also `tasks/harness-roadmap.md` for the full harness speed roadmap.
+
+## Harness fidelity — never override test262
+
+The runner must execute test262's own harness files (`assert.js`,
+`sta.js`, `propertyHelper.js`, `deepEqual.js`, `isConstructor.js`, …)
+**verbatim**. Native reimplementations, no-op patches, stripped
+functions, or skipped includes can mask real failures — or worse,
+fabricate passes — and make the conformance number a lie. Every current
+override is tracked as debt in `tasks/harness-roadmap.md` §Harness
+fidelity; the target is zero overrides. Never edit files under
+`tests/test262/` (AGENTS.md), and never substitute their content at
+load time either — same rule, load-time form.
 
 ## Improving the Tools
 
@@ -287,7 +305,7 @@ These tools should evolve as you use them. Every time you run a digest, ask:
 
 1. **Was the output useful?** If failure groups are too broad, improve the normalization.
 2. **Did it crash?** Some tests cause stack overflows that kill the process. Add those to the skip list or improve the digest runner to use process isolation.
-3. **Was it fast enough?** If it's too slow, use `TEST262_FIRST_N=10` for quick iteration, or `TEST262_RERUN_FAILURES` to only run tests that previously failed.
+3. **Was it fast enough?** If it's too slow, use `TEST262_QUICK=1` for quick iteration, or `TEST262_FAILED_JSON` to only run tests that previously failed.
 4. **Are the groups actionable?** If a group mixes different root causes, split by a deeper error analysis.
 5. **Can you inspect the failing JS?** Use `TEST262_SHOW_SCRIPT=1` to see the exact harnessed script the runtime evaluates.
 6. **Can you understand the test quickly?** Use `cargo run --bin inspect-test -- path/to/test.js` to see parsed metadata without running.

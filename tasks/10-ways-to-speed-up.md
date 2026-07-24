@@ -5,7 +5,9 @@ Data-driven (per-stage counts live in `tasks/index.json`):
 - **42,892 tests** across 122 stages: language 23,711 · built-ins
   23,668 · annexB 1,086 · harness 116.
 - **27,323 passed (63.7%)** as of 2026-07-23 full digest. In progress:
-  stage 16 `class` — 4,367.
+  stage 25 `for-of` — 751 (698 pass / 53 fail, `tasks/failures-25.json`).
+  Stage 13 `async-function` is a documented gate exception (pending,
+  awaits S4; see `tasks/index.json` `gate_exceptions`).
 - Largest remaining: `expressions` 11,101 · `Temporal` 4,603 ·
   `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
   `TypedArray` 1,446 · `for-await-of` 1,234 · `String` 1,223 ·
@@ -35,7 +37,7 @@ Phase B — before grinding built-ins (~stage 71 Object)
 
 Phase C — built-ins → annexB → Temporal
   C1. Built-ins stages in JS        (never re-expand Rust builtins)
-  C2. S4 async→generator            (for-await-of / Promise / Async*; verify swc first)
+  C2. S4 async→generator            (for-await-of / Promise / Async*; hand-rolled, OXC only)
   C3. R18 regex Unicode escapes     (RegExp \p{}; before stage 84)
   C4. Temporal last                 (temporal_rs + ICU4X; stage 120)
 ```
@@ -74,29 +76,22 @@ lowering (R17; `DEPENDENCIES.md` row in the same diff).
 
 ## S4 — Async-to-generator transform *(medium-high, Phase C)*
 
-Generators already pass (stage 27 `done`). Async stages
+Generators work (generator stages land via the stage gate; note:
+`tasks/index.json` marks stage 27 `generators` **pending** — certify it
+through the gate before relying on "done"). Async stages
 (`async-generator`, `for-await-of` 1,234, `await-using`) plus `Promise`
 729 + `AsyncFunction`/`AsyncGenerator*` reduce to generators + a job
 queue if the transform runs at lower time.
 
-**Confirmed (2026-07-23):** `oxc_transformer` does NOT have an
-async-to-generator transform — it handles TypeScript stripping, JSX,
-React, decorators, and ES2026→ES2015 lowering only.
-`swc_ecma_compat_es2017::async_to_generator` (docs.rs confirmed) has the
-transform. The risk is adding the full `swc_ecma_*` dependency stack (~10+
-crates) alongside existing `oxc` (0.47), creating a second heavyweight
-parser dependency.
-
-Verification steps:
-1. Does `swc_ecma_compat_es2017` work standalone (without the full swc
-   parser), or does it require `swc_ecma_parser` as a peer?
-2. Does it conflict with the current `oxc` version in `Cargo.toml`?
-3. Run a subset of `for-await-of` (stage 40) tests against the transform
-   output before committing.
-
-If swc conflicts: fall back to hand-rolling async eval nodes in `eval/`
-(~500 LOC, low risk). Boa (the reference Rust JS engine) uses a hand-rolled
-async executor and achieves 94.12% test262 without a swc dependency.
+**Decision (2026-07-24): hand-rolled async in `eval/`, OXC only.**
+Single parser, ever. `oxc_transformer` has no async-to-generator
+transform, and the only crate that does
+(`swc_ecma_compat_es2017::async_to_generator`) operates on the swc AST —
+using it means a second parser stack (`swc_ecma_*`, ~10+ crates), a
+codegen step, and an oxc re-parse. That is rejected outright
+(`docs/architecture.md` §Execution model: single parser). Boa reaches
+94.12% test262 with a hand-rolled async executor (~500 LOC, no
+transform dependency); Kiesel does the same. That is the path.
 
 ## S5 — Parallel in-stage runner + failure digest tooling *(medium — active)*
 
@@ -112,6 +107,14 @@ Detail: `tasks/harness-roadmap.md`.
 **Next:** cluster filter, digest diff script, progress fields in
 `index.json`, zero crash-file skips.
 
+**Harness fidelity (hard rule):** the runner must execute test262's own
+harness files verbatim — no native reimplementations, no-op patches,
+stripped functions, or skipped includes. Existing overrides are tracked
+debt with removal criteria in `tasks/harness-roadmap.md` §Harness
+fidelity; new overrides are rejected like skip-list entries. A
+conformance number produced by a substituted harness is not a
+conformance number.
+
 ## S6 — Disciplined unit tests *(ongoing practice)*
 
 Per `AGENTS.md`: reproducers, core invariants, refactor pins only.
@@ -123,13 +126,15 @@ Policy (`DEPENDENCIES.md`): regress, chrono, num-bigint, serde_json,
 urlencoding, oxc. **Long pole: `Temporal` (4,603)** — staged last.
 
 `temporal_rs` confirmed production-grade (2026-07-23 research):
-- Used by **Boa** (94.12% test262), **Kiesel**, and **V8/Chrome 144**
+- Used by **Boa** (94.12% test262), **Kiesel**; V8's Temporal is being
+  implemented on it (Node issue #58730)
 - 8 types: `ZonedDateTime`, `Instant`, `PlainDateTime`, `PlainDate`,
   `PlainTime`, `Duration`, `Calendar`, `TimeZone`
 - ICU4X for calendar/timezone math; Diplomat for C++/Rust FFI
 - ES Stage 4 (2026-03-11); spec stable
 - `DEPENDENCIES.md` row in the same diff as Temporal stage start.
-- Evaluate API surface vs. ES spec version before committing.
+- Version pin: the `temporal_rs` release whose spec snapshot matches the
+  test262 checkout at stage-120 start (decided in `DEPENDENCIES.md`).
 
 ## S8 — `url` over `urlencoding` *(low effort, early Phase A/B)*
 
@@ -157,7 +162,7 @@ count × external dependencies. `impl` = primary implementation language.
 | 44 | `language/expressions` | 11,101 | 8 | rust | ~1,500 | 0 | Many eval nodes, early errors | `oxc_semantic` |
 | 16 | `statements/class` | 4,367 | 7 | rust | ~800 | 0 | Object model, super, private | R5 ✓ object model fix |
 | 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | ~300 | ~400 | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
-| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
+| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: hand-rolled (OXC only) |
 | 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
 | 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
 | 40 | `statements/for-await-of` | 1,234 | 7 | rust | ~300 | 0 | Async iteration + await + R2 | S4 + R2 iterator protocol |
@@ -221,8 +226,14 @@ No Darwin-specific code needed for any remaining stage:
   skip list is a lie that compounds.
 - *Grinding Object/Array/String in Rust* — deleted by R0.
 - *oxc_transformer for async* — confirmed (2026-07-23) it has no
-  async-to-generator; S4 now targets `swc_ecma_compat_es2017` with
-  validation gates.
+  async-to-generator.
+- *swc for async (`swc_ecma_compat_es2017`)* — needs a second parser
+  stack + codegen + oxc re-parse. Rejected outright: single parser
+  (OXC) only. Async is hand-rolled in `eval/` (S4).
+- *Evaluating directly on the oxc AST (dropping `ast.rs` + `lower/`)* —
+  saves ~6.2k LOC but rewrites ~25k LOC of working eval and couples it
+  to oxc's arena lifetimes; rejected, see `docs/architecture.md`
+  §Execution model.
 - *tokio for async* — overkill for a microtask queue; smol or
   hand-rolled is correct scope.
 - *fancy-regex / re2 for RegExp* — too limited for ES2024 `\p{}`
@@ -325,15 +336,15 @@ comparison, `Map`/`Set` hashing. Un-interned `String` objects do O(n)
 byte-by-byte comparison on every `==`; an atom table deduplicates strings
 so pointer comparison (`==`) is O(1).
 
-**Confirmed (2026-07-23):**
-- `string_interner` crate: widely used, thread-safe variant available,
-  O(1) get/create.
-- `fnv = "2"`: Fast HashMap with good distribution for small keys;
-  standard `HashMap` is fine for the atom table scale.
+**Confirmed (2026-07-24):**
+- `src/interner.rs` already holds a hand-rolled `StringInterner` on
+  `Context` with zero call sites — S12 starts by wiring it in or
+  replacing it with the crate, deleting the loser in the same diff.
+- `string_interner` crate: current 0.20 (0.19 fine), O(1) get/create.
+- Hashing: reuse the vendored `rustc-hash` (`FxHashMap`). Do NOT add
+  `fnv` (max release is 1.0.7; the `fnv = "2"` line was unresolvable).
 - QuickJS uses a global atom table in `JSRuntime` with ~50k atom slots.
 - `string_cache` (Servo): unmaintained since ~2020.
-- `rustc-hash`: fastest overall but lower-quality hash; fine for atom
-  table where attack resistance is not a concern.
 
 Usage:
 - Property keys (string and Symbol): interned key lookup for `Object`
@@ -347,10 +358,8 @@ Implementation: `string_interner::StringInterner` in `Context`; every
 `Value::String(s)` wraps a `StringId`. `#[test]`: "abc" == "abc" pointer
 compare; `Map` with 10k string keys (performance regression test).
 
-- [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
-- [ ] `DEPENDENCIES.md` row.
-- [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId`
-      type wrapping `string_interner::DefaultSymbol`.
+- [ ] Decide: wire `src/interner.rs` or adopt `string_interner = "0.19"`;
+      delete the other. `DEPENDENCIES.md` row if the crate lands.
 - [ ] `#[test]`: interned string pointer equality.
 - [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
 
@@ -361,7 +370,7 @@ compare; `Map` with 10k string keys (performance regression test).
 | R5 object model (partial ✓) | ~300 remaining | — | eval nodes + property store |
 | R0 self-hosting (0 started) | 0 | ~8,000 | Object→TypedArray; 3x smaller than Rust equivalent |
 | R17 oxc_semantic early errors | ~500 | — | ES2015+ static semantics |
-| S4 async→generator | ~400 | — | swc or hand-rolled |
+| S4 async→generator | ~400 | — | hand-rolled (OXC only) |
 | R2/R3 iterator + Date | ~100 | ~100 | |
 | R18 RegExp Unicode | ~300 | ~400 | `regex` crate |
 | S10 bumpalo | ~300 | — | arena allocation |
