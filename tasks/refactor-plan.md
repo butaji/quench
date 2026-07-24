@@ -255,9 +255,24 @@ After R4/R1/R0 reduce the surface: dead convert helpers, unused
 Repo debris spotted in the 2026-07-24 audit (delete in the sweep):
 `tasks/repro_overflow.rs`, `tasks/run_all_stage16.sh` (stage-16-era
 leftovers), `tools/debug-test.js` (untracked debug script — AGENTS.md:
-no debug code), and the unwired `patches/oxc_parser` copy (R23).
+no debug code), `src/builtins/test_marker` (a 4-byte file containing
+"test", referenced nowhere), and the unwired `patches/oxc_parser` copy
+(R23).
 
-~620 LOC saved. Opportunistic on touch; no dedicated queue jump.
+Also measured 2026-07-24:
+
+- **35 `#[allow(dead_code)]` markers in `src/`** — each is a
+  `TODO(delete)` per AGENTS.md. R15's final sweep zeroes them; 35 is
+  the baseline.
+- **`console.rs` (87 LOC)** — `console` is not ECMA-262; test262 never
+  tests it. Keep only as a host API behind a feature, else delete.
+- **Native assert duplication (~2.1k LOC)** — `assert_helpers.rs`
+  (1,155) + `property_helpers.rs` (947) reimplement test262's own JS.
+  Shrinks as the official files load verbatim — tracked with removal
+  criteria in `tasks/harness-roadmap.md` §Harness fidelity.
+
+~620 LOC saved (original estimate; debris adds more). Opportunistic on
+touch; no dedicated queue jump.
 
 ## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER, diff=4)*
 
@@ -289,8 +304,12 @@ Wholesale split of untouched >500-line files waits until after R0/R5
 shrink the surface — do not prioritize ahead of Phase A/B.
 
 - [ ] On touch: file ≤ 500, fn ≤ 40, complexity ≤ 10, no new `#[allow]`.
-- [ ] Final sweep: `rg '#\[allow\(' crates/quench-runtime/src` zero hits;
-      no production file > 500 lines; clippy clean.
+- [ ] Hoist the 16 duplicate `fn eval(src: &str)` test helpers (grep
+      count 2026-07-24) into one shared `#[cfg(test)]` util — zero-
+      duplication rule applies to test code too.
+- [ ] Final sweep: `rg '#\[allow\(' crates/quench-runtime/src` zero hits
+      (baseline: 35 `#[allow(dead_code)]`, 2026-07-24); no production
+      file > 500 lines; clippy clean.
 
 ## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path, diff=2)*
 

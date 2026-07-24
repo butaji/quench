@@ -382,9 +382,18 @@ compare; `Map` with 10k string keys (performance regression test).
 | **Total (rounded)** | **~11,000** | **~17,000** | ~28k combined |
 | **Target (aspirational, 100%)** | **~8–12k** | **~19k** | Per Boa ~25k Rust → 94% |
 
-Current: ~57k Rust + ~14k builtins Rust = ~71k production Rust. Strategy
-brings Rust down to ~20–28k + JS up to ~17k = ~37–45k total, a ~35–50%
+Current: ~68k production Rust (`src/`: ~46k core/eval/value, ~16k
+builtins, ~6k test262 harness; measured 2026-07-24). Strategy brings
+Rust down to ~20–28k + JS up to ~17k = ~37–45k total, a ~35–50%
 reduction, with the heavy spec logic moved to self-hosted JS.
+
+Identified removal levers (2026-07-24 audit, all tracked in
+`tasks/refactor-plan.md`): R23 unwired `patches/oxc_parser` (~4.6k),
+R0 Rust-builtins deletion (~14k → ~10k JS), R24 TS/JSX feature-gate
+(~0.9k out of the conformance build), R17 hand-rolled early errors +
+`strict_reserved.rs`, R9 debris + 35 dead-code markers, harness native
+assert duplication (~2.1k, §Harness fidelity in
+`tasks/harness-roadmap.md`), R15 test-helper dedup (16 copies).
 
 ## CI regression gate
 
