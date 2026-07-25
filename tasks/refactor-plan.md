@@ -1,8 +1,12 @@
 # Refactor Plan
 
-Goal: 100% of test262, staged, **as soon as possible**, with **minimum
-LOC**. Architecture is a small Rust core + self-hosted JS builtins
-(see `docs/architecture.md`). Execution order is decided by
+Goal: 100% of test262 (all 50k+ tests, no skips), staged to 100% per
+stage, **as soon as possible**, with **minimum LOC**.
+
+Architecture: **OXC + walker** (see `docs/architecture.md`) — OXC
+parses, `lower/` converts to internal AST, `eval/` walks it. Spec ops
+in one place (`eval/ops.rs` → `%ops%`). Builtins self-host in JS on
+top of `%ops%`. Execution order is decided by
 `tasks/10-ways-to-speed-up.md` (Phases A → B → C) — this file is the
 work queue behind that path.
 

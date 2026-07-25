@@ -1,4 +1,8 @@
-# Strategy — fastest path to 100% test262 (min LOC)
+# Strategy — fastest path to 100% test262 (all 50k+ tests, no skips, min LOC)
+
+Architecture: **OXC + walker** (see `docs/architecture.md`) — OXC parses,
+`lower/` converts to internal AST, `eval/` walks it. No hand-written
+parser, no bytecode layer. Builtins self-host in JS on top of `%ops%`.
 
 Data-driven (per-stage counts live in `tasks/index.json`):
 
@@ -9,8 +13,7 @@ Data-driven (per-stage counts live in `tasks/index.json`):
   `Iterator`, `Date`.
 
 Speed = fixes-per-week × tests-unlocked-per-fix. Rank levers by that
-metric. End-state shape (small Rust + JS builtins) is fixed in
-`docs/architecture.md`; **execution order** is what this file decides.
+metric. **Execution order** is what this file decides.
 
 ## Critical path (do in this order)
 
