@@ -826,9 +826,14 @@ fn eval_while_with_labels(
     labels: Vec<String>,
 ) -> Result<Value, JsError> {
     let loop_labels = labels;
+    let mut completion = Value::Undefined;
     while to_bool(&eval_expression(condition, env, in_arrow_function)?) {
         take_control_flow();
-        let _ = eval_statement(body, env, false, in_arrow_function)?;
+        let body_val = eval_statement(body, env, false, in_arrow_function)?;
+        // Per ES §13.7.3.6 step 2.g: if body's [[value]] is not empty, update V
+        if !matches!(body_val, Value::Undefined) {
+            completion = body_val;
+        }
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
@@ -856,7 +861,7 @@ fn eval_while_with_labels(
             None => {}
         }
     }
-    Ok(Value::Undefined)
+    Ok(completion)
 }
 
 fn eval_do_while(

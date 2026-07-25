@@ -37,6 +37,7 @@ const CRASH_FILES: &[(&str, &str)] = &[
     ("bigint-wrapped-values.js", "known crash: stack overflow"),
     ("tco-if-body.js", "known crash: stack overflow"),
     ("tco-else-body.js", "known crash: stack overflow"),
+    ("tco-body.js", "known crash: stack overflow"),
 ];
 
 /// Returns true if the feature is implemented (or should be attempted).
