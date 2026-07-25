@@ -226,7 +226,24 @@ impl Scope {
                 e.insert(Rc::new(value));
                 true
             }
-            std::collections::hash_map::Entry::Vacant(_) => false,
+            std::collections::hash_map::Entry::Vacant(e) => {
+                // Check if the global object has this property (e.g. , )
+                if let Some(ref obj) = self.object_binding {
+                    if obj.borrow().has(&name) {
+                        // Check writability before setting
+                        let writable = obj.borrow().get_descriptor(&name)
+                            .map(|f| f.writable)
+                            .unwrap_or(true);
+                        if writable || !strict {
+                            obj.borrow_mut().set(&name, value.clone());
+                            e.insert(Rc::new(value));
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                false
+            }
         }
     }
 
