@@ -2,14 +2,11 @@
 
 Data-driven (per-stage counts live in `tasks/index.json`):
 
-- **42,892 tests** across 122 stages: language 23,711 · built-ins
-  23,668 · annexB 1,086 · harness 116.
-- **27,323 passed (63.7%)** as of 2026-07-23 full digest. Current:
-  stage 17 `const` (136 tests) · stage 16 `class` done at 100%.
-- Largest remaining: `expressions` 11,101 · `Temporal` 4,603 ·
-  `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
-  `TypedArray` 1,446 · `for-await-of` 1,234 · `String` 1,223 ·
-  `Promise` 729.
+- 122 stages: language · built-ins · annexB · harness.
+- Current stage and pass rates: see `tasks/index.json`.
+- Largest remaining areas: `Temporal`, `Array`, `Object`,
+  `expressions`, `TypedArray`, `RegExp`, `annexB`, `String`,
+  `Iterator`, `Date`.
 
 Speed = fixes-per-week × tests-unlocked-per-fix. Rank levers by that
 metric. End-state shape (small Rust + JS builtins) is fixed in
@@ -21,10 +18,10 @@ metric. End-state shape (small Rust + JS builtins) is fixed in
 Phase A — clear language stages (now → ~stage 70)
   A1. R4 delete dead TComp          (~470 LOC, no blockers)
   A2. R5 object-model correctness   (unblocks class + Object + eval)
-  A3. Stage-16 class via S2 digest  (done 2026-07-23, 100%)
+  A3. Stage-16 class via S2 digest  (done)
   A4. R17 oxc_semantic early errors (language half, high tests/LOC)
   A5. S8 url over urlencoding       (URL Standard; before modules)
-  A6. Remaining language stages     (for-of, expressions, …)
+  A6. Remaining language stages     (for-of in progress, expressions, …)
       — grow R1 only for ops you touch
 
 Phase B — before grinding built-ins (~stage 71 Object)
@@ -40,14 +37,14 @@ Phase C — built-ins → annexB → Temporal
   C4. Temporal last                 (temporal_rs + ICU4X; stage 120)
 ```
 
-Do **not** pause stage 16 for a full R0 migration. R0’s throughput
+Do **not** pause language stages for a full R0 migration. R0's throughput
 payoff starts at the built-ins half; R5 unblocks the stage you are on.
 
 ## S1 — Object model + stage digest before full R0 *(highest now)*
 
-Stage 16 (`class`) and most language failures share one property
+Stage 16 (`class`, done) and most language failures shared one property
 store. Land R4 → R5, then fix class by S2 failure clusters. Full R1→R0
-is the highest lever for the **built-ins** half (23,668 tests) — schedule
+is the highest lever for the **built-ins** half — schedule
 it as Phase B, immediately before `Object`/`Array`/`String` stages.
 Do not grind those stages in Rust; that work dies under R0.
 See `tasks/refactor-plan.md`.
@@ -75,8 +72,8 @@ lowering (R17; `DEPENDENCIES.md` row in the same diff).
 ## S4 — Async-to-generator transform *(medium-high, Phase C)*
 
 Generators already pass (stage 27 `done`). Async stages
-(`async-generator`, `for-await-of` 1,234, `await-using`) plus `Promise`
-729 + `AsyncFunction`/`AsyncGenerator*` reduce to generators + a job
+(`async-generator`, `for-await-of`, `await-using`) plus `Promise`
++ `AsyncFunction`/`AsyncGenerator*` reduce to generators + a job
 queue if the transform runs at lower time.
 
 **Confirmed (2026-07-23):** `oxc_transformer` does NOT have an
@@ -145,46 +142,46 @@ Based on research across Boa (94.12%), Kiesel (94.2%), QuickJS (83%), and
 Quench's own codebase (2026-07-23). Difficulty = spec complexity × test
 count × external dependencies. `impl` = primary implementation language.
 
-### Hardest (difficulty 7–9, ~10 stages, ~19k tests)
+### Hardest (difficulty 7–9)
 
-> **LOC estimates:** `~Rust` = incremental Rust LOC to implement; `~JS` = JS builtins LOC after R0. JS builtins are ~1/3 the LOC of equivalent Rust per the architecture doc — high Rust LOC in this table = prime target for R0 self-hosting.
+> **LOC estimates:** `~Rust` = incremental Rust LOC to implement; `~JS` = JS builtins LOC after R0. JS builtins are ~1/3 the LOC of equivalent Rust per the architecture doc — high Rust LOC in this table = prime target for R0 self-hosting. Test counts live in `tasks/index.json`.
 
-| Id | Path | Tests | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge | Crate / approach |
-|---|---|---|---|---|---|---|---|---|
-| 120 | `built-ins/Temporal` | 4,603 | 9 | rust | ~200 | ~1,200 | Full Temporal API | `temporal_rs` + `zoneinfo_rs` |
-| 118 | `built-ins/ShadowRealm` | 64 | 9 | rust | ~150 | ~400 | Isolated global per spec | Rust-level; not WASM |
-| 115 | `built-ins/Proxy` | 311 | 8 | hybrid | ~600 | ~200 | 11 internal ops + invariants | Rust traps + JS invariants |
-| 44 | `language/expressions` | 11,101 | 8 | rust | ~1,500 | 0 | Many eval nodes, early errors | `oxc_semantic` |
-| 16 | `statements/class` | 4,367 | 7 | rust | ~800 | 0 | Object model, super, private | R5 ✓ object model fix |
-| 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | ~300 | ~400 | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
-| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
-| 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
-| 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
-| 40 | `statements/for-await-of` | 1,234 | 7 | rust | ~300 | 0 | Async iteration + await + R2 | S4 + R2 iterator protocol |
+| Id | Path | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge | Crate / approach |
+|---|---|---|---|---|---|---|---|
+| 120 | `built-ins/Temporal` | 9 | rust | ~200 | ~1,200 | Full Temporal API | `temporal_rs` + `zoneinfo_rs` |
+| 118 | `built-ins/ShadowRealm` | 9 | rust | ~150 | ~400 | Isolated global per spec | Rust-level; not WASM |
+| 115 | `built-ins/Proxy` | 8 | hybrid | ~600 | ~200 | 11 internal ops + invariants | Rust traps + JS invariants |
+| 44 | `language/expressions` | 8 | rust | ~1,500 | 0 | Many eval nodes, early errors | `oxc_semantic` |
+| 16 | `statements/class` (done ✓) | 7 | rust | ~800 | 0 | Object model, super, private | R5 ✓ object model fix |
+| 84 | `built-ins/RegExp` | 7 | hybrid | ~300 | ~400 | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
+| 38 | `statements/async-generator` | 7 | rust | ~400 | 0 | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
+| 97 | `AsyncGeneratorFunction` | 7 | rust | ~100 | 0 | Same as S4 | S4 |
+| 98 | `AsyncGeneratorPrototype` | 7 | rust | ~100 | 0 | Same as S4 | S4 |
+| 40 | `statements/for-await-of` | 7 | rust | ~300 | 0 | Async iteration + await + R2 | S4 + R2 iterator protocol |
 
 > **LOC note:** Built-in stages marked `js` are prime R0 targets — Rust implementation would be ~3x more LOC than the JS version. Target the JS LOC as the cost; Rust LOC = 0 (JS wins).
 
-| Id | Path | Tests | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge |
-|---|---|---|---|---|---|---|---|
-| 71 | `built-ins/Object` | 3,411 | 6 | js | 0 | ~900 | R0 self-hosting |
-| 85 | `built-ins/Array` | 3,081 | 6 | js | 0 | ~600 | R0 self-hosting |
-| 82 | `built-ins/String` | 1,223 | 6 | js | 0 | ~400 | R0 self-hosting |
-| 102 | `TypedArray` | 1,446 | 6 | hybrid | ~500 | ~200 | Rust buffers + JS |
-| 103 | `TypedArrayConstructors` | 738 | 6 | hybrid | ~200 | ~100 | Rust buffers + JS |
-| 113 | `Promise` | 729 | 6 | hybrid | ~400 | ~300 | Rust job queue + JS |
-| 39 | `await-using` | 94 | 6 | hybrid | ~100 | ~50 | Using + async |
-| 41 | `using` | 78 | 6 | js | 0 | ~150 | Disposable resource protocol |
-| 72 | `Function` | 509 | 5 | js | 0 | ~350 | R0 |
-| 80 | `Math` | 327 | 5 | js | 0 | ~200 | R0 |
-| 53 | `module-code` | 599 | 5 | hybrid | ~100 | ~200 | `url` crate + JS |
-| 83 | `Symbol` | 98 | 5 | js | 0 | ~150 | R0 |
-| 99 | `AsyncFunction` | 18 | 5 | rust | ~100 | 0 | S4 async→generator |
-| 100-101 | `ArrayBuffer`, `SharedArrayBuffer` | 325 | 5 | hybrid | ~300 | ~50 | Rust buffers |
-| 105 | `DataView` | 561 | 5 | hybrid | ~200 | ~100 | Rust buffers + JS |
-| 111 | `WeakRef` | 29 | 6 | hybrid | ~150 | ~100 | GC interaction |
-| 112 | `FinalizationRegistry` | 47 | 5 | js | 0 | ~150 | R0 |
+| Id | Path | Diff | Impl | ~Rust LOC | ~JS LOC | Key challenge |
+|---|---|---|---|---|---|---|
+| 71 | `built-ins/Object` | 6 | js | 0 | ~900 | R0 self-hosting |
+| 85 | `built-ins/Array` | 6 | js | 0 | ~600 | R0 self-hosting |
+| 82 | `built-ins/String` | 6 | js | 0 | ~400 | R0 self-hosting |
+| 102 | `TypedArray` | 6 | hybrid | ~500 | ~200 | Rust buffers + JS |
+| 103 | `TypedArrayConstructors` | 6 | hybrid | ~200 | ~100 | Rust buffers + JS |
+| 113 | `Promise` | 6 | hybrid | ~400 | ~300 | Rust job queue + JS |
+| 39 | `await-using` | 6 | hybrid | ~100 | ~50 | Using + async |
+| 41 | `using` | 6 | js | 0 | ~150 | Disposable resource protocol |
+| 72 | `Function` | 5 | js | 0 | ~350 | R0 |
+| 80 | `Math` | 5 | js | 0 | ~200 | R0 |
+| 53 | `module-code` | 5 | hybrid | ~100 | ~200 | `url` crate + JS |
+| 83 | `Symbol` | 5 | js | 0 | ~150 | R0 |
+| 99 | `AsyncFunction` | 5 | rust | ~100 | 0 | S4 async→generator |
+| 100-101 | `ArrayBuffer`, `SharedArrayBuffer` | 5 | hybrid | ~300 | ~50 | Rust buffers |
+| 105 | `DataView` | 5 | hybrid | ~200 | ~100 | Rust buffers + JS |
+| 111 | `WeakRef` | 6 | hybrid | ~150 | ~100 | GC interaction |
+| 112 | `FinalizationRegistry` | 5 | js | 0 | ~150 | R0 |
 
-### Easy (difficulty 1–4, ~68 stages, ~17k tests)
+### Easy (difficulty 1–4)
 
 > LOC estimates for easy stages vary: language stages (break, const, for-in, etc.) are
 > pure Rust eval nodes (~50–300 LOC each); R0-builtins (Error, Number, Boolean, Map,

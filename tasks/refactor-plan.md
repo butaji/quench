@@ -23,7 +23,10 @@ Top 5 bugs: `Array.prototype.reduce` accumulator (B1), `await` discarded
 in lowering (B2), `groupBy` wrong `this` (B8), double evaluation of
 assignment RHS (B14), object rest captures full object (B10).
 
-## Status (2026-07-23)
+## Status
+
+Per-stage pass/fail counts live in `tasks/index.json` and
+`tasks/failures-*.json` — do not duplicate them here.
 
 | Metric | Value |
 |--------|-------|
@@ -34,8 +37,8 @@ assignment RHS (B14), object rest captures full object (B10).
 | Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
-| Current stage | 17 `const` (136 tests) · stage 16 `class` done at 100% (2026-07-23) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
-| Crate candidates | `DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
+| Current stage | see `tasks/index.json` `current_stage` |
+| Crate candidates | `DEPENDENCIES.md`; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
 are snapshots; re-locate by symbol name before editing. Object-model
@@ -45,8 +48,8 @@ audit: `tasks/review-2026-07-22-object-model.md`. Crate candidates:
 ## Critical path (ASAP × min LOC)
 
 ```
-Phase A — language (now)
-  R4 ✓ → R5 ✓ → stage-16 S2 digest → R17 → remaining language stages
+Phase A — language (in progress: for-of)
+  R4 ✓ → R5 ✓ → stage-16 ✓ → R17 → remaining language stages
   S5 harness active · R1 grows only for ops touched by fixes
 
 Phase B — immediately before built-ins stages

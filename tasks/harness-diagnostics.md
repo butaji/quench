@@ -37,7 +37,7 @@
 
 ## Verification
 - `cargo clippy -p quench-runtime --all-targets` — zero new warnings (3 pre-existing only)
-- `cargo test -p quench-runtime --lib` — 1899 passed, 0 failed
+- `cargo test -p quench-runtime --lib` — all unit tests pass
 - `cargo build -p run-test -p inspect-test` — clean
 - `cargo run --bin inspect-test -- <test.js>` — works
 - `cargo run --bin run-test -- <test.js>` — works

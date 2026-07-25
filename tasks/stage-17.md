@@ -1,19 +1,11 @@
 # Stage 17 — test/language/statements/const
 
-**Status:** done · **Path:** `test/language/statements/const` ·
-**136 tests** · **136 pass / 0 fail (100%)** as of 2026-07-23.
+**Status:** done · **Path:** `test/language/statements/const`
 
 ```bash
 TEST262_STAGE=17 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   --test test262 test262_staged -- --ignored --nocapture
 ```
-
-## Progress log
-
-| Date | Passed | Failed | % | Notes |
-|------|--------|--------|---|-------|
-| 2026-07-23 | 113 | 23 | 83.1% | Baseline after stage 16 complete |
-| 2026-07-23 | **136** | **0** | **100%** | Object destructure → `PatternDeclaration`; for-of per-iteration const; SetFunctionName guard |
 
 ## Fixes landed
 

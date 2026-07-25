@@ -1,12 +1,13 @@
 # Stage 01 — test/language/literals
 
-**Status:** done · **Path:** `test/language/literals` (534 tests) · stage 00 done.
+**Status:** done · **Path:** `test/language/literals` · stage 00 done.
 
 ```bash
 TEST262_STAGE=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-On success the runner prints `ALL STAGES COMPLETE — Stage 1: 534/534`; that line drives the CI summary job and is the gate to advance to stage 02.
+On success the runner prints `ALL STAGES COMPLETE`; that line drives the
+CI summary job and is the gate to advance to stage 02.
 
 ## Workflow
 

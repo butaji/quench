@@ -1,19 +1,11 @@
 # Stage 20 — test/language/statements/do-while
 
-**Status:** done · **Path:** `test/language/statements/do-while` ·
-**36 tests** · **36 pass / 0 fail (100%)** as of 2026-07-23.
+**Status:** done · **Path:** `test/language/statements/do-while`
 
 ```bash
 TEST262_STAGE=20 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
   --test test262 test262_staged -- --ignored --nocapture
 ```
-
-## Progress log
-
-| Date | Passed | Failed | % | Notes |
-|------|--------|--------|---|-------|
-| 2026-07-23 | 29 | 7 | 80.6% | Baseline |
-| 2026-07-23 | **36** | **0** | **100%** | do-while completion/hoisting/TCO; string split literal |
 
 ## Fixes landed
 

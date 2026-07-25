@@ -1,7 +1,6 @@
 # Stage 24 — test/language/statements/for-in
 
-**Status:** done · **Path:** `test/language/statements/for-in` ·
-**115 tests** · **115 pass / 0 fail (100%)** as of 2026-07-23.
+**Status:** done · **Path:** `test/language/statements/for-in`
 
 ```bash
 TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
@@ -17,4 +16,4 @@ TEST262_STAGE=24 TEST262_DIGEST=1 TEST262_JSON=1 cargo test -p quench-runtime \
 - `Object.create` applies property descriptors; `defineProperty` preserves absent attrs on update
 - Var redeclaration without initializer skips re-init; non-enumerable builtin prototype methods
 
-See `tasks/failures-24.json` (empty at 100%).
+See `tasks/failures-24.json` for failure clusters.
