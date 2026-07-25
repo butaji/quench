@@ -4,8 +4,8 @@ Data-driven (per-stage counts live in `tasks/index.json`):
 
 - **42,892 tests** across 122 stages: language 23,711 · built-ins
   23,668 · annexB 1,086 · harness 116.
-- **27,323 passed (63.7%)** as of 2026-07-23 full digest. In progress:
-  stage 16 `class` — 4,367.
+- **27,323 passed (63.7%)** as of 2026-07-23 full digest. Current:
+  stage 17 `const` (136 tests) · stage 16 `class` done at 100%.
 - Largest remaining: `expressions` 11,101 · `Temporal` 4,603 ·
   `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
   `TypedArray` 1,446 · `for-await-of` 1,234 · `String` 1,223 ·
@@ -21,7 +21,7 @@ metric. End-state shape (small Rust + JS builtins) is fixed in
 Phase A — clear language stages (now → ~stage 70)
   A1. R4 delete dead TComp          (~470 LOC, no blockers)
   A2. R5 object-model correctness   (unblocks class + Object + eval)
-  A3. Stage-16 class via S2 digest  (root-cause clusters, not per-test)
+  A3. Stage-16 class via S2 digest  (done 2026-07-23, 100%)
   A4. R17 oxc_semantic early errors (language half, high tests/LOC)
   A5. S8 url over urlencoding       (URL Standard; before modules)
   A6. Remaining language stages     (for-of, expressions, …)

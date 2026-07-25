@@ -34,7 +34,7 @@ assignment RHS (B14), object rest captures full object (B10).
 | Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
-| Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
+| Current stage | 17 `const` (136 tests) · stage 16 `class` done at 100% (2026-07-23) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
 | Crate candidates | `DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
