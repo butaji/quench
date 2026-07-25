@@ -18,7 +18,7 @@ src/
 ├── interpreter.rs   # eval entry points
 ├── eval/
 │   └── ops.rs       # canonical spec abstract ops, exposed as %ops%
-├── env.rs           # lexical environments
+├── env/             # lexical environments
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
 └── builtins/
@@ -33,10 +33,14 @@ src/
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
-## JS builtins
+## JS builtins (target — R0 not started)
+
+All builtins are currently Rust (`src/builtins/`). The plan is to
+self-host them as JS once `%ops%` is fleshed out (R0 in
+`tasks/refactor-plan.md`):
 
 ```
-crates/quench-runtime/builtins/
+builtins/
 ├── _intrinsics.js   # %ops% destructure (resolved at parse time)
 ├── Object.js, Function.js, Error.js, Symbol.js,
 ├── Number.js, Boolean.js, String.js, Math.js,
@@ -48,10 +52,10 @@ crates/quench-runtime/builtins/
 └── decodeURI.js, encodeURI.js
 ```
 
-All `*.prototype.*`, intrinsic iterator prototypes, `Object.*`,
-`Reflect.*`, `Promise.prototype.*`, etc. are authored here. Pure spec
-algorithms on top of `%ops%`. Embedded via `include_str!`; parsed once
-per `Realm` by `builtins/bootstrap.rs`.
+Once built, all `*.prototype.*`, intrinsic iterator prototypes,
+`Object.*`, `Reflect.*`, `Promise.prototype.*`, etc. are authored here.
+Pure spec algorithms on top of `%ops%`. Embedded via `include_str!`;
+parsed once per `Realm` by `builtins/bootstrap.rs`.
 
 ## `%ops%` — the only Rust↔JS bridge for spec ops
 

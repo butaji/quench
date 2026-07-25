@@ -10,19 +10,19 @@ cargo run --bin run-test -- [--strict] [--stack] [--show-script] tests/test262/.
 cargo run --bin inspect-test -- [--source] tests/test262/.../test.js
 
 # Run stage and show ALL failures grouped by root cause
-TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 
 # Run a single stage (stops at first failure)
-TEST262_STAGE=16 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N cargo test -p quench-runtime --test test262
 
 # Run all stages (stops at first failure)
 ALL_STAGES=1 cargo test -p quench-runtime --test test262
 
 # Process-isolated: survives stack overflows (slower)
-TEST262_STAGE=16 bash tools/run-each.sh
+TEST262_STAGE=N bash tools/run-each.sh
 
 # Run and show just pass/fail summary
-TEST262_STAGE=16 TEST262_QUICK=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N TEST262_QUICK=1 cargo test -p quench-runtime --test test262
 
 # Run all stages in digest mode, produce report
 bash tools/digest-all.sh
@@ -31,10 +31,10 @@ bash tools/digest-all.sh
 bash tools/stage-status.sh
 
 # Check if current stage is 100% and advance
-TEST262_STAGE=16 bash tools/advance-stage.sh
+TEST262_STAGE=N bash tools/advance-stage.sh
 
 # Machine-readable JSON output
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 ```
 
 ## Tool Reference
@@ -103,7 +103,7 @@ Runs ALL tests in a stage (or all stages), collects every failure, and groups th
 
 ```bash
 # Digest a single stage
-TEST262_STAGE=16 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 
 # Digest all stages  
 ALL_STAGES=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
@@ -134,16 +134,16 @@ Fix the most numerous group first for maximum impact.
 
 ```bash
 # Show generated script for failing tests
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_SHOW_SCRIPT=1 cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_SHOW_SCRIPT=1 cargo test
 
 # Save failure list for later iteration
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
 
 # Re-run only previously failed tests (fast!)
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
 
 # Quick smoke test — first 10 tests only
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FIRST_N=10 cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_FIRST_N=10 cargo test
 ```
 
 ### 4. `TEST262_QUICK=1` — Quick Summary Mode
@@ -151,7 +151,7 @@ TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_FIRST_N=10 cargo test
 Shows just the pass/fail counts without per-test details.
 
 ```
-TEST262_STAGE=16 TEST262_QUICK=1 TEST262_DIGEST=1 cargo test
+TEST262_STAGE=N TEST262_QUICK=1 TEST262_DIGEST=1 cargo test
 ```
 
 ### 5. `TEST262_JSON=1` — Machine-Readable Output
@@ -159,7 +159,7 @@ TEST262_STAGE=16 TEST262_QUICK=1 TEST262_DIGEST=1 cargo test
 Produces JSON with failure groups for external processing (diffing, baselines, alerts).
 
 ```bash
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > stage16.json
+TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > stage16.json
 ```
 
 ### 6. `tools/run-each.sh` — Process-Isolated Runner
@@ -167,7 +167,7 @@ TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > stage16.json
 Runs each test in a separate process using the `run-test` binary. Survives stack overflows and crashes that kill the in-process runner.
 
 ```bash
-TEST262_STAGE=16 bash tools/run-each.sh
+TEST262_STAGE=N bash tools/run-each.sh
 ```
 
 ### 7. `tools/digest-all.sh` — Master Report
@@ -191,7 +191,7 @@ bash tools/stage-status.sh
 Checks if a stage has reached 100%, updates `tasks/index.json` to mark it done, and advances `current_stage` to the next pending stage.
 
 ```bash
-TEST262_STAGE=16 bash tools/advance-stage.sh
+TEST262_STAGE=N bash tools/advance-stage.sh
 
 # Or just check the current stage:
 bash tools/advance-stage.sh
@@ -207,15 +207,15 @@ Every test has a 10-second timeout. Tests that hang are reported as "Must be opt
 
 1. Run digest on the current stage:
    ```bash
-   TEST262_STAGE=16 TEST262_DIGEST=1 cargo test
+   TEST262_STAGE=N TEST262_DIGEST=1 cargo test
    ```
 2. Identify the largest failure group (e.g., "42 tests: Expected ReferenceError")
 3. Fix the root cause (one fix may unlock 10-100+ tests)
 4. Save failure list and re-run only those:
    ```bash
-   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
+   TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
    # ... apply fix ...
-   TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
+   TEST262_STAGE=N TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
    ```
 5. When stage reaches 100%, auto-advance:
    ```bash
@@ -251,17 +251,17 @@ bash tools/stage-status.sh
 
 ```bash
 # Before fix
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > before.json
+TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > before.json
 
 # After fix
-TEST262_STAGE=16 TEST262_JSON=1 TEST262_DIGEST=1 cargo test > after.json
+TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > after.json
 
 # Diff (requires jq)
 diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
 
 # Or use failure file for exact test lists:
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/before.txt cargo test
-TEST262_STAGE=16 TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/after.txt cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/before.txt cargo test
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/after.txt cargo test
 diff /tmp/before.txt /tmp/after.txt
 ```
 
