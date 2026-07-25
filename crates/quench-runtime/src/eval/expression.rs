@@ -76,15 +76,18 @@ pub fn eval_expression(
 
             // When generator.return() resumes the generator, ControlFlow::Return is
             // pending. Don't set the generator yield flag — the Return must propagate
-            // through the try body so eval_try runs the finally exactly once.
-            if let Some(crate::interpreter::ControlFlow::Return(ret)) =
-                crate::interpreter::take_control_flow()
+            // through the for-of body / try-finally so IteratorClose fires properly
+            // and eval_try runs the finally exactly once.
             {
-                crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
-                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
-                    ret.clone(),
-                ));
-                return Ok(ret);
+                let maybe_ret = crate::interpreter::take_control_flow();
+                let is_return = matches!(&maybe_ret, Some(crate::interpreter::ControlFlow::Return(_)));
+                if let Some(cf) = maybe_ret {
+                    crate::interpreter::set_control_flow(cf);
+                }
+                if is_return {
+                    crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
+                    return Ok(resume_val);
+                }
             }
 
             crate::interpreter::set_generator_yield(value.clone());
