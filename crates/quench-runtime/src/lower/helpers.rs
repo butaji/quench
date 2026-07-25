@@ -45,6 +45,45 @@ pub fn lower_fn_body(body: &ast::FunctionBody) -> Vec<crate::ast::Statement> {
     stmts
 }
 
+/// Check for strict-mode early errors on function parameters.
+///
+/// ES2025 §14.1.2: It is a SyntaxError if the Identifier `"eval"` or the
+/// Identifier `"arguments"` occurs within a FormalParameterList of a
+/// strict mode FunctionDeclaration, FunctionExpression, or method.
+pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
+    // Check if function body has "use strict" directive
+    let is_strict = func
+        .body
+        .as_ref()
+        .is_some_and(|b| b.directives.iter().any(|d| d.expression.value == "use strict"));
+    if !is_strict {
+        return Ok(());
+    }
+    // Check parameter names for "eval" and "arguments"
+    for param in &func.params.items {
+        if let ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+            if ident.name == "arguments" || ident.name == "eval" {
+                return Err(LowerError::new(format!(
+                    "SyntaxError: Unexpected strict mode reserved word: {}",
+                    ident.name
+                )));
+            }
+        }
+    }
+    // Check rest parameter
+    if let Some(rest) = &func.params.rest {
+        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.argument.kind {
+            if ident.name == "arguments" || ident.name == "eval" {
+                return Err(LowerError::new(format!(
+                    "SyntaxError: Unexpected strict mode reserved word: {}",
+                    ident.name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Convert Wtf8Atom to String using Display trait
 pub fn wtf8_atom_to_string(atom: &str) -> String {
     atom.to_string()

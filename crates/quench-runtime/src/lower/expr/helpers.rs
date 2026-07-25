@@ -228,6 +228,8 @@ fn lower_method_prop_from_value(
 }
 
 fn lower_fn_expr(func: &ast::Function) -> Result<Expression, LowerError> {
+    // ES2025 §14.1.2: SyntaxError for "eval"/"arguments" as param names in strict mode
+    super::super::helpers::validate_strict_params(func)?;
     let name = func.id.as_ref().map(|i| i.name.as_str().to_string());
     let params = lower_formal_params(&func.params);
     let body = func

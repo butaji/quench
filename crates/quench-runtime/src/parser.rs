@@ -22,6 +22,7 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
         return Err(JsError(format!("Parse error: {:?}", ret.errors)));
     }
     check_strict_reserved(&ret.program)?;
+    check_strict_fn_params(&ret.program)?;
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
@@ -40,6 +41,115 @@ fn check_strict_reserved(program: &oxc::ast::ast::Program) -> Result<(), JsError
             name
         )));
     }
+    Ok(())
+}
+
+/// Check all function declarations/expressions for strict-mode parameter violations.
+/// ES2025 §14.1.2: SyntaxError if `"eval"` or `"arguments"` is a parameter name
+/// when the function body is strict mode.
+fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsError> {
+    // Check if the program itself has "use strict" (inherited by contained functions)
+    let prog_strict = program
+        .directives
+        .iter()
+        .any(|d| d.expression.value == "use strict");
+
+    let mut check_fn = |params: &oxc::ast::ast::FormalParameters,
+                        body: &oxc::ast::ast::FunctionBody,
+                        inherit_strict: bool|
+     -> Result<(), JsError> {
+        let strict = inherit_strict
+            || body
+                .directives
+                .iter()
+                .any(|d| d.expression.value == "use strict");
+        if !strict {
+            return Ok(());
+        }
+        let mut names = Vec::new();
+        for param in &params.items {
+            if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind
+            {
+                let name = ident.name.as_str();
+                if name == "arguments" || name == "eval" {
+                    return Err(JsError(format!(
+                        "SyntaxError: Unexpected strict mode reserved word: {}",
+                        name
+                    )));
+                }
+                if names.contains(&name.to_string()) {
+                    return Err(JsError(format!(
+                        "SyntaxError: Duplicate parameter name not allowed in strict mode: {}",
+                        name
+                    )));
+                }
+                names.push(name.to_string());
+            }
+        }
+        Ok(())
+    };
+
+    fn walk_stmts<'a>(
+        stmts: &'a [oxc::ast::ast::Statement<'a>],
+        strict: bool,
+        check_fn: &mut impl FnMut(
+            &oxc::ast::ast::FormalParameters,
+            &oxc::ast::ast::FunctionBody,
+            bool,
+        ) -> Result<(), JsError>,
+    ) -> Result<(), JsError> {
+        for stmt in stmts {
+            match stmt {
+                oxc::ast::ast::Statement::FunctionDeclaration(func) => {
+                    if let Some(body) = &func.body {
+                        check_fn(&func.params, body, strict)?;
+                    }
+                }
+                oxc::ast::ast::Statement::ExpressionStatement(expr) => {
+                    walk_expr(&expr.expression, strict, check_fn)?;
+                }
+                oxc::ast::ast::Statement::VariableDeclaration(var_decl) => {
+                    for decl in &var_decl.declarations {
+                        if let Some(init) = &decl.init {
+                            walk_expr(init, strict, check_fn)?;
+                        }
+                    }
+                }
+                oxc::ast::ast::Statement::ReturnStatement(ret) => {
+                    if let Some(arg) = &ret.argument {
+                        walk_expr(arg, strict, check_fn)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn walk_expr<'a>(
+        expr: &'a oxc::ast::ast::Expression<'a>,
+        strict: bool,
+        check_fn: &mut impl FnMut(
+            &oxc::ast::ast::FormalParameters,
+            &oxc::ast::ast::FunctionBody,
+            bool,
+        ) -> Result<(), JsError>,
+    ) -> Result<(), JsError> {
+        match expr {
+            oxc::ast::ast::Expression::FunctionExpression(func) => {
+                if let Some(body) = &func.body {
+                    check_fn(&func.params, body, strict)?;
+                }
+            }
+            oxc::ast::ast::Expression::ArrowFunctionExpression(arrow) => {
+                check_fn(&arrow.params, &arrow.body, strict)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    walk_stmts(&program.body, prog_strict, &mut check_fn)?;
     Ok(())
 }
 
