@@ -626,12 +626,49 @@ fn copy_enumerable_own_properties(
             copy_key_to_rest(&mut rest, &key, Value::String(ch.to_string()));
         }
     } else {
+        // Copy enumerable string-keyed own properties (per OrdinaryOwnPropertyKeys order)
         for key in crate::value::object::enumerable_own_keys(&src) {
             if excluded.contains(&key) {
                 continue;
             }
             let val = copy_enumerable_value(obj, &key, &src, env)?;
             copy_key_to_rest(&mut rest, &key, val);
+        }
+        // Copy enumerable symbol-keyed own properties (per ES2025 RestDestructuringAssignmentEvaluation)
+        for key in src.symbol_properties.keys() {
+            if excluded.contains(key) {
+                continue;
+            }
+            let val = copy_enumerable_value(obj, key, &src, env)?;
+            copy_key_to_rest(&mut rest, key, val);
+        }
+        // Symbol-keyed getters
+        for (key, getter) in &src.getters {
+            if !key.contains('\0') {
+                continue; // not a symbol key
+            }
+            if excluded.contains(key) {
+                continue;
+            }
+            if !src.is_enumerable(key) {
+                continue;
+            }
+            let val = copy_enumerable_value(obj, key, &src, env)?;
+            copy_key_to_rest(&mut rest, key, val);
+        }
+        // Symbol-keyed setters (if no getter)
+        for (key, _) in &src.setters {
+            if !key.contains('\0') {
+                continue;
+            }
+            if excluded.contains(key) || src.getters.contains_key(key) {
+                continue;
+            }
+            if !src.is_enumerable(key) {
+                continue;
+            }
+            let val = copy_enumerable_value(obj, key, &src, env)?;
+            copy_key_to_rest(&mut rest, key, val);
         }
     }
     Ok(Value::Object(Rc::new(RefCell::new(rest))))

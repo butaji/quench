@@ -102,7 +102,11 @@ fn add_non_numeric_keys(
     seen: &mut std::collections::HashSet<String>,
 ) {
     for key in obj.properties.keys() {
-        if as_array_index(key).is_none() && !seen.contains(key) && obj.is_enumerable(key) {
+        if as_array_index(key).is_none()
+            && !seen.contains(key)
+            && obj.is_enumerable(key)
+            && !key.contains('\0')
+        {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
@@ -115,13 +119,17 @@ fn add_accessor_keys(
     seen: &mut std::collections::HashSet<String>,
 ) {
     for key in obj.getters.keys() {
-        if !seen.contains(key) && obj.is_enumerable(key) {
+        if !seen.contains(key) && obj.is_enumerable(key) && !key.contains('\0') {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
     }
     for key in obj.setters.keys() {
-        if !seen.contains(key) && !obj.getters.contains_key(key) && obj.is_enumerable(key) {
+        if !seen.contains(key)
+            && !obj.getters.contains_key(key)
+            && obj.is_enumerable(key)
+            && !key.contains('\0')
+        {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
