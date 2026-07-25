@@ -146,7 +146,7 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                     if let Some(desc) = desc {
                         if let Some(func) = desc.get {
                             drop(borrowed);
-                            let arr_val = Value::Object(Rc::clone(&arr));
+                            let _arr_val = Value::Object(Rc::clone(&arr));
                             return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
                         }
                         if let Some(val) = desc.value {
@@ -169,7 +169,7 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                     let entry_val = if let Some(desc) = desc {
                         if let Some(func) = desc.get {
                             drop(borrowed);
-                            let arr_val = Value::Object(Rc::clone(&arr));
+                            let _arr_val = Value::Object(Rc::clone(&arr));
                             return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
                         }
                         if let Some(val) = desc.value {
@@ -210,7 +210,7 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
 fn invoke_getter_func(
     func: Value,
     arr: &Rc<RefCell<Object>>,
-    key: &str,
+    _key: &str,
     mode: LiveIndexIteratorMode,
     i: usize,
     index: Rc<RefCell<usize>>,

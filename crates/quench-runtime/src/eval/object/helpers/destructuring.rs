@@ -643,7 +643,7 @@ fn copy_enumerable_own_properties(
             copy_key_to_rest(&mut rest, key, val);
         }
         // Symbol-keyed getters
-        for (key, getter) in &src.getters {
+        for (key, _getter) in &src.getters {
             if !key.contains('\0') {
                 continue; // not a symbol key
             }

@@ -457,7 +457,6 @@ fn super_in_base_class_instance_method_works() {
 // ─── super in static method of derived class ──────────────────────
 
 #[test]
-#[test]
 fn test_tdz_basic() {
     // Basic TDZ: accessing `y` before `let y;` runs
     let basic = eval("try { y; 'no_exc' } catch(e) { 'caught' } let y;");
@@ -543,6 +542,7 @@ fn test_tdz_in_for_of_destructuring_default() {
         "TDZ in for-of destructuring default should throw: {:?}", r);
 }
 
+#[test]
 fn super_in_static_method_of_derived_class_works() {
     // super.property in a static method should access the superclass constructor's
     // own properties (static methods/fields).

@@ -185,7 +185,7 @@ pub fn proto_at(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 /// Array.prototype.entries() - returns an iterator of [index, value] pairs
-pub fn proto_entries(args: Vec<Value>) -> Result<Value, JsError> {
+pub fn proto_entries(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().ok_or_else(|| {
         JsError("Array.prototype.entries called on null or undefined".to_string())
     })?;
@@ -204,7 +204,7 @@ pub fn proto_entries(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 /// Array.prototype.keys() - returns an iterator of indices
-pub fn proto_keys(args: Vec<Value>) -> Result<Value, JsError> {
+pub fn proto_keys(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().ok_or_else(|| {
         JsError("Array.prototype.keys called on null or undefined".to_string())
     })?;
