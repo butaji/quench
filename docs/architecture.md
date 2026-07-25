@@ -57,7 +57,7 @@ builtins/
 Once built, all `*.prototype.*`, intrinsic iterator prototypes,
 `Object.*`, `Reflect.*`, `Promise.prototype.*`, etc. are authored here.
 Pure spec algorithms on top of `%ops%`. Embedded via `include_str!`;
-parsed once per `Realm` by `builtins/bootstrap.rs`.
+parsed once per `Realm` by `builtins/bootstrap.rs` (R0 planned).
 
 ## `%ops%` — the only Rust↔JS bridge for spec ops
 
@@ -120,7 +120,10 @@ All tracked in `tasks/refactor-plan.md` — not duplicated here to avoid drift:
 | String interning / atom table | R21 | Phase B |
 | Profiling (flamegraph/samply/xctrace) | R22, `docs/tools.md` | When loop is the bottleneck |
 
-## Bootstrap order
+## Bootstrap order (target — R0 planned)
+
+Currently all builtins are Rust modules registered in `builtins/mod.rs`.
+The target bootstrap path for self-hosted JS builtins is:
 
 `Context::new` builds the Rust realm (intrinsic prototypes +
 `%ThrowTypeError%`), then `bootstrap.rs` evaluates `builtins/*.js` in
