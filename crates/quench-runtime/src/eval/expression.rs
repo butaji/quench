@@ -73,6 +73,20 @@ pub fn eval_expression(
                 }
             }
             let resume_val = crate::interpreter::take_generator_resume_value();
+
+            // When generator.return() resumes the generator, ControlFlow::Return is
+            // pending. Don't set the generator yield flag — the Return must propagate
+            // through the try body so eval_try runs the finally exactly once.
+            if let Some(crate::interpreter::ControlFlow::Return(ret)) =
+                crate::interpreter::take_control_flow()
+            {
+                crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
+                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
+                    ret.clone(),
+                ));
+                return Ok(ret);
+            }
+
             crate::interpreter::set_generator_yield(value.clone());
             crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
             Ok(resume_val)

@@ -1020,15 +1020,7 @@ fn eval_for(
             break;
         }
         take_control_flow();
-        let body_val = if head_lexical {
-            let body_copies = snapshot_lexical_bindings(&env.borrow(), &per_iter_names);
-            push_lexical_scope_with_values(&mut env.borrow_mut(), &body_copies);
-            let val = eval_statement(body, env, false, in_arrow_function)?;
-            env.borrow_mut().pop_scope();
-            val
-        } else {
-            eval_statement(body, env, false, in_arrow_function)?
-        };
+        let body_val = eval_statement(body, env, false, in_arrow_function)?;
         completion = body_val.clone();
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
@@ -1111,6 +1103,12 @@ fn eval_try(
     // Handle the result
     match try_result {
         Ok(try_val) => {
+            // If the generator is about to suspend, skip the finally for now.
+            // The finally will run when the generator is resumed (via g.next(),
+            // g.return(), or g.throw()) and the try body truly completes.
+            if crate::interpreter::peek_generator_yield() {
+                return Ok(try_val);
+            }
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
                 // Suspend pending control flow while finally runs.
