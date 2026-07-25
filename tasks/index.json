@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 17,
+  "current_stage": 25,
   "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins. Execution order: tasks/10-ways-to-speed-up.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
@@ -17,13 +17,13 @@
       "id": 0,
       "path": "test/harness",
       "tests": 116,
-      "status": "pending",
+      "status": "done",
       "difficulty": 1,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "0\u20130",
-      "failed": 4,
-      "pass_rate": "96.6%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 1,
@@ -233,13 +233,13 @@
       "id": 18,
       "path": "test/language/statements/continue",
       "tests": 24,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "0\u20130",
-      "failed": 1,
-      "pass_rate": "95.8%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 19,
@@ -257,13 +257,13 @@
       "id": 20,
       "path": "test/language/statements/do-while",
       "tests": 36,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "0\u20130",
-      "failed": 36,
-      "pass_rate": "0.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 21,
@@ -293,37 +293,37 @@
       "id": 23,
       "path": "test/language/statements/for",
       "tests": 385,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "150\u2013300",
       "js_loc": "0\u20130",
-      "failed": 265,
-      "pass_rate": "31.2%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 24,
       "path": "test/language/statements/for-in",
       "tests": 115,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 28,
-      "pass_rate": "75.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 25,
       "path": "test/language/statements/for-of",
       "tests": 751,
-      "status": "pending",
+      "status": "in_progress",
       "difficulty": 4,
       "impl": "rust",
       "rust_loc": "300\u2013600",
       "js_loc": "0\u20130",
-      "failed": 266,
-      "pass_rate": "64.6%"
+      "failed": 40,
+      "pass_rate": "94.7%"
     },
     {
       "id": 26,
@@ -334,8 +334,8 @@
       "impl": "rust",
       "rust_loc": "200\u2013400",
       "js_loc": "0\u20130",
-      "failed": 64,
-      "pass_rate": "85.8%"
+      "failed": 65,
+      "pass_rate": "85.6%"
     },
     {
       "id": 27,
@@ -353,13 +353,13 @@
       "id": 28,
       "path": "test/language/statements/if",
       "tests": 69,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 3,
-      "pass_rate": "95.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 29,
@@ -382,8 +382,8 @@
       "impl": "rust",
       "rust_loc": "150\u2013300",
       "js_loc": "0\u20130",
-      "failed": 0,
-      "pass_rate": "100.0%"
+      "failed": 53,
+      "pass_rate": "63.4%"
     },
     {
       "id": 31,
@@ -430,8 +430,8 @@
       "impl": "rust",
       "rust_loc": "200\u2013400",
       "js_loc": "0\u20130",
-      "failed": 112,
-      "pass_rate": "44.3%"
+      "failed": 96,
+      "pass_rate": "52.2%"
     },
     {
       "id": 35,
@@ -442,8 +442,8 @@
       "impl": "rust",
       "rust_loc": "150\u2013300",
       "js_loc": "0\u20130",
-      "failed": 34,
-      "pass_rate": "80.9%"
+      "failed": 7,
+      "pass_rate": "96.1%"
     },
     {
       "id": 36,
@@ -454,8 +454,8 @@
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 11,
-      "pass_rate": "71.1%"
+      "failed": 1,
+      "pass_rate": "97.4%"
     },
     {
       "id": 37,
@@ -466,8 +466,8 @@
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 70,
-      "pass_rate": "61.3%"
+      "failed": 67,
+      "pass_rate": "63.0%"
     },
     {
       "id": 38,
@@ -478,8 +478,8 @@
       "impl": "rust",
       "rust_loc": "500\u20131000",
       "js_loc": "0\u20130",
-      "failed": 9,
-      "pass_rate": "97.0%"
+      "failed": 3,
+      "pass_rate": "99.0%"
     },
     {
       "id": 39,
@@ -497,13 +497,13 @@
       "id": 40,
       "path": "test/language/statements/for-await-of",
       "tests": 1234,
-      "status": "pending",
+      "status": "done",
       "difficulty": 7,
       "impl": "rust",
       "rust_loc": "400\u2013800",
       "js_loc": "0\u20130",
-      "failed": 128,
-      "pass_rate": "89.6%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 41,
@@ -533,13 +533,13 @@
       "id": 43,
       "path": "test/language/block-scope",
       "tests": 145,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "150\u2013300",
       "js_loc": "0\u20130",
-      "failed": 8,
-      "pass_rate": "94.5%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 44,
@@ -550,8 +550,8 @@
       "impl": "rust",
       "rust_loc": "800\u20132000",
       "js_loc": "0\u20130",
-      "failed": 1336,
-      "pass_rate": "88.0%"
+      "failed": 31,
+      "pass_rate": "99.7%"
     },
     {
       "id": 45,
@@ -586,8 +586,8 @@
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 2,
-      "pass_rate": "81.8%"
+      "failed": 1,
+      "pass_rate": "90.9%"
     },
     {
       "id": 48,
@@ -598,8 +598,8 @@
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 7,
-      "pass_rate": "96.8%"
+      "failed": 5,
+      "pass_rate": "97.7%"
     },
     {
       "id": 49,
@@ -874,8 +874,8 @@
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "600\u20131200",
-      "failed": 1968,
-      "pass_rate": "42.3%"
+      "failed": 1783,
+      "pass_rate": "47.7%"
     },
     {
       "id": 72,
@@ -886,8 +886,8 @@
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "400\u2013800",
-      "failed": 199,
-      "pass_rate": "60.9%"
+      "failed": 207,
+      "pass_rate": "59.3%"
     },
     {
       "id": 73,

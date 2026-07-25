@@ -187,6 +187,19 @@ impl GeneratorObject {
             );
             match crate::eval::eval_statement(stmt, &call_env, false, false) {
                 Ok(_val) => {
+                    // Check for ControlFlow::Return FIRST. When generator.return()
+                    // resumes the generator, the yield at the suspension point
+                    // completes with Return, but the yield expression already set
+                    // the generator yield flag. We must process the Return before
+                    // the yield flag to prevent double-finally execution.
+                    if let Some(crate::interpreter::ControlFlow::Return(ret)) =
+                        crate::interpreter::take_control_flow()
+                    {
+                        // Clear the stale yield flag set by the yield expression
+                        let _ = crate::interpreter::take_generator_yield();
+                        completion = ret;
+                        break;
+                    }
                     if let Some(yield_val) = crate::interpreter::take_generator_yield() {
                         crate::value::generator_replay::commit_suspend(&mut self.stored_resumes);
                         self.yields_to_replay = self.stored_resumes.len();
