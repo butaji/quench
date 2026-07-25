@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 1234,
+  "path": "test/language/statements/for-await-of",
+  "skipped": 0,
+  "skips": {},
+  "stage": 40,
+  "total": 1234
+}

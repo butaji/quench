@@ -1,0 +1,31 @@
+{
+  "failed": 2,
+  "groups": [
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/await-using/syntax/await-using-declaring-let-split-across-two-lines.js"
+      ],
+      "reason": "Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"Line terminator not permitted before using declaration.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(4018), length: 3 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/await-using/syntax/await-using-declaring-let-split-across-two-lines.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/await-using/syntax/await-using.js"
+      ],
+      "reason": "ReferenceError: z is not defined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/await-using/syntax/await-using.js"
+      ]
+    }
+  ],
+  "passed": 92,
+  "path": "test/language/statements/await-using",
+  "skipped": 0,
+  "skips": {},
+  "stage": 39,
+  "total": 94
+}

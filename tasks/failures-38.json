@@ -1,0 +1,43 @@
+{
+  "failed": 4,
+  "groups": [
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/generator-created-after-decl-inst.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-from-sync-iterator-inaccessible.js"
+      ],
+      "reason": "Object.getPrototypeOf called on non-object",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/generator-created-after-decl-inst.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-from-sync-iterator-inaccessible.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+      ],
+      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/unscopables-with.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 4 !== 6",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/unscopables-with.js"
+      ]
+    }
+  ],
+  "passed": 297,
+  "path": "test/language/statements/async-generator",
+  "skipped": 0,
+  "skips": {},
+  "stage": 38,
+  "total": 301
+}
