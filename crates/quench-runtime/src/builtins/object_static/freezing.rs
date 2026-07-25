@@ -120,6 +120,17 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             }
             Ok(Value::Null)
         }
+        Value::Generator(gen) => {
+            let g = gen.borrow();
+            // Generator objects have %GeneratorPrototype% as prototype,
+            // async generators have %AsyncGeneratorPrototype%.
+            let proto = if g.is_async {
+                crate::builtins::function::get_async_generator_function_prototype()
+            } else {
+                crate::builtins::function::get_generator_function_prototype()
+            };
+            Ok(proto.map(Value::Object).unwrap_or(Value::Null))
+        }
         _ => Err(JsError::from("Object.getPrototypeOf called on non-object")),
     }
 }
