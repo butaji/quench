@@ -620,8 +620,8 @@ fn assign_to_function(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
-    if f.is_arrow && (prop_name == "caller" || prop_name == "arguments") {
-        let msg = "'caller' and 'arguments' are restricted properties and cannot be set on arrow functions".to_string();
+    if (f.is_arrow || f.strict) && (prop_name == "caller" || prop_name == "arguments") {
+        let msg = "'caller' and 'arguments' are restricted properties and cannot be set on this function".to_string();
         let (err, js_err) = crate::value::create_js_error_with_type(&msg, "TypeError");
         crate::value::set_thrown_value(err);
         return Err(js_err);

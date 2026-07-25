@@ -783,7 +783,9 @@ fn eval_func_decl(
         is_async,
         is_generator,
     );
-    func.strict = crate::interpreter::is_strict_mode();
+    // strict is set by ValueFunction::new based on body's "use strict" directive.
+    // For arrow functions and class bodies, strict may also be inherited from the
+    // calling context — but for declarations the body's own directive is sufficient.
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
     env.borrow_mut().define(name.to_owned(), value.clone());

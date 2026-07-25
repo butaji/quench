@@ -49,8 +49,22 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         _ => {
             // Per ES spec, property lookup on a function object follows the
             // [[Prototype]] chain, which for all functions is Function.prototype.
-            // f.get_prototype() returns the .prototype property (for new instances),
-            // NOT the function's own [[Prototype]]. Use Function.prototype instead.
+            // Check for accessor properties (like caller/arguments) on the
+            // prototype that may throw TypeError.
+            if prop_name == "caller" || prop_name == "arguments" {
+                if let Some(func_proto) = crate::builtins::get_function_prototype() {
+                    if let Some(getter) = func_proto.borrow().getters.get(prop_name) {
+                        if let Some(getter_fn) = &getter.func {
+                            return crate::eval::function::call_value_impl(
+                                getter_fn.clone(),
+                                vec![],
+                                Value::Function(f.clone()),
+                                true,
+                            );
+                        }
+                    }
+                }
+            }
             if let Some(func_proto) = crate::builtins::get_function_prototype() {
                 Ok(func_proto
                     .borrow()

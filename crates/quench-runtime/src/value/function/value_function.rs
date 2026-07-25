@@ -149,6 +149,7 @@ impl ValueFunction {
         if let Some(ref n) = name {
             props.insert("name".to_string(), Value::String(n.clone()));
         }
+        let strict = crate::interpreter::helpers::check_use_strict_directive(&body);
         ValueFunction {
             name,
             params,
@@ -158,7 +159,7 @@ impl ValueFunction {
             is_arrow: false,
             is_async,
             is_generator,
-            strict: false,
+            strict,
             is_method: false,
             empty_prototype: false,
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),

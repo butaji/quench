@@ -238,7 +238,7 @@ impl Environment {
                 let rc = entry.get();
                 match rc.as_ref() {
                     Value::Function(ref f) => {
-                        if f.is_arrow && (prop == "caller" || prop == "arguments") {
+                        if (f.is_arrow || f.strict) && (prop == "caller" || prop == "arguments") {
                             return false;
                         }
                         if !crate::interpreter::is_strict_mode()
