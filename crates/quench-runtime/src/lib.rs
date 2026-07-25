@@ -21,6 +21,28 @@
 //! assert_eq!(result, quench_runtime::Value::Number(3.0));
 //! ```
 
+/// Create a JS error with a specific type and return `Err(js_err)`.
+/// Sets the thrown_value thread-local for catch blocks.
+///
+/// # Examples
+/// ```ignore
+/// return throw!("TypeError", "value is not a function");
+/// ```
+#[macro_export]
+macro_rules! throw {
+    ($typ:expr, $msg:expr) => {{
+        let (err_val, js_err) = $crate::value::error::create_js_error_with_type($msg, $typ);
+        $crate::value::error::set_thrown_value(err_val);
+        Err(js_err)
+    }};
+    ($typ:expr, $fmt:expr, $($arg:tt)+) => {{
+        let msg = format!($fmt, $($arg)+);
+        let (err_val, js_err) = $crate::value::error::create_js_error_with_type(&msg, $typ);
+        $crate::value::error::set_thrown_value(err_val);
+        Err(js_err)
+    }};
+}
+
 pub mod ast;
 pub mod builtins;
 pub mod context;

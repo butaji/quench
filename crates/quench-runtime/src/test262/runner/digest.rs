@@ -181,14 +181,15 @@ fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
 }
 
 fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome {
-    if isolated {
-        return run_isolated(path);
-    }
-    if path
+    // Skip check runs before isolated as well — crash files must be skipped
+    // even in subprocess mode because the crash would kill the subprocess.
+    if let Some(reason) = path
         .to_str()
         .and_then(crate::test262::skip::should_skip_path)
-        .is_some()
     {
+        return TestOutcome::Skip { reason };
+    }
+    if isolated {
         return run_isolated(path);
     }
     let mut host = crate::test262::host::QuenchHost::new();

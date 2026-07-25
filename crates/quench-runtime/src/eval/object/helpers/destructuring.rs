@@ -192,7 +192,8 @@ fn array_with_iterator_impl(
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = apply(inner, &rest_array) {
                 if !iterator_done {
-                    call_iterator_return(iterator);
+                    // Per ES §7.4.6 step 5: original error takes precedence
+                    let _close_err = call_iterator_return(iterator);
                 }
                 return Err(error);
             }
@@ -201,7 +202,7 @@ fn array_with_iterator_impl(
         if let BindingElement::AssignmentTarget(target) = binding {
             if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
                 if !iterator_done {
-                    let _ = call_iterator_return(iterator);
+                    let _close_err = call_iterator_return(iterator);
                 }
                 return Err(error);
             }
@@ -211,7 +212,7 @@ fn array_with_iterator_impl(
         if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
             if !iterator_done {
-                let _ = call_iterator_return(iterator);
+                let _close_err = call_iterator_return(iterator);
             }
             if let Some(thrown) = original {
                 crate::value::set_thrown_value(thrown);
@@ -346,6 +347,7 @@ pub fn take_iterator_step(
 }
 
 /// Call iterator.return, returning an error if it throws or returns a non-Object.
+#[must_use = "iterator.return() errors must be handled per ES spec §7.4.6"]
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
     let return_call = invoke_iterator_return(iterator, iter_this);

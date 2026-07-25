@@ -285,6 +285,26 @@ impl Scope {
     pub fn bindings(&self) -> impl Iterator<Item = (&String, &Rc<Value>)> {
         self.bindings.iter()
     }
+
+    /// Debug dump: print all bindings, declarations, and object properties.
+    #[cfg(debug_assertions)]
+    pub fn dump(&self, label: &str) {
+        eprintln!("[Scope {}] bindings:", label);
+        for (k, v) in &self.bindings {
+            eprintln!("  {} = {:?}", k, v.as_ref());
+        }
+        eprintln!("[Scope {}] declarations:", label);
+        for (k, v) in &self.declarations {
+            eprintln!("  {} = {:?}", k, v);
+        }
+        eprintln!("[Scope {}] var_kinds:", label);
+        for (k, v) in &self.var_kinds {
+            eprintln!("  {} = {:?}", k, v);
+        }
+        if let Some(ref obj) = self.object_binding {
+            eprintln!("[Scope {}] object_binding keys: {:?}", label, obj.borrow().properties.keys().collect::<Vec<_>>());
+        }
+    }
 }
 
 impl Default for Scope {

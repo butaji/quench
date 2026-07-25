@@ -35,6 +35,8 @@ const CRASH_FILES: &[(&str, &str)] = &[
     ),
     ("tco.js", "known crash: stack overflow"),
     ("bigint-wrapped-values.js", "known crash: stack overflow"),
+    ("tco-if-body.js", "known crash: stack overflow"),
+    ("tco-else-body.js", "known crash: stack overflow"),
 ];
 
 /// Returns true if the feature is implemented (or should be attempted).
@@ -127,5 +129,45 @@ mod tests {
     #[test]
     fn test_should_skip_source_no_skips() {
         assert!(should_skip_source("async function foo() {}").is_none());
+    }
+
+    /// Verify each CRASH_FILES entry has a matching test262 test file.
+    /// Ensures stale skip entries (for tests that no longer crash) are removed.
+    #[test]
+    fn crash_files_exist_on_disk() {
+        let test262_dir = std::env::var("TEST262_DIR")
+            .unwrap_or_else(|_| "tests/test262".to_string());
+        let test262_path = std::path::Path::new(&test262_dir);
+        let mut missing = Vec::new();
+        for (file, _reason) in CRASH_FILES {
+            // Search in all subdirectories for the file
+            let found = walk_files(test262_path, file);
+            if !found {
+                missing.push(*file);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "CRASH_FILES entries with no matching test262 file: {:?}\n\
+             These entries are stale and should be removed.",
+            missing
+        );
+    }
+
+    /// Recursively search for a file by basename in the given directory.
+    fn walk_files(dir: &std::path::Path, name: &str) -> bool {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if walk_files(&path, name) {
+                        return true;
+                    }
+                } else if path.file_name().and_then(|s| s.to_str()) == Some(name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
