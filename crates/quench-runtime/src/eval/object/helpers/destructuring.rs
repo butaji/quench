@@ -190,6 +190,8 @@ fn array_with_iterator_impl(
                 }
             }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
+            // collect_remaining_array consumes the iterator to completion
+            iterator_done = true;
             if let Err(error) = apply(inner, &rest_array) {
                 if !iterator_done {
                     // Per ES §7.4.6 step 5: original error takes precedence

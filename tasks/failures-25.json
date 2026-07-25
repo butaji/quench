@@ -1,5 +1,5 @@
 {
-  "failed": 42,
+  "failed": 40,
   "groups": [
     {
       "count": 4,
@@ -84,10 +84,8 @@
       ]
     },
     {
-      "count": 7,
+      "count": 5,
       "paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-break.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-continue.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-return.js",
@@ -96,8 +94,6 @@
       ],
       "reason": "Test262Error: sameValue failed: 1 !== 0",
       "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/dstr/array-rest-nested-array-iter-thrw-close-skip.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-break.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-continue.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/for-of/generator-close-via-return.js",
@@ -206,7 +202,7 @@
       ]
     }
   ],
-  "passed": 709,
+  "passed": 711,
   "path": "test/language/statements/for-of",
   "skipped": 0,
   "skips": {},
