@@ -813,6 +813,7 @@ pub fn assign_to_identifier(
                 }
             }
         }
+        let undef_fix_val = value.clone();
         let set_result = env.borrow_mut().set(name, value);
         if !set_result && crate::interpreter::is_strict_mode() {
             // Check if this is a TDZ violation.
@@ -837,6 +838,22 @@ pub fn assign_to_identifier(
             );
             return Err(js_err);
         }
+        // Workaround: if set returned true but get still returns undefined,
+        // the global object likely has a non-writable property (e.g. `eval`).
+        let fix_name = name.to_string();
+        if !crate::interpreter::is_strict_mode() && matches!(env.borrow().get(&fix_name), Some(Value::Undefined)) {
+            for scope_rc in env.borrow().scopes.iter().rev() {
+                let mut scope = scope_rc.borrow_mut();
+                if scope.is_declared_only(&fix_name) {
+                    scope.initialize_declared(&fix_name, undef_fix_val.clone());
+                    break;
+                }
+                if scope.has(&fix_name) {
+                    scope.set(fix_name.clone(), undef_fix_val.clone(), false);
+                    break;
+                }
+            }
+        }
     } else {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -845,7 +862,6 @@ pub fn assign_to_identifier(
             );
             return Err(js_err);
         }
-        eprintln!("[assign_to_identifier AFTER] name={}, set_failed, getting value={:?}", name, env.borrow().get(name));
         let use_global_this = matches!(env.borrow().get("globalThis"), Some(Value::Object(_)));
         if use_global_this {
             if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
