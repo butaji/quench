@@ -136,7 +136,19 @@ pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
 
     for i in start_idx..elements.len() {
         let elem = &elements[i];
-        accumulator = call_callback(&callback, elem, i, &elements)?;
+        // Reduce calls callback(accumulator, element, index, array) — not
+        // call_callback which passes (element, index, array).
+        let array_copy = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
+            elements.to_vec(),
+        ))));
+        let callback_args = vec![accumulator.clone(), elem.clone(), Value::Number(i as f64), array_copy];
+        accumulator = match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+            }
+            Value::NativeFunction(nf) => nf.call(Value::Undefined, callback_args)?,
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        };
     }
     Ok(accumulator)
 }
