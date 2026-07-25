@@ -1,10 +1,36 @@
 # Architecture
 
-**Goal:** 100% of test262, staged, minimum implementation LOC.
+**Goal:** 100% of test262 (all 50k+ tests, no skips), staged to 100% per
+stage, with the **minimum possible LOC**.
 
-**Shape:** small Rust core + self-hosted JS builtins. JS is ~1/3 the
-LOC of equivalent Rust and easier to keep spec-faithful, so anything
-that can be JS is JS.
+**Shape:** OXC parser + tree-walking interpreter + self-hosted JS
+builtins. Three layers, each minimal:
+
+1. **OXC parse** — `oxc` parses JS source into a spec-compliant AST
+   (~20k LOC of parser logic we don't write).
+2. **Lower** — `lower/` converts oxc AST nodes into our simpler internal
+   AST (`ast.rs`), stripping arena lifetimes and collapsing nodes the
+   walker doesn't need to distinguish.
+3. **Walk** — `eval/` walks the internal AST node by node, evaluating
+   expressions and statements directly. No bytecode, no JIT, no
+   intermediate compilation step.
+
+This is the fastest path to 100% conformance with minimum LOC because:
+
+- **No hand-written parser.** OXC is spec-compliant and covers full
+  ECMAScript + TypeScript + JSX. We save ~20k LOC and get correctness
+  for free.
+- **No bytecode layer.** A tree-walking interpreter is the simplest
+  possible evaluator — each AST node maps to one `eval_*` function.
+  Bytecode compilation would add a compiler pass + a VM loop (~5–10k
+  LOC) with no conformance benefit — test262 tests behavior, not speed.
+- **Spec ops in one place.** `eval/ops.rs` owns every canonical
+  abstract operation (`ToPrimitive`, `ToObject`, `IteratorNext`, …),
+  exposed to JS as `%ops%`. Every eval node and every builtin routes
+  through them — no duplicate implementations.
+- **Builtins self-hosted in JS.** JS is ~1/3 the LOC of equivalent
+  Rust for spec algorithms. Once `%ops%` is complete, builtins move
+  to JS (`builtins/*.js`) and the Rust core shrinks.
 
 ## Rust core
 
