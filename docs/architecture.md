@@ -22,13 +22,15 @@ src/
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
 └── builtins/
-    ├── core/        # crate-backed primitives only
-    │   ├── regex.rs     # regress
-    │   ├── date.rs      # chrono
-    │   ├── bigint.rs    # num-bigint
-    │   ├── json.rs       # serde_json
-    │   └── uri.rs        # urlencoding
-    └── bootstrap.rs # parses + evaluates builtins/*.js at realm init
+    ├── core/            # %ops% wrapper infrastructure
+    ├── regex/           # regress-backed (crate)
+    ├── date/            # chrono-backed (crate)
+    ├── bigint.rs        # num-bigint-backed (crate)
+    ├── json.rs          # serde_json-backed (crate)
+    ├── uri.rs           # urlencoding-backed (crate)
+    ├── array/, object/, string/, …  # per-type modules
+    ├── error/, promise/, map/, …
+    └── mod.rs           # module registration (bootstrap.rs planned for R0)
 ```
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
