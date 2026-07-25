@@ -19,12 +19,27 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
             } else {
-                // For non-Array objects (array-likes, arguments), extract indexed properties
+                // For non-Array objects (array-likes, arguments), extract indexed properties.
+                // Arguments objects in mappable mode (sloppy mode, no rest/default params)
+                // store values in `elements` rather than `properties`, so check both.
                 let mut elements = Vec::new();
                 let mut i = 0u32;
-                while let Some(val) = arr.properties.get(&i.to_string()) {
-                    elements.push(val.clone());
-                    i += 1;
+                loop {
+                    let val = arr.properties.get(&i.to_string()).or_else(|| {
+                        let idx = i as usize;
+                        if idx < arr.elements.len() && !arr.holes.contains(&idx) {
+                            Some(&arr.elements[idx])
+                        } else {
+                            None
+                        }
+                    });
+                    match val {
+                        Some(v) => {
+                            elements.push(v.clone());
+                            i += 1;
+                        }
+                        None => break,
+                    }
                 }
                 Ok(elements)
             }

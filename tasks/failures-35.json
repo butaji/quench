@@ -1,0 +1,65 @@
+{
+  "failed": 7,
+  "groups": [
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-20-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-21-s.js"
+      ],
+      "reason": "SyntaxError: SyntaxError: Unexpected strict mode reserved word: arguments",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-20-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-21-s.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-10-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-9-s.js"
+      ],
+      "reason": "SyntaxError: SyntaxError: Unexpected strict mode reserved word: eval",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-10-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/12.2.1-9-s.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A9.js"
+      ],
+      "reason": "Test262Error: #1: When using property attributes, {DontEnum} not used\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A9.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A2.js"
+      ],
+      "reason": "Test262Error: #3: (delete(__variable) | delete(this[\\\"__variable\\\"]))===false\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/binding-resolution.js"
+      ],
+      "reason": "Test262Error: sameValue failed: undefined !== true",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/binding-resolution.js"
+      ]
+    }
+  ],
+  "passed": 171,
+  "path": "test/language/statements/variable",
+  "skipped": 0,
+  "skips": {},
+  "stage": 35,
+  "total": 178
+}

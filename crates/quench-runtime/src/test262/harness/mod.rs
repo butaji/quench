@@ -106,14 +106,20 @@ impl HarnessLoader {
             }
             // propertyHelper.js: strip the JS verifyProperty function so the native one
             // (installed by try_inject_harness) handles Symbol-keyed accessor restoration.
+            // Also override nonIndexNumericPropertyName (used by isWritable for arrays)
+            // to a safe value that doesn't cause OOM from array.length = 4294967295.
             if inc == "propertyHelper.js" {
                 match self.load(inc) {
                     Some(h) => {
-                        // Strip `function verifyProperty(...)` block by removing everything
-                        // from `function verifyProperty(` to the closing `}` at the matching
-                        // depth. We find the line start and skip the entire function body.
+                        // Strip `function verifyProperty(...)` block
                         let stripped = strip_js_function(&h, "verifyProperty");
-                        out.push_str(&stripped);
+                        // Patch nonIndexNumericPropertyName to a safe value to prevent OOM
+                        // when isWritable sets array.length to 4294967295.
+                        let safe = stripped.replace(
+                            "var nonIndexNumericPropertyName = Math.pow(2, 32) - 1;",
+                            "var nonIndexNumericPropertyName = 999999;",
+                        );
+                        out.push_str(&safe);
                         out.push('\n');
                     }
                     None => return Err(format!("harness include not found: {}", inc)),

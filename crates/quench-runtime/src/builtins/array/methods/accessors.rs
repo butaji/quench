@@ -19,12 +19,27 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
             } else {
-                // For non-Array objects (array-likes, arguments), extract indexed properties
+                // For non-Array objects (array-likes, arguments), extract indexed properties.
+                // Arguments objects in mappable mode (sloppy mode, no rest/default params)
+                // store values in `elements` rather than `properties`, so check both.
                 let mut elements = Vec::new();
                 let mut i = 0u32;
-                while let Some(val) = arr.properties.get(&i.to_string()) {
-                    elements.push(val.clone());
-                    i += 1;
+                loop {
+                    let val = arr.properties.get(&i.to_string()).or_else(|| {
+                        let idx = i as usize;
+                        if idx < arr.elements.len() && !arr.holes.contains(&idx) {
+                            Some(&arr.elements[idx])
+                        } else {
+                            None
+                        }
+                    });
+                    match val {
+                        Some(v) => {
+                            elements.push(v.clone());
+                            i += 1;
+                        }
+                        None => break,
+                    }
                 }
                 Ok(elements)
             }
@@ -166,6 +181,44 @@ pub fn proto_at(args: Vec<Value>) -> Result<Value, JsError> {
         Ok(Value::Undefined)
     } else {
         Ok(elements[actual_idx as usize].clone())
+    }
+}
+
+/// Array.prototype.entries() - returns an iterator of [index, value] pairs
+pub fn proto_entries(args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("Array.prototype.entries called on null or undefined".to_string())
+    })?;
+    match this {
+        Value::Object(o) => {
+            let iter = crate::builtins::map::helpers::make_live_index_iterator(
+                Rc::clone(&o),
+                crate::builtins::map::helpers::LiveIndexIteratorMode::Entries,
+            );
+            Ok(iter)
+        }
+        _ => Err(JsError(
+            "Array.prototype.entries requires an object".to_string(),
+        )),
+    }
+}
+
+/// Array.prototype.keys() - returns an iterator of indices
+pub fn proto_keys(args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("Array.prototype.keys called on null or undefined".to_string())
+    })?;
+    match this {
+        Value::Object(o) => {
+            let iter = crate::builtins::map::helpers::make_live_index_iterator(
+                Rc::clone(&o),
+                crate::builtins::map::helpers::LiveIndexIteratorMode::Keys,
+            );
+            Ok(iter)
+        }
+        _ => Err(JsError(
+            "Array.prototype.keys requires an object".to_string(),
+        )),
     }
 }
 

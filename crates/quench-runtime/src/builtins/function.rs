@@ -398,7 +398,11 @@ fn make_function_constructor(
                     return Err(js_err);
                 }
             }
-            match crate::parser::parse_script(&source) {
+            // Function constructor bodies are always sloppy mode per ES spec §20.2.1.1.1
+            // (step 14: "Let strict be false"). The enclosing strict mode must not leak in.
+            let saved_strict = crate::interpreter::is_strict_mode();
+            crate::interpreter::set_strict_mode(false);
+            let fc_result = match crate::parser::parse_script(&source) {
                 Ok(crate::ast::Program::Script(stmts)) => {
                     if let Some(crate::ast::Statement::FunctionDeclaration {
                         name,
@@ -448,7 +452,9 @@ fn make_function_constructor(
                     crate::value::set_thrown_value(err_val);
                     Err(js_err)
                 }
-            }
+            };
+            crate::interpreter::set_strict_mode(saved_strict);
+            fc_result
         },
         function_proto,
     )

@@ -392,16 +392,34 @@ fn handle_tail_call_in_block(
     if stmts.is_empty() {
         return Ok(None);
     }
+    // Push a new scope for this block (same as eval_block), so let/const
+    // declarations are properly scoped and don't leak to the enclosing scope.
+    env.borrow_mut().push_scope();
+    predeclare_let_const(stmts, &mut env.borrow_mut());
+
+    // Evaluate all statements except the last in the new scope.
+    for stmt in &stmts[..stmts.len() - 1] {
+        eval_statement(stmt, env, false, in_arrow_function)?;
+    }
     let last_stmt = &stmts[stmts.len() - 1];
+
+    // Last statement is a nested Block → recurse.
+    if let Statement::Block(inner_stmts) = last_stmt {
+        // Pop current scope before recursing — the recursive call pushes its own.
+        env.borrow_mut().pop_scope();
+        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
+    }
 
     // Last statement is a Return → check for tail call.
     if let Statement::Return(ref expr) = last_stmt {
         if expr.as_ref().is_some_and(|e| is_tail_expr(e))
             && try_handle_tail_call(expr, env, in_arrow_function)?
         {
+            env.borrow_mut().pop_scope();
             return Ok(Some(()));
         }
         if tail_calls_only {
+            env.borrow_mut().pop_scope();
             return Ok(None);
         }
         // Non-tail return inside block: evaluate it and propagate via control flow.
@@ -410,15 +428,12 @@ fn handle_tail_call_in_block(
             None => Value::Undefined,
         };
         set_control_flow(ControlFlow::Return(val));
+        env.borrow_mut().pop_scope();
         return Ok(Some(()));
     }
 
-    // Last statement is a nested Block → recurse.
-    if let Statement::Block(inner_stmts) = last_stmt {
-        return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
-    }
-
     // No tail-call found; caller will evaluate the block normally.
+    env.borrow_mut().pop_scope();
     Ok(None)
 }
 
@@ -529,6 +544,22 @@ pub fn eval_statement(
                     init,
                     condition,
                     update,
+                    inner_body,
+                    env,
+                    in_arrow_function,
+                    vec![label.clone()],
+                );
+                pop_label_scope();
+                return result;
+            }
+            // For While loops, pass the label via the labels parameter.
+            if let Statement::While {
+                condition,
+                body: inner_body,
+            } = body.as_ref()
+            {
+                let result = eval_while_with_labels(
+                    condition,
                     inner_body,
                     env,
                     in_arrow_function,
@@ -784,7 +815,17 @@ fn eval_while(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let loop_labels: [String; 0] = [];
+    eval_while_with_labels(condition, body, env, in_arrow_function, vec![])
+}
+
+fn eval_while_with_labels(
+    condition: &Expression,
+    body: &Statement,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+    labels: Vec<String>,
+) -> Result<Value, JsError> {
+    let loop_labels = labels;
     while to_bool(&eval_expression(condition, env, in_arrow_function)?) {
         take_control_flow();
         let _ = eval_statement(body, env, false, in_arrow_function)?;
@@ -1073,10 +1114,13 @@ fn eval_try(
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
                 match fin_result {
                     Ok(_) => {
-                        if take_control_flow().is_none() {
-                            if let Some(cf) = pending_cf {
-                                set_control_flow(cf);
-                            }
+                        // If finally has its own control flow (break/continue/return),
+                        // it overrides the original. Per ES §14.15.4, finally's completion
+                        // replaces the try's completion for [[Type]] break, continue, return.
+                        if let Some(cf) = take_control_flow() {
+                            set_control_flow(cf); // Propagate finally's control flow
+                        } else if let Some(cf) = pending_cf {
+                            set_control_flow(cf); // Restore original control flow
                         }
                         Ok(try_val)
                     }
@@ -1091,13 +1135,21 @@ fn eval_try(
             let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
             let thrown_for_catch = thrown_value.clone();
 
-            if let Some(name) = param {
-                env.borrow_mut().define(name.to_string(), thrown_for_catch);
+            let has_catch_param = param.is_some();
+            if has_catch_param {
+                // Per ES §13.15.7: catch parameter creates a new lexical scope
+                // so it doesn't shadow outer bindings.
+                let name = param.as_ref().unwrap().clone();
+                env.borrow_mut().push_scope();
+                env.borrow_mut().define(name, thrown_for_catch);
             }
 
             if let Some(h) = handler {
                 // Run catch block
                 let catch_result = eval_statement(h, env, false, in_arrow_function);
+                if has_catch_param {
+                    env.borrow_mut().pop_scope();
+                }
 
                 // Run finally if present
                 if let Some(fin) = finalizer {
@@ -1105,10 +1157,12 @@ fn eval_try(
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
-                            if take_control_flow().is_none() {
-                                if let Some(cf) = pending_cf {
-                                    set_control_flow(cf);
-                                }
+                            // Finally's control flow overrides the catch's.
+                            let fin_cf = take_control_flow();
+                            if let Some(cf) = fin_cf {
+                                set_control_flow(cf); // Propagate finally's control flow
+                            } else if let Some(cf) = pending_cf {
+                                set_control_flow(cf); // Restore original
                             }
                             catch_result
                         }
@@ -1124,6 +1178,11 @@ fn eval_try(
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
                         Ok(_) => {
+                            // If finally has control flow, it replaces the rethrow
+                            if let Some(cf) = take_control_flow() {
+                                set_control_flow(cf);
+                                return Ok(Value::Undefined);
+                            }
                             // Finally completed normally - rethrow
                             let msg = to_js_string(&thrown_value);
                             set_thrown_value(thrown_value);

@@ -14,3 +14,6 @@ pub use proxy::*;
 
 #[cfg(test)]
 mod member_tests;
+
+#[cfg(test)]
+mod destructuring_tests;

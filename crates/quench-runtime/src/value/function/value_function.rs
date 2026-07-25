@@ -349,7 +349,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
 
     fn class_member_to_string(member: &crate::ast::ClassMember) -> String {
         match member {
-            crate::ast::ClassMember::Constructor { params, body } => {
+            crate::ast::ClassMember::Constructor { params, body, .. } => {
                 let body_str = body
                     .iter()
                     .map(stmt_to_string)
@@ -1000,8 +1000,6 @@ fn generate_source_text(f: &ValueFunction) -> String {
             Expression::Spread(expr) => {
                 format!("...{}", expr_to_string(expr))
             }
-            Expression::JsxElement { .. } => "[JsxElement]".to_string(),
-            Expression::JsxFragment { .. } => "[JsxFragment]".to_string(),
         }
     }
 

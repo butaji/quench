@@ -9,10 +9,13 @@
 //!
 //! Env: TEST262_DIR=<path-to-test262>
 
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use quench_runtime::test262::harness::try_inject_harness;
 use quench_runtime::test262::metadata::Test262Metadata;
-use quench_runtime::test262::runner::default_test262_dir;
-use quench_runtime::test262::runner::run_single_test;
-use quench_runtime::test262::{HarnessLoader, QuenchHost, TestOutcome};
+use quench_runtime::test262::HarnessLoader;
+use quench_runtime::{builtins, Context, Value};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -126,6 +129,11 @@ fn main() -> ExitCode {
                 eprintln!("{}: harness load failed: {}", label, e);
                 return 1;
             }
+            // Set MAIN_REALM_TEST262_ERROR for this realm so create_js_error_with_type
+            // uses the correct constructor (see value/error.rs for details).
+            if let Some(te) = ctx.get_global("Test262Error") {
+                quench_runtime::value::error::set_main_realm_test262_error(te);
+            }
         }
 
         let run_result = if module || is_module_meta {
@@ -134,21 +142,37 @@ fn main() -> ExitCode {
             ctx.eval(code)
         };
 
+        // For negative: phase: parse or runtime tests, ANY error (Err) is a PASS
+        // because the test expects an error to be thrown at the specified phase.
+        let is_negative_test = meta.negative.as_ref()
+            .map(|n| n.phase == "parse" || n.phase == "runtime")
+            .unwrap_or(false);
+
         match run_result {
             Ok(Value::Undefined) => {
+                if is_negative_test {
+                    println!("  {}: FAILED (expected {} but no error occurred)", label, meta.negative.as_ref().map(|n| n.typ.as_str()).unwrap_or("error"));
+                    return 1;
+                }
                 if !label.is_empty() { println!("  {}: PASSED (undefined)", label); }
                 0
             }
             Ok(v) => {
+                if is_negative_test {
+                    println!("  {}: FAILED (expected {} but returned {:?})", label, meta.negative.as_ref().map(|n| n.typ.as_str()).unwrap_or("error"), v);
+                    return 1;
+                }
                 if !label.is_empty() { println!("  {}: PASSED ({:?})", label, v); }
                 0
             }
             Err(e) => {
+                if is_negative_test {
+                    if !label.is_empty() { println!("  {}: PASSED (expected error)", label); }
+                    return 0;
+                }
                 let msg = format!("{:?}", e);
                 println!("  {}: FAILED: {}", label, msg);
                 if show_stack {
-                    // JsError format already includes message; for stack we'd need
-                    // deeper integration. For now, show the full debug output.
                     println!("  Error (full): {:?}", e);
                 }
                 1

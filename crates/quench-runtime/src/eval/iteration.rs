@@ -16,7 +16,7 @@ use crate::interpreter::{
 };
 use crate::value::object::enumerate_for_in_keys;
 use crate::value::object::helpers::ObjData;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, Value};
 
 /// Get an iterator for for-of/for-in loops (materialized; spread/destructuring).
 pub fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
@@ -44,9 +44,6 @@ fn get_generator_values(
 }
 
 fn get_object_iterator(o: &Rc<RefCell<Object>>) -> Result<Vec<Value>, JsError> {
-    if o.borrow().kind == ObjectKind::Array {
-        return Ok(o.borrow().elements.clone());
-    }
     let env = Rc::new(RefCell::new(Environment::new()));
     let iterator = obtain_iterator(o)?;
     let mut index = 0usize;
@@ -544,16 +541,20 @@ fn run_for_in_iteration(
                 if loop_handles_break(&cf, &[]) {
                     Ok(ForInIterResult::Break(body_val))
                 } else {
-                    set_control_flow(cf);
-                    Ok(ForInIterResult::Step(body_val))
+                    // Break label doesn't match this loop — exit and let
+                    // the enclosing scope handle it. The control flow is
+                    // already set.
+                    Ok(ForInIterResult::Break(body_val))
                 }
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if loop_handles_continue(&cf, &[]) {
                     Ok(ForInIterResult::Step(body_val))
                 } else {
-                    set_control_flow(cf);
-                    Ok(ForInIterResult::Step(body_val))
+                    // Continue label doesn't match this loop — exit and let
+                    // the enclosing scope handle it. The control flow is
+                    // already set.
+                    Ok(ForInIterResult::Break(body_val))
                 }
             }
             Some(ControlFlow::Return(val))
@@ -1165,6 +1166,140 @@ mod tests {
             )
             .unwrap();
         assert_eq!(j, Value::Number(1.0));
+    }
+
+    #[test]
+    fn for_of_destructure_default_tdz() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval(
+                "var x; var threw = false; \
+                 try { for ({ x = y } of [{}]) { } } \
+                 catch (e) { threw = e.name === 'ReferenceError'; } \
+                 let y; \
+                 threw",
+            )
+            .unwrap();
+        assert_eq!(err, Value::Boolean(true));
+    }
+
+    #[test]
+    fn for_of_destructure_default_tdz_simple_identifier() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval(
+                "var threw = false; \
+                 try { y; } \
+                 catch (e) { threw = e.name === 'ReferenceError'; } \
+                 let y; \
+                 threw",
+            )
+            .unwrap();
+        assert_eq!(err, Value::Boolean(true));
+    }
+
+    #[test]
+    fn tdz_destructure_assign_same_scope() {
+        // Same scope: `y` is in TDZ in the same block as the destructuring
+        let mut ctx = new_ctx();
+        let r1 = ctx.eval(
+            "{ let y; ({ x = y } = {}); x }",
+        );
+        // `let y;` at the top of the block initializes `y` (exits TDZ)
+        // So `x = y` should resolve `y` to `undefined`
+        assert_eq!(r1.unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn tdz_destructure_assign_before_let() {
+        let mut ctx = new_ctx();
+        let r1 = ctx.eval(
+            "{ \
+               ({ x = y } = {}); \
+               let y; \
+             }",
+        );
+        // `let y` is hoisted to top of block, so `y` is in TDZ when destructuring runs
+        assert!(r1.is_err(), "expected TDZ error, got: {:?}", r1);
+    }
+
+    #[test]
+    fn tdz_destructure_let_decl_before_let_in_block() {
+        let mut ctx = new_ctx();
+        let r1 = ctx.eval(
+            "{ \
+               let { x = y } = {}; \
+               let y; \
+             }",
+        );
+        assert!(r1.is_err(), "expected TDZ error for let decl pattern, got: {:?}", r1);
+    }
+
+    #[test]
+    fn tdz_destructure_let_decl_at_script_level() {
+        let mut ctx = new_ctx();
+        let r1 = ctx.eval(
+            "let { x = y } = {}; \
+             let y; \
+             'ok'",
+        );
+        assert!(r1.is_err(), "expected TDZ error at script level (let decl), got: {:?}", r1);
+    }
+
+    #[test]
+    fn tdz_destructure_assign_at_script_level() {
+        let mut ctx = new_ctx();
+        // This matches the test262 pattern: assignment destructuring, let at bottom
+        let r1 = ctx.eval(
+            "var x; \
+             ({ x = y } = {}); \
+             let y; \
+             'ok'",
+        );
+        assert!(r1.is_err(), "expected TDZ error at script level (assign), got: {:?}", r1);
+    }
+
+    #[test]
+    fn tdz_for_of_at_script_level() {
+        let mut ctx = new_ctx();
+        // This matches the test262 for-of pattern  
+        let r1 = ctx.eval(
+            "var x; \
+             ({ x = y } = {}); \
+             let y; \
+             'ok'",
+        );
+        assert!(r1.is_err(), "expected TDZ error for for-of, got: {:?}", r1);
+    }
+
+    #[test]
+    fn tdz_in_destructure_default_works_in_standalone() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval(
+                "var x; var threw = false; \
+                 try { ({ x = y } = {}); } \
+                 catch (e) { threw = e.name === 'ReferenceError'; } \
+                 let y; \
+                 threw",
+            )
+            .unwrap();
+        assert_eq!(err, Value::Boolean(true));
+    }
+
+    #[test]
+    fn tdz_in_destructure_default_works_in_standalone_let_decl() {
+        let mut ctx = new_ctx();
+        let err = ctx
+            .eval(
+                "var threw = false; \
+                 try { let { x = y } = {}; } \
+                 catch (e) { threw = e.name === 'ReferenceError'; } \
+                 let y; \
+                 threw",
+            )
+            .unwrap();
+        assert_eq!(err, Value::Boolean(true));
     }
 
     #[test]

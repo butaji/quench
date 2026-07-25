@@ -79,7 +79,14 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         Value::Object(obj_ref) => {
             let obj = obj_ref.borrow();
             if matches!(&name, Value::Symbol(_)) {
+                // Symbol-keyed properties are stored differently depending on type:
+                // - Accessor properties: stored in getters/setters (via define_accessor)
+                // - Data properties: stored in properties (via define)
+                // - Some are also stored in symbol_properties
                 obj.has_symbol(&name)
+                    || obj.has_getter(&name_str)
+                    || obj.has_setter(&name_str)
+                    || obj.has_own(&name_str)  // check properties/descriptors too
             } else {
                 obj.has_own(&name_str) || obj.has_getter(&name_str) || obj.has_setter(&name_str)
             }
@@ -753,7 +760,61 @@ mod tests {
         );
         assert!(
             result.is_ok(),
-            "verifyProperty with Symbol key should pass: {:?}",
+            "verifyProperty with Symbol key (accessor) should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_symbol_data_key_via_define_property() {
+        let mut ctx = harness_ctx();
+        // Symbol-keyed data property defined via Object.defineProperty.
+        // This bugs because defineProperty stores the key as desc\0id string
+        // in `properties`, NOT in `symbol_properties`, but verifyProperty's
+        // Symbol branch only checks has_symbol() which looks at symbol_properties.
+        let result = ctx.eval(
+            "var obj = {}; var sym = Symbol(1); \
+             Object.defineProperty(obj, sym, { value: 42, enumerable: true, configurable: true, writable: true }); \
+             verifyProperty(obj, sym, { value: 42, enumerable: true, configurable: true, writable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty with Symbol data key via defineProperty should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_symbol_data_key_via_define_property_raw_call() {
+        let mut ctx = harness_ctx();
+        // Test the raw native verify_property call (no JS wrapper) to isolate the bug.
+        // This directly checks whether the Symbol branch of verify_property finds
+        // properties stored in `properties` (not `symbol_properties`).
+        let result = ctx.eval(
+            "var obj = {}; var sym = Symbol('raw'); \
+             Object.defineProperty(obj, sym, { value: 99, writable: false, enumerable: false, configurable: false }); \
+             verifyProperty(obj, sym, { value: 99, writable: false, enumerable: false, configurable: false });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty with Symbol data key (non-default flags) should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_property_symbol_accessor_define_property() {
+        let mut ctx = harness_ctx();
+        // Symbol-keyed accessor property defined via Object.defineProperty.
+        let result = ctx.eval(
+            "var obj = {}; var sym = Symbol(1); \
+             var getter = function() { return 1; }; var setter = function(v) {}; \
+             Object.defineProperty(obj, sym, { get: getter, set: setter, enumerable: true, configurable: true }); \
+             verifyProperty(obj, sym, { get: getter, set: setter, enumerable: true, configurable: true });",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyProperty with Symbol accessor key via defineProperty should pass: {:?}",
             result
         );
     }
@@ -864,6 +925,24 @@ mod tests {
             "var obj = {}; Object.defineProperty(obj, 'foo', { value: 1, writable: true, configurable: true }); verifyWritable(obj, 'foo');",
         );
         assert!(result.is_ok(), "verifyWritable should pass: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_writable_array_length_no_crash() {
+        // Regression: JS verifyWritable calls isWritable which sets
+        // array.length = 4294967295 on arrays, causing OOM.
+        // The native no-op version must be used instead.
+        let mut ctx = harness_ctx();
+        // Set up a larger ArrayBuffer to verify the crash doesn't happen
+        let result = ctx.eval(
+            "var array = [1, 2, 3]; verifyWritable(array, 'length'); array.length === 3;",
+        );
+        assert!(
+            result.is_ok(),
+            "verifyWritable(array, 'length') should not crash: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), crate::Value::Boolean(true));
     }
 
     #[test]

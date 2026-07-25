@@ -2,7 +2,6 @@
 //! Main dispatch (lower_expr) lives here; specialized lowerers live in helpers_expr.rs.
 
 use super::super::helpers::LowerError;
-use super::super::jsx::{lower_jsx_element, lower_jsx_fragment};
 use super::super::literals::{lower_tagged_template, lower_template_literal};
 use super::super::opt_chain::lower_opt_chain;
 use super::super::stmt::lower_formal_params;
@@ -67,8 +66,6 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::TaggedTemplateExpression(tagged) => lower_tagged_template(tagged),
         ast::Expression::TemplateLiteral(tpl) => lower_template_literal(tpl),
         ast::Expression::ClassExpression(class_expr) => lower_class_expr(class_expr),
-        ast::Expression::JSXElement(elem) => lower_jsx_element(elem),
-        ast::Expression::JSXFragment(frag) => lower_jsx_fragment(frag),
         ast::Expression::TSAsExpression(e) => lower_expr(&e.expression),
         ast::Expression::TSSatisfiesExpression(e) => lower_expr(&e.expression),
         ast::Expression::TSTypeAssertion(e) => lower_expr(&e.expression),

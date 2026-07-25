@@ -185,20 +185,24 @@ fn array_with_iterator_impl(
         if let BindingElement::Rest(inner) = binding {
             if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
                 if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
-                    let _ = call_iterator_return(iterator);
+                    // touch_assignment_target pre-check may throw before any step
                     return Err(error);
                 }
             }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
             if let Err(error) = apply(inner, &rest_array) {
-                call_iterator_return(iterator);
+                if !iterator_done {
+                    call_iterator_return(iterator);
+                }
                 return Err(error);
             }
             return Ok(());
         }
         if let BindingElement::AssignmentTarget(target) = binding {
             if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
-                let _ = call_iterator_return(iterator);
+                if !iterator_done {
+                    let _ = call_iterator_return(iterator);
+                }
                 return Err(error);
             }
         }
@@ -206,7 +210,9 @@ fn array_with_iterator_impl(
         iterator_done = done;
         if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
-            let _ = call_iterator_return(iterator);
+            if !iterator_done {
+                let _ = call_iterator_return(iterator);
+            }
             if let Some(thrown) = original {
                 crate::value::set_thrown_value(thrown);
             }
@@ -805,9 +811,26 @@ pub fn assign_to_identifier(
                 }
             }
         }
-        if !env.borrow_mut().set(name, value) && crate::interpreter::is_strict_mode() {
+        let set_result = env.borrow_mut().set(name, value);
+        if !set_result && crate::interpreter::is_strict_mode() {
+            // Check if this is a TDZ violation.
+            if env.borrow().is_tdz(name) {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    &format!("ReferenceError: Cannot access '{}' before initialization", name),
+                    "ReferenceError",
+                );
+                return Err(js_err);
+            }
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 &format!("{} is not defined", name),
+                "ReferenceError",
+            );
+            return Err(js_err);
+        }
+        // Also check TDZ when set succeeded (set now returns false for TDZ).
+        if env.borrow().is_tdz(name) {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                &format!("ReferenceError: Cannot access '{}' before initialization", name),
                 "ReferenceError",
             );
             return Err(js_err);
@@ -820,6 +843,7 @@ pub fn assign_to_identifier(
             );
             return Err(js_err);
         }
+        eprintln!("[assign_to_identifier AFTER] name={}, set_failed, getting value={:?}", name, env.borrow().get(name));
         let use_global_this = matches!(env.borrow().get("globalThis"), Some(Value::Object(_)));
         if use_global_this {
             if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {

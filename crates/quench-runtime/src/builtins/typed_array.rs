@@ -489,6 +489,23 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_array_iterator() {
+        let mut ctx = Context::new().unwrap();
+        register_typed_arrays(&mut ctx);
+        crate::builtins::register_builtins(&mut ctx);
+        // After register_builtins, the typed array iterator should be wired
+        let r = ctx
+            .eval(
+                "var arr = new Int8Array([1,2,3]); \
+                 var result = []; \
+                 for (var v of arr) { result.push(v); } \
+                 result.join(',');",
+            )
+            .unwrap();
+        assert_eq!(r, Value::String("1,2,3".into()));
+    }
+
+    #[test]
     fn typed_array_buffer_view_sets_idx_length() {
         let ctx = &mut Context::new().unwrap();
         register_typed_arrays(ctx);

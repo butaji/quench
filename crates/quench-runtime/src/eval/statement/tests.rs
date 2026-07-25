@@ -1904,4 +1904,48 @@ mod class_name_in_const {
             Value::String("MyClass".to_string())
         );
     }
+
+    #[test]
+    fn global_var_strict_function_can_read_var() {
+        // Regression: strict-mode script global `var` bindings must be
+        // accessible from function bodies.
+        assert_eq!(
+            eval(
+                "\"use strict\";
+                var x = 42;
+                function f() { return x; }
+                f();"
+            )
+            .unwrap(),
+            Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn strict_var_after_sloppy_harness() {
+        // Reproduce the run_test binary flow: first load harness in sloppy mode,
+        // then evaluate a strict script with propertyHelper.js included.
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::test262::harness::try_inject_harness(&mut ctx).expect("harness");
+        // This simulates what build_script produces for verifyProperty-string-prop.js
+        // plus the "use strict" prefix the run_test binary adds.
+        // Global var access inside a function must work in strict mode.
+        let script = r#""use strict";
+var obj;
+var prop = 'prop';
+function reset(desc) {
+  obj = {};
+}
+reset({enumerable: true});
+obj;
+"#;
+        let result = ctx.eval(script).unwrap();
+        // obj should be defined — created inside reset and accessible globally
+        assert!(
+            matches!(result, Value::Object(_)),
+            "obj should be defined, got {:?}",
+            result
+        );
+    }
 }

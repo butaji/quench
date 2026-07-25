@@ -43,6 +43,22 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
             _ => None,
         })
         .collect();
+    // Handle rest parameter: stored separately in FormalParameters.rest
+    // For constructors, we need to capture the rest param name even though
+    // build_constructor_env doesn't yet handle rest semantics. The parameter
+    // must at least be defined so it's accessible (even if as an empty array
+    // until rest parameter handling is implemented for constructors).
+    let mut ps = ps;
+    let mut has_rest = false;
+    if let Some(rest) = &constructor.value.params.rest {
+        match &rest.argument.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                ps.push(ident.name.as_str().to_string());
+                has_rest = true;
+            }
+            _ => {}
+        }
+    }
     let body = constructor
         .value
         .body
@@ -54,7 +70,11 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
                 .collect()
         })
         .unwrap_or_default();
-    Ok(ClassMember::Constructor { params: ps, body })
+    Ok(ClassMember::Constructor {
+        params: ps,
+        body,
+        has_rest_param: has_rest,
+    })
 }
 
 fn lower_method(method: &ast::MethodDefinition) -> Result<ClassMember, LowerError> {

@@ -101,13 +101,23 @@ pub fn set_test262_error_proto(proto: Rc<RefCell<Object>>) {
 
 /// Set the main realm's Test262Error Value (called by harness injection).
 /// This is the Value::Function from sta.js (or NativeConstructor before it loads).
-/// Used by create_js_error_with_type to ensure wrapped errors always have the
-/// main realm's Test262Error as their .constructor.
+/// Used by create_js_error_with_type as a fallback when there's no active context.
+/// Only stores the first realm's Test262Error — sub-realms ($262.createRealm())
+/// Called by the host (QuenchHost::run_script) after harness injection.
+/// ALWAYS overwrites so each top-level realm gets its own constructor.
+/// Sub-realms ($262.createRealm()) do NOT call this, so the main realm's
+/// Test262Error is preserved even after a sub-realm creates its own.
 pub fn set_main_realm_test262_error(val: Value) {
     MAIN_REALM_TEST262_ERROR.with(|cell| {
-        if cell.borrow().is_none() {
-            *cell.borrow_mut() = Some(val);
-        }
+        *cell.borrow_mut() = Some(val);
+    });
+}
+
+/// Reset the main realm's Test262Error. Called at the start of each
+/// `try_inject_harness` so that each top-level realm gets its own constructor.
+pub fn reset_main_realm_test262_error() {
+    MAIN_REALM_TEST262_ERROR.with(|cell| {
+        *cell.borrow_mut() = None;
     });
 }
 
@@ -215,12 +225,11 @@ where
 }
 
 /// Create a JS Error object with a specific error type.
+/// Uses MAIN_REALM_TEST262_ERROR for Test262Error type errors.
 pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsError) {
-    // For Test262Error, use the main realm's Test262Error Value (stored during
-    // harness injection). This is critical when CURRENT_CONTEXT points to a sub-realm
-    // (e.g., inside $262.createRealm().global.eval(...)): we still want the wrapped
-    // error's .constructor to be the main realm's Test262Error, so that
-    // err.constructor === Test262Error works in test code running in the main realm.
+    // For Test262Error, always use MAIN_REALM_TEST262_ERROR so that the error's
+    // .constructor matches the main realm's Test262Error, even when called from
+    // a sub-realm context. The main realm's Test262Error is the canonical one.
     if error_type == "Test262Error" {
         if let Some(te) = get_main_realm_test262_error() {
             let final_val = match &te {

@@ -300,4 +300,27 @@ mod iterator_protocol_tests {
         let r = eval("var [a, , b] = [1, 'skip', 3]; a + b;").unwrap();
         assert_eq!(r, Value::Number(4.0)); // 1 + 3
     }
+
+    // ─── TDZ check in destructuring default ──────────────────────────────────
+
+    /// Assignment destructuring `({ x = y } = {})` must throw ReferenceError when
+    /// `y` is in TDZ (let hoisting), test262 obj-id-init-let.js reproducer.
+    #[test]
+    fn test_tdz_in_destructuring_default() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            r#"
+            var counter = 0;
+            try {
+              ({ x = y } = {});
+              counter += 1;
+            } catch(e) {
+              // expected: ReferenceError for y in TDZ
+            }
+            let y;
+            counter;
+            "#,
+        );
+        assert_eq!(result, Ok(Value::Number(0.0)));
+    }
 }

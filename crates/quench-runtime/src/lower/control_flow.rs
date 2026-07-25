@@ -85,7 +85,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    return None;
+                    VarKind::Let
                 }
             };
             let has_pattern = decl
@@ -134,7 +134,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    return None;
+                    VarKind::Let
                 }
             };
             let has_pattern = decl

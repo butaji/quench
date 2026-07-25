@@ -273,6 +273,11 @@ impl Environment {
     pub fn set(&mut self, name: &str, value: Value) -> bool {
         for scope_rc in self.scopes.iter().rev() {
             let mut scope = scope_rc.borrow_mut();
+            // TDZ check: if the binding exists but is uninitialized (e.g. `let x;`),
+            // assignment to it must throw ReferenceError (ES §8.1.1.1.4, step 3).
+            if scope.is_tdz(name) {
+                return false;
+            }
             if let Some(success) =
                 scope.set_object_property(name, value.clone(), crate::interpreter::is_strict_mode())
             {

@@ -208,6 +208,9 @@ fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
         );
         return Err(js_err);
     };
-    let elements = arr_rc.borrow().elements.clone();
-    Ok(crate::builtins::map::helpers::make_iterator(elements))
+    // Use live index iterator so mutations during iteration are respected.
+    Ok(crate::builtins::map::helpers::make_live_index_iterator(
+        arr_rc,
+        crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
+    ))
 }

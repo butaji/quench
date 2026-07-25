@@ -5,7 +5,6 @@
 pub mod control_flow;
 pub mod expr;
 pub mod helpers;
-pub mod jsx;
 pub mod literals;
 pub mod opt_chain;
 pub mod pattern;

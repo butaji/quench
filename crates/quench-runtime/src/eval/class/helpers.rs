@@ -358,9 +358,24 @@ pub fn build_constructor_env(
     }
     call_env.set_private_class_context(class.class_id(), class.declared_private_names.clone());
 
+    // Bind constructor parameters. The last param is a rest parameter when
+    // it was lowered from OXC's params.rest (stored as the last entry in
+    // constructor_params). Rest params collect all remaining args into an array.
+    let non_rest_count = if class.has_rest_param {
+        class.constructor_params.len() - 1
+    } else {
+        class.constructor_params.len()
+    };
     for (i, param) in class.constructor_params.iter().enumerate() {
-        let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-        call_env.define(param.clone(), arg);
+        if class.has_rest_param && i == class.constructor_params.len() - 1 {
+            // Rest parameter: collect all remaining arguments into an array.
+            let rest_args: Vec<Value> = args[non_rest_count..].to_vec();
+            let rest_arr = Object::new_array_from(rest_args);
+            call_env.define(param.clone(), Value::Object(Rc::new(RefCell::new(rest_arr))));
+        } else {
+            let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
+            call_env.define(param.clone(), arg);
+        }
     }
 
     let args_obj = create_arguments_object_simple(args.to_vec());

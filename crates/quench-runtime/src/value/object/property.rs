@@ -172,6 +172,12 @@ impl Object {
                     return Some(self.elements[idx].clone());
                 }
             }
+            // Arguments objects (ObjData::Args) also store indexed values in
+            // `elements`, especially the "mappable" case with no params in
+            // sloppy mode where no getter/setter is installed per index.
+            if matches!(self.data, ObjData::Args { .. }) && idx < self.elements.len() {
+                return Some(self.elements[idx].clone());
+            }
             if self.kind == ObjectKind::Array && idx < self.elements.len() {
                 return Some(self.elements[idx].clone());
             }

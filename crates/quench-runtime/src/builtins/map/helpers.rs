@@ -129,39 +129,72 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
     let arr = Rc::clone(&arr_rc);
     let next_fn = NativeFunction::new(move |_args| {
         let mut result = Object::new(ObjectKind::Ordinary);
-        let mut i = index.borrow_mut();
+        let current_idx = { *index.borrow() };
         let borrowed = arr.borrow();
         let len = borrowed
             .get("length")
             .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
             .unwrap_or(borrowed.elements.len());
-        if *i < len {
-            let key = i.to_string();
+        if current_idx < len {
+            let key = current_idx.to_string();
             let value = match mode {
-                LiveIndexIteratorMode::Keys => Value::Number(*i as f64),
-                LiveIndexIteratorMode::Values => borrowed.get(&key).unwrap_or_else(|| {
-                    if *i < borrowed.elements.len() {
-                        borrowed.elements[*i].clone()
+                LiveIndexIteratorMode::Keys => Value::Number(current_idx as f64),
+                LiveIndexIteratorMode::Values => {
+                    // Check for accessor property (getter) — use get_own_property
+                    // which properly checks the getters map.
+                    let desc = borrowed.get_own_property(&key);
+                    if let Some(desc) = desc {
+                        if let Some(func) = desc.get {
+                            drop(borrowed);
+                            let arr_val = Value::Object(Rc::clone(&arr));
+                            return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
+                        }
+                        if let Some(val) = desc.value {
+                            val
+                        } else {
+                            Value::Undefined
+                        }
                     } else {
-                        Value::Undefined
-                    }
-                }),
-                LiveIndexIteratorMode::Entries => {
-                    Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
-                        Value::Number(*i as f64),
                         borrowed.get(&key).unwrap_or_else(|| {
-                            if *i < borrowed.elements.len() {
-                                borrowed.elements[*i].clone()
+                            if current_idx < borrowed.elements.len() {
+                                borrowed.elements[current_idx].clone()
                             } else {
                                 Value::Undefined
                             }
-                        }),
+                        })
+                    }
+                }
+                LiveIndexIteratorMode::Entries => {
+                    let desc = borrowed.get_own_property(&key);
+                    let entry_val = if let Some(desc) = desc {
+                        if let Some(func) = desc.get {
+                            drop(borrowed);
+                            let arr_val = Value::Object(Rc::clone(&arr));
+                            return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
+                        }
+                        if let Some(val) = desc.value {
+                            val
+                        } else {
+                            Value::Undefined
+                        }
+                    } else {
+                        borrowed.get(&key).unwrap_or_else(|| {
+                            if current_idx < borrowed.elements.len() {
+                                borrowed.elements[current_idx].clone()
+                            } else {
+                                Value::Undefined
+                            }
+                        })
+                    };
+                    Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
+                        Value::Number(current_idx as f64),
+                        entry_val,
                     ]))))
                 }
             };
             result.set("value", value);
             result.set("done", Value::Boolean(false));
-            *i += 1;
+            *index.borrow_mut() = current_idx + 1;
         } else {
             result.set("value", Value::Undefined);
             result.set("done", Value::Boolean(true));
@@ -171,6 +204,34 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
     let mut iter = Object::new(ObjectKind::Ordinary);
     iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
     Value::Object(Rc::new(RefCell::new(iter)))
+}
+
+/// Invoke a getter function and return the iterator result.
+fn invoke_getter_func(
+    func: Value,
+    arr: &Rc<RefCell<Object>>,
+    key: &str,
+    mode: LiveIndexIteratorMode,
+    i: usize,
+    index: Rc<RefCell<usize>>,
+) -> Result<Value, JsError> {
+    let arr_val = Value::Object(Rc::clone(arr));
+    let val = crate::eval::function::call_value_with_this(func, vec![], arr_val)?;
+    let mut result = Object::new(ObjectKind::Ordinary);
+    let value = match mode {
+        LiveIndexIteratorMode::Values => val,
+        LiveIndexIteratorMode::Entries => {
+            Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
+                Value::Number(i as f64),
+                val,
+            ]))))
+        }
+        LiveIndexIteratorMode::Keys => Value::Number(i as f64),
+    };
+    result.set("value", value);
+    result.set("done", Value::Boolean(false));
+    *index.borrow_mut() = i + 1;
+    Ok(Value::Object(Rc::new(RefCell::new(result))))
 }
 
 /// Property key for the Symbol.iterator method

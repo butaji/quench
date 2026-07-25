@@ -1,0 +1,1178 @@
+{
+  "failed": 207,
+  "groups": [
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/resizable-buffer.js"
+      ],
+      "reason": "ReferenceError: fixedLength is not defined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/resizable-buffer.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/AsyncFunction.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/AsyncGenerator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/Function.js"
+      ],
+      "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"Expected `,` but found `;`\\\", labels: Some([LabeledSpan { label: Some(\\\"`,` expected\\",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/AsyncFunction.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/AsyncGenerator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/Function.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/GeneratorFunction.js"
+      ],
+      "reason": "SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"Expected `,` but found `yield`\\\", labels: Some([LabeledSpan { label: Some(\\\"`,` expected\\",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/GeneratorFunction.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-7-s.js"
+      ],
+      "reason": "SyntaxError: Function constructor produced: SyntaxError: Unexpected strict mode reserved word: arguments",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-7-s.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-4-s.js"
+      ],
+      "reason": "SyntaxError: Function constructor produced: SyntaxError: Unexpected strict mode reserved word: eval",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-4-s.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T2.js"
+      ],
+      "reason": "Test262Error: #1.1: The Function prototype object is itself a Function object that, when invoked, accepts any arguments and returns undefined: SyntaxError: Function constructor produced: Parse error: [OxcDiagnostic { inner: OxcDiagnosticInner { message: \\\"Identifier expected. 'null' is a reserved word that cannot be used here.\\\", labels: Some([LabeledSpan { label: None, span: SourceSpan { offset: SourceOffset(19), length: 4 }, primary: false }]), help: None, severity: Error, code: OxcCode { scope: None, number: None }, url: None } }]\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T1.js"
+      ],
+      "reason": "Test262Error: #1.1: The Function prototype object is itself a Function object that, when invoked, accepts any arguments and returns undefined: Test262Error: sameValue failed: [object] !== undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/arrow-function.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"(a, b) => {  }\\\" (( /* a */ a /* b */ , /* c */ b /* d */ ) /* e */ => /* f */ { /* g */ ; /* h */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/arrow-function.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-arrow-function.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"(a, b) => {  }\\\" (async /* a */ ( /* b */ a /* c */ , /* d */ b /* e */ ) /* f */ => /* g */ { /* h */ ; /* i */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-arrow-function.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/built-in-function-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"[Function]\\\" (%AggregateError%)\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/built-in-function-object.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-explicit-ctor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-expression-explicit-ctor.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"[Function]\\\" (class /* a */ A /* b */ extends /* c */ B /* d */ { /* e */ constructor /* f */ ( /* g */ ) /* h */ { /* i */ ; /* j */ } /* k */ m /* l */ ( /* m */ ) /* n */ { /* o */ } /* p */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-explicit-ctor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-expression-explicit-ctor.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-complex-heritage.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"[Function]\\\" (class /* a */ A /* b */ extends /* c */ class /* d */ B /* e */ { /* f */ } /* g */ { /* h */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-complex-heritage.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-implicit-ctor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-expression-implicit-ctor.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"[Function]\\\" (class /* a */ A /* b */ { /* c */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-declaration-implicit-ctor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/class-expression-implicit-ctor.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/bound-function.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"[Function]\\\"\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/bound-function.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-function-expression.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function F(x, y) {; }\\\" (async function /* a */ F /* b */ ( /* c */ x /* d */ , /* e */ y /* f */ ) /* g */ { /* h */ ; /* i */ ; /* j */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-function-expression.js"
+      ]
+    },
+    {
+      "count": 4,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function f() {}\\\" (async f /* a */ ( /* b */ ) /* c */ { /* d */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-class-statement.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-function-declaration.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function f(x, y) {; }\\\" (async function /* a */ f /* b */ ( /* c */ x /* d */ , /* e */ y /* f */ ) /* g */ { /* h */ ; /* i */ ; /* j */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-function-declaration.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-expression.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function* F(x, y) {; }\\\" (async /* a */ function /* b */ * /* c */ F /* d */ ( /* e */ x /* f */ , /* g */ y /* h */ ) /* i */ { /* j */ ; /* k */ ; /* l */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-expression.js"
+      ]
+    },
+    {
+      "count": 4,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function* f() {}\\\" (async /* a */ * /* b */ f /* c */ ( /* d */ ) /* e */ { /* f */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-class-statement.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-declaration.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"async function* f(x, y) {; }\\\" (async /* a */ function /* b */ * /* c */ f /* d */ ( /* e */ x /* f */ , /* g */ y /* h */ ) /* i */ { /* j */ ; /* k */ ; /* l */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-declaration.js"
+      ]
+    },
+    {
+      "count": 4,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-method-class-statement.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-static-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-static-method-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function #f() {}\\\" (#f /* a */ ( /* b */ ) /* c */ { /* d */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-method-class-statement.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-static-method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/private-static-method-class-statement.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-method.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function () {}\\\" (* /* a */ f /* b */ ( /* c */ ) /* d */ { /* e */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-method.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-computed-property-name.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function () {}\\\" ([ /* a */ \\\"f\\\" /* b */ ] /* c */ ( /* d */ ) /* e */ { /* f */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-computed-property-name.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function () {}\\\" (async /* a */ * /* b */ f /* c */ ( /* d */ ) /* e */ { /* f */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-generator-method-object.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function () {}\\\" (async f /* a */ ( /* b */ ) /* c */ { /* d */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/async-method-object.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function () {}\\\" (f /* a */ ( /* b */ ) /* c */ { /* d */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-object.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-expression.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function F(x, y) {; }\\\" (function /* a */ F /* b */ ( /* c */ x /* d */ , /* e */ y /* f */ ) /* g */ { /* h */ ; /* i */ ; /* j */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-expression.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/unicode.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function a(b, c) {b = c; return b}\\\" (function \\\\u0061(\\\\u{62}, \\\\u0063) { \\\\u0062 = \\\\u{00063}; return b; })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/unicode.js"
+      ]
+    },
+    {
+      "count": 4,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f() {}\\\" (f /* a */ ( /* b */ ) /* c */ { /* d */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/method-class-statement.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f() {}\\\" (get /* a */ f /* b */ ( /* c */ ) /* d */ { /* e */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-statement.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-declaration-non-simple-parameter-list.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(a = 0, arg) {}\\\" (function /* a */ f /* b */ ( /* c */ a /* d */ = /* e */ 0 /* f */ , /* g */ { /* h */ b /* i */ = /* j */ 0 /* k */ } /* l */ ) /* m */ { /* n */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-declaration-non-simple-parameter-list.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-statement.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(a) {}\\\" (set /* a */ f /* b */ ( /* c */ a /* d */ ) /* e */ { /* f */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-statement.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-declaration.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(x, y) {; }\\\" (function /* a */ f /* b */ ( /* c */ x /* d */ , /* e */ y /* f */ ) /* g */ { /* h */ ; /* i */ ; /* j */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/function-declaration.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-LF.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(x, y) {; }\\\" (function\\n// a\\nf\\n// b\\n(\\n// c\\nx\\n// d\\n,\\n// e\\ny\\n// f\\n)\\n// g\\n{\\n// h\\n;\\n// i\\n;\\n// j\\n})\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-LF.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-CR.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(x, y) {; }\\\" (function\\r// a\\rf\\r// b\\r(\\r// c\\rx\\r// d\\r,\\r// e\\ry\\r// f\\r)\\r// g\\r{\\r// h\\r;\\r// i\\r;\\r// j\\r})\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-CR.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-CR-LF.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function f(x, y) {; }\\\" (function\\r\\n// a\\r\\nf\\r\\n// b\\r\\n(\\r\\n// c\\r\\nx\\r\\n// d\\r\\n,\\r\\n// e\\r\\ny\\r\\n// f\\r\\n)\\r\\n// g\\r\\n{\\r\\n// h\\r\\n;\\r\\n// i\\r\\n;\\r\\n// j\\r\\n})\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/line-terminator-normalisation-CR-LF.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function get f() {}\\\" (get /* a */ f /* b */ ( /* c */ ) /* d */ { /* e */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/getter-object.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-object.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function set f(a) {}\\\" (set /* a */ f /* b */ ( /* c */ a /* d */ ) /* e */ { /* f */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-expression-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-class-statement-static.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/setter-object.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-function-expression.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function* F(x, y) {; }\\\" (function /* a */ * /* b */ F /* c */ ( /* d */ x /* e */ , /* f */ y /* g */ ) /* h */ { /* i */ ; /* j */ ; /* k */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-function-expression.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-function-declaration.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"function* g(x, y) {; }\\\" (function /* a */ * /* b */ g /* c */ ( /* d */ x /* e */ , /* f */ y /* g */ ) /* h */ { /* i */ ; /* j */ ; /* k */ })\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/generator-function-declaration.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/symbol-named-builtins.js"
+      ],
+      "reason": "Test262Error: Conforms to NativeFunction Syntax: \\\"undefined\\\"\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/symbol-named-builtins.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js"
+      ],
+      "reason": "Test262Error: Expected ReferenceError but got a different error constructor with the same name. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T1.js"
+      ],
+      "reason": "Test262Error: Expected SameValue(«3», «3») to be false. The value of f.length is not 3\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T2.js"
+      ],
+      "reason": "Test262Error: Expected SameValue(«5», «5») to be false. The value of f.length is not 5\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T3.js"
+      ],
+      "reason": "Test262Error: Expected SameValue(«6», «6») to be false. The value of f.length is not 6\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/length/S15.3.5.1_A2_T3.js"
+      ]
+    },
+    {
+      "count": 4,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-10-6gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-1-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-3-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-5-s.js"
+      ],
+      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-10-6gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-1-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-3-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/15.3.2.1-11-5-s.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/private-identifiers-not-empty.js"
+      ],
+      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. It should be a SyntaxError if AllPrivateIdentifiersValid returns false to dynamic function body\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/private-identifiers-not-empty.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/StrictFunction_reservedwords_with.js"
+      ],
+      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. `new Function(\\\"'use strict'; with ({}) {}\\\")` throws a SyntaxError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/StrictFunction_reservedwords_with.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/this-val-poisoned-prototype.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/value-get-prototype-of-err.js"
+      ],
+      "reason": "Test262Error: Expected Test262Error but got TypeError. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/this-val-poisoned-prototype.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/value-get-prototype-of-err.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/get-index-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/get-length-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-error.js"
+      ],
+      "reason": "Test262Error: Expected Test262Error to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/get-index-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/get-length-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-error.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-return-val-realm.js"
+      ],
+      "reason": "Test262Error: Expected TypeError but got a different error constructor with the same name. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-return-val-realm.js"
+      ]
+    },
+    {
+      "count": 16,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/argarray-not-object-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/argarray-not-object.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/this-not-callable-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/this-not-callable.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-11.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-12.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-13.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-14.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-15.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-20-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-21-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/BoundFunction_restricted-properties.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-non-callable-throws.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/argarray-not-object-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/argarray-not-object.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/this-not-callable-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/this-not-callable.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-11.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-12.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A14.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.bind.call(null, {}) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A14.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A13.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.bind.call(undefined, {}) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A13.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A15.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.bind.call({}, {}) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A15.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A15.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.call.call({}, {}) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A15.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A13.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.toString.call(null) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A13.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A12.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.toString.call(undefined) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A12.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A14.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. Function.prototype.toString.call({}) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A14.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A16.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. String(obj) throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A16.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A5.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. `new Function.prototype` throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A5.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/StrictFunction_restricted-properties.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. func.caller = {} throws a TypeError exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/StrictFunction_restricted-properties.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A10.js"
+      ],
+      "reason": "Test262Error: Expected obj[length] NOT to be writable, but was.\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A10.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-non-string.js"
+      ],
+      "reason": "Test262Error: Expected obj[name] NOT to be writable, but was.\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-non-string.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.5.2_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.5.2_A1_T2.js"
+      ],
+      "reason": "Test262Error: Expected true but got false\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.5.2_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.5.2_A1_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A2_T1.js"
+      ],
+      "reason": "Test262Error: Function.prototype.isPrototypeOf(Function) must return true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A2_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-9-1.js"
+      ],
+      "reason": "Test262Error: Function.prototype.isPrototypeOf(bf) !== true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-9-1.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A2_T2.js"
+      ],
+      "reason": "Test262Error: The result of evaluating (e instanceof SyntaxError) is expected to be true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A2_T2.js"
+      ]
+    },
+    {
+      "count": 6,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A1_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A16.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A16.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A1_T2.js"
+      ],
+      "reason": "Test262Error: The result of evaluating (e instanceof TypeError) is expected to be true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A1_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/S15.3.4.5_A16.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A16.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A1_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A9.js"
+      ],
+      "reason": "Test262Error: The value of !Function.prototype.call.hasOwnProperty('length') is expected to be true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A9.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A9.js"
+      ],
+      "reason": "Test262Error: The value of !Function.prototype.toString.hasOwnProperty('length') is expected to be true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/S15.3.4.2_A9.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/length.js"
+      ],
+      "reason": "Test262Error: length should be an own property\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/length.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/name.js"
+      ],
+      "reason": "Test262Error: name should be an own property\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/name.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-9.js"
+      ],
+      "reason": "Test262Error: obj.hasOwnProperty(\\\"property\\\") !== true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-9.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A2_T2.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 0 !== 1",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A2_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-exceeds-int32.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 0 !== 2147483648",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-exceeds-int32.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-tointeger.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 0 !== inf",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-tointeger.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T7.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 1 !== undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T7.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-4.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 3 !== 12",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-4.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/arguments/prop-desc.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/caller/prop-desc.js"
+      ],
+      "reason": "Test262Error: sameValue failed: [NativeFunction] !== [NativeFunction]",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/arguments/prop-desc.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/caller/prop-desc.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T1.js"
+      ],
+      "reason": "Test262Error: sameValue failed: [object] !== 1",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T1.js"
+      ],
+      "reason": "Test262Error: sameValue failed: [object] !== 7",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T3.js"
+      ],
+      "reason": "Test262Error: sameValue failed: [object] !== \\\"body\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T3.js"
+      ],
+      "reason": "Test262Error: sameValue failed: [object] !== undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.4_A2_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-chained.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"anonymous\\\" !== \\\"bound bound target\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name-chained.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"bound \\\" !== \\\"bound target\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-name.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-10.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"number\\\" !== \\\"undefined\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-6-10.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/prop-desc.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"undefined\\\" !== \\\"function\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/prop-desc.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-9-2.js"
+      ],
+      "reason": "Test262Error: sameValue failed: null !== [object]",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-9-2.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T13.js"
+      ],
+      "reason": "Test262Error: sameValue failed: null !== undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T13.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A2_T2.js"
+      ],
+      "reason": "Test262Error: sameValue failed: undefined !== 1",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A2_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/call-bind-this-realm-value.js"
+      ],
+      "reason": "Test262Error: sameValue failed: undefined !== [object]",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/call-bind-this-realm-value.js"
+      ]
+    },
+    {
+      "count": 10,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-arrow-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-generator-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-generator-method-definition.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-method-definition.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-bound-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-class.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-function-expression.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-generator-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-method-definition.js"
+      ],
+      "reason": "TypeError",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-arrow-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-generator-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-generator-method-definition.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-async-method-definition.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-bound-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-class.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/proxy-function-expression.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.3.1_A3.js"
+      ],
+      "reason": "TypeError: Cannot read property 'configurable' of undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.3.1_A3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.3.1_A1.js"
+      ],
+      "reason": "TypeError: Cannot read property 'writable' of undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.3.1_A1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-default-value.js"
+      ],
+      "reason": "TypeError: Object.setPrototypeOf called on a function (prototype is non-configurable)",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-length-default-value.js"
+      ]
+    },
+    {
+      "count": 30,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T5.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T6.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/base-ctor-revoked-proxy-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/proto-from-ctor-realm-prototype.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/proto-from-ctor-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/S15.3.3.1_A2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/this-val-bound-target.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/this-val-not-callable.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/value-negative.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/value-non-obj.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/Symbol.hasInstance/value-positive.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-5.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-6.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-8.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/15.3.4.5-2-9.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/get-fn-realm-recursive.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/get-fn-realm.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-construct-newtarget-self-reflect.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/proto-from-ctor-realm.js"
+      ],
+      "reason": "TypeError: Value is not a function, got undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.3_A3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T5.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3_A3_T6.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-construct-newtarget-self-new.js"
+      ],
+      "reason": "TypeError: function is not a constructor",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/instance-construct-newtarget-self-new.js"
+      ]
+    },
+    {
+      "count": 15,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T13.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T8.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T6.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T9.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-return-val.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-this-uninitialized.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A8_T4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A8_T5.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/not-a-constructor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/bind/not-a-constructor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A7_T4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/S15.3.4.4_A7_T5.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/call/not-a-constructor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/toString/not-a-constructor.js"
+      ],
+      "reason": "isolated exit 1: ❌ FAILED (exit code 1)",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T13.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A1_T8.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T10.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T6.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/S15.3.2.1_A3_T9.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-return-val.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/internals/Construct/derived-this-uninitialized.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/built-ins/Function/prototype/apply/S15.3.4.3_A8_T4.js"
+      ]
+    }
+  ],
+  "passed": 302,
+  "path": "test/built-ins/Function",
+  "skipped": 0,
+  "skips": {},
+  "stage": 72,
+  "total": 509
+}

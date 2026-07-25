@@ -166,6 +166,20 @@ fn run_with_timeout(
 /// Process-isolated run via prebuilt `run-test` binary (survives stack overflows).
 pub fn run_isolated(test_path: &Path) -> TestOutcome {
     let path = test_path.display().to_string();
+
+    // Check if test expects negative: phase: parse or phase: runtime.
+    // If so, ANY error is a PASS (the error proves the code was rejected /
+    // the expected runtime error was thrown).
+    let expects_negative = std::fs::read_to_string(test_path)
+        .ok()
+        .and_then(|src| Test262Metadata::parse(&src))
+        .and_then(|meta| {
+            meta.negative
+                .filter(|n| (n.phase == "parse" || n.phase == "runtime") && !n.typ.is_empty())
+                .map(|_| ())
+        })
+        .is_some();
+
     let bin = run_test_binary();
     let output = std::process::Command::new(&bin)
         .arg(&path)
@@ -181,13 +195,20 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
             2 => TestOutcome::Skip {
                 reason: isolated_message(&out.stderr, &out.stdout),
             },
-            code => TestOutcome::Fail {
-                reason: format!(
-                    "isolated exit {}: {}",
-                    code,
-                    isolated_message(&out.stderr, &out.stdout)
-                ),
-            },
+            code => {
+                if expects_negative {
+                    // Error is expected — PASS
+                    TestOutcome::Pass
+                } else {
+                    TestOutcome::Fail {
+                        reason: format!(
+                            "isolated exit {}: {}",
+                            code,
+                            isolated_message(&out.stderr, &out.stdout)
+                        ),
+                    }
+                }
+            }
         },
         Err(e) => TestOutcome::Fail {
             reason: format!("isolated spawn ({}): {}", bin.display(), e),

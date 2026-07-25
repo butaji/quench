@@ -8,7 +8,6 @@ use crate::env::Environment;
 use crate::eval::call::{eval_call, eval_member, eval_new, set_super_property};
 use crate::eval::class::eval_class_expr;
 use crate::eval::iteration::{eval_for_in, eval_for_of};
-use crate::eval::jsx::{eval_jsx_element, eval_jsx_fragment};
 use crate::eval::literal::{
     eval_array_literal, eval_identifier, eval_object_literal, eval_regexp_literal,
 };
@@ -397,12 +396,6 @@ pub fn eval_expression(
             env,
             in_arrow_function,
         ),
-        Expression::JsxElement {
-            tag,
-            props,
-            children,
-        } => eval_jsx_element(tag, props, children, env),
-        Expression::JsxFragment { children } => eval_jsx_fragment(children, env),
         Expression::Class(class) => eval_class_expr(class, env, None),
         Expression::Spread(_) => Err(JsError(
             "Spread must be used inside an array literal context".to_string(),

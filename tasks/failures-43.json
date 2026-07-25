@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 145,
+  "path": "test/language/block-scope",
+  "skipped": 0,
+  "skips": {},
+  "stage": 43,
+  "total": 145
+}

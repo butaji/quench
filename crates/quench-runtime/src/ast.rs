@@ -309,16 +309,6 @@ pub enum Expression {
         /// Per-iteration lexical binding for `for (let/const x in ...)`.
         loop_binding: Option<VarKind>,
     },
-    /// JSX element: <tag {...props}>{children}</tag>
-    JsxElement {
-        tag: JsxTagName,
-        props: Vec<JsxProp>,
-        children: Vec<JsxChild>,
-    },
-    /// JSX fragment: <>children</>
-    JsxFragment {
-        children: Vec<JsxChild>,
-    },
     /// RegExp literal: /pattern/flags
     RegExp {
         pattern: String,
@@ -330,48 +320,6 @@ pub enum Expression {
     Yield(Option<Box<Expression>>),
     /// Yield* expression: yield* expr (delegate to another generator)
     YieldDelegate(Box<Expression>),
-}
-
-/// JSX tag name (element name or component reference)
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsxTagName {
-    /// Regular HTML tag name: div, span, input
-    Ident(String),
-    /// Member expression: Foo.Bar
-    Member { object: String, property: String },
-    /// Namespaced name: ns:Element
-    Namespaced { namespace: String, name: String },
-}
-
-/// JSX property (attribute or spread)
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsxProp {
-    /// Regular attribute: className="foo"
-    Attr { name: String, value: JsxAttrValue },
-    /// Spread attribute: {...props}
-    Spread(Expression),
-}
-
-/// JSX attribute value
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsxAttrValue {
-    /// String literal: className="foo"
-    String(String),
-    /// Expression: value={count}
-    Expression(Expression),
-}
-
-/// JSX child element
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsxChild {
-    /// Text content
-    Text(String),
-    /// Expression: {count}
-    Expression(Expression),
-    /// Spread: {...children}
-    Spread(Expression),
-    /// Nested JSX element
-    Element(Box<Expression>),
 }
 
 /// Binding element - can be a simple identifier or nested pattern
@@ -458,6 +406,7 @@ pub enum ClassMember {
     Constructor {
         params: Vec<String>,
         body: Vec<Statement>,
+        has_rest_param: bool,
     },
     /// Regular method (params include default values)
     Method {

@@ -305,13 +305,28 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
             _ => None,
         })
         .collect();
+    let mut ps = ps;
+    let mut has_rest = false;
+    if let Some(rest) = &method.value.params.rest {
+        match &rest.argument.kind {
+            ast::BindingPatternKind::BindingIdentifier(ident) => {
+                ps.push(ident.name.as_str().to_string());
+                has_rest = true;
+            }
+            _ => {}
+        }
+    }
     let body = method
         .value
         .body
         .as_ref()
         .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
         .unwrap_or_default();
-    Some(ClassMember::Constructor { params: ps, body })
+    Some(ClassMember::Constructor {
+        params: ps,
+        body,
+        has_rest_param: has_rest,
+    })
 }
 
 #[allow(clippy::complexity)]

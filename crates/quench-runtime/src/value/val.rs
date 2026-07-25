@@ -174,6 +174,8 @@ pub struct ClassValue {
     /// Missing constructor on a derived class gets a synthetic
     /// `constructor(...args){ super(...args); }` — only then may we auto-call super.
     pub has_explicit_constructor: bool,
+    /// True when the constructor has a rest parameter (e.g. constructor(...args)).
+    pub has_rest_param: bool,
     /// Instance methods
     pub methods: Vec<ClassMethod>,
     /// Static methods
@@ -247,6 +249,7 @@ impl ClassValue {
         let mut constructor_params = Vec::new();
         let mut constructor_body = Vec::new();
         let mut has_explicit_constructor = false;
+        let mut has_rest_param = false;
         let mut methods = Vec::new();
         let mut static_methods = Vec::new();
         let mut getters = Vec::new();
@@ -262,6 +265,7 @@ impl ClassValue {
             &mut constructor_params,
             &mut constructor_body,
             &mut has_explicit_constructor,
+            &mut has_rest_param,
             &mut methods,
             &mut static_methods,
             &mut getters,
@@ -282,6 +286,7 @@ impl ClassValue {
             constructor_params,
             constructor_body,
             has_explicit_constructor,
+            has_rest_param,
             methods,
             static_methods,
             getters,
@@ -597,6 +602,7 @@ fn fill_members_from_ast(
     constructor_params: &mut Vec<String>,
     constructor_body: &mut Vec<crate::ast::Statement>,
     has_explicit_constructor: &mut bool,
+    has_rest_param: &mut bool,
     methods: &mut Vec<ClassMethod>,
     static_methods: &mut Vec<ClassMethod>,
     getters: &mut Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
@@ -609,10 +615,17 @@ fn fill_members_from_ast(
 ) {
     for member in members {
         match member {
-            ClassMember::Constructor { params, body } => {
+            ClassMember::Constructor {
+                params,
+                body,
+                has_rest_param: has_rest,
+            } => {
                 *constructor_params = params.clone();
                 *constructor_body = body.clone();
                 *has_explicit_constructor = true;
+                if *has_rest {
+                    *has_rest_param = true;
+                }
             }
             ClassMember::Method {
                 name,

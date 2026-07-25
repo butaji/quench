@@ -1,0 +1,371 @@
+{
+  "failed": 65,
+  "groups": [
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A8_T1.js"
+      ],
+      "reason": "ReferenceError: __gunc is not defined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A8_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T2.js"
+      ],
+      "reason": "ReferenceError: arguments is not defined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T2.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T3.js"
+      ],
+      "reason": "Test262Error: #1.1: arguments[0] === undefined\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A13_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A5.js"
+      ],
+      "reason": "Test262Error: #1: Function.prototype.isPrototypeOf(__func)\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A5.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T4.js"
+      ],
+      "reason": "Test262Error: #1: Since arguments property has attribute { DontDelete }, but elements of arguments can be deleted\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T4.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A1_T2.js"
+      ],
+      "reason": "Test262Error: #1: __PROTO.isPrototypeOf(__monster) must be true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A1_T2.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.1_A9.1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.1_A9.1_T2.js"
+      ],
+      "reason": "Test262Error: #1: __func() === undefined. Actual: __func() ===true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.1_A9.1_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.1_A9.1_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A15_T4.js"
+      ],
+      "reason": "Test262Error: #1: __func(42,42,42) === \\\"object\\\". Actual: __func(42,42,42)===undefined\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A15_T4.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A6_T1.js"
+      ],
+      "reason": "Test262Error: #1: __store__func === __func. Actual: __store__func ===function __func() {return 1}\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A6_T1.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T1.js"
+      ],
+      "reason": "Test262Error: #1: arguments property has attribute { DontDelete }\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A11_T1.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A12_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A12_T2.js"
+      ],
+      "reason": "Test262Error: #1: delete __func returning false\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A12_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A12_T2.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A19_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A19_T2.js"
+      ],
+      "reason": "Test262Error: #1: typeof __decl === \\\"function\\\". Actual: typeof __decl ===undefined\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A19_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A19_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A12.js"
+      ],
+      "reason": "Test262Error: #1: var obj = new FACTORY() does not lead to throwing exception. Actual: Exception is ReferenceError: func is not defined\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A12.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A2.js"
+      ],
+      "reason": "Test262Error: #2: Exception Type is TypeError. Actual: exception ===Test262Error: #1: __rose() lead to throwing exception\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A6_T2.js"
+      ],
+      "reason": "Test262Error: #2: __result === \\\"SECOND\\\". Actual: __result ===FIRST\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A6_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A1.js"
+      ],
+      "reason": "Test262Error: #2: typeof __exp__func === \\\"undefined\\\". Actual: typeof __exp__func ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A1.js"
+      ]
+    },
+    {
+      "count": 3,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T3.js"
+      ],
+      "reason": "Test262Error: #2: typeof __func === 'undefined'. Actual: typeof __func ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A2_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A18.js"
+      ],
+      "reason": "Test262Error: #2: typeof sinx === 'undefined'. Actual: typeof sinx ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13_A18.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A4_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A4_T2.js"
+      ],
+      "reason": "Test262Error: #3: __constructor_was__enumed === false. Actual: __constructor_was__enumed ===true\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A4_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2_A4_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T2.js"
+      ],
+      "reason": "Test262Error: #3: typeof __func === \\\"undefined\\\". Actual: typeof __func ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A17_T3.js"
+      ],
+      "reason": "Test262Error: #4: __obj.getRight() === false. Actual: __obj.getRight()===right\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A17_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T3.js"
+      ],
+      "reason": "Test262Error: #4: typeof __func === \\\"undefined\\\". Actual: typeof __func ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T3.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T1.js"
+      ],
+      "reason": "Test262Error: #5: typeof __func === \\\"undefined\\\". Actual: typeof __func ===function\")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A16_T1.js"
+      ]
+    },
+    {
+      "count": 10,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.0-13-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.0-14-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-22-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-23-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-25-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-27-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-29-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-31-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-33-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/eval-var-scope-syntax-err.js"
+      ],
+      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.0-13-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.0-14-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-22-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-23-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-25-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-27-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-29-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.1-31-s.js"
+      ]
+    },
+    {
+      "count": 16,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-10-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-13-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-14-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-17-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-18-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-19-b-3gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-2-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-21-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-22-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-25-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-26-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-30-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-4-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-5-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-6-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-9-s.js"
+      ],
+      "reason": "Test262Error: Expected TypeError to be thrown but no exception was thrown. \")",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-10-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-13-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-14-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-17-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-18-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-19-b-3gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-2-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-21-s.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/unscopables-with-in-nested-fn.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 1 !== 10",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/unscopables-with-in-nested-fn.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/unscopables-with.js"
+      ],
+      "reason": "Test262Error: sameValue failed: 1 !== undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/unscopables-with.js"
+      ]
+    },
+    {
+      "count": 1,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-18-1.js"
+      ],
+      "reason": "Test262Error: sameValue failed: \\\"[Function]\\\" !== \\\"[object Object]\\\"",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-18-1.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-1-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-3-s.js"
+      ],
+      "reason": "TypeError: 'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-1-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/13.2-3-s.js"
+      ]
+    },
+    {
+      "count": 2,
+      "paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A19_T7.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A8_T3.js"
+      ],
+      "reason": "TypeError: Value is not a function, got undefined",
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A19_T7.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/function/S13.2.2_A8_T3.js"
+      ]
+    }
+  ],
+  "passed": 386,
+  "path": "test/language/statements/function",
+  "skipped": 0,
+  "skips": {},
+  "stage": 26,
+  "total": 451
+}

@@ -195,6 +195,23 @@ impl Scope {
         if matches!(self.var_kinds.get(&name), Some(VarKind::Const)) {
             return false;
         }
+        // Handle DeclaredOnly → bindings transition: this happens when a `var`
+        // binding without an initializer (e.g. `var obj;`) is first assigned.
+        // Also sync to the object_binding (global object) so that subsequent
+        // strict-mode assignments don't incorrectly throw ReferenceError
+        // (the object_binding_has check would see the binding in bindings but
+        // not on the global object, and report Some(false), triggering a throw).
+        if self.declarations.contains_key(&name)
+            && matches!(self.declarations.get(&name), Some(VarState::DeclaredOnly))
+        {
+            self.declarations.remove(&name);
+            self.bindings.insert(name.clone(), Rc::new(value.clone()));
+            // Sync to the global object so the binding is visible there too.
+            if let Some(ref obj) = self.object_binding {
+                obj.borrow_mut().set(&name, value);
+            }
+            return true;
+        }
         match self.bindings.entry(name.clone()) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 if strict {

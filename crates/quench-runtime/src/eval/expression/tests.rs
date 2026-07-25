@@ -457,6 +457,92 @@ fn super_in_base_class_instance_method_works() {
 // ─── super in static method of derived class ──────────────────────
 
 #[test]
+#[test]
+fn test_tdz_basic() {
+    // Basic TDZ: accessing `y` before `let y;` runs
+    let basic = eval("try { y; 'no_exc' } catch(e) { 'caught' } let y;");
+    assert_eq!(basic, Ok(Value::String("caught".into())),
+        "Basic TDZ should throw ReferenceError");
+}
+
+#[test]
+fn test_tdz_in_function_call() {
+    // TDZ in function call: accessing `y` inside a function before `let y;` runs
+    let r = eval(
+        "var err = null; \
+         try { (function() { y; })(); } \
+         catch(e) { err = e; } \
+         let y; \
+         err !== null"
+    );
+    assert_eq!(r, Ok(Value::Boolean(true)),
+        "TDZ in function call should throw: {:?}", r);
+}
+
+#[test]
+fn test_tdz_in_for_of_direct() {
+    // TDZ in for-of: accessing `y` in the OF expression (after `of`)
+    let r = eval(
+        "var err = null; \
+         var x; \
+         try { for (x of [y]) { } } \
+         catch(e) { err = e; } \
+         let y; \
+         err !== null"
+    );
+    assert_eq!(r, Ok(Value::Boolean(true)),
+        "TDZ in for-of direct iterable should throw: {:?}", r);
+}
+
+#[test]
+fn test_tdz_in_direct_destructuring() {
+    // Test basic `{ x = y }` destructuring (not in for-of) with `y` in TDZ
+    let r = eval(
+        "var err = null; \
+         var obj = {}; \
+         try { var { x = y } = obj; } \
+         catch(e) { err = e; } \
+         let y; \
+         err !== null"
+    );
+    eprintln!("Direct destructuring TDZ test: {:?}", r);
+    assert_eq!(r, Ok(Value::Boolean(true)),
+        "TDZ in direct assignment destructuring default should throw: {:?}", r);
+}
+
+#[test]
+fn test_tdz_in_for_of_destructuring_default() {
+    // First check: does simple for-of destructuring work?
+    let s1 = eval(
+        "var s = 0; \
+         for ({ x } of [{x:5}]) { s += x; } \
+         s"
+    );
+    assert_eq!(s1, Ok(Value::Number(5.0)),
+        "for-of simple destructuring: {:?}", s1);
+    
+    // Second check: does default in destructuring work when no TDZ?
+    let s2 = eval(
+        "var v = 0; \
+         for ({ x = 99 } of [{}]) { v = x; } \
+         v"
+    );
+    assert_eq!(s2, Ok(Value::Number(99.0)),
+        "for-of destructuring with default: {:?}", s2);
+    
+    // Third check: now test TDZ
+    let r = eval(
+        "var err = null; \
+         try { for ({ x = y } of [{}]) { } } \
+         catch(e) { err = e; } \
+         let y; \
+         err !== null"
+    );
+    eprintln!("For-of destructuring TDZ test: {:?}", r);
+    assert_eq!(r, Ok(Value::Boolean(true)),
+        "TDZ in for-of destructuring default should throw: {:?}", r);
+}
+
 fn super_in_static_method_of_derived_class_works() {
     // super.property in a static method should access the superclass constructor's
     // own properties (static methods/fields).
