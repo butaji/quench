@@ -145,25 +145,6 @@ pub fn eval_class_expr(
                     new_value.push_static_field_key(key_str);
                     static_field_idx += 1;
                 }
-                let key_str = match new_value.static_field_key(static_field_idx) {
-                    Some(k) => k,
-                    None => prop_key_to_string(name, &child_env, true)?,
-                };
-                crate::eval::class::helpers::set_function_name_for_field_initializer(
-                    &mut field_value,
-                    name,
-                    &key_str,
-                    value_expr,
-                );
-                let storage_key = if crate::value::is_private_name_key(&key_str) {
-                    key_str
-                } else if key_str.starts_with('#') {
-                    crate::value::private_name_key(&key_str)
-                } else {
-                    key_str
-                };
-                new_value.set_static_field(&storage_key, field_value)?;
-                static_field_idx += 1;
             }
             crate::ast::ClassMember::StaticMethod { name, .. } => {
                 let key_str = prop_key_to_string(name, &class_scope, true)?;

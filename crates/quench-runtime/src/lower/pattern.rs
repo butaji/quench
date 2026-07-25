@@ -121,13 +121,7 @@ pub fn lower_assignment_target_prop(
     match prop {
         ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(id) => {
             let key = PropertyKey::Ident(id.binding.name.as_str().to_string());
-            let binding = BindingElement::Identifier(id.binding.name.as_str().to_string());
-            let value = if let Some(init) = &id.init {
-                let init_expr = lower_expr(init).ok()?;
-                BindingElement::Default(Box::new(binding), Box::new(init_expr))
-            } else {
-                binding
-            };
+            let value = BindingElement::Identifier(id.binding.name.as_str().to_string());
             Some((key, value))
         }
         ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(prop) => {

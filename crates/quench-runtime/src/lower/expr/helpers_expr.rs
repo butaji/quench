@@ -130,10 +130,6 @@ fn lower_computed_member_expr(
     })
 }
 
-fn private_field_prop_key(name: &str) -> PropertyKey {
-    PropertyKey::Ident(crate::value::private_name_key(name))
-}
-
 fn lower_private_field_expr(
     member: &ast::PrivateFieldExpression,
 ) -> Result<Expression, LowerError> {

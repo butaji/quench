@@ -32,26 +32,42 @@ Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 
 ### Note on `urlencoding`
 
-`urlencoding` only handles `%`-encoding/decoding — keep it for
-`encodeURI`/`decodeURI`. ES modules (stage 53) additionally need full
-URL Standard resolution. **Decision:** add `url` (rust-url) +
-`data-url` (data: payload decoding) when stage 53 starts; do not
-replace `urlencoding`, which is correct for the URI builtins.
+`urlencoding` only handles `%`-encoding/decoding. The ECMAScript `import`
+spec requires full URL resolution (scheme parsing, path normalization,
+`data:` URLs, bare specifiers). Consider upgrading to `url` (rust-url) which
+implements the URL Standard and covers `data:` URLs natively.
 
 ---
 
-## Accepted — landing at their stage (decisions made 2026-07-24)
+## Candidate — not yet added
 
-Each row lands with a failing test and a `Cargo.toml` diff in the same PR.
+Each row needs a failing test, a `DEPENDENCIES.md` diff, and a verification
+run before landing.
 
-| Crate | Stage | Decision |
-|---|---|---|
-| `oxc_semantic = "0.47"` | R17 | **Adopt.** Early errors on the oxc AST pre-lower; the `oxc` umbrella crate does not include it (Cargo.lock-verified). Deletes thousands of hand-rolled LOC in `lower/`. |
-| `bumpalo = "3"` | R19 | **Adopt** (not `bump_scope` — unproven). Arena for eval frames → parser → Value constructors. |
-| `string_interner = "0.20"` | R21 | **Adopt** and delete the unused hand-rolled `src/interner.rs` in the same diff. Hashing via the vendored `rustc-hash`; `fnv` is rejected (stale, slower). |
-| `url` + `data-url` | 53 `modules` | **Adopt** for URL Standard resolution + `data:` payload decoding. `urlencoding` stays for the URI builtins. |
-| `regex` + `unicode-perl` | 84 `RegExp` | **Adopt as secondary engine only.** Dispatched when a pattern has `\p{}`/`\P{}` and no lookaround/backrefs; `regress` stays primary (only it has backrefs/lookbehind). Residual gap: patterns needing both. |
-| `temporal_rs` + `zoneinfo_rs` | 120 `Temporal` | **Adopt.** Powers Boa (94.12%), Kiesel; V8's Temporal is being implemented on it. Pin the version whose spec snapshot matches the test262 checkout when stage 120 starts. |
+### High confidence (research-verified, spec-aligned)
+
+| Crate | Stage | Difficulty | Why | Risk |
+|---|---|---|---|---|
+| `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. 244.6M+ downloads, stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. 2–4× speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
+| `url` | 53 `modules` | 5 | Supersedes `urlencoding` for URL Standard compliance. Covers `import "https://..."`, bare specifier resolution, and `data:` URLs. | Low. Drop-in upgrade. |
+| `oxc_semantic` | R17 | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
+| `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa (94.12% test262), Kiesel, and **V8/Chrome 144**. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
+| `regex` + `unicode-perl` | 84 `RegExp` | 7 | `regress` (ES2018) does NOT support Unicode property escapes `\p{}`. `regex` with `unicode-perl` covers `\p{Script}`, `\p{Emoji}`, etc. | Low. Evaluate replacing `regress` if `regex` covers ES2018 backreferences + lookbehind too. |
+
+### Medium confidence (research-verified, needs validation)
+
+| Crate | Stage | Difficulty | Why | Risk |
+|---|---|---|---|---|
+| `swc_ecma_compat_es2017::async_to_generator` | 40, 38, 113, 97-99 | 7 | Unlocks ~2,500 async tests. `docs.rs/swc_ecma_compat_es2017` exposes the transform. | **High.** Full `swc_ecma_*` stack (~10+ crates) alongside existing `oxc` (0.47). Validate: (a) works standalone without swc parser, (b) no version conflict. Fallback: hand-roll ~500 LOC in `lower/`. Boa proof-of-concept confirms hand-rolled works. |
+| `smol` | 113 `Promise` | 5 | Single-threaded async executor for microtask queue. Boa uses its own executor (not smol); the hand-rolled job queue in `builtins/promise/` works today. | Medium. Evaluate against integration complexity. |
+| `data-url` | 53 `modules` | 4 | Parses `data:` URLs per Fetch Standard. `import "data:text/javascript,..."` needs this. | Low. Small, focused crate. |
+
+### Low priority / evaluate later
+
+| Crate | Stage | Difficulty | Why | Risk |
+|---|---|---|---|---|
+| `unicode-segmentation` | 82 `String` | 3 | Grapheme cluster iteration. The spec uses code point iteration for `String.prototype[Symbol.iterator]`, not grapheme clusters. Not needed unless `String.prototype` methods specifically require it. | Low priority. |
+| `bytemuck` | 102 `TypedArray` | 2 | Safe typed array element transmutation. `f32::from_bits` works for single values. Bulk operations would need it, but that's not the bottleneck. | Not needed now. Re-evaluate when TypedArray bulk operations are profiled. |
 
 ---
 
@@ -59,12 +75,8 @@ Each row lands with a failing test and a `Cargo.toml` diff in the same PR.
 
 | Crate | Stage | Why rejected |
 |---|---|---|
-| `swc_ecma_compat_es2017` | async→generator (38, 40, 97–99) | Operates on the swc AST — requires a second parser stack (`swc_ecma_*`, ~10+ crates) + codegen + oxc re-parse. Rejected 2026-07-24: single parser (OXC) only. Async is hand-rolled in `eval/` (S4; Boa reaches 94.12% the same way). |
-| `tokio` | Promise / async | Overkill. Full multi-threaded runtime; a hand-rolled job queue is purpose-built for a microtask queue. |
-| `smol` | 113 `Promise` | Same role, smaller — still unnecessary. Boa runs a hand-rolled executor; the existing `builtins/promise/` job queue stays. |
+| `tokio` | Promise / async | Overkill. Full multi-threaded runtime; smol or hand-rolled is purpose-built for a microtask queue. |
 | `async-executor` | Promise / async | Same role as smol but more bytes. |
-| `unicode-segmentation` | 82 `String` | Spec iterates **code points**, not grapheme clusters, for `String.prototype[Symbol.iterator]`. No current stage needs graphemes. |
-| `bytemuck` | 102 `TypedArray` | `f32::from_bits`-style conversions suffice; adopt only if profiling shows bulk transmutation hot. |
 | `fancy-regex` | RegExp | Supports lookbehind but not ES2024 `unicode_sets` mode for `\p{}`. |
 | `re2` | RegExp | No backreferences, lookahead, or Unicode property escapes — too limited for ES spec. |
 | `time` crate | Date / Temporal | Covers basic Date math but not the full Temporal API. `temporal_rs` + `chrono` covers this. |
@@ -93,9 +105,9 @@ No `cfg(target_os = "macos")` branches should appear in `src/`.
 | Stage | Difficulty | Spec version | Crate coverage | Gap |
 |---|---|---|---|---|
 | RegExp | 7 | ES2024 | `regress` (ES2018) + `regex` (Unicode) | Unicode property escapes `\p{}` — `regex` fills gap |
-| Temporal | 9 | Stage 4 (2026-03) | `temporal_rs` + ICU4X | None. `temporal_rs` also underpins V8's in-progress Temporal implementation. |
+| Temporal | 9 | Stage 4 (2026-03) | `temporal_rs` + ICU4X | None. `temporal_rs` is the reference impl for V8/Chrome. |
 | Modules | 5 | ES2020+ | `url` (URL Standard) | `data:` URLs — `data-url` or inline parsing needed |
 | Date | 3 | ES2023 | `chrono` (partial) | R3: `builtins/date.rs` hand-rolls leap-year math without importing chrono. Fix: use `chrono::NaiveDate` + `chrono::Utc` in `builtins/core/date.rs`. |
-| async/await | 7 | ES2017 | hand-rolled in `eval/` (Boa-style, ~500 LOC) | oxc_transformer has no async-to-generator (confirmed); swc rejected (second parser — OXC only). Boa proof: hand-rolled works. |
+| async/await | 7 | ES2017 | `swc_ecma_compat_es2017::async_to_generator` or hand-rolled | **Verify before committing swc.** oxc_transformer does NOT have async-to-generator (confirmed). Boa proof-of-concept: hand-rolled works. |
 
-Last verified: 2026-07-24.
+Last verified: 2026-07-23.

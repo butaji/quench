@@ -5,9 +5,7 @@ Data-driven (per-stage counts live in `tasks/index.json`):
 - **42,892 tests** across 122 stages: language 23,711 · built-ins
   23,668 · annexB 1,086 · harness 116.
 - **27,323 passed (63.7%)** as of 2026-07-23 full digest. In progress:
-  stage 25 `for-of` — 751 (698 pass / 53 fail, `tasks/failures-25.json`).
-  Stage 13 `async-function` is a documented gate exception (pending,
-  awaits S4; see `tasks/index.json` `gate_exceptions`).
+  stage 16 `class` — 4,367.
 - Largest remaining: `expressions` 11,101 · `Temporal` 4,603 ·
   `class` 4,367 · `Object` 3,411 · `Array` 3,081 · `RegExp` 1,879 ·
   `TypedArray` 1,446 · `for-await-of` 1,234 · `String` 1,223 ·
@@ -37,7 +35,7 @@ Phase B — before grinding built-ins (~stage 71 Object)
 
 Phase C — built-ins → annexB → Temporal
   C1. Built-ins stages in JS        (never re-expand Rust builtins)
-  C2. S4 async→generator            (for-await-of / Promise / Async*; hand-rolled, OXC only)
+  C2. S4 async→generator            (for-await-of / Promise / Async*; verify swc first)
   C3. R18 regex Unicode escapes     (RegExp \p{}; before stage 84)
   C4. Temporal last                 (temporal_rs + ICU4X; stage 120)
 ```
@@ -76,22 +74,29 @@ lowering (R17; `DEPENDENCIES.md` row in the same diff).
 
 ## S4 — Async-to-generator transform *(medium-high, Phase C)*
 
-Generators work (generator stages land via the stage gate; note:
-`tasks/index.json` marks stage 27 `generators` **pending** — certify it
-through the gate before relying on "done"). Async stages
+Generators already pass (stage 27 `done`). Async stages
 (`async-generator`, `for-await-of` 1,234, `await-using`) plus `Promise`
 729 + `AsyncFunction`/`AsyncGenerator*` reduce to generators + a job
 queue if the transform runs at lower time.
 
-**Decision (2026-07-24): hand-rolled async in `eval/`, OXC only.**
-Single parser, ever. `oxc_transformer` has no async-to-generator
-transform, and the only crate that does
-(`swc_ecma_compat_es2017::async_to_generator`) operates on the swc AST —
-using it means a second parser stack (`swc_ecma_*`, ~10+ crates), a
-codegen step, and an oxc re-parse. That is rejected outright
-(`docs/architecture.md` §Execution model: single parser). Boa reaches
-94.12% test262 with a hand-rolled async executor (~500 LOC, no
-transform dependency); Kiesel does the same. That is the path.
+**Confirmed (2026-07-23):** `oxc_transformer` does NOT have an
+async-to-generator transform — it handles TypeScript stripping, JSX,
+React, decorators, and ES2026→ES2015 lowering only.
+`swc_ecma_compat_es2017::async_to_generator` (docs.rs confirmed) has the
+transform. The risk is adding the full `swc_ecma_*` dependency stack (~10+
+crates) alongside existing `oxc` (0.47), creating a second heavyweight
+parser dependency.
+
+Verification steps:
+1. Does `swc_ecma_compat_es2017` work standalone (without the full swc
+   parser), or does it require `swc_ecma_parser` as a peer?
+2. Does it conflict with the current `oxc` version in `Cargo.toml`?
+3. Run a subset of `for-await-of` (stage 40) tests against the transform
+   output before committing.
+
+If swc conflicts: fall back to hand-rolling async eval nodes in `eval/`
+(~500 LOC, low risk). Boa (the reference Rust JS engine) uses a hand-rolled
+async executor and achieves 94.12% test262 without a swc dependency.
 
 ## S5 — Parallel in-stage runner + failure digest tooling *(medium — active)*
 
@@ -107,14 +112,6 @@ Detail: `tasks/harness-roadmap.md`.
 **Next:** cluster filter, digest diff script, progress fields in
 `index.json`, zero crash-file skips.
 
-**Harness fidelity (hard rule):** the runner must execute test262's own
-harness files verbatim — no native reimplementations, no-op patches,
-stripped functions, or skipped includes. Existing overrides are tracked
-debt with removal criteria in `tasks/harness-roadmap.md` §Harness
-fidelity; new overrides are rejected like skip-list entries. A
-conformance number produced by a substituted harness is not a
-conformance number.
-
 ## S6 — Disciplined unit tests *(ongoing practice)*
 
 Per `AGENTS.md`: reproducers, core invariants, refactor pins only.
@@ -126,15 +123,13 @@ Policy (`DEPENDENCIES.md`): regress, chrono, num-bigint, serde_json,
 urlencoding, oxc. **Long pole: `Temporal` (4,603)** — staged last.
 
 `temporal_rs` confirmed production-grade (2026-07-23 research):
-- Used by **Boa** (94.12% test262), **Kiesel**; V8's Temporal is being
-  implemented on it (Node issue #58730)
+- Used by **Boa** (94.12% test262), **Kiesel**, and **V8/Chrome 144**
 - 8 types: `ZonedDateTime`, `Instant`, `PlainDateTime`, `PlainDate`,
   `PlainTime`, `Duration`, `Calendar`, `TimeZone`
 - ICU4X for calendar/timezone math; Diplomat for C++/Rust FFI
 - ES Stage 4 (2026-03-11); spec stable
 - `DEPENDENCIES.md` row in the same diff as Temporal stage start.
-- Version pin: the `temporal_rs` release whose spec snapshot matches the
-  test262 checkout at stage-120 start (decided in `DEPENDENCIES.md`).
+- Evaluate API surface vs. ES spec version before committing.
 
 ## S8 — `url` over `urlencoding` *(low effort, early Phase A/B)*
 
@@ -162,7 +157,7 @@ count × external dependencies. `impl` = primary implementation language.
 | 44 | `language/expressions` | 11,101 | 8 | rust | ~1,500 | 0 | Many eval nodes, early errors | `oxc_semantic` |
 | 16 | `statements/class` | 4,367 | 7 | rust | ~800 | 0 | Object model, super, private | R5 ✓ object model fix |
 | 84 | `built-ins/RegExp` | 1,879 | 7 | hybrid | ~300 | ~400 | Unicode property escapes `\p{}` | `regex` + `unicode-perl` |
-| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: hand-rolled (OXC only) |
+| 38 | `statements/async-generator` | 301 | 7 | rust | ~400 | 0 | Async→generator transform | S4: `swc_ecma_compat` or hand-rolled |
 | 97 | `AsyncGeneratorFunction` | 23 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
 | 98 | `AsyncGeneratorPrototype` | 48 | 7 | rust | ~100 | 0 | Same as S4 | S4 |
 | 40 | `statements/for-await-of` | 1,234 | 7 | rust | ~300 | 0 | Async iteration + await + R2 | S4 + R2 iterator protocol |
@@ -226,14 +221,8 @@ No Darwin-specific code needed for any remaining stage:
   skip list is a lie that compounds.
 - *Grinding Object/Array/String in Rust* — deleted by R0.
 - *oxc_transformer for async* — confirmed (2026-07-23) it has no
-  async-to-generator.
-- *swc for async (`swc_ecma_compat_es2017`)* — needs a second parser
-  stack + codegen + oxc re-parse. Rejected outright: single parser
-  (OXC) only. Async is hand-rolled in `eval/` (S4).
-- *Evaluating directly on the oxc AST (dropping `ast.rs` + `lower/`)* —
-  saves ~6.2k LOC but rewrites ~25k LOC of working eval and couples it
-  to oxc's arena lifetimes; rejected, see `docs/architecture.md`
-  §Execution model.
+  async-to-generator; S4 now targets `swc_ecma_compat_es2017` with
+  validation gates.
 - *tokio for async* — overkill for a microtask queue; smol or
   hand-rolled is correct scope.
 - *fancy-regex / re2 for RegExp* — too limited for ES2024 `\p{}`
@@ -254,114 +243,25 @@ Confirmed by the [Rust Performance Book](https://nnethercote.github.io/perf-book
 "Compared to opt-level = 'z', it allows slightly more inlining and also the
 vectorization of loops." Source: `nnethercote.github.io/perf-book`.
 
-## S10 — `bumpalo` arena allocation *(high, Phase B, ~300 LOC)*
+## S10 — `bumpalo` arena allocation *(high, Phase B)*
 
-Most `JsValue` objects and eval frames are short-lived and freed in LIFO
-order. `bumpalo` (244M+ downloads, Rust-native) allocates from a
-pre-reserved arena — a single bump pointer with no per-allocation
-bookkeeping. `bump_scope` (crate, ~2x faster in micro-benchmarks) uses
-scope-based lifetime for arena resets; both are viable.
+Short-lived JS values and eval frames are a natural fit for arena
+allocation (bump pointer, no per-object bookkeeping). See **R19** in
+`tasks/refactor-plan.md` for details and checkboxes.
 
-Key constraint: **no `Drop` on freed objects.** Types that need finalizers
-(e.g. closing file handles) must use `bumpalo::boxed::Box` which runs Drop
-on scope exit; heap allocation is acceptable for those. Most JS value
-types (`Object`, `Array`, `String`) have no Drop impl.
+## S11 — NaN-boxed `JsValue` *(high, Phase B)*
 
-Usage in Quench:
-- Parsing: `Arena` lives for the parse phase; all `NodeId`s / AST nodes
-  allocated from it; freed in one shot when the arena drops.
-- Eval frames: `Bump` in `Context`; eval loop allocates Value slots from
-  it; each top-level eval call resets with `Bump::new`.
-- NaN-boxed `JsValue` layout (S11): inline scalar types in 64 bits,
-  heap allocations only for objects/strings that overflow the NaN payload.
+Store every JS value in a single `u64` (integer in the top 33 bits,
+pointer in the low 49 bits of a quiet NaN) instead of a Rust enum.
+See **R20** in `tasks/refactor-plan.md` for bit layout and checkboxes.
 
-Boa historically used individual heap allocation; switching to arena
-allocation (when paired with S11 NaN boxing) is a measurable memory and
-throughput win. Boa v0.21 benchmarks on microbenchmarks show significant
-improvement with NaN boxing alone; arena allocation compounds this.
+**Do not start before R5 (object model correctness) — NaN boxing must
+pair with the correct property store.**
 
-- [ ] `bumpalo = "3"` or `bump_scope` in `Cargo.toml`.
-- [ ] `DEPENDENCIES.md` row.
-- [ ] `#[test]`: no Drop impls on freed arena objects.
-- [ ] Migration: eval frames first, then parser, then Value constructors.
+## S12 — String interning / atom table *(medium-high, Phase B)*
 
-## S11 — NaN-boxed `JsValue` *(high, Phase B, ~600 LOC)*
-
-JS values are either 31-bit integers, quiet NaN payloads (strings,
-symbols, objects, undefined, null, booleans), or 64-bit IEEE754 numbers.
-Rust's `enum JsValue` with inline/`Box`/Rc variants costs 2 words per
-Value + heap traffic for every object. NaN boxing stores everything in a
-single `u64`: integers in the top 33 bits, pointers in the low 49 bits
-of a quiet NaN, with a tag field to distinguish pointer-slot from
-integer-slot from raw number.
-
-**Confirmed (2026-07-23):**
-- Boa v0.21 switched from enum to NaN-boxed `JsValue` (October 2025).
-- Boa v0.21 achieves 94.12% test262 conformance.
-- SpiderMonkey and JSC use NaN boxing; V8 uses tagged pointers.
-- No dedicated Rust crate — implement with `unsafe` in `value/` module.
-- Quiet NaN (qNaN) only — signaling NaN never appears in IEEE754 JS
-  values.
-
-Bit layout (leaves room for 2^16 object types in the tag space):
-
-```
-63       49     48     32     31     0
-[unused][tag ][integer payload    ] — integer slot (tag = 0xFFFF)
-63       49     48     32     31     0
-[unused][tag =0][pointer payload          ] — pointer slot (tag = 0x0000)
-```
-
-Tag values: `0xFFFF` → Integer, `0x0000` → Pointer, `0x7FFC` → Double.
-Pointer encoding uses 2^49 offset to distinguish from canonical NaN
-(`0x7FFC000000000000`). `JsValue` becomes a newtype `u64` with accessor
-methods; `JsValue::new_integer(i32)`, `JsValue::new_object(*mut Object)`,
-`JsValue::new_double(f64)`, `JsValue::unbox()`.
-
-Migration order: implement alongside `bumpalo` (S10), as NaN boxing reduces
-heap pressure that arena allocation handles. Do **not** migrate before R5
-(object model correctness) — NaN boxing must pair with the correct property
-store, not the current buggy one.
-
-- [ ] `value/value_nan.rs` — `JsValue` newtype + all accessor methods.
-- [ ] `#[test]`: integer round-trip, object round-trip, double round-trip,
-      `undefined`, `null`, `true`, `false`, `NaN`, `Infinity`.
-- [ ] `#[test]`: NaN-boxed value survives a bumpalo round-trip.
-- [ ] `#[test]`: `Object.is` / `SameValue` on NaN-boxed values.
-
-## S12 — String interning / atom table *(medium-high, Phase B, ~400 LOC)*
-
-JavaScript string comparisons are pervasive: property key lookup, `===`
-comparison, `Map`/`Set` hashing. Un-interned `String` objects do O(n)
-byte-by-byte comparison on every `==`; an atom table deduplicates strings
-so pointer comparison (`==`) is O(1).
-
-**Confirmed (2026-07-24):**
-- `src/interner.rs` already holds a hand-rolled `StringInterner` on
-  `Context` with zero call sites — S12 starts by wiring it in or
-  replacing it with the crate, deleting the loser in the same diff.
-- `string_interner` crate: current 0.20 (0.19 fine), O(1) get/create.
-- Hashing: reuse the vendored `rustc-hash` (`FxHashMap`). Do NOT add
-  `fnv` (max release is 1.0.7; the `fnv = "2"` line was unresolvable).
-- QuickJS uses a global atom table in `JSRuntime` with ~50k atom slots.
-- `string_cache` (Servo): unmaintained since ~2020.
-
-Usage:
-- Property keys (string and Symbol): interned key lookup for `Object`
-  property map; `Key = InternedKey(KeyId)` from `string_interner`.
-- String literals: intern at parse time; string comparison in eval uses
-  `KeyId::eq` (pointer compare).
-- String values: stored as `Rc<str>` or interned StringId; comparison
-  via `StringId::eq`.
-
-Implementation: `string_interner::StringInterner` in `Context`; every
-`Value::String(s)` wraps a `StringId`. `#[test]`: "abc" == "abc" pointer
-compare; `Map` with 10k string keys (performance regression test).
-
-- [ ] Decide: wire `src/interner.rs` or adopt `string_interner = "0.19"`;
-      delete the other. `DEPENDENCIES.md` row if the crate lands.
-- [ ] `#[test]`: interned string pointer equality.
-- [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
+Intern strings so property key comparison is O(1) pointer compare.
+See **R21** in `tasks/refactor-plan.md` for crate choice and checkboxes.
 
 ### Total work remaining (approximate)
 
@@ -370,7 +270,7 @@ compare; `Map` with 10k string keys (performance regression test).
 | R5 object model (partial ✓) | ~300 remaining | — | eval nodes + property store |
 | R0 self-hosting (0 started) | 0 | ~8,000 | Object→TypedArray; 3x smaller than Rust equivalent |
 | R17 oxc_semantic early errors | ~500 | — | ES2015+ static semantics |
-| S4 async→generator | ~400 | — | hand-rolled (OXC only) |
+| S4 async→generator | ~400 | — | swc or hand-rolled |
 | R2/R3 iterator + Date | ~100 | ~100 | |
 | R18 RegExp Unicode | ~300 | ~400 | `regex` crate |
 | S10 bumpalo | ~300 | — | arena allocation |
@@ -382,18 +282,9 @@ compare; `Map` with 10k string keys (performance regression test).
 | **Total (rounded)** | **~11,000** | **~17,000** | ~28k combined |
 | **Target (aspirational, 100%)** | **~8–12k** | **~19k** | Per Boa ~25k Rust → 94% |
 
-Current: ~68k production Rust (`src/`: ~46k core/eval/value, ~16k
-builtins, ~6k test262 harness; measured 2026-07-24). Strategy brings
-Rust down to ~20–28k + JS up to ~17k = ~37–45k total, a ~35–50%
+Current: ~57k Rust + ~14k builtins Rust = ~71k production Rust. Strategy
+brings Rust down to ~20–28k + JS up to ~17k = ~37–45k total, a ~35–50%
 reduction, with the heavy spec logic moved to self-hosted JS.
-
-Identified removal levers (2026-07-24 audit, all tracked in
-`tasks/refactor-plan.md`): R23 unwired `patches/oxc_parser` (~4.6k),
-R0 Rust-builtins deletion (~14k → ~10k JS), R24 delete TS/JSX entirely
-(~0.9k — quench is a JS runtime; Ink compat removed), R17 hand-rolled
-early errors + `strict_reserved.rs`, R9 debris + 35 dead-code markers,
-harness native assert duplication (~2.1k, §Harness fidelity in
-`tasks/harness-roadmap.md`), R15 test-helper dedup (16 copies).
 
 ## CI regression gate
 

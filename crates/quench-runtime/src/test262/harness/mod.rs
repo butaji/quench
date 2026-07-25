@@ -68,11 +68,15 @@ impl HarnessLoader {
         if trimmed.is_empty() {
             return None;
         }
-        // Patch deepEqual.js: the original JS file overwrites assert.deepEqual
-        // with a buggy implementation that fails for objects-with-arrays.
-        // Replace it with a no-op that preserves the working native version.
+        // NOTE: deepEqual.js is suppressed because Quench's runtime is
+        // incomplete — the upstream file (identical to the local copy) is
+        // spec-correct and used by all major engines. It depends on
+        // Reflect.ownKeys, Symbol.toStringTag, Symbol.iterator, Array.isArray,
+        // Map, Set, all TypedArrays, Promise, and boxed primitives being
+        // fully wired up. Once those exist, delete this override and load the
+        // JS version. See docs/test-harness-overrides.md, R23 in refactor-plan.
         let patched = if name == "deepEqual.js" {
-            String::new() // empty = effectively a no-op, assert.deepEqual stays native
+            String::new() // empty = no-op, assert.deepEqual stays native
         } else {
             trimmed.clone()
         };
@@ -89,11 +93,14 @@ impl HarnessLoader {
     pub fn build_script(&self, source: &str, includes: &[String]) -> Result<String, String> {
         let mut out = String::with_capacity(source.len() + 4096);
         for inc in includes {
-            // Skip isConstructor.js from includes — the native isConstructor (installed by
-            // try_inject_harness) is spec-correct. The JS wrapper from isConstructor.js
-            // checks `typeof f.prototype === 'function'` which fails because ES6 function
-            // prototypes are plain objects (typeof === 'object'), causing the wrapper to
-            // return false for all functions and shadowing the native implementation.
+            // Skip isConstructor.js — the native isConstructor (installed by
+            // try_inject_harness) covers all edge cases. The upstream JS
+            // (identical to the local copy) actually uses Reflect.construct
+            // and is spec-correct — the old comment claiming it checked
+            // typeof f.prototype === 'function' was wrong. Keep the skip
+            // because the native version is simpler and already used by
+            // builtins code. Remove once builtins route through JS only.
+            // See docs/test-harness-overrides.md, R23 in refactor-plan.
             if inc == "isConstructor.js" {
                 continue;
             }
@@ -496,14 +503,11 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     // assert.js and sta.js both use Test262Error.
     inject_test262_error(ctx);
 
-    // Store the main realm's Test262Error so create_js_error_with_type can use it
-    // even when CURRENT_CONTEXT points to a sub-realm (e.g., inside
-    // $262.createRealm().global.eval(...)). This ensures the wrapped error's
-    // .constructor is the main realm's Test262Error, so that
-    // err.constructor === Test262Error works in test code.
-    if let Some(te) = ctx.get_global("Test262Error") {
-        crate::value::error::set_main_realm_test262_error(te);
-    }
+    // NOTE: MAIN_REALM_TEST262_ERROR is NOT set here. It must be set by the
+    // CALLER after try_inject_harness returns (e.g., QuenchHost::run_script
+    // or the test runner code). Setting it here would cause sub-realms
+    // ($262.createRealm()) to overwrite the main realm's constructor.
+    // See also create_js_error_with_type in value/error.rs.
 
     // STEP 1b: Inject __quenchSameValue BEFORE loading assert.js
     // This is a native SameValue function that handles NaN correctly
@@ -636,16 +640,17 @@ assert._toString = function (value) {
         "propertyHelper.js",
         "nativeErrors.js",
         // deepEqual.js is NOT loaded here. The native assert_deep_equal
-        // (property_helpers.rs) handles deep structural comparison correctly.
-        // Loading the JS version overwrites it with a buggy implementation that
-        // returns wrong results for objects-with-arrays, causing deepEqual-deep.js
-        // and many other tests to fail.
+        // (property_helpers.rs) handles deep structural comparison because
+        // Quench's runtime doesn't have all the primitives the upstream JS
+        // version needs yet (Reflect.ownKeys, Map, Set, TypedArrays, etc.).
+        // The upstream file is spec-correct — load it once the runtime is
+        // complete. See docs/test-harness-overrides.md, R23 in refactor-plan.
         "fnGlobalObject.js",
-        // isConstructor.js is NOT loaded here. It defines a JS wrapper that checks
-        // `typeof f.prototype === 'function'` — but ES6 function prototypes are
-        // plain objects (typeof returns "object"), making the JS version return
-        // false for all function expressions. The native is_constructor() in this
-        // module is spec-correct and is installed as fallback below.
+        // isConstructor.js is NOT loaded here. The upstream JS file
+        // (identical to the local copy) uses Reflect.construct and is
+        // spec-correct — keep the native is_constructor() because it's
+        // already used by builtins code. Remove once builtins route
+        // through JS only. See docs/test-harness-overrides.md, R23.
         "compareArray.js",
         // detachArrayBuffer.js is NOT loaded here. Its inline test expects
         // $262.detachArrayBuffer to be undefined (ReferenceError on call),

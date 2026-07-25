@@ -6,30 +6,6 @@
 LOC of equivalent Rust and easier to keep spec-faithful, so anything
 that can be JS is JS.
 
-## Execution model — OXC + tree-walker (fixed)
-
-OXC parses source; the interpreter **tree-walks** the lowered internal
-AST. No bytecode compiler, no VM — a tree-walker is sufficient for
-conformance and far smaller.
-
-- **Keep the internal AST** (`ast.rs` + `lower/`, ~6.2k LOC). It
-  decouples eval from oxc's lifetime-parameterized arena AST and lets
-  eval values stay `Rc`-based. Evaluating directly on the oxc AST would
-  delete those ~6.2k LOC but rewrite ~25k LOC of working `eval/` code
-  and couple every eval node to oxc `Box<'a, _>` types — a mid-flight
-  rewrite that risks the 63.7% already passing for a ~8% LOC saving.
-  **Rejected for now**; revisit only if `lower/` becomes the measured
-  bottleneck.
-- **Early errors run on the oxc AST pre-lower** (R17, `oxc_semantic`) —
-  no conflict with the internal-AST walker; semantic checks happen
-  before lowering.
-- **Single parser.** No second parser stack (swc) may enter the
-  pipeline; transforms that require one are rejected (see S4 in
-  `tasks/10-ways-to-speed-up.md`).
-- **JavaScript only.** No TypeScript, no JSX, no Ink compatibility —
-  removed entirely in R24 (2026-07-24 decision). Quench is a JS
-  runtime; anything ECMA-262 does not need is deleted, not gated.
-
 ## Rust core
 
 Smallest set the builtins cannot be written without.
@@ -81,15 +57,10 @@ per `Realm` by `builtins/bootstrap.rs`.
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a
-`NativeFunction`. Target: JS destructures it at parse time (never
-user-visible). **Current state (scaffold, R1):** only `toPrimitive`,
-`toNumber`, `toPropertyKey` are exposed, and the object is registered
-as a plain global binding named `%ops%` — `%` is not a valid JS
-identifier character, so it is reachable only as `globalThis["%ops%"]`
-until R1 lands parse-time resolution.
+`NativeFunction`. JS destructures it at parse time (never user-visible):
 
 ```js
-// builtins/Array.js (excerpt, target state after R1)
+// builtins/Array.js (excerpt)
 const { IsCallable, ToObject, ThrowTypeError } = %ops%;
 
 Array.prototype.map = function (callback, thisArg) {
@@ -132,147 +103,16 @@ Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
 Hand-rolled copies — including `chrono_*` helpers that never import
 `chrono` — are forbidden.
 
-## Value representation — NaN boxing *(R20 target)*
+## Future optimization targets
 
-JS values (`JsValue`) fit in a single `u64` via NaN boxing — the same
-technique used by QuickJS (C), JSC, V8, and Boa v0.21+.
+All tracked in `tasks/refactor-plan.md` — not duplicated here to avoid drift:
 
-```
-u64 bits:
-  [sign:1][exp:11][mantissa:52]
-NaN payload (all exp=1, mantissa≠0 for quiet NaN):
-  [1][11111111111][tag:16][payload:36]
-  tag=0xFFFF  →  Integer(i32)  (mantissa low 32 bits)
-  tag=0x0000  →  Pointer to heap Value
-  tag=0x0001  →  Undefined
-  tag=0x0002  →  Null
-  tag=0x0003  →  Boolean
-  tag=0x0004  →  BigInt
-Special doubles pass through untouched (infinity, -0.0).
-```
-
-Boa v0.21 (October 2025) switched to NaN boxing and reports measurable
-runtime and memory improvements over their older enum approach. Reference:
-<https://boajs.dev/blog/2025/10/22/boa-release-21>.
-
-**Start only in Phase B** — after R5 has made the property store
-correct (NaN boxing must pair with the correct store) and after R0 has
-given us the clean JS-layer boundary to verify correctness afterward.
-The Value representation change touches every call site. Boa did the
-same: NaN boxing was added as a feature-flagged feature alongside the
-existing enum (`jsvalue-enum`).
-
-Rust `unsafe` is confined to the `value/` module. No unsafe leaks into
-`eval/` or `builtins/`.
-
-## Memory — bumpalo arena allocation *(R19 target)*
-
-`bumpalo` (244M+ crate downloads) is the standard arena allocator for Rust
-JS engines. It provides fast short-lived allocations without per-object
-overhead:
-
-- **Parsing** (oxc → internal AST): nodes die after lowering — arena
-  perfect fit.
-- **Eval frames** (per-expression allocations): short-lived, high volume.
-- **No Drop calls** on freed objects — `bumpalo` does not run destructors.
-  Use `bumpalo::boxed::Box` for types that need Drop.
-
-```toml
-# Cargo.toml
-bumpalo = "3"
-```
-
-See <https://nickb.dev/blog/the-serde-optimization-gauntlet-wasm-and-arenas/>
-for benchmarks. `bumpalo` is battle-tested (Boa, many WASM engines);
-`bump-scope` benches ~2x faster but is less proven. Land `bumpalo` first,
-optimize later.
-
-Add `DEPENDENCIES.md` row in the same diff as the first arena use.
-
-## Strings — atom table interning *(R21 target)*
-
-Identifier strings, keywords, property names, and spec-intrinsic strings are
-interned: stored once, compared by pointer equality. Hashing uses the
-already-vendored `rustc-hash` (`FxHashMap`) — do **not** add `fnv` (its
-latest release is 1.0.7 and `rustc-hash` is both faster and already a
-dependency).
-
-```toml
-# Cargo.toml
-string_interner = "0.20"
-```
-
-Note: `src/interner.rs` already contains a hand-rolled `StringInterner`
-stored on `Context` — with **zero call sites** outside its own module.
-R21 deletes it in favor of the crate (AGENTS.md: prefer a crate over
-hand-rolling; dead code is a bug).
-
-- `string_interner` crate is an alternative (handles arbitrary strings,
-  not just identifiers).
-- `rustc-hash` (FxHashMap) is the fastest but lower-quality hash — use
-  only for hot-path property lookups where collision risk is acceptable.
-- `stringcache` crate is unmaintained; do not use.
-
-String interning is especially valuable during parsing (oxc produces
-interned identifier strings) and in `eval/ops.rs` (all spec op names are
-static atoms). A single atom table means `ToPropertyKey` on an identifier
-string is O(1) pointer comparison, not O(n) string compare.
-
-Add `DEPENDENCIES.md` row in the same diff.
-
-## Profiling on macOS
-
-Throughput-sensitive workloads (test262 runner) benefit from profiling.
-Tools confirmed working on macOS (Darwin):
-
-### cargo-flamegraph
-
-```bash
-brew install dtrace         # required on macOS
-cargo install cargo-flamegraph
-cargo flamegraph --bin run-test -- tests/test262/.../test.js
-```
-
-On macOS, `cargo-flamegraph` uses `xctrace` (Apple Instruments CLI) under
-the hood. Output is a `.perfetto` file viewable in Chrome
-(`chrome://tracing`) or `xctrace` viewer.
-
-Reference: <https://docs.rs/crate/flamegraph/latest>
-
-### samply (better macOS support)
-
-```bash
-cargo install samply
-samply record -- ./target/release/quench test.js
-samply record -- samples "cargo test -p quench-runtime --test test262"
-```
-
-`samply` uses the macOS `timed` backend (superior to `dtrace` on Darwin).
-
-Reference: <https://github.com/mstange/samply>
-
-### xctrace (Apple Instruments CLI)
-
-Apple's native profiling tool, available via Xcode:
-
-```bash
-xctrace record --template 'Time Profiler' --output trace.trace \
-  --launch -- /path/to/quench -- test.js
-# View:
-xctrace show trace.trace
-```
-
-### Which to use
-
-| Tool | macOS support | Best for |
-|---|---|---|
-| `cargo-flamegraph` | ✅ (xctrace) | Flame graphs, CI regression |
-| `samply` | ✅ (native) | CPU hotspots, wall-clock time |
-| `xctrace` | ✅ (native) | Deep Apple tooling, Instruments users |
-
-Profile **before** adding NaN boxing or bumpalo to measure baseline, then
-measure after to confirm the optimization actually helps. Premature
-optimization is a trap — let the profiler guide the changes.
+| Target | Ref plan | Timeline |
+|--------|----------|----------|
+| NaN-boxed `JsValue` (single `u64`) | R20 | Phase B, after R0 |
+| `bumpalo` arena allocation | R19 | Phase B, pairs with R20 |
+| String interning / atom table | R21 | Phase B |
+| Profiling (flamegraph/samply/xctrace) | R22, `docs/tools.md` | When loop is the bottleneck |
 
 ## Bootstrap order
 

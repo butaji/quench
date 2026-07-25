@@ -782,11 +782,6 @@ pub fn assign_to_identifier(
         return Err(js_err);
     }
 
-    if env.borrow().is_tdz(name) {
-        env.borrow_mut().initialize_declared(name, value);
-        return Ok(());
-    }
-
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
@@ -1294,76 +1289,6 @@ mod tests {
     fn object_destructuring_rest() {
         let r = eval("var {a, ...rest} = {a: 1, b: 2, c: 3}; rest.b + rest.c").unwrap();
         assert_eq!(r, Value::Number(5.0));
-    }
-
-    #[test]
-    fn for_of_object_id_init_assignment_missing() {
-        let r = eval(
-            "var x, counter = 0; \
-             for ({ x = 1 } of [{}]) { counter += 1; } \
-             JSON.stringify([x, counter])",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[1,1]".into()));
-    }
-
-    #[test]
-    fn for_of_object_id_init_assignment_undef() {
-        let r = eval(
-            "var x, counter = 0; \
-             for ({ x = 1 } of [{ x: undefined }]) { counter += 1; } \
-             JSON.stringify([x, counter])",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[1,1]".into()));
-    }
-
-    #[test]
-    fn for_of_object_id_init_order() {
-        let r = eval(
-            "var x = 0, a, b, counter = 0; \
-             for ({ a = x += 1, b = x *= 2 } of [{}]) { counter += 1; } \
-             JSON.stringify([a, b, x, counter])",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[1,2,2,1]".into()));
-    }
-
-    #[test]
-    fn for_of_object_id_init_evaluation_skips_present_property() {
-        let r = eval(
-            "var flag1 = false, flag2 = false, x, y, counter = 0; \
-             for ({ x = flag1 = true, y = flag2 = true } of [{ y: 1 }]) { counter += 1; } \
-             JSON.stringify([flag1, flag2, y, counter])",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[true,false,1,1]".into()));
-    }
-
-    #[test]
-    fn for_of_object_id_init_fn_name() {
-        let r = eval(
-            "var fn, counter = 0; \
-             for ({ fn = function() {} } of [{}]) { counter += 1; } \
-             JSON.stringify([fn.name, counter])",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[\"fn\",1]".into()));
-    }
-
-    #[test]
-    fn for_of_object_id_init_yield_expr() {
-        let r = eval(
-            "var iter = (function*() { \
-               var counter = 0, x; \
-               for ({ x = yield } of [{}]) { counter += 1; } \
-               return JSON.stringify([counter, x]); \
-             })(); \
-             iter.next(); \
-             iter.next(3).value",
-        )
-        .unwrap();
-        assert_eq!(r, Value::String("[1,3]".into()));
     }
 
     #[test]

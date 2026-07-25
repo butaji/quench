@@ -6,10 +6,6 @@
 This guide ranks stages by implementation difficulty, estimates LOC per stage
 (based on `index.json` columns), maps each to the crates/methods that unlock
 it, and identifies single-leverage fixes that unblock multiple stages.
-**Execution order is decided by `tasks/10-ways-to-speed-up.md` (Phases A–C)
-and the sequential stage gate — the "Phase" groupings below are difficulty
-tiers, not a parallel schedule.** Crate choices are final per
-`DEPENDENCIES.md` (decisions made 2026-07-24).
 
 ## Summary: Work Remaining
 
@@ -36,15 +32,13 @@ These are the final-stages gate.
 `ZonedDateTime`, `Instant`, `PlainDateTime`, `PlainDate`, `PlainTime`,
 `Duration`, `Calendar`, `TimeZone`. Calendar/timezone math via ICU4X.
 
-- **Approach:** `temporal_rs` (powers Boa and Kiesel; V8's Temporal is
-  being implemented on it — ES Stage 4, spec stable) + `zoneinfo_rs` for
-  IANA timezone data.
+- **Approach:** `temporal_rs` (Boa/Kiesel/V8-backed, ES Stage 4 stable) +
+  `zoneinfo_rs` for IANA timezone data.
 - **Rust LOC:** 500–1,500 (Rust-side wrapper + date math)
 - **JS LOC:** 200–600 (JS facade over the crate)
-- **Version pin:** choose the `temporal_rs` release whose spec snapshot
-  matches the test262 checkout at stage-120 start.
-- **Crate:** `temporal_rs` + `zoneinfo_rs` (accepted in `DEPENDENCIES.md`).
-- **Note:** Boa achieves 94.12% with this exact approach (~97% Temporal).
+- **Risk:** ICU4X API surface vs. ES spec version; evaluate before committing.
+- **Crate:** `temporal_rs` + `zoneinfo_rs` (new rows in `DEPENDENCIES.md`).
+- **Note:** Boa achieves 94.12% with this exact approach.
 
 ### Stage 118 — `ShadowRealm` (difficulty 9, 64 tests, 0.0%)
 
@@ -90,12 +84,13 @@ types: binary/unary operators, literals, primary expressions, calls,
 `regress` (ES2018) does NOT support Unicode property escapes `\p{}`. Stage 84
 tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 
-- **Approach:** dual-engine dispatch (R18, decided 2026-07-24):
-  `regress` stays primary (backrefs + lookbehind); `regex` with
-  `unicode-perl` handles patterns with `\p{}`/`\P{}` and no
-  lookaround/backrefs. Residual gap: patterns needing both.
+- **Approach:** `regex` crate with `unicode-perl` feature alongside `regress`;
+  or replace `regress` if `regex` covers ES2024. Evaluate ES2018 backreferences,
+  lookbehind, and dotAll too.
 - **Rust LOC:** 200–400 (regex dispatch layer)
 - **JS LOC:** 200–400 (RegExp built-in)
+- **Risk:** `regex` crate with `unicode-perl` must cover ALL ES2024 syntax.
+  `DEPENDENCIES.md` row in the same diff as the stage.
 - **R18 reference:** `tasks/refactor-plan.md` §R18.
 
 ### Stage 38 — `async-generator` (difficulty 7, 301 tests, 97.0%)
@@ -103,8 +98,8 @@ tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 Async generators: `async function* f() {}`. Combines async function
 lifecycle with generator state machine. Job queue integration.
 
-- **Approach:** S4 async→generator, hand-rolled in `eval/` (~500 LOC,
-  OXC only — swc rejected: second parser). Boa achieves 94.12% this way.
+- **Approach:** S4 async→generator transform. Hand-rolling (~500 LOC) is the
+  fallback; Boa achieves 94.12% without a heavy transform dependency.
 - **Rust LOC:** 500–1,000 (eval nodes for async generator state)
 - **JS LOC:** 0–0
 - **Unlock:** Also unblocks stage 97 (`AsyncGeneratorFunction`) and stage 98
@@ -149,10 +144,7 @@ Near-100% already. A handful of fixes each.
 
 ### Stage 13 — `async-function` (difficulty 3, 74 tests, 98.6%, **1 failed**)
 
-One failing test per the 2026-07-23 digest — but the stage is still
-**pending** in `index.json`: it is the documented gate exception
-(awaiting S4 async work). Certify it through the runner before marking
-done.
+Trivial: just 1 failing test stands between this stage and 100%.
 
 ### Stage 56 — `asi` (difficulty 3, 102 tests, 98.0%, **2 failed**)
 
@@ -168,10 +160,9 @@ a corner case in condition evaluation.
 Block-scoped `let`/`const` in for-loop initializer, catch parameter, etc.
 8 failures likely share a root cause.
 
-### Stage 20 — `do-while` (difficulty 2, 36 tests, done ✓)
+### Stage 20 — `do-while` (difficulty 2, 36 tests, 80.6%, **7 failed**)
 
-Completed; 36/36. Current stage is 25 (`for-of`, 698/751) — see
-`tasks/stage-25.md`.
+Currently in progress (stage 20). 29/36 passing.
 
 ### Stage 34 — `try` (difficulty 3, 201 tests, 44.3%, **112 failed**)
 
@@ -186,17 +177,17 @@ Done or near-done. These stages are Rust eval nodes only.
 
 ## Optimal Implementation Order (Phase 1–5)
 
-### Phase 1 — Finish the current gate + the one exception
+### Phase 1 — Clear easy wins (1–2 weeks, ~500 LOC)
 
-The stage gate is sequential; easy stages are reached in gate order.
-1. Stage 25 `for-of` — finish (53 fails, `tasks/failures-25.json`)
-2. Stage 13 `async-function` — the documented gate exception
-   (`index.json` `gate_exceptions`); 1 failing test per the last digest,
-   then certify and mark done
-3. Stages 26–34 in order (`function`, `generators`, `if`, `labeled`,
-   `let`, `switch`, `throw`✓, `try` — 112 fails, likely one root cause)
+Land the near-100% stages first for quick progress signals:
+1. Stage 13 `async-function` — 1 test fix
+2. Stage 56 `asi` — 2 test fix
+3. Stage 28 `if` — 3 test fix
+4. Stage 43 `block-scope` — 8 test fix
+5. Stage 20 `do-while` — 7 test fix
+6. Stage 34 `try` — 112 test fix (one root cause)
 
-**LOC: ~500 Rust. Tests unlocked: ~250.**
+**LOC: ~500 Rust. Tests unlocked: ~150.**
 
 ### Phase 2 — Language stages via R17 `oxc_semantic` (2–4 weeks)
 
@@ -224,7 +215,7 @@ simplifies future fixes. R0 order:
 
 ### Phase 4 — Async/Promise (2–4 weeks)
 
-- S4 async→generator (hand-rolled, OXC only)
+- S4 async→generator (swc or hand-rolled)
 - R2 one iterator protocol
 - `Promise` stage (729 tests)
 - `for-await-of` (1,234 tests)

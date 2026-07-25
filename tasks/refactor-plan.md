@@ -12,25 +12,30 @@ lines, complexity ≤ 10, ≤ 3 bool params, no `#[allow]` and no
 deferrals). Lint limits apply to every touched file; do not queue
 repo-wide split sweeps ahead of failing test262 clusters.
 
-## Status (2026-07-24)
+## Code audit (2026-07-25)
+
+Full read-only audit of all 160 `.rs` files: **`tasks/code-audit-2026-07-25.md`**.
+Key stats: 19 spec-violation bugs, 5 unsoundness/panic sites, 13 duplicate
+code patterns, 11 missing edge cases, 7 inconsistent error-handling sites,
+41+ `#[allow(dead_code)]` markers, ~480 LOC of simplification opportunities.
+
+Top 5 bugs: `Array.prototype.reduce` accumulator (B1), `await` discarded
+in lowering (B2), `groupBy` wrong `this` (B8), double evaluation of
+assignment RHS (B14), object rest captures full object (B10).
+
+## Status (2026-07-23)
 
 | Metric | Value |
 |--------|-------|
-| Production Rust LOC | ~68k `src/` total: ~46k core+eval+value, ~16k builtins, ~6k test262 harness (tests excluded; measured 2026-07-24) |
+| Production Rust LOC | ~57k (`src/`; tests excluded) |
+| Builtins Rust LOC | ~14k |
 | JS builtins | **0** — R0 not started |
 | `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + thin `%ops%` wrapper; not yet the single owner |
 | Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
-| Current stage | 25 `for-of` (751 tests; 698 pass / 53 fail per `tasks/failures-25.json`) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
-| Crate candidates | `DEPENDENCIES.md` — verified 2026-07-24; new: `bumpalo`, `string_interner`, `oxc_semantic`, `regex` (for Unicode) |
-
-**Build gate (2026-07-24):** `cargo test -p quench-runtime` currently
-fails to compile — `tests/for_of_yield_repro.rs` is missing
-`use quench_runtime::test262::Test262Host;` (E0599 ×4) and
-`src/lower/expr/helpers_expr.rs:133` emits warnings under `-D warnings`.
-Fixing this precedes any stage work; the linter gate is meaningless on a
-tree that does not build.
+| Current stage | 16 `class` (4,367 tests) · full digest 27,323/42,892 = 63.7% (2026-07-23) |
+| Crate candidates | `DEPENDENCIES.md` — verified 2026-07-23; new: `bumpalo`, `string_interner`, `fnv`, `regex` (for Unicode) |
 
 File:line references in this plan and in `tasks/review-2026-07-19*.md`
 are snapshots; re-locate by symbol name before editing. Object-model
@@ -41,8 +46,7 @@ audit: `tasks/review-2026-07-22-object-model.md`. Crate candidates:
 
 ```
 Phase A — language (now)
-  R4 ✓ → R5 ✓ → stages 16–24 ✓ → stage-25 S2 digest → R17 →
-  remaining language stages
+  R4 ✓ → R5 ✓ → stage-16 S2 digest → R17 → remaining language stages
   S5 harness active · R1 grows only for ops touched by fixes
 
 Phase B — immediately before built-ins stages
@@ -54,7 +58,7 @@ Phase C — built-ins / async / Temporal
 
 Priority legend used below:
 
-- **NOW** — unblocks stage 25 / language
+- **NOW** — unblocks stage 16 / language
 - **PHASE-B** — required before grinding Object/Array/…
 - **LATER** — hygiene, LOC, or stage-specific; never ahead of NOW
 
@@ -113,47 +117,22 @@ Do **not** wait for R0 — language stages need this now.
 ## R17 — OXC early errors via `oxc_semantic`  *(NOW / Phase A, diff=4)*
 
 High tests-per-LOC for the language half. Hand-rolling early errors in
-`lower/` is thousands of LOC.
+`lower/` is thousands of LOC. `oxc_semantic` confirmed in `docs.rs/oxc`
+under the main oxc crate — verify if a feature flag is needed or if
+`ctx.semantic()` is already available from existing `oxc` usage.
 
-**Decision (2026-07-24): adopt `oxc_semantic = "0.47"`.** The `oxc`
-0.47 umbrella crate does **not** include semantic (Cargo.lock shows only
-`oxc_allocator`, `oxc_ast`, `oxc_diagnostics`, `oxc_parser`,
-`oxc_regular_expression`, `oxc_span`, `oxc_syntax`), so this is a new
-dependency with a `DEPENDENCIES.md` row. `SemanticBuilder::build(&program)`
-runs on the oxc AST **before lowering** — it fits the internal-AST
-walker unchanged (`docs/architecture.md` §Execution model).
-
-The checker does not cover every ECMAScript early error, so landing is
-two-step: first wire it in and count newly-caught failures on the
-current digest; delete a hand-rolled check only when oxc_semantic
-demonstrably fires for that case.
-
-- [ ] Add `oxc_semantic = "0.47"` + `DEPENDENCIES.md` row.
+- [ ] Verify `oxc_semantic` API in current `oxc` version (0.47): does
+      `Parser::parse` → `SemanticAnalysis::build` give early errors?
+- [ ] `DEPENDENCIES.md` row if a new feature or version is needed.
 - [ ] `#[test]`: duplicate `let` in one block → catchable `SyntaxError`.
-- [ ] Wire parse → semantic check → SyntaxError before lowering; report
-      the newly-caught failure count on the stage-25 digest.
-- [ ] Delete redundant hand-rolled checks only where coverage is proven
-      by the step above.
-- [ ] Delete `src/strict_reserved.rs` once oxc_semantic is proven to
-      catch strict-mode reserved-word bindings (it is exactly the kind
-      of hand-rolled early error R17 exists to replace).
+- [ ] Parse → semantic check → SyntaxError before lowering; delete
+      redundant hand-rolled checks.
 
 ## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
-as a scaffold (re-exports + frozen `%ops%` with only `toPrimitive`,
-`toNumber`, `toPropertyKey`). Not yet the single owner — private copies
-remain in `builtins/*.rs` and `eval/`.
-
-**Known defect (audit 2026-07-24):** the object is registered as a
-global literally named `%ops%`, but `%` is not a valid JS identifier
-character — JS can only reach it as `globalThis["%ops%"]`, and any test
-or builtin evaluating `"%ops%.foo(...)"` as source should fail oxc
-parsing. Until parse-time resolution lands, reference it via
-`globalThis["%ops%"]` in JS/tests, or rename the binding to a valid
-intrinsic name (e.g. `$ops`). Verify the `ops_wrapper` eval-based tests
-when the build gate is fixed; if red, switch them to the string-key
-form in the same diff.
+as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
+private copies remain in `builtins/*.rs` and `eval/`.
 
 - [ ] Own the implementations in `eval/ops.rs` (or thin wrappers that
       are the only call path): `to_primitive`, `to_property_key`,
@@ -165,8 +144,7 @@ form in the same diff.
       `throw_type_error`.
 - [ ] One `#[test]` per op when it becomes owned here.
 - [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
-      (never user-visible). When this lands, sync the AGENTS.md
-      `%ops%` convention line with the implemented mechanism.
+      (never user-visible).
 - [ ] On touch: replace the local duplicate; do not leave two owners.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of
       the ops list above remain outside `eval/ops.rs`.
@@ -255,27 +233,7 @@ After R4/R1/R0 reduce the surface: dead convert helpers, unused
 `Getter`/`Setter*` types, `ObjData` variants never constructed,
 `intl.rs` (out of scope — delete), one-line wrappers, etc.
 
-Repo debris spotted in the 2026-07-24 audit (delete in the sweep):
-`tasks/repro_overflow.rs`, `tasks/run_all_stage16.sh` (stage-16-era
-leftovers), `tools/debug-test.js` (untracked debug script — AGENTS.md:
-no debug code), `src/builtins/test_marker` (a 4-byte file containing
-"test", referenced nowhere), and the unwired `patches/oxc_parser` copy
-(R23).
-
-Also measured 2026-07-24:
-
-- **35 `#[allow(dead_code)]` markers in `src/`** — each is a
-  `TODO(delete)` per AGENTS.md. R15's final sweep zeroes them; 35 is
-  the baseline.
-- **`console.rs` (87 LOC)** — `console` is not ECMA-262; test262 never
-  tests it. Keep only as a host API behind a feature, else delete.
-- **Native assert duplication (~2.1k LOC)** — `assert_helpers.rs`
-  (1,155) + `property_helpers.rs` (947) reimplement test262's own JS.
-  Shrinks as the official files load verbatim — tracked with removal
-  criteria in `tasks/harness-roadmap.md` §Harness fidelity.
-
-~620 LOC saved (original estimate; debris adds more). Opportunistic on
-touch; no dedicated queue jump.
+~620 LOC saved. Opportunistic on touch; no dedicated queue jump.
 
 ## R10 — RAII `CURRENT_CONTEXT`; collapse thread-locals  *(LATER, diff=4)*
 
@@ -307,12 +265,11 @@ Wholesale split of untouched >500-line files waits until after R0/R5
 shrink the surface — do not prioritize ahead of Phase A/B.
 
 - [ ] On touch: file ≤ 500, fn ≤ 40, complexity ≤ 10, no new `#[allow]`.
-- [ ] Hoist the 16 duplicate `fn eval(src: &str)` test helpers (grep
-      count 2026-07-24) into one shared `#[cfg(test)]` util — zero-
-      duplication rule applies to test code too.
 - [ ] Final sweep: `rg '#\[allow\(' crates/quench-runtime/src` zero hits
-      (baseline: 35 `#[allow(dead_code)]`, 2026-07-24); no production
-      file > 500 lines; clippy clean.
+      (baseline: 41+ `#[allow(dead_code)]` + 3 `#[allow(clippy::complexity)]`,
+      2026-07-25 audit); no production file > 500 lines; clippy clean.
+  - [ ] Remove 34 `println!`/`eprintln!` debug calls from tests (parser.rs,
+        basic.rs, accessor_symbol.rs — 2026-07-25 audit).
 
 ## R16 — Drop `FROZEN_OBJECTS` thread_local  *(LATER / with R5 freeze path, diff=2)*
 
@@ -324,32 +281,26 @@ Use `Object.extensible` (and proper descriptors from R5); delete
 
 ## R18 — RegExp Unicode property escapes  *(LATER / stage 84, diff=2)*
 
-`regress` (ES2018 + `v` flag, confirmed in `DEPENDENCIES.md`) does NOT
-support Unicode property escapes `\p{}`. Stage 84 tests `\p{Script}`,
-`\p{Emoji}`, `\p{General_Category}`, etc.
+`regress` (ES2018, confirmed in `DEPENDENCIES.md`) does NOT support
+Unicode property escapes `\p{}` (docs.rs regress: "features which have
+yet to be implemented: Unicode property escapes like `\p{Sc}`"). Stage 84
+tests `\p{Script}`, `\p{Emoji}`, `\p{General_Category}`, etc.
 
-**Decision (2026-07-24): two engines, one dispatch.** Keep `regress` as
-the RegExp engine (it alone covers ES backreferences and lookbehind —
-the `regex` crate has neither, so it can never replace regress). Add
-`regex` with `unicode-perl` as the secondary engine used **only** when
-the pattern contains `\p{`/`\P{` and no lookaround/backreferences —
-exactly the slice `regex` covers. Patterns needing both `\p{}` and
-backrefs are the accepted residual gap until regress grows `\p{}`
-upstream. `fancy-regex` stays rejected (no `v`-flag Unicode sets).
-
-- [ ] `regex = { version = "1", features = ["unicode-perl"] }` +
-      `DEPENDENCIES.md` row.
-- [ ] Dispatch in `builtins/core/regex.rs` on pattern scan; `#[test]`
-      per branch.
-- [ ] `#[test]`: `\p{Emoji}` matching, `\p{Script=Latin}`,
+- [ ] Evaluate: does `regex` crate with `unicode-perl` feature cover all
+      ES2024 `\p{}` syntax? Does it also cover ES2018 backreferences,
+      lookbehind, and dotAll?
+- [ ] If yes: add `regex` to `Cargo.toml` alongside `regress`; or replace
+      `regress` if the feature set is a superset.
+- [ ] `DEPENDENCIES.md` row in the same diff.
+- [ ] `#[test]` for `\p{Emoji}` matching, `\p{Script=Latin}`,
       `\p{General_Category=Number}`.
 
 ## R19 — `bumpalo` arena allocation  *(LATER / Phase B, diff=3)*
 
-**Decision: `bumpalo = "3"`, not `bump_scope`.** `bump_scope` benches
-~2x faster but is far less proven; `bumpalo` (244M+ downloads) is the
-battle-tested choice (Boa, many WASM engines). Optimize later only if
-profiling (R22) shows the arena itself hot.
+`bumpalo` (244M+ downloads) provides arena allocation — a single bump
+pointer, no per-allocation bookkeeping. `bump_scope` benches ~2x faster
+but less proven. Most `JsValue` objects and eval frames are short-lived
+and freed in LIFO order: the exact use case for arena.
 
 Key constraint: **no `Drop` on freed objects.** `bumpalo::boxed::Box`
 runs Drop on scope exit for types that need it; standard heap allocation
@@ -363,7 +314,8 @@ Usage in Quench:
 - NaN-boxed `JsValue` (R20): arena allocation pairs well — fewer heap
   objects means less GC pressure.
 
-- [ ] `bumpalo = "3"` in `Cargo.toml` + `DEPENDENCIES.md` row.
+- [ ] `bumpalo = "3"` in `Cargo.toml` (or `bump_scope` if bench proves it).
+- [ ] `DEPENDENCIES.md` row.
 - [ ] `#[test]`: no Drop impls on freed arena objects.
 - [ ] Migration order: eval frames first, then parser, then Value constructors.
 
@@ -411,16 +363,12 @@ JavaScript string comparisons are pervasive: property key lookup, `===`,
 `Map`/`Set` hashing. Un-interned strings do O(n) byte-by-byte comparison
 on every `==`; an atom table makes pointer comparison O(1).
 
-**Confirmed (2026-07-24):**
-- `src/interner.rs` already has a hand-rolled `StringInterner` on
-  `Context` — with **zero call sites** outside its own module. R21
-  deletes it in favor of the crate (decision below).
-- `string_interner = "0.20"` is the atom table (decision 2026-07-24:
-  crate over the unused hand-rolled `src/interner.rs`, which R21
-  deletes). Hashing: `rustc-hash` (already vendored). Do NOT add `fnv` —
-  latest release is 1.0.7 and slower than `rustc-hash`.
+**Confirmed (2026-07-23):**
+- `string_interner` crate: widely used, thread-safe variant, O(1) get/create.
+- `fnv = "2"`: Fast HashMap; fine for atom table scale (~50k entries).
 - QuickJS uses a global atom table in `JSRuntime`.
 - `string_cache` (Servo): unmaintained since ~2020.
+- `rustc-hash`: fastest overall but lower-quality; fine for atom table.
 
 Usage:
 - Property keys (string + Symbol): interned key lookup for `Object` property
@@ -429,12 +377,27 @@ Usage:
   `KeyId::eq` (pointer compare).
 - String values: `StringId` type wrapping `string_interner::DefaultSymbol`.
 
-- [ ] Adopt `string_interner = "0.20"` and **delete** the unused
-      hand-rolled `src/interner.rs` in the same diff (AGENTS.md:
-      prefer a crate over hand-rolling). `DEPENDENCIES.md` row.
-      Hashing: the already-vendored `rustc-hash`.
+- [ ] `string_interner = "0.18"` + `fnv = "2"` in `Cargo.toml`.
+- [ ] `DEPENDENCIES.md` row.
+- [ ] `value/string_interner.rs` — `Interner` on `Context`, `StringId` type.
 - [ ] `#[test]`: interned string pointer equality; `"abc" == "abc"` pointer compare.
 - [ ] `#[test]`: `Map` with 10k distinct string keys — baseline benchmark.
+
+## R23 — Remove test262 harness overrides  *(PHASE-B, after built-ins stabilize, diff=5)*
+
+Quench skips/replaces several harness JS files with native Rust
+(`isConstructor.js`, `assert.js`, `deepEqual.js`,
+`propertyHelper.js`/`verifyProperty`, `detachArrayBuffer.js`,
+6 deprecated `verify*` stubs). Most are workarounds for Quench
+incompleteness, not upstream bugs.
+
+Checklist with per-item deletion conditions: **`docs/test-harness-overrides.md`**.
+
+**Dependency chain:** Blocks on R0 (self-hosted builtins in JS cover
+most of the missing primitives). Do not start before Phase A language
+stages are clear.
+
+---
 
 ## R22 — Profiling tools on macOS  *(LATER / when needed, diff=1)*
 
@@ -465,57 +428,17 @@ open trace.trace               # open in Instruments.app
 For flamegraph output: `~/.cargo/bin/cargo-flamegraph` or install via
 `cargo install cargo-flamegraph`. `perf` on Linux is equivalent.
 
-## R23 — Delete unwired `patches/oxc_parser`  *(NOW, diff=1)*
-
-`patches/oxc_parser/` is a full vendored copy of `oxc_parser` 0.47.1
-(~4.6k LOC) that **nothing references**: no `[patch.crates-io]` in the
-workspace `Cargo.toml`, no path dependency, and `Cargo.lock` resolves
-`oxc_parser` from crates.io. Dead weight under the dead-code rule —
-anyone auditing the tree cannot tell which parser source is real.
-
-- [ ] `git rm -r patches/oxc_parser` (recoverable from git history if a
-      parser patch is ever actually needed — at which point it must be
-      wired via `[patch.crates-io]` with a `DEPENDENCIES.md` note).
-
-## R24 — Delete TypeScript + JSX support entirely  *(NOW, after build gate, diff=2)*
-
-**Decision (2026-07-24): quench is a JavaScript runtime, period.** All
-Ink / JSX / TypeScript compatibility is removed — no feature gate, no
-compat shim. test262 exercises neither, and keeping them costs surface
-in `ast.rs`, `lower/`, and `eval/` that every future stage must route
-around.
-
-Deletion surface (~900 LOC):
-
-- `parser.rs`: `parse_ts` (dead-marked), `parse_typescript`,
-  `parse_jsx`, `strip_imports_exports`, the TS/JSX parser tests, and
-  `with_jsx(true)` from `parse_script`. Collapse the remaining entry
-  points into one `parse_with(source, SourceType)`.
-- `context/mod.rs`: `parse_typescript`, `eval_typescript`.
-- `lower/jsx.rs` (186 LOC), `eval/jsx.rs` + `eval/jsx/` (404 incl.
-  tests), the 18 JSX references / AST variants in `ast.rs`, and every
-  `lower/` + `eval/` match arm on them.
-- `Cargo.toml` description: drop "Ink terminal UI framework" — the
-  crate is a JavaScript runtime.
-
-- [ ] Refactor pin first (AGENTS.md): `#[test]` that `1 + 1` and a JSX-
-      free program still parse/eval after the AST variants are gone.
-- [ ] Full `cargo test -p quench-runtime` + clippy green; stage-25
-      digest must not regress.
-
 ---
 
 ## Sequencing (summary)
 
 ```
-NOW:     fix build gate (for_of_yield_repro import; see Status) →
-         stage 25 for-of (S2 digest, 53 fails) → R17 → language stages
-         R23 delete patches/oxc_parser (1 command, no risk)
-         R24 delete TS/JSX (~900 LOC; shrinks lower/eval surface)
+NOW:     R4 ✓ → R5 ✓ → stage 16 (S2) → R17 → language stages
          R1 incremental on every op touch
          S5 harness (parallel digest, failed-only rerun) — active
 PHASE-B: R1 complete → R0 → R2 (+ R3 with Date.js) → R18
          R19 (bumpalo) + R20 (NaN boxing) + R21 (interning)
+         R23 (harness overrides) — after built-ins stabilize
 LATER:   R6 R8 R9 R10 R11 R14 R16 as stages/digests demand
          R22 profiling when loop is the bottleneck
          R15 on every touch; repo-wide sweep after R0/R5
