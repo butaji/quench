@@ -99,6 +99,16 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
             if matches!(&lp, Value::Symbol(_)) || matches!(&rp, Value::Symbol(_)) {
                 return symbol_conversion_error("number");
             }
+            // BigInt/Number mixed check
+            let l_is_bigint = matches!(&lp, Value::BigInt(_));
+            let r_is_bigint = matches!(&rp, Value::BigInt(_));
+            if l_is_bigint != r_is_bigint {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "Cannot mix BigInt and other types",
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
             let l = to_number(&lp);
             let r = to_number(&rp);
             Ok(Value::Number(l + r))
@@ -117,6 +127,17 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
     } else {
         if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
             return symbol_conversion_error("number");
+        }
+        // Per ES2025 §7.2.6 ApplyStringOrNumericBinaryOperator: if one operand
+        // is BigInt and the other is not (Number, Symbol), throw TypeError.
+        let left_is_bigint = matches!(left, Value::BigInt(_));
+        let right_is_bigint = matches!(right, Value::BigInt(_));
+        if left_is_bigint != right_is_bigint {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot mix BigInt and other types",
+                "TypeError",
+            );
+            return Err(js_err);
         }
         // to_number may trigger ToPrimitive(valueOf/toString). Surface any
         // thrown value (even one that was set before eval_add) WITHOUT consuming
