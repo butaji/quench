@@ -229,8 +229,9 @@ pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
 pub fn lower_formal_params(params: &ast::FormalParameters) -> Vec<Param> {
     let mut result: Vec<Param> = params.items.iter().map(lower_param_decl).collect();
     // Handle rest parameter: stored separately in FormalParameters.rest
+    // (oxc 0.141: FormalParameterRest wraps a BindingRestElement in `.rest`).
     if let Some(rest) = &params.rest {
-        let mut param = match crate::lower::pattern::lower_binding_elem(&rest.argument) {
+        let mut param = match crate::lower::pattern::lower_binding_elem(&rest.rest.argument) {
             Ok(crate::ast::BindingElement::Identifier(name)) => Param::rest(&name),
             Ok(pattern) => Param {
                 name: "arg".to_string(),
@@ -308,7 +309,7 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
     let mut ps = ps;
     let mut has_rest = false;
     if let Some(rest) = &method.value.params.rest {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.argument.kind {
+        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.rest.argument.kind {
             ps.push(ident.name.as_str().to_string());
             has_rest = true;
         }
@@ -401,7 +402,10 @@ pub fn lower_prop_name_stmt(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
-        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(format!("{}n", b.raw))),
+        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(format!(
+            "{}n",
+            crate::lower::helpers::bigint_raw(b)
+        ))),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
         // TemplateLiterals with expressions and computed keys: lower as runtime-evaluated

@@ -21,13 +21,8 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::FunctionExpression(func) => lower_fn_expr(func),
         ast::Expression::ArrowFunctionExpression(arrow) => lower_arrow_expr(arrow),
         ast::Expression::YieldExpression(yield_expr) => lower_yield_expr(yield_expr),
-        ast::Expression::MetaProperty(meta) => {
-            if meta.meta.name == "new" && meta.property.name == "target" {
-                Ok(Expression::Identifier("new.target".to_string()))
-            } else {
-                Ok(Expression::Undefined)
-            }
-        }
+        ast::Expression::NewTarget(_) => Ok(Expression::Identifier("new.target".to_string())),
+        ast::Expression::ImportMeta(_) => Ok(Expression::Undefined),
         ast::Expression::AwaitExpression(await_expr) => Ok(Expression::Await(Box::new(
             lower_expr(&await_expr.argument)?,
         ))),
@@ -61,10 +56,12 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::BooleanLiteral(b) => Ok(Expression::Boolean(b.value)),
         ast::Expression::NullLiteral(_) => Ok(Expression::Null),
         ast::Expression::RegExpLiteral(r) => Ok(Expression::RegExp {
-            pattern: r.regex.pattern.to_string(),
+            pattern: r.regex.pattern.text.to_string(),
             flags: r.regex.flags.to_string(),
         }),
-        ast::Expression::BigIntLiteral(b) => Ok(Expression::BigInt(b.raw.to_string())),
+        ast::Expression::BigIntLiteral(b) => Ok(Expression::BigInt(
+            super::super::helpers::bigint_raw(b),
+        )),
         ast::Expression::TaggedTemplateExpression(tagged) => lower_tagged_template(tagged),
         ast::Expression::TemplateLiteral(tpl) => lower_template_literal(tpl),
         ast::Expression::ClassExpression(class_expr) => lower_class_expr(class_expr),

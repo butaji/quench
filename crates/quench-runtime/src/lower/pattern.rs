@@ -164,7 +164,6 @@ pub fn lower_assignment_target_to_binding(
         ast::AssignmentTarget::TSSatisfiesExpression(e) => expr_to_binding_elem(&e.expression),
         ast::AssignmentTarget::TSNonNullExpression(e) => expr_to_binding_elem(&e.expression),
         ast::AssignmentTarget::TSTypeAssertion(e) => expr_to_binding_elem(&e.expression),
-        ast::AssignmentTarget::TSInstantiationExpression(e) => expr_to_binding_elem(&e.expression),
     }
 }
 
@@ -284,7 +283,9 @@ fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
-        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(b.raw.to_string())),
+        ast::PropertyKey::BigIntLiteral(b) => {
+            Some(PropertyKey::String(crate::lower::helpers::bigint_raw(b)))
+        }
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
         _ => {

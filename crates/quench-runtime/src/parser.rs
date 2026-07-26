@@ -15,12 +15,12 @@ use std::sync::Arc;
 /// Parse JavaScript source using OXC (script mode, not module)
 pub fn parse_script(source: &str) -> Result<Program, JsError> {
     // Explicitly mark as script so `await` is not reserved (§11.6.2).
-    // SourceType::default() is module-first in OXC 0.47+.
+    // SourceType::default() is module-first in OXC.
     let source_type = SourceType::default().with_script(true).with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
-    if !ret.errors.is_empty() {
-        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    if !ret.diagnostics.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
     check_strict_reserved(&ret.program)?;
     check_strict_fn_params(&ret.program)?;
@@ -297,8 +297,8 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_module(true).with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
-    if !ret.errors.is_empty() {
-        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    if !ret.diagnostics.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
     if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(&ret.program) {
         return Err(JsError(format!(
@@ -314,8 +314,8 @@ pub fn parse_jsx(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_jsx(true);
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
-    if !ret.errors.is_empty() {
-        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    if !ret.diagnostics.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
@@ -327,8 +327,8 @@ pub fn parse_typescript(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_typescript(true).with_jsx(true);
     let allocator = Arc::new(Allocator::default());
     let ret = Parser::new(allocator.as_ref(), &stripped, source_type).parse();
-    if !ret.errors.is_empty() {
-        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    if !ret.diagnostics.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
     drop(allocator);
@@ -359,8 +359,8 @@ pub fn parse_ts(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default().with_typescript(true);
     let allocator = Arc::new(Allocator::default());
     let ret = Parser::new(allocator.as_ref(), source, source_type).parse();
-    if !ret.errors.is_empty() {
-        return Err(JsError(format!("Parse error: {:?}", ret.errors)));
+    if !ret.diagnostics.is_empty() {
+        return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
     let result = lower_program(&ret.program).map_err(|e| JsError(e.to_string()));
     drop(allocator);
@@ -637,7 +637,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source, source_type).parse();
-        assert!(ret.errors.is_empty(), "Parse errors: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "Parse errors: {:?}", ret.diagnostics);
 
         let cls = &ret.program.body[0];
         println!("Statement type: {:?}", cls);

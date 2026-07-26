@@ -367,7 +367,6 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
         ast::ForStatementLeft::TSSatisfiesExpression(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::TSNonNullExpression(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::TSTypeAssertion(e) => lower_expr(&e.expression).ok(),
-        ast::ForStatementLeft::TSInstantiationExpression(e) => lower_expr(&e.expression).ok(),
         ast::ForStatementLeft::StaticMemberExpression(sm) => {
             let obj = lower_expr(&sm.object).ok()?;
             Some(Expression::Member {

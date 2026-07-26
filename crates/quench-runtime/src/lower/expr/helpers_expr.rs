@@ -319,7 +319,6 @@ pub fn lower_assignment_target(target: &ast::AssignmentTarget) -> Result<Express
         ast::AssignmentTarget::TSSatisfiesExpression(e) => lower_expr_inner(&e.expression),
         ast::AssignmentTarget::TSNonNullExpression(e) => lower_expr_inner(&e.expression),
         ast::AssignmentTarget::TSTypeAssertion(e) => lower_expr_inner(&e.expression),
-        ast::AssignmentTarget::TSInstantiationExpression(e) => lower_expr_inner(&e.expression),
         _ => Err(LowerError::new("Unsupported assignment target")),
     }
 }
@@ -373,8 +372,5 @@ pub fn lower_simple_assignment_target(
         ast::SimpleAssignmentTarget::TSSatisfiesExpression(e) => lower_expr_inner(&e.expression),
         ast::SimpleAssignmentTarget::TSNonNullExpression(e) => lower_expr_inner(&e.expression),
         ast::SimpleAssignmentTarget::TSTypeAssertion(e) => lower_expr_inner(&e.expression),
-        ast::SimpleAssignmentTarget::TSInstantiationExpression(e) => {
-            lower_expr_inner(&e.expression)
-        }
     }
 }

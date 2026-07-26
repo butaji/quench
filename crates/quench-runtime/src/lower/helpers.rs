@@ -71,9 +71,10 @@ pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
             }
         }
     }
-    // Check rest parameter
+    // Check rest parameter (oxc 0.141: FormalParameters.rest is FormalParameterRest
+    // wrapping a BindingRestElement in `.rest`).
     if let Some(rest) = &func.params.rest {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.argument.kind {
+        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.rest.argument.kind {
             if ident.name == "arguments" || ident.name == "eval" {
                 return Err(LowerError::new(format!(
                     "SyntaxError: Unexpected strict mode reserved word: {}",
@@ -88,6 +89,14 @@ pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
 /// Convert Wtf8Atom to String using Display trait
 pub fn wtf8_atom_to_string(atom: &str) -> String {
     atom.to_string()
+}
+
+/// Source text of a BigInt literal. oxc 0.141: `raw` is `Option<Str>`,
+/// `value` is the digits without the trailing `n`.
+pub fn bigint_raw(b: &ast::BigIntLiteral) -> String {
+    b.raw
+        .as_ref()
+        .map_or_else(|| b.value.to_string(), |r| r.to_string())
 }
 
 /// Lower binary operator

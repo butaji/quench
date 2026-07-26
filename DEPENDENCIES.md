@@ -9,9 +9,9 @@ forbidden. A new crate needs a row here in the same diff.
 `oxc_semantic`, …) must track the **latest published version** — currently
 **0.141.0** (they release in lockstep; verify with
 `curl -sH "User-Agent: quench" https://crates.io/api/v1/crates/oxc`).
-The pinned `oxc = "0.47"` in `crates/quench-runtime/Cargo.toml` is tech
-debt, not a choice: upgrade to latest and add `oxc_semantic` at the same
-version in one diff (plan A0/A1, `tasks/plan.md`). Never add a new OXC
+`oxc = "0.141"` in `crates/quench-runtime/Cargo.toml` satisfies this.
+Adding `oxc_semantic` at the same version remains planned work
+(plan A0/A1, `tasks/plan.md`). Never add a new OXC
 crate at an older version than the latest.
 
 Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
@@ -24,7 +24,7 @@ Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 
 | Crate | Version | Purpose | File |
 |---|---|---|---|
-| `oxc` | 0.47 → **0.141 (latest, required)** | Parser (oxc → internal AST) | `Cargo.toml` |
+| `oxc` | 0.141 | Parser (oxc → internal AST) | `Cargo.toml` |
 | `regress` | 0.11 | RegExp exec (ES2018 syntax targeting) | `Cargo.toml` |
 | `chrono` | 0.4 | Date math, timestamp conversion | `Cargo.toml` |
 | `num-bigint` | 0.4 | BigInt arithmetic | `Cargo.toml` |
