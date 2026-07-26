@@ -8,8 +8,8 @@
 //! first offending name so the caller can raise a SyntaxError.
 
 use oxc::ast::ast::Program;
-use oxc::ast::visit::walk::walk_assignment_expression;
-use oxc::ast::visit::Visit;
+use oxc::ast_visit::walk_assignment_expression;
+use oxc::ast_visit::Visit;
 
 /// Future reserved words that may not be used as a binding identifier in
 /// strict mode (ES §12.7.2). `yield` is included because it is a reserved
