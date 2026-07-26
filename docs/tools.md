@@ -38,6 +38,12 @@ editing `tasks/index.json`.
 Signals (segfault/abort/stack overflow) are always failures, never
 passes — including for negative tests.
 
+> **Stale-binary hazard:** digest mode and `run-each.sh` execute the
+> prebuilt `target/debug/run-test` binary — they do NOT rebuild it.
+> After changing `tools/run-test/` or runner judging logic, rebuild it
+> first (`cargo build --manifest-path tools/run-test/Cargo.toml`) or
+> the digest silently uses outdated judging.
+
 ## Digest mode — fix by root cause
 
 ```bash
