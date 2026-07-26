@@ -5,6 +5,7 @@
 use crate::value::Value;
 
 pub mod accessors;
+pub mod grouping;
 pub mod mutation;
 pub mod rearrange;
 pub mod search;
@@ -17,7 +18,10 @@ pub use transformation::{call_callback, flatten_array, get_this_array, make_arra
 pub use mutation::{get_this_array_obj, set_elements};
 
 // Re-export method implementations
-pub use accessors::{proto_at, proto_concat, proto_entries, proto_join, proto_keys, proto_slice, proto_to_string};
+pub use accessors::{
+    proto_at, proto_concat, proto_entries, proto_join, proto_keys, proto_slice, proto_to_string,
+};
+pub use grouping::{proto_group_by, proto_group_by_to_map};
 pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
 pub use rearrange::{proto_reverse, proto_sort};
 pub use search::{
@@ -45,6 +49,7 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     setup_rearrange_methods(&m);
     setup_accessor_methods(&m);
     setup_search_methods(&m);
+    setup_grouping_methods(&m);
 }
 
 fn setup_transformation_methods(
@@ -89,4 +94,9 @@ fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate:
     m("find", proto_find);
     m("findLast", proto_find_last);
     m("findLastIndex", proto_find_last_index);
+}
+
+fn setup_grouping_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
+    m("groupBy", proto_group_by);
+    m("groupByToMap", proto_group_by_to_map);
 }

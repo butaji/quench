@@ -73,6 +73,11 @@ pub(crate) fn call_value_impl(
                 gen_obj.is_async = true;
                 // Store evaluated args so they can be bound when generator starts
                 gen_obj.args = Some(args);
+                // Set the instance's [[Prototype]] to the function's .prototype (or
+                // %GeneratorPrototype% as fallback when .prototype is not an object).
+                gen_obj.prototype = f
+                    .get_prototype_if_object()
+                    .or_else(crate::builtins::function::get_generator_prototype);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if f.is_generator {
                 // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
@@ -107,6 +112,11 @@ pub(crate) fn call_value_impl(
                 );
                 gen_obj.args = Some(args);
                 gen_obj.call_env = Some(body_env_rc);
+                // Set the instance's [[Prototype]] to the function's .prototype (or
+                // %GeneratorPrototype% as fallback when .prototype is not an object).
+                gen_obj.prototype = f
+                    .get_prototype_if_object()
+                    .or_else(crate::builtins::function::get_generator_prototype);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if force_strict {
                 call_js_function_impl_with_strict(f, args, this_val, true)
@@ -258,11 +268,13 @@ pub(crate) fn call_js_function_impl_with_strict(
         crate::interpreter::set_strict_mode(in_strict);
         let previous_eval_env = crate::interpreter::get_current_eval_env();
         crate::interpreter::set_current_eval_env(Some(Rc::clone(&body_env_rc)));
+
         let result = if f.is_arrow {
             call_arrow_body(&f, &body_env_rc)
         } else {
             eval_function_body(&f.body, &body_env_rc, false)
         };
+
         crate::interpreter::set_current_eval_env(previous_eval_env);
         crate::interpreter::set_strict_mode(prev_strict);
 
@@ -456,7 +468,7 @@ fn check_use_strict(body: &[Statement]) -> bool {
 fn box_sloppy_this(this_val: Value) -> Value {
     match &this_val {
         Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
-            crate::value::convert::to_object(&this_val)
+            crate::value::convert::to_object(&this_val).unwrap_or(this_val.clone())
         }
         _ => this_val,
     }

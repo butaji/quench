@@ -4,8 +4,11 @@
 //! supplemented by Rust-native helpers for Stage 0 compliance.
 
 pub mod assert_helpers;
+pub mod deep_equal;
 pub mod host262;
 pub mod property_helpers;
+#[cfg(test)]
+mod property_helpers_tests;
 pub mod test_deep_equal;
 
 use crate::value::function::NativeConstructor;
@@ -349,6 +352,16 @@ fn fn_global_object(_args: Vec<Value>) -> Result<Value, JsError> {
     })
 }
 
+/// Save the harness global-object cache (realm snapshot support)
+pub(crate) fn save_global_object() -> Option<Rc<std::cell::RefCell<crate::value::Object>>> {
+    GLOBAL_OBJECT.with(|g| g.borrow().clone())
+}
+
+/// Restore the harness global-object cache (realm snapshot support)
+pub(crate) fn restore_global_object(saved: Option<Rc<std::cell::RefCell<crate::value::Object>>>) {
+    GLOBAL_OBJECT.with(|g| *g.borrow_mut() = saved);
+}
+
 /// Build an array of native error constructors
 fn make_error_constructor_array(ctx: &Context, include_extra: bool) -> Value {
     use crate::value::{Object, ObjectKind};
@@ -586,7 +599,7 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     );
     // Set native deepEqual with stub properties that JS code expects.
     // The JS harness file deepEqual.js will overwrite these with real implementations.
-    let deep_equal_fn = make_native(property_helpers::assert_deep_equal);
+    let deep_equal_fn = make_native(deep_equal::assert_deep_equal);
     if let Value::NativeFunction(ref nf) = deep_equal_fn {
         // These are stubs that the JS code will override
         let _ = nf.set_property("format", Value::Undefined);
@@ -646,7 +659,7 @@ assert._toString = function (value) {
         "propertyHelper.js",
         "nativeErrors.js",
         // deepEqual.js is NOT loaded here. The native assert_deep_equal
-        // (property_helpers.rs) handles deep structural comparison because
+        // (deep_equal.rs) handles deep structural comparison because
         // Quench's runtime doesn't have all the primitives the upstream JS
         // version needs yet (Reflect.ownKeys, Map, Set, TypedArrays, etc.).
         // The upstream file is spec-correct — load it once the runtime is
@@ -693,34 +706,10 @@ assert._toString = function (value) {
         "verifyProperty".to_string(),
         make_native(property_helpers::verify_property),
     );
-    ctx.set_global(
-        "verifyAccessorProperty".to_string(),
-        make_native(property_helpers::verify_accessor),
-    );
-    ctx.set_global(
-        "verifyWritable".to_string(),
-        make_native(property_helpers::verify_writable),
-    );
-    ctx.set_global(
-        "verifyNotWritable".to_string(),
-        make_native(property_helpers::verify_not_writable),
-    );
-    ctx.set_global(
-        "verifyEnumerable".to_string(),
-        make_native(property_helpers::verify_enumerable),
-    );
-    ctx.set_global(
-        "verifyNotEnumerable".to_string(),
-        make_native(property_helpers::verify_not_enumerable),
-    );
-    ctx.set_global(
-        "verifyConfigurable".to_string(),
-        make_native(property_helpers::verify_configurable),
-    );
-    ctx.set_global(
-        "verifyNotConfigurable".to_string(),
-        make_native(property_helpers::verify_not_configurable),
-    );
+    // verifyAccessorProperty and the deprecated verifyWritable /
+    // verifyNotWritable / verifyEnumerable / verifyNotEnumerable /
+    // verifyConfigurable / verifyNotConfigurable come from the real JS
+    // versions in the propertyHelper.js include — no native overrides.
 
     if ctx.get_global("nativeErrors").is_none() {
         ctx.set_global(

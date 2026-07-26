@@ -460,8 +460,11 @@ fn super_in_base_class_instance_method_works() {
 fn test_tdz_basic() {
     // Basic TDZ: accessing `y` before `let y;` runs
     let basic = eval("try { y; 'no_exc' } catch(e) { 'caught' } let y;");
-    assert_eq!(basic, Ok(Value::String("caught".into())),
-        "Basic TDZ should throw ReferenceError");
+    assert_eq!(
+        basic,
+        Ok(Value::String("caught".into())),
+        "Basic TDZ should throw ReferenceError"
+    );
 }
 
 #[test]
@@ -472,10 +475,14 @@ fn test_tdz_in_function_call() {
          try { (function() { y; })(); } \
          catch(e) { err = e; } \
          let y; \
-         err !== null"
+         err !== null",
     );
-    assert_eq!(r, Ok(Value::Boolean(true)),
-        "TDZ in function call should throw: {:?}", r);
+    assert_eq!(
+        r,
+        Ok(Value::Boolean(true)),
+        "TDZ in function call should throw: {:?}",
+        r
+    );
 }
 
 #[test]
@@ -487,10 +494,14 @@ fn test_tdz_in_for_of_direct() {
          try { for (x of [y]) { } } \
          catch(e) { err = e; } \
          let y; \
-         err !== null"
+         err !== null",
     );
-    assert_eq!(r, Ok(Value::Boolean(true)),
-        "TDZ in for-of direct iterable should throw: {:?}", r);
+    assert_eq!(
+        r,
+        Ok(Value::Boolean(true)),
+        "TDZ in for-of direct iterable should throw: {:?}",
+        r
+    );
 }
 
 #[test]
@@ -502,11 +513,15 @@ fn test_tdz_in_direct_destructuring() {
          try { var { x = y } = obj; } \
          catch(e) { err = e; } \
          let y; \
-         err !== null"
+         err !== null",
     );
     eprintln!("Direct destructuring TDZ test: {:?}", r);
-    assert_eq!(r, Ok(Value::Boolean(true)),
-        "TDZ in direct assignment destructuring default should throw: {:?}", r);
+    assert_eq!(
+        r,
+        Ok(Value::Boolean(true)),
+        "TDZ in direct assignment destructuring default should throw: {:?}",
+        r
+    );
 }
 
 #[test]
@@ -515,31 +530,43 @@ fn test_tdz_in_for_of_destructuring_default() {
     let s1 = eval(
         "var s = 0; \
          for ({ x } of [{x:5}]) { s += x; } \
-         s"
+         s",
     );
-    assert_eq!(s1, Ok(Value::Number(5.0)),
-        "for-of simple destructuring: {:?}", s1);
-    
+    assert_eq!(
+        s1,
+        Ok(Value::Number(5.0)),
+        "for-of simple destructuring: {:?}",
+        s1
+    );
+
     // Second check: does default in destructuring work when no TDZ?
     let s2 = eval(
         "var v = 0; \
          for ({ x = 99 } of [{}]) { v = x; } \
-         v"
+         v",
     );
-    assert_eq!(s2, Ok(Value::Number(99.0)),
-        "for-of destructuring with default: {:?}", s2);
-    
+    assert_eq!(
+        s2,
+        Ok(Value::Number(99.0)),
+        "for-of destructuring with default: {:?}",
+        s2
+    );
+
     // Third check: now test TDZ
     let r = eval(
         "var err = null; \
          try { for ({ x = y } of [{}]) { } } \
          catch(e) { err = e; } \
          let y; \
-         err !== null"
+         err !== null",
     );
     eprintln!("For-of destructuring TDZ test: {:?}", r);
-    assert_eq!(r, Ok(Value::Boolean(true)),
-        "TDZ in for-of destructuring default should throw: {:?}", r);
+    assert_eq!(
+        r,
+        Ok(Value::Boolean(true)),
+        "TDZ in for-of destructuring default should throw: {:?}",
+        r
+    );
 }
 
 #[test]

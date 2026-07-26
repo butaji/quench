@@ -36,10 +36,10 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
         } else if let Value::Function(f) = &this_val {
             // ValueFunction stores properties in a HashMap
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
-                if key_str == "prototype" {
-                    return Ok(Value::Boolean(
-                        f.get_property("prototype").is_some() || f.has_prototype(),
-                    ));
+                // Non-arrow functions always have a .prototype own property
+                // (even if it hasn't been lazily created yet).
+                if key_str == "prototype" && !f.is_arrow {
+                    return Ok(Value::Boolean(true));
                 }
                 if f.get_property(&key_str).is_some() {
                     return Ok(Value::Boolean(true));
@@ -63,6 +63,18 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                 }
                 // Check user-defined properties
                 if nf.get_property(&key_str).is_some() {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+        } else if let Value::NativeConstructor(nc) = &this_val {
+            if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
+                if key_str == "prototype" || key_str == "length" || key_str == "name" {
+                    return Ok(Value::Boolean(true));
+                }
+                if nc.get_static_method(&key_str).is_some() {
+                    return Ok(Value::Boolean(true));
+                }
+                if nc.get_accessor(&key_str).is_some() {
                     return Ok(Value::Boolean(true));
                 }
             }

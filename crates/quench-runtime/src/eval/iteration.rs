@@ -293,6 +293,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
         }
     }
     if let Some(ControlFlow::Return(val))
+    | Some(ControlFlow::Throw(val))
     | Some(ControlFlow::Yield(val))
     | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
     {
@@ -371,6 +372,12 @@ fn run_for_of_iteration(
                         set_control_flow(cf);
                         Ok(ForOfIterResult::Break(body_val))
                     }
+                }
+                Some(ControlFlow::Throw(val)) => {
+                    // throw in for-of body: propagate as error so the
+                    // iterator is properly closed via abrupt_close.
+                    let msg = crate::value::to_js_string(&val);
+                    Err(crate::value::JsError::from(msg))
                 }
                 Some(ControlFlow::Return(val))
                 | Some(ControlFlow::Yield(val))
@@ -558,6 +565,7 @@ fn run_for_in_iteration(
                 }
             }
             Some(ControlFlow::Return(val))
+            | Some(ControlFlow::Throw(val))
             | Some(ControlFlow::Yield(val))
             | Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
@@ -619,6 +627,7 @@ pub fn eval_for_in(
     }
 
     if let Some(ControlFlow::Return(val))
+    | Some(ControlFlow::Throw(val))
     | Some(ControlFlow::Yield(val))
     | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
     {
@@ -1202,9 +1211,7 @@ mod tests {
     fn tdz_destructure_assign_same_scope() {
         // Same scope: `y` is in TDZ in the same block as the destructuring
         let mut ctx = new_ctx();
-        let r1 = ctx.eval(
-            "{ let y; ({ x = y } = {}); x }",
-        );
+        let r1 = ctx.eval("{ let y; ({ x = y } = {}); x }");
         // `let y;` at the top of the block initializes `y` (exits TDZ)
         // So `x = y` should resolve `y` to `undefined`
         assert_eq!(r1.unwrap(), Value::Undefined);
@@ -1232,7 +1239,11 @@ mod tests {
                let y; \
              }",
         );
-        assert!(r1.is_err(), "expected TDZ error for let decl pattern, got: {:?}", r1);
+        assert!(
+            r1.is_err(),
+            "expected TDZ error for let decl pattern, got: {:?}",
+            r1
+        );
     }
 
     #[test]
@@ -1243,7 +1254,11 @@ mod tests {
              let y; \
              'ok'",
         );
-        assert!(r1.is_err(), "expected TDZ error at script level (let decl), got: {:?}", r1);
+        assert!(
+            r1.is_err(),
+            "expected TDZ error at script level (let decl), got: {:?}",
+            r1
+        );
     }
 
     #[test]
@@ -1256,13 +1271,17 @@ mod tests {
              let y; \
              'ok'",
         );
-        assert!(r1.is_err(), "expected TDZ error at script level (assign), got: {:?}", r1);
+        assert!(
+            r1.is_err(),
+            "expected TDZ error at script level (assign), got: {:?}",
+            r1
+        );
     }
 
     #[test]
     fn tdz_for_of_at_script_level() {
         let mut ctx = new_ctx();
-        // This matches the test262 for-of pattern  
+        // This matches the test262 for-of pattern
         let r1 = ctx.eval(
             "var x; \
              ({ x = y } = {}); \

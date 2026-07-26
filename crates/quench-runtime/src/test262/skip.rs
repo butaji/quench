@@ -5,40 +5,85 @@
 //! drive implementation. Force-run path skips with `TEST262_NOSKIP=1`.
 
 use crate::test262::metadata::Test262Metadata;
-use std::path::Path;
 
 /// Features that abort the process (not merely fail). Empty by default —
 /// prefer failing tests over silent skips so digests stay honest.
 const UNSUPPORTED_FEATURES: &[&str] = &[];
 
-/// File basenames that stack-overflow / abort the process in-process.
+/// Stage-relative paths (from the test262 root) that stack-overflow / abort
+/// the process in-process. Every entry was verified to crash `run-test`
+/// (exit 134); paths are full `test/...` suffixes, never bare basenames.
 const CRASH_FILES: &[(&str, &str)] = &[
-    ("prototype-setter.js", "known crash: stack overflow"),
     (
-        "this-access-restriction-2.js",
-        "known crash: stack overflow",
-    ),
-    ("this-access-restriction.js", "known crash: stack overflow"),
-    ("this-check-ordering.js", "known crash: stack overflow"),
-    ("restricted-properties.js", "known crash: stack overflow"),
-    (
-        "static-init-arguments-functions.js",
+        "test/language/statements/if/tco-else-body.js",
         "known crash: stack overflow",
     ),
     (
-        "static-init-arguments-methods.js",
+        "test/language/statements/if/tco-if-body.js",
         "known crash: stack overflow",
     ),
     (
-        "static-init-arguments-eval.js",
+        "test/language/statements/labeled/tco.js",
         "known crash: stack overflow",
     ),
-    ("tco.js", "known crash: stack overflow"),
-    ("bigint-wrapped-values.js", "known crash: stack overflow"),
-    ("tco-if-body.js", "known crash: stack overflow"),
-    ("tco-else-body.js", "known crash: stack overflow"),
-    ("tco-body.js", "known crash: stack overflow"),
+    (
+        "test/language/statements/while/tco-body.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/addition/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/bitwise-and/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/bitwise-or/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/bitwise-xor/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/division/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/exponentiation/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/left-shift/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/modulus/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/multiplication/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/right-shift/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/subtraction/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
+    (
+        "test/language/expressions/unsigned-right-shift/bigint-wrapped-values.js",
+        "known crash: stack overflow",
+    ),
 ];
+
+/// The configured crash-skip entries, for gate diagnostics.
+pub fn crash_files() -> &'static [(&'static str, &'static str)] {
+    CRASH_FILES
+}
 
 /// Returns true if the feature is implemented (or should be attempted).
 pub fn is_feature_supported(feature: &str) -> bool {
@@ -56,17 +101,16 @@ pub fn should_skip(meta: &Test262Metadata) -> Option<String> {
 }
 
 /// Path-level skip for known process killers. Honored unless `TEST262_NOSKIP=1`.
+/// `path` is matched by full stage-relative suffix (`test/...`), so any
+/// absolute or repo-relative prefix resolves to the same entry.
 pub fn should_skip_path(path: &str) -> Option<String> {
     if noskip_enabled() {
         return None;
     }
-    let name = Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let normalized = path.replace('\\', "/");
     CRASH_FILES
         .iter()
-        .find(|(file, _)| *file == name)
+        .find(|(rel, _)| normalized == *rel || normalized.ends_with(&format!("/{}", rel)))
         .map(|(_, reason)| (*reason).to_string())
 }
 
@@ -110,9 +154,18 @@ mod tests {
     }
 
     #[test]
-    fn crash_files_are_skipped_by_path() {
-        let r = should_skip_path("foo/tco.js");
+    fn crash_files_are_skipped_by_full_relative_path() {
+        let r = should_skip_path("tests/test262/test/language/statements/labeled/tco.js");
         assert!(r.unwrap().contains("crash"));
+        // The bare relative path key also matches (subprocess cwd independence).
+        let r = should_skip_path("test/language/statements/labeled/tco.js");
+        assert!(r.unwrap().contains("crash"));
+    }
+
+    #[test]
+    fn same_basename_different_dir_is_not_skipped() {
+        // return/tco.js no longer crashes; only labeled/tco.js does.
+        assert!(should_skip_path("tests/test262/test/language/statements/return/tco.js").is_none());
     }
 
     #[test]
@@ -132,19 +185,18 @@ mod tests {
         assert!(should_skip_source("async function foo() {}").is_none());
     }
 
-    /// Verify each CRASH_FILES entry has a matching test262 test file.
+    /// Verify each CRASH_FILES entry points at an existing test262 file.
     /// Ensures stale skip entries (for tests that no longer crash) are removed.
     #[test]
     fn crash_files_exist_on_disk() {
-        let test262_dir = std::env::var("TEST262_DIR")
-            .unwrap_or_else(|_| "tests/test262".to_string());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/test262");
+        let test262_dir =
+            std::env::var("TEST262_DIR").unwrap_or_else(|_| root.to_string_lossy().into_owned());
         let test262_path = std::path::Path::new(&test262_dir);
         let mut missing = Vec::new();
-        for (file, _reason) in CRASH_FILES {
-            // Search in all subdirectories for the file
-            let found = walk_files(test262_path, file);
-            if !found {
-                missing.push(*file);
+        for (rel_path, _reason) in CRASH_FILES {
+            if !test262_path.join(rel_path).is_file() {
+                missing.push(*rel_path);
             }
         }
         assert!(
@@ -153,22 +205,5 @@ mod tests {
              These entries are stale and should be removed.",
             missing
         );
-    }
-
-    /// Recursively search for a file by basename in the given directory.
-    fn walk_files(dir: &std::path::Path, name: &str) -> bool {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if walk_files(&path, name) {
-                        return true;
-                    }
-                } else if path.file_name().and_then(|s| s.to_str()) == Some(name) {
-                    return true;
-                }
-            }
-        }
-        false
     }
 }

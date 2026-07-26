@@ -327,7 +327,7 @@ fn copy_spread_into_object(
     let source_obj = match source {
         Value::Object(o) => o,
         other => {
-            let Value::Object(o) = to_object(&other) else {
+            let Value::Object(o) = to_object(&other)? else {
                 return Ok(());
             };
             o

@@ -12,11 +12,26 @@ STAGE=${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/in
 
 echo "Checking Stage $STAGE..."
 
-OUTPUT=$(TEST262_STAGE=$STAGE timeout 60 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
+# Per-stage timeout scaled to its test count: 10s + 0.2s/test, min 120s.
+STAGE_COUNT=$(python3 -c "
+import json
+d = json.load(open('tasks/index.json'))
+print(next((s['tests'] for s in d['stages'] if s['id'] == $STAGE), 0))
+")
+STAGE_TIMEOUT=$((10 + STAGE_COUNT / 5))
+[ "$STAGE_TIMEOUT" -lt 120 ] && STAGE_TIMEOUT=120
 
-if echo "$OUTPUT" | grep -q "ALL STAGES COMPLETE"; then
+if command -v timeout >/dev/null 2>&1; then
+    OUTPUT=$(TEST262_STAGE=$STAGE timeout "$STAGE_TIMEOUT" cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
+else
+    OUTPUT=$(TEST262_STAGE=$STAGE cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
+fi
+
+# Success requires the exact footer AND zero skipped tests (the footer is
+# suppressed when anything is skipped, but belt-and-braces for stale runners).
+if echo "$OUTPUT" | grep -q "ALL STAGES COMPLETE" && ! echo "$OUTPUT" | grep -qE "skipped [1-9]|[1-9][0-9]* skipped"; then
     echo "✅ Stage $STAGE is 100%!"
-    
+
     # Update index.json
     python3 -c "
 import json
@@ -39,6 +54,10 @@ with open('tasks/index.json', 'w') as f:
 print('index.json updated')
 "
 else
-    PASSED=$(echo "$OUTPUT" | grep -oP 'Stage \d+: \K\d+/\d+' || echo "?")
-    echo "❌ Stage $STAGE not yet 100% (${PASSED})"
+    # Portable (BSD/macOS-safe) extraction of the "Stage N: P/T" tally.
+    PASSED=$(echo "$OUTPUT" | grep -oE 'Stage [0-9]+: [0-9]+/[0-9]+' | head -1 | grep -oE '[0-9]+/[0-9]+' || echo "?")
+    echo "❌ Stage $STAGE not yet 100% (${PASSED:-?})"
+    if echo "$OUTPUT" | grep -qE "skipped [1-9]|[1-9][0-9]* skipped"; then
+        echo "   (skipped tests present — stage cannot advance)"
+    fi
 fi

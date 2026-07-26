@@ -84,6 +84,18 @@ pub fn reset_global_symbol_registry() {
     });
 }
 
+/// Save the well-known symbol cache (realm snapshot support).
+/// GLOBAL_SYMBOL_REGISTRY is deliberately excluded: Symbol.for is a
+/// cross-realm registry per spec.
+pub(crate) fn save_well_known_symbols() -> HashMap<&'static str, Value> {
+    WELL_KNOWN_SYMBOLS.with(|symbols| symbols.borrow().clone())
+}
+
+/// Restore the well-known symbol cache (realm snapshot support)
+pub(crate) fn restore_well_known_symbols(saved: HashMap<&'static str, Value>) {
+    WELL_KNOWN_SYMBOLS.with(|symbols| *symbols.borrow_mut() = saved);
+}
+
 /// Implementation of Symbol.for(key) - looks up or creates a symbol in the global registry.
 fn symbol_for_impl(key: &str) -> Value {
     GLOBAL_SYMBOL_REGISTRY.with(|registry| {

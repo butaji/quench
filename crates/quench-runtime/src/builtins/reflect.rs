@@ -66,6 +66,9 @@ fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
 
 pub fn register_reflect(ctx: &mut Context) {
     let mut reflect = Object::new(ObjectKind::Ordinary);
+    if let Some(proto) = crate::builtins::get_object_prototype() {
+        reflect.prototype = Some(proto);
+    }
     reflect.set(
         "ownKeys",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(

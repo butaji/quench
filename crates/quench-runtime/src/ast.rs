@@ -224,6 +224,8 @@ pub enum Expression {
     Elision,
     /// Spread element: ...expr (used in array literals)
     Spread(Box<Expression>),
+    /// Await expression (await expr)
+    Await(Box<Expression>),
     FunctionExpression {
         name: Option<String>,
         params: Vec<Param>,

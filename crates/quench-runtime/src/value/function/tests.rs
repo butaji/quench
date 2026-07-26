@@ -61,7 +61,8 @@ fn expected_arg_count_rest_param_ignored() {
     p3.rest = true;
 
     let params = vec![p1, p2, p3];
-    assert_eq!(expected_argument_count(&params), 3.0);
+    // Per ES §14.1.6, rest parameters are NOT counted in ExpectedArgumentCount
+    assert_eq!(expected_argument_count(&params), 2.0);
 }
 
 // ── ValueFunction construction ────────────────────────────────────────────────

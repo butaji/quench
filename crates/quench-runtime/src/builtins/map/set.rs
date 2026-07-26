@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::helpers::{
-    init_set_object, iterator_prop_key, make_iterator, map_update_size, native_fn, set_has_value,
-    set_populate, set_values,
+    init_set_object, iterator_prop_key, map_update_size, native_fn, set_has_value, set_populate,
+    set_values,
 };
 use crate::value::{JsError, Object, ObjectKind, Value};
 use crate::Context;
@@ -68,10 +68,8 @@ fn set_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = set_values(&this)
-        .map(|v| v.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(make_iterator(items))
+    let values = set_values(&this).unwrap_or_else(|| Rc::new(RefCell::new(Object::new_array(0))));
+    Ok(super::helpers::make_live_value_iterator(values))
 }
 
 pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {

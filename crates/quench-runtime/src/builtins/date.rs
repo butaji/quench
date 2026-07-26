@@ -230,13 +230,19 @@ fn register_boolean_converter(ctx: &mut Context) {
         boolean_proto_rc.clone(),
     )));
 
-    let boolean_obj = Object::new(ObjectKind::Ordinary);
-    let boolean_obj_rc = Rc::new(RefCell::new(boolean_obj));
-    boolean_obj_rc
+    // Set Boolean.prototype.constructor after boolean_fn exists
+    boolean_proto_rc
         .borrow_mut()
-        .set("prototype", Value::Object(boolean_proto_rc));
-    boolean_obj_rc.borrow_mut().set("constructor", boolean_fn);
-    ctx.set_global("Boolean".to_string(), Value::Object(boolean_obj_rc));
+        .set("constructor", boolean_fn.clone());
+
+    // Set Boolean.prototype as the "prototype" property of boolean_fn
+    // so constructor_prototype("Boolean") can find it.
+    if let Value::NativeFunction(ref bf) = boolean_fn {
+        let _ = bf.set_property("prototype", Value::Object(Rc::clone(&boolean_proto_rc)));
+    }
+
+    // Register Boolean as a NativeFunction (callable), not a plain Object.
+    ctx.set_global("Boolean".to_string(), boolean_fn);
 }
 
 // ============================================================================

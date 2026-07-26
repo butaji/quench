@@ -123,6 +123,76 @@ pub enum LiveIndexIteratorMode {
     Entries,
 }
 
+/// Build a live iterator over Map/Set entries referenced by `entries_rc`.
+/// Each iteration reads the current length from the entries array,
+/// so deletions during iteration are reflected correctly.
+pub fn make_live_entry_iterator(entries_rc: Rc<RefCell<Object>>) -> Value {
+    let index = Rc::new(RefCell::new(0usize));
+    let entries = Rc::clone(&entries_rc);
+    let next_fn = NativeFunction::new(move |_args| {
+        let mut result = Object::new(ObjectKind::Ordinary);
+        let current_idx = { *index.borrow() };
+        let borrowed = entries.borrow();
+        let len = borrowed
+            .get("length")
+            .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
+            .unwrap_or(borrowed.elements.len());
+        if current_idx < len {
+            let key = current_idx.to_string();
+            let entry = borrowed.get(&key).unwrap_or_else(|| {
+                if current_idx < borrowed.elements.len() {
+                    borrowed.elements[current_idx].clone()
+                } else {
+                    Value::Undefined
+                }
+            });
+            result.set("value", entry);
+            result.set("done", Value::Boolean(false));
+            *index.borrow_mut() = current_idx + 1;
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Value::Object(Rc::new(RefCell::new(iter)))
+}
+
+/// Build a live iterator over Set values referenced by `values_rc`.
+pub fn make_live_value_iterator(values_rc: Rc<RefCell<Object>>) -> Value {
+    let index = Rc::new(RefCell::new(0usize));
+    let values = Rc::clone(&values_rc);
+    let next_fn = NativeFunction::new(move |_args| {
+        let mut result = Object::new(ObjectKind::Ordinary);
+        let current_idx = { *index.borrow() };
+        let borrowed = values.borrow();
+        let len = borrowed
+            .get("length")
+            .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
+            .unwrap_or(borrowed.elements.len());
+        if current_idx < len {
+            let val = if current_idx < borrowed.elements.len() {
+                borrowed.elements[current_idx].clone()
+            } else {
+                let key = current_idx.to_string();
+                borrowed.get(&key).unwrap_or(Value::Undefined)
+            };
+            result.set("value", val);
+            result.set("done", Value::Boolean(false));
+            *index.borrow_mut() = current_idx + 1;
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    let mut iter = Object::new(ObjectKind::Ordinary);
+    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    Value::Object(Rc::new(RefCell::new(iter)))
+}
+
 /// Build `{ next() }` reading indexed elements live from `arr_rc`.
 pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIteratorMode) -> Value {
     let index = Rc::new(RefCell::new(0usize));
@@ -147,7 +217,14 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                         if let Some(func) = desc.get {
                             drop(borrowed);
                             let _arr_val = Value::Object(Rc::clone(&arr));
-                            return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
+                            return invoke_getter_func(
+                                func,
+                                &arr,
+                                &key,
+                                mode,
+                                current_idx,
+                                index.clone(),
+                            );
                         }
                         if let Some(val) = desc.value {
                             val
@@ -170,7 +247,14 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                         if let Some(func) = desc.get {
                             drop(borrowed);
                             let _arr_val = Value::Object(Rc::clone(&arr));
-                            return invoke_getter_func(func, &arr, &key, mode, current_idx, index.clone());
+                            return invoke_getter_func(
+                                func,
+                                &arr,
+                                &key,
+                                mode,
+                                current_idx,
+                                index.clone(),
+                            );
                         }
                         if let Some(val) = desc.value {
                             val

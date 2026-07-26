@@ -140,6 +140,37 @@ pub fn get_test262_error_with_proto() -> Option<(Rc<RefCell<Object>>, Value)> {
     proto.map(|p| (p, ctor))
 }
 
+/// Snapshot of the thread-local error intrinsic caches (realm snapshot support):
+/// (Error.prototype, TypeError.prototype, Test262Error, Test262Error.prototype).
+/// MAIN_REALM_TEST262_ERROR is deliberately excluded: it must keep pointing at
+/// the main realm even while a sub-realm is being created.
+pub(crate) type ErrorIntrinsics = (
+    Option<Rc<RefCell<Object>>>,
+    Option<Rc<RefCell<Object>>>,
+    Option<Value>,
+    Option<Rc<RefCell<Object>>>,
+);
+
+/// Save the thread-local error intrinsic caches (realm snapshot support)
+pub(crate) fn save_error_intrinsics() -> ErrorIntrinsics {
+    let err = ERROR_PROTOTYPE.with(|c| c.replace(None));
+    ERROR_PROTOTYPE.with(|c| c.set(err.clone()));
+    let ty = TYPE_ERROR_PROTOTYPE.with(|c| c.replace(None));
+    TYPE_ERROR_PROTOTYPE.with(|c| c.set(ty.clone()));
+    let t262 = TEST262_ERROR.with(|c| c.borrow().clone());
+    let t262p = TEST262_ERROR_PROTO.with(|c| c.borrow().clone());
+    (err, ty, t262, t262p)
+}
+
+/// Restore the thread-local error intrinsic caches (realm snapshot support)
+pub(crate) fn restore_error_intrinsics(saved: ErrorIntrinsics) {
+    let (err, ty, t262, t262p) = saved;
+    ERROR_PROTOTYPE.with(|c| c.set(err));
+    TYPE_ERROR_PROTOTYPE.with(|c| c.set(ty));
+    TEST262_ERROR.with(|c| *c.borrow_mut() = t262);
+    TEST262_ERROR_PROTO.with(|c| *c.borrow_mut() = t262p);
+}
+
 /// Register Error prototype for use in create_js_error (called during init)
 pub fn register_error_constructor(error: Value, error_prototype: Rc<RefCell<Object>>) {
     let name = if let Value::Object(obj) = &error {
@@ -154,7 +185,10 @@ pub fn register_error_constructor(error: Value, error_prototype: Rc<RefCell<Obje
     match name.as_str() {
         "Error" => ERROR_PROTOTYPE.with(|cell| cell.set(Some(error_prototype))),
         "TypeError" => TYPE_ERROR_PROTOTYPE.with(|cell| cell.set(Some(error_prototype))),
-        _ => ERROR_PROTOTYPE.with(|cell| cell.set(Some(error_prototype))),
+        // Other error types (SyntaxError, RangeError, etc.) don't need
+        // their own thread-local slots — they fall back to Error.prototype
+        // via the prototype chain when needed.
+        _ => {}
     }
 }
 
@@ -545,6 +579,16 @@ mod tests {
 
     #[test]
     fn register_error_constructor_unknown_name_fallback_to_error() {
+        // First register Error so ERROR_PROTOTYPE is properly set
+        let mut error_ctor = Object::new(ObjectKind::Ordinary);
+        error_ctor.set("name", Value::String("Error".to_string()));
+        let error_proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+        register_error_constructor(
+            Value::Object(Rc::new(RefCell::new(error_ctor))),
+            Rc::clone(&error_proto),
+        );
+
+        // Now register a custom error type — should NOT overwrite ERROR_PROTOTYPE
         let mut ctor = Object::new(ObjectKind::Ordinary);
         ctor.set("name", Value::String("CustomError".to_string()));
         let proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));

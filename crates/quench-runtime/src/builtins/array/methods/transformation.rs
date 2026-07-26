@@ -141,7 +141,12 @@ pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
         let array_copy = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
             elements.to_vec(),
         ))));
-        let callback_args = vec![accumulator.clone(), elem.clone(), Value::Number(i as f64), array_copy];
+        let callback_args = vec![
+            accumulator.clone(),
+            elem.clone(),
+            Value::Number(i as f64),
+            array_copy,
+        ];
         accumulator = match &callback {
             Value::Function(_) => {
                 call_value_with_this(callback.clone(), callback_args, Value::Undefined)?

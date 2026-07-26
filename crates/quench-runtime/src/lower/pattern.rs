@@ -2,7 +2,7 @@
 
 use super::expr::lower_expr;
 use super::helpers::LowerError;
-use crate::ast::{BindingElement, Expression, PropertyKey, Statement, VarKind};
+use crate::ast::{BindingElement, Expression, PropertyKey, Statement, UnaryOp, VarKind};
 use crate::lower::expr::lower_assignment_target;
 use oxc::ast::ast;
 
@@ -249,9 +249,14 @@ fn lower_assignment_target_maybe_default(
                     let init = lower_expr(&d.init).ok()?;
                     Some(BindingElement::Default(Box::new(binding), Box::new(init)))
                 }
-                None => lower_assignment_target(&d.binding)
-                    .ok()
-                    .map(BindingElement::AssignmentTarget),
+                None => {
+                    let target = lower_assignment_target(&d.binding).ok()?;
+                    let init = lower_expr(&d.init).ok()?;
+                    Some(BindingElement::Default(
+                        Box::new(BindingElement::AssignmentTarget(target)),
+                        Box::new(init),
+                    ))
+                }
             }
         }
         // Regular assignment target
@@ -459,6 +464,23 @@ pub fn expand_nested_object_pattern(
     // Handle rest element
     if let Some(rest) = &obj.rest {
         let rest_temp_name = format!("{}_rest", source_var);
+        // Before initializing the rest var, delete each already-destructured
+        // key from the source object so the rest only captures remaining props.
+        for prop in &obj.properties {
+            let key_str = match &prop.key {
+                ast::PropertyKey::StaticIdentifier(i) => i.name.as_str().to_string(),
+                ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                ast::PropertyKey::NumericLiteral(n) => n.value.to_string(),
+                _ => continue,
+            };
+            if key_str.is_empty() {
+                continue;
+            }
+            stmts.push(Statement::Expression(Box::new(Expression::Unary {
+                op: UnaryOp::Delete,
+                argument: Box::new(object_member_expr(source_var, &key_str)),
+            })));
+        }
         stmts.push(Statement::VarDeclaration {
             kind: VarKind::Const,
             name: rest_temp_name.clone(),

@@ -231,7 +231,9 @@ impl Scope {
                 if let Some(ref obj) = self.object_binding {
                     if obj.borrow().has(&name) {
                         // Check writability before setting
-                        let writable = obj.borrow().get_descriptor(&name)
+                        let writable = obj
+                            .borrow()
+                            .get_descriptor(&name)
                             .map(|f| f.writable)
                             .unwrap_or(true);
                         if writable || !strict {
@@ -302,7 +304,11 @@ impl Scope {
             eprintln!("  {} = {:?}", k, v);
         }
         if let Some(ref obj) = self.object_binding {
-            eprintln!("[Scope {}] object_binding keys: {:?}", label, obj.borrow().properties.keys().collect::<Vec<_>>());
+            eprintln!(
+                "[Scope {}] object_binding keys: {:?}",
+                label,
+                obj.borrow().properties.keys().collect::<Vec<_>>()
+            );
         }
     }
 }

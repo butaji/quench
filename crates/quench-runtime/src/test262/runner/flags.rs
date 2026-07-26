@@ -26,7 +26,7 @@ impl RunnerFlags {
             stage: std::env::var("TEST262_STAGE")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(0),
+                .unwrap_or_else(default_stage),
             quick_limit: std::env::var("TEST262_QUICK_LIMIT")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -34,6 +34,27 @@ impl RunnerFlags {
             failed_json: std::env::var("TEST262_FAILED_JSON").ok(),
         }
     }
+}
+
+/// Default stage: `current_stage` from `tasks/index.json`, 0 if unreadable.
+pub fn default_stage() -> usize {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(root) = manifest.parent().and_then(|p| p.parent()) else {
+        return 0;
+    };
+    std::fs::read_to_string(root.join("tasks/index.json"))
+        .ok()
+        .and_then(|json| parse_current_stage(&json))
+        .unwrap_or(0)
+}
+
+/// Extract `current_stage` from a `tasks/index.json` document.
+fn parse_current_stage(json: &str) -> Option<usize> {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()?
+        .get("current_stage")?
+        .as_u64()
+        .map(|n| n as usize)
 }
 
 fn env_bool(name: &str) -> bool {
@@ -73,5 +94,20 @@ mod tests {
             failed_json: None,
         };
         assert!(f.parallel);
+    }
+
+    #[test]
+    fn parse_current_stage_reads_number() {
+        let json = r#"{ "stages": [], "current_stage": 25 }"#;
+        assert_eq!(parse_current_stage(json), Some(25));
+        assert_eq!(parse_current_stage("not json"), None);
+    }
+
+    #[test]
+    fn default_stage_matches_tasks_index_json() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tasks/index.json");
+        let json = std::fs::read_to_string(root).expect("tasks/index.json readable");
+        let expected = parse_current_stage(&json).expect("current_stage present");
+        assert_eq!(default_stage(), expected);
     }
 }

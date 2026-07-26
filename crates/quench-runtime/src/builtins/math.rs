@@ -74,7 +74,10 @@ fn rand_simple() -> f64 {
 }
 
 pub fn register_math(ctx: &mut Context) {
-    let math = Object::new(crate::value::ObjectKind::Ordinary);
+    let mut math = Object::new(crate::value::ObjectKind::Ordinary);
+    if let Some(proto) = crate::builtins::get_object_prototype() {
+        math.prototype = Some(proto);
+    }
     let math = Rc::new(RefCell::new(math));
 
     register_unary_math_fns(&math);

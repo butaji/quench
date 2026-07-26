@@ -175,7 +175,11 @@ impl Object {
             // Arguments objects (ObjData::Args) also store indexed values in
             // `elements`, especially the "mappable" case with no params in
             // sloppy mode where no getter/setter is installed per index.
-            if matches!(self.data, ObjData::Args { .. }) && idx < self.elements.len() {
+            // Check holes so `delete arguments[i]` properly removes the property.
+            if matches!(self.data, ObjData::Args { .. })
+                && idx < self.elements.len()
+                && !self.holes.contains(&idx)
+            {
                 return Some(self.elements[idx].clone());
             }
             if self.kind == ObjectKind::Array && idx < self.elements.len() {

@@ -343,16 +343,14 @@ fn test_to_primitive_object_plain() {
 
 #[test]
 fn test_to_object_null_undefined() {
-    // Per spec, ToObject(null/undefined) returns a new ordinary object (not a real error)
-    let r = to_object(&Value::Null);
-    assert!(matches!(r, Value::Object(_)));
-    let r2 = to_object(&Value::Undefined);
-    assert!(matches!(r2, Value::Object(_)));
+    // Per spec, ToObject(null/undefined) throws TypeError
+    assert!(to_object(&Value::Null).is_err());
+    assert!(to_object(&Value::Undefined).is_err());
 }
 
 #[test]
 fn test_to_object_boolean() {
-    let r = to_object(&Value::Boolean(true));
+    let r = to_object(&Value::Boolean(true)).unwrap();
     assert!(matches!(r, Value::Object(_)));
     let obj = match r {
         Value::Object(o) => o,
@@ -366,7 +364,7 @@ fn test_to_object_boolean() {
 
 #[test]
 fn test_to_object_number() {
-    let r = to_object(&Value::Number(42.0));
+    let r = to_object(&Value::Number(42.0)).unwrap();
     assert!(matches!(r, Value::Object(_)));
     let obj = match r {
         Value::Object(o) => o,
@@ -380,7 +378,7 @@ fn test_to_object_number() {
 
 #[test]
 fn test_to_object_string() {
-    let r = to_object(&Value::String("abc".to_string()));
+    let r = to_object(&Value::String("abc".to_string())).unwrap();
     assert!(matches!(r, Value::Object(_)));
     let obj = match r {
         Value::Object(o) => o,
@@ -401,7 +399,7 @@ fn test_to_object_string() {
 #[test]
 fn test_to_object_bigint() {
     let bi = num_bigint::BigInt::from(123);
-    let r = to_object(&Value::BigInt(Rc::new(bi)));
+    let r = to_object(&Value::BigInt(Rc::new(bi))).unwrap();
     assert!(matches!(r, Value::Object(_)));
     let obj = match r {
         Value::Object(o) => o,
@@ -419,7 +417,8 @@ fn test_to_object_symbol() {
     let r = to_object(&Value::Symbol(Rc::new(Symbol::new(
         Some("sym".into()),
         false,
-    ))));
+    ))))
+    .unwrap();
     assert!(matches!(r, Value::Object(_)));
 }
 
@@ -427,7 +426,7 @@ fn test_to_object_symbol() {
 fn test_to_object_object_passthrough() {
     let obj = Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
     let obj_clone = obj.clone();
-    let r = to_object(&obj);
+    let r = to_object(&obj).unwrap();
     assert!(matches!(r, Value::Object(_)));
     // to_object on object returns same object (passthrough)
     drop(obj_clone);

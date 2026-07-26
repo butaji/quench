@@ -35,7 +35,8 @@ pub fn eval_native_function_member(
         "toPrimitive" | "hasInstance" | "isConcatSpreadable" => eval_well_known_symbol(prop_name),
         _ => {
             // Fall through to Function.prototype for inherited properties
-            // (hasOwnProperty, toString, valueOf, etc.)
+            // (hasOwnProperty, toString, valueOf, etc.), then walk up to
+            // Object.prototype via Function.prototype.[[Prototype]].
             if let Some(fp) = crate::builtins::get_function_prototype() {
                 let fp_borrowed = fp.borrow();
                 if fp_borrowed.has_getter(prop_name) || fp_borrowed.has_setter(prop_name) {
@@ -43,6 +44,10 @@ pub fn eval_native_function_member(
                 }
                 if let Some(val) = fp_borrowed.get(prop_name) {
                     return Ok(val);
+                }
+                // Walk Function.prototype's own [[Prototype]] chain (→ Object.prototype)
+                if let Some(ref obj_proto) = fp_borrowed.prototype {
+                    return crate::eval::member::eval_object_member(obj_proto, prop_name, None);
                 }
             }
             Ok(Value::Undefined)
@@ -191,7 +196,24 @@ pub fn eval_native_constructor_member(
             }
         }
         "name" => Ok(Value::String(nc.name().to_string())),
-        _ => Ok(Value::Undefined),
+        _ => {
+            // Walk Function.prototype chain ([[Prototype]] of constructors)
+            // to find inherited properties like hasOwnProperty, toString, etc.
+            if let Some(fp) = crate::builtins::get_function_prototype() {
+                let fp_borrowed = fp.borrow();
+                if fp_borrowed.has_getter(prop_name) || fp_borrowed.has_setter(prop_name) {
+                    return crate::eval::member::eval_object_member(&fp, prop_name, None);
+                }
+                if let Some(val) = fp_borrowed.get(prop_name) {
+                    return Ok(val);
+                }
+                // Walk Function.prototype's own [[Prototype]] chain (→ Object.prototype)
+                if let Some(ref obj_proto) = fp_borrowed.prototype {
+                    return crate::eval::member::eval_object_member(obj_proto, prop_name, None);
+                }
+            }
+            Ok(Value::Undefined)
+        }
     }
 }
 
@@ -264,5 +286,31 @@ mod tests {
     fn native_constructor_name() {
         let r = eval("Object.name").unwrap();
         assert_eq!(r, Value::String("Object".into()));
+    }
+
+    // ─── Object(null) accessors ────────────────────────────────────────────
+
+    #[test]
+    fn object_null_tostring_call() {
+        let r = eval("var o = Object(null); o.toString()").unwrap();
+        assert_eq!(r, Value::String("[object Object]".into()));
+    }
+
+    #[test]
+    fn object_null_constructor() {
+        let r = eval("Object(null).constructor");
+        assert!(r.is_ok(), "constructor failed: {:?}", r);
+    }
+
+    #[test]
+    fn object_null_prototype() {
+        let r = eval("Object(null).prototype");
+        assert!(r.is_ok(), "prototype failed: {:?}", r);
+    }
+
+    #[test]
+    fn object_null_tolocalestring_regression() {
+        let r = eval("Object(null).toLocaleString()");
+        assert!(r.is_ok(), "toLocaleString failed: {:?}", r);
     }
 }

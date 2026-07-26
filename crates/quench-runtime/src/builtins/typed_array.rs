@@ -33,6 +33,16 @@ pub fn get_typed_array_prototype() -> Option<Rc<RefCell<Object>>> {
     TYPED_ARRAY_PROTOTYPE.with(|tp| tp.borrow().clone())
 }
 
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_typed_array_prototype() -> Option<Rc<RefCell<Object>>> {
+    get_typed_array_prototype()
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_typed_array_prototype(proto: Option<Rc<RefCell<Object>>>) {
+    TYPED_ARRAY_PROTOTYPE.with(|tp| *tp.borrow_mut() = proto);
+}
+
 pub fn register_typed_arrays(ctx: &mut Context) {
     // Create shared TypedArray prototype once (shared by all TypedArray instances)
     let typed_array_proto = Object::new(ObjectKind::Ordinary);

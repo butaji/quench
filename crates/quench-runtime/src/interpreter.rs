@@ -25,6 +25,7 @@ pub(crate) enum ControlFlow {
     Break(Option<String>),
     Continue(Option<String>),
     Return(Value),
+    Throw(Value),
     Yield(Value),
     YieldDelegate(Value),
 }

@@ -13,11 +13,12 @@ pub fn install_at_method(proto: &Rc<RefCell<Object>>) {
     );
 }
 
-/// String.prototype.at(index) - returns character at index, negative = from end
+/// String.prototype.at(index) - returns UTF-16 code unit at index, negative = from end
 fn proto_at(args: Vec<Value>) -> Result<Value, JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => {
-            let len = s.chars().count() as f64;
+    match super::this_js_string() {
+        Some(s) => {
+            let utf16: Vec<u16> = s.encode_utf16().collect();
+            let len = utf16.len() as f64;
             let idx = args.first().map(to_number).unwrap_or(0.0);
 
             let actual_idx = if idx < 0.0 {
@@ -26,11 +27,14 @@ fn proto_at(args: Vec<Value>) -> Result<Value, JsError> {
                 idx as isize
             };
 
-            if actual_idx < 0 || (actual_idx as usize) >= s.chars().count() {
+            if actual_idx < 0 || (actual_idx as usize) >= utf16.len() {
                 Ok(Value::Undefined)
             } else {
-                let ch = s.chars().nth(actual_idx as usize).map(|c| c.to_string());
-                Ok(ch.map(Value::String).unwrap_or(Value::Undefined))
+                let code_unit = utf16[actual_idx as usize];
+                // Convert single UTF-16 code unit to String
+                Ok(Value::String(
+                    String::from_utf16(&[code_unit]).unwrap_or_else(|_| String::new()),
+                ))
             }
         }
         _ => Ok(Value::Undefined),

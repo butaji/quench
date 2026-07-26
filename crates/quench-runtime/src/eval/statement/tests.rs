@@ -1066,6 +1066,19 @@ mod block_edge_cases {
     fn block_with_var_hoists_out() {
         assert_eq!(eval("{ var x = 10; } x").unwrap(), Value::Number(10.0));
     }
+
+    #[test]
+    fn block_scope_visible_inside_for_let_loop() {
+        // Regression: let bindings in outer blocks must be visible inside
+        // for (let i = 0; ...) loops (before TDZ fix).
+        let result = eval(
+            "{ let x = 10; let r = []; for (let i = 0; i < 3; ++i) { r.push(x); } r.length; }",
+        );
+        match &result {
+            Ok(Value::Number(n)) if *n == 3.0 => {} // pass
+            other => panic!("Expected 3, got {:?}", other),
+        }
+    }
 }
 
 // ─── Throw with different types ───────────────────────────────────────────

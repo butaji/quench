@@ -226,9 +226,31 @@ fn function_instanceof(
         }
         return has_prototype_in_chain(&ip.borrow(), target_proto);
     }
-    let func_proto = func.get_prototype();
-    let func_proto_ref = func_proto.borrow();
-    has_prototype_in_chain(&func_proto_ref, target_proto)
+    // Per ES spec §12.9.4 (OrdinaryHasInstance): walk the instance's own
+    // [[Prototype]] chain looking for target_proto.
+    // For function objects, [[Prototype]] depends on the function kind:
+    //   normal/arrow → %FunctionPrototype%
+    //   generator    → %GeneratorFunctionPrototype%
+    //   async        → %AsyncFunctionPrototype%
+    //   async gen    → %AsyncGeneratorFunctionPrototype%
+    let func_proto = if func.is_generator && !func.is_async {
+        crate::builtins::function::get_generator_function_prototype()
+    } else if func.is_async && !func.is_generator {
+        crate::builtins::function::get_async_function_prototype()
+    } else if func.is_async {
+        crate::builtins::function::get_async_generator_function_prototype()
+    } else {
+        crate::builtins::function::get_function_prototype()
+    };
+    if let Some(ref fp) = func_proto {
+        let fp_ptr: *const std::cell::RefCell<crate::value::Object> = &**fp;
+        let tp_ptr: *const std::cell::RefCell<crate::value::Object> = &**target_proto;
+        if fp_ptr == tp_ptr {
+            return true;
+        }
+        return has_prototype_in_chain(&fp.borrow(), target_proto);
+    }
+    false
 }
 
 fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
@@ -253,6 +275,19 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         }
         (Value::Function(func), Value::NativeConstructor(ctor)) => {
             let result = function_instanceof(func, &ctor.prototype);
+            Ok(Value::Boolean(result))
+        }
+        (Value::Function(func), Value::NativeFunction(nf)) => {
+            if let Some(Value::Object(proto)) = nf.get_property("prototype") {
+                let result = function_instanceof(func, &proto);
+                Ok(Value::Boolean(result))
+            } else {
+                Ok(Value::Boolean(false))
+            }
+        }
+        (Value::Function(func), Value::Function(ctor)) => {
+            let ctor_proto = ctor.get_prototype();
+            let result = function_instanceof(func, &ctor_proto);
             Ok(Value::Boolean(result))
         }
         (Value::Object(obj), Value::Object(ctor)) => {

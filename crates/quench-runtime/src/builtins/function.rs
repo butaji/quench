@@ -17,6 +17,12 @@ thread_local! {
         const { RefCell::new(None) };
     static ASYNC_GENERATOR_FUNCTION_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
         const { RefCell::new(None) };
+    /// %GeneratorPrototype% — the intrinsic prototype of generator instances.
+    /// Accessible as %GeneratorFunctionPrototype%.prototype.
+    static GENERATOR_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    /// %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
+    static ASYNC_GENERATOR_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
 }
 
 /// Get the Function.prototype object (for use by interpreter)
@@ -34,6 +40,42 @@ pub fn get_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
 
 pub fn get_async_generator_function_prototype() -> Option<Rc<RefCell<Object>>> {
     ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| fp.borrow().clone())
+}
+
+/// Get %GeneratorPrototype% — the intrinsic prototype of generator instances.
+pub fn get_generator_prototype() -> Option<Rc<RefCell<Object>>> {
+    GENERATOR_PROTOTYPE.with(|gp| gp.borrow().clone())
+}
+
+/// Get %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
+pub fn get_async_generator_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_GENERATOR_PROTOTYPE.with(|gp| gp.borrow().clone())
+}
+
+/// Snapshot of all six function-family prototype caches (realm snapshot support)
+pub(crate) type FunctionPrototypes = [Option<Rc<RefCell<Object>>>; 6];
+
+/// Save all function-family prototype caches (realm snapshot support)
+pub(crate) fn save_function_prototypes() -> FunctionPrototypes {
+    [
+        get_function_prototype(),
+        get_async_function_prototype(),
+        get_generator_function_prototype(),
+        get_async_generator_function_prototype(),
+        get_generator_prototype(),
+        get_async_generator_prototype(),
+    ]
+}
+
+/// Restore all function-family prototype caches (realm snapshot support)
+pub(crate) fn restore_function_prototypes(saved: FunctionPrototypes) {
+    let [fp, afp, gfp, agfp, gp, agp] = saved;
+    FUNCTION_PROTOTYPE.with(|c| *c.borrow_mut() = fp);
+    ASYNC_FUNCTION_PROTOTYPE.with(|c| *c.borrow_mut() = afp);
+    GENERATOR_FUNCTION_PROTOTYPE.with(|c| *c.borrow_mut() = gfp);
+    ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|c| *c.borrow_mut() = agfp);
+    GENERATOR_PROTOTYPE.with(|c| *c.borrow_mut() = gp);
+    ASYNC_GENERATOR_PROTOTYPE.with(|c| *c.borrow_mut() = agp);
 }
 
 /// Check if an object is Function.prototype (for special property access handling)
@@ -224,6 +266,34 @@ pub fn register_function(ctx: &mut Context) {
     ASYNC_GENERATOR_FUNCTION_PROTOTYPE.with(|fp| {
         *fp.borrow_mut() = Some(Rc::clone(&async_generator_function_proto_rc));
     });
+
+    // Create %GeneratorPrototype% — the intrinsic prototype of generator instances.
+    // Inherits from %ObjectPrototype%, and is set as %GeneratorFunctionPrototype%.prototype.
+    let generator_proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+        generator_proto_rc.borrow_mut().prototype = Some(obj_proto);
+    }
+    GENERATOR_PROTOTYPE.with(|gp| {
+        *gp.borrow_mut() = Some(Rc::clone(&generator_proto_rc));
+    });
+    // Wire %GeneratorFunctionPrototype%.prototype = %GeneratorPrototype%
+    generator_function_proto_rc
+        .borrow_mut()
+        .set("prototype", Value::Object(Rc::clone(&generator_proto_rc)));
+
+    // Create %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
+    let async_generator_proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+        async_generator_proto_rc.borrow_mut().prototype = Some(obj_proto);
+    }
+    ASYNC_GENERATOR_PROTOTYPE.with(|gp| {
+        *gp.borrow_mut() = Some(Rc::clone(&async_generator_proto_rc));
+    });
+    // Wire %AsyncGeneratorFunctionPrototype%.prototype = %AsyncGeneratorPrototype%
+    async_generator_function_proto_rc.borrow_mut().set(
+        "prototype",
+        Value::Object(Rc::clone(&async_generator_proto_rc)),
+    );
 
     let function_constructor = make_function_constructor(
         function_proto.clone(),

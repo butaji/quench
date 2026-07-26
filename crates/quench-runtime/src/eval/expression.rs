@@ -59,6 +59,30 @@ pub fn eval_expression(
                 Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
                 None => {
                     if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
+                        // After replay, check for pending Return/Throw control flow
+                        // (from generator.return() / generator.throw()).
+                        // try_replay_yield already consumed the resume value,
+                        // so do NOT call take_generator_resume_value() here.
+                        let maybe_cf = crate::interpreter::take_control_flow();
+                        if let Some(cf) = maybe_cf {
+                            match cf {
+                                crate::interpreter::ControlFlow::Return(val) => {
+                                    crate::interpreter::set_control_flow(
+                                        crate::interpreter::ControlFlow::Return(val),
+                                    );
+                                    return Ok(replayed);
+                                }
+                                crate::interpreter::ControlFlow::Throw(val) => {
+                                    crate::value::set_thrown_value(val);
+                                    return Err(crate::value::JsError(
+                                        "Generator threw".to_string(),
+                                    ));
+                                }
+                                other => {
+                                    crate::interpreter::set_control_flow(other);
+                                }
+                            }
+                        }
                         return Ok(replayed);
                     }
                     Value::Undefined
@@ -67,26 +91,46 @@ pub fn eval_expression(
             if crate::interpreter::peek_generator_yield() {
                 return Ok(Value::Undefined);
             }
+            let resume_val = crate::interpreter::take_generator_resume_value();
+
+            // When generator.return() or generator.throw() resumes the generator,
+            // ControlFlow::Return or ControlFlow::Throw is pending. Check this
+            // BEFORE the replay path so throw/return are not masked by replayed
+            // yield values.
+            {
+                let maybe_cf = crate::interpreter::take_control_flow();
+                let is_return_or_throw = maybe_cf.is_some();
+                if let Some(cf) = maybe_cf {
+                    crate::interpreter::set_control_flow(cf);
+                }
+                if is_return_or_throw {
+                    let cf = crate::interpreter::take_control_flow();
+                    match cf {
+                        Some(crate::interpreter::ControlFlow::Return(val)) => {
+                            // Restore the Return completion so it propagates
+                            // through the generator body to the return statement.
+                            crate::interpreter::set_control_flow(
+                                crate::interpreter::ControlFlow::Return(val.clone()),
+                            );
+                            crate::value::generator_replay::record_fresh_yield_resume(
+                                resume_val.clone(),
+                            );
+                            return Ok(resume_val);
+                        }
+                        Some(crate::interpreter::ControlFlow::Throw(val)) => {
+                            // Use the thrown value directly — don't round-trip through
+                            // create_js_error_with_type which may have side effects.
+                            crate::value::set_thrown_value(val);
+                            return Err(crate::value::JsError("Generator threw".to_string()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Replay path for class field computed keys (normal .next() only)
             if expr.is_some() {
                 if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
                     return Ok(replayed);
-                }
-            }
-            let resume_val = crate::interpreter::take_generator_resume_value();
-
-            // When generator.return() resumes the generator, ControlFlow::Return is
-            // pending. Don't set the generator yield flag — the Return must propagate
-            // through the for-of body / try-finally so IteratorClose fires properly
-            // and eval_try runs the finally exactly once.
-            {
-                let maybe_ret = crate::interpreter::take_control_flow();
-                let is_return = matches!(&maybe_ret, Some(crate::interpreter::ControlFlow::Return(_)));
-                if let Some(cf) = maybe_ret {
-                    crate::interpreter::set_control_flow(cf);
-                }
-                if is_return {
-                    crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
-                    return Ok(resume_val);
                 }
             }
 
@@ -122,12 +166,15 @@ pub fn eval_expression(
             });
             // Per ES spec §12.4.1.3: a named FunctionExpression creates an
             // immutable binding for its own name inside the function's environment.
-            // Access scopes directly to avoid double RefCell borrow.
+            // Create a fresh scope for this binding so it doesn't leak into the
+            // enclosing scope via shared Rc<RefCell<Scope>> from live_scopes_snapshot.
             if let Some(ref name) = name {
                 let func_clone = func.clone();
-                if let Some(scope) = closure.borrow().scopes.last() {
-                    scope.borrow_mut().define(name.clone(), func_clone);
-                }
+                closure.borrow_mut().push_scope();
+                closure
+                    .borrow_mut()
+                    .declare_var(name.clone(), crate::ast::VarKind::Const);
+                closure.borrow_mut().initialize_declared(name, func_clone);
             }
             Ok(func)
         }
@@ -400,6 +447,7 @@ pub fn eval_expression(
             env,
             in_arrow_function,
         ),
+        Expression::Await(arg) => eval_await(arg, env, in_arrow_function),
         Expression::ForIn {
             variable,
             object,
@@ -421,6 +469,15 @@ pub fn eval_expression(
             "Array elision must be used inside an array literal context".to_string(),
         )),
     }
+}
+
+fn eval_await(
+    arg: &Expression,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let value = eval_expression(arg, env, in_arrow_function)?;
+    Ok(crate::eval::r#await::eval_await_value(value))
 }
 
 /// Build the environment captured by a closure.

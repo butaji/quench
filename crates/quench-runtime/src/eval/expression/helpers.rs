@@ -130,9 +130,16 @@ pub fn eval_delete(
                     }
                     Ok(Value::Boolean(configurable))
                 }
-                Value::NativeConstructor(_nc) => Ok(Value::Boolean(
-                    prop_key == "name" || prop_key == "prototype",
-                )),
+                Value::NativeConstructor(_nc) => {
+                    // Per spec: prototype is non-configurable (configurable: false)
+                    // so delete returns false. name is also non-configurable.
+                    // length IS configurable on most constructors.
+                    if prop_key == "length" {
+                        Ok(Value::Boolean(true))
+                    } else {
+                        Ok(Value::Boolean(false))
+                    }
+                }
                 _ => Ok(Value::Boolean(false)),
             }
         }

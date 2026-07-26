@@ -265,7 +265,17 @@ fn string_to_number(s: &str) -> f64 {
         return f64::NAN;
     }
     // Per ES §7.1.4.1: ToNumber Applied to the String Type
-    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+    // Check for hex prefix (0x or 0X)
+    let is_hex = s.len() > 2 && (s.starts_with("0x") || s.starts_with("0X"));
+    if is_hex {
+        let rest = &s[2..];
+        // For hex floats (with 'p' exponent or decimal point), use the
+        // hex float parser from builtins. Otherwise, parse as integer.
+        if rest.contains('p') || rest.contains('P') || rest.contains('.') {
+            if let Some(val) = crate::builtins::date::helpers::parse_hex_float_from_str(s) {
+                return val;
+            }
+        }
         return u64::from_str_radix(rest, 16)
             .ok()
             .map(|n| n as f64)

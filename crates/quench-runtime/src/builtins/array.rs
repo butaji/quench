@@ -34,6 +34,16 @@ pub fn get_array_prototype() -> Option<Rc<RefCell<Object>>> {
     ARRAY_PROTOTYPE.with(|ap| ap.borrow().clone())
 }
 
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_array_prototype() -> Option<Rc<RefCell<Object>>> {
+    get_array_prototype()
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_array_prototype(proto: Option<Rc<RefCell<Object>>>) {
+    ARRAY_PROTOTYPE.with(|ap| *ap.borrow_mut() = proto);
+}
+
 // ============================================================================
 // Array
 // ============================================================================

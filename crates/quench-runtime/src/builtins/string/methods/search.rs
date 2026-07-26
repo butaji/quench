@@ -68,21 +68,21 @@ fn install_index_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
         "indexOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(index_of_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(index_of_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
     proto_clone.borrow_mut().set(
         "lastIndexOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(last_index_of_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(last_index_of_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }
 
@@ -92,30 +92,30 @@ fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
         "includes",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(includes_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(includes_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
     proto_clone.borrow_mut().set(
         "startsWith",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(starts_with_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(starts_with_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
     proto_clone.borrow_mut().set(
         "endsWith",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(ends_with_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(ends_with_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }
 

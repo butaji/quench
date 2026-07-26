@@ -13,9 +13,10 @@ pub use static_methods::{capability, promise_all, promise_race};
 // Re-export public APIs
 pub use constructor::{create_promise_constructor, register_promise};
 pub use helpers::{
-    clear_promise_proto, create_callback_promise, create_promise_proto, create_rejected_promise,
+    create_callback_promise, create_promise_proto, create_rejected_promise,
     create_resolved_promise, get_promise_proto, set_promise_proto,
 };
+pub(crate) use helpers::{restore_promise_proto, save_promise_proto};
 pub use microtask::{execute_pending_microtasks, queue_microtask_impl};
 pub use static_methods::{
     promise_all_impl, promise_race_impl, promise_reject_impl_static, promise_resolve_impl_static,

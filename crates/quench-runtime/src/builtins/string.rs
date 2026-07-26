@@ -21,6 +21,16 @@ pub fn get_string_prototype() -> Option<Rc<RefCell<Object>>> {
     STRING_PROTOTYPE.with(|sp| sp.borrow().clone())
 }
 
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_string_prototype() -> Option<Rc<RefCell<Object>>> {
+    get_string_prototype()
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_string_prototype(proto: Option<Rc<RefCell<Object>>>) {
+    STRING_PROTOTYPE.with(|sp| *sp.borrow_mut() = proto);
+}
+
 /// Convert a JS value to a number, propagating errors.
 /// Unlike to_number() which returns NaN on error, this propagates the error.
 fn to_number_or_err(v: &Value) -> Result<f64, JsError> {

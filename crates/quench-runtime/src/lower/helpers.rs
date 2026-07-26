@@ -52,10 +52,11 @@ pub fn lower_fn_body(body: &ast::FunctionBody) -> Vec<crate::ast::Statement> {
 /// strict mode FunctionDeclaration, FunctionExpression, or method.
 pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
     // Check if function body has "use strict" directive
-    let is_strict = func
-        .body
-        .as_ref()
-        .is_some_and(|b| b.directives.iter().any(|d| d.expression.value == "use strict"));
+    let is_strict = func.body.as_ref().is_some_and(|b| {
+        b.directives
+            .iter()
+            .any(|d| d.expression.value == "use strict")
+    });
     if !is_strict {
         return Ok(());
     }

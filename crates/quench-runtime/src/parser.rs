@@ -23,6 +23,7 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     }
     check_strict_reserved(&ret.program)?;
     check_strict_fn_params(&ret.program)?;
+    check_strict_fn_body(&ret.program)?;
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
@@ -150,6 +151,142 @@ fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsErro
     }
 
     walk_stmts(&program.body, prog_strict, &mut check_fn)?;
+    Ok(())
+}
+
+/// Check all function bodies for strict-mode violations (e.g., assignment to
+/// `eval` or `arguments` in strict mode). ES §16.1: in strict mode, these
+/// identifiers cannot appear as assignment targets.
+fn check_strict_fn_body(program: &oxc::ast::ast::Program) -> Result<(), JsError> {
+    let prog_strict = program
+        .directives
+        .iter()
+        .any(|d| d.expression.value == "use strict");
+    walk_body_stmts(&program.body, prog_strict)
+}
+
+fn walk_body_stmts(stmts: &[oxc::ast::ast::Statement], strict: bool) -> Result<(), JsError> {
+    for stmt in stmts {
+        match stmt {
+            oxc::ast::ast::Statement::FunctionDeclaration(func) => {
+                check_fn_strict_body(&func.params, &func.body, strict)?;
+                if let Some(body) = &func.body {
+                    walk_body_stmts(&body.statements, strict)?;
+                }
+            }
+            oxc::ast::ast::Statement::ExpressionStatement(expr) => {
+                walk_body_expr(&expr.expression, strict)?;
+            }
+            oxc::ast::ast::Statement::VariableDeclaration(var_decl) => {
+                for decl in &var_decl.declarations {
+                    if let Some(init) = &decl.init {
+                        walk_body_expr(init, strict)?;
+                    }
+                }
+            }
+            oxc::ast::ast::Statement::ReturnStatement(ret) => {
+                if let Some(arg) = &ret.argument {
+                    walk_body_expr(arg, strict)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn walk_body_expr(expr: &oxc::ast::ast::Expression, strict: bool) -> Result<(), JsError> {
+    match expr {
+        oxc::ast::ast::Expression::FunctionExpression(func) => {
+            check_fn_strict_body(&func.params, &func.body, strict)?;
+            if let Some(body) = &func.body {
+                walk_body_stmts(&body.statements, strict)?;
+            }
+        }
+        oxc::ast::ast::Expression::ArrowFunctionExpression(arrow) => {
+            let body_is_strict = strict
+                || arrow
+                    .body
+                    .directives
+                    .iter()
+                    .any(|d| d.expression.value == "use strict");
+            if body_is_strict {
+                // Check for eval/arguments as parameter names
+                for param in &arrow.params.items {
+                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) =
+                        &param.pattern.kind
+                    {
+                        let name = ident.name.as_str();
+                        if name == "eval" || name == "arguments" {
+                            return Err(JsError(format!(
+                                "SyntaxError: Unexpected strict mode reserved word: {}",
+                                name
+                            )));
+                        }
+                    }
+                }
+                // Check body statements for assignments to eval/arguments
+                check_body_assignments(&arrow.body.statements)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn check_fn_strict_body(
+    params: &oxc::ast::ast::FormalParameters,
+    body: &Option<oxc::allocator::Box<'_, oxc::ast::ast::FunctionBody<'_>>>,
+    inherit_strict: bool,
+) -> Result<(), JsError> {
+    let Some(b) = body else {
+        return Ok(());
+    };
+    let body_is_strict = inherit_strict
+        || b.directives
+            .iter()
+            .any(|d| d.expression.value == "use strict");
+    if !body_is_strict {
+        return Ok(());
+    }
+    // Check for eval/arguments as parameter names
+    for param in &params.items {
+        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+            let name = ident.name.as_str();
+            if name == "eval" || name == "arguments" {
+                return Err(JsError(format!(
+                    "SyntaxError: Unexpected strict mode reserved word: {}",
+                    name
+                )));
+            }
+        }
+    }
+    // Check for assignments to eval/arguments in body statements
+    check_body_assignments(&b.statements)?;
+    Ok(())
+}
+
+fn check_body_assignments(stmts: &[oxc::ast::ast::Statement]) -> Result<(), JsError> {
+    for stmt in stmts {
+        if let oxc::ast::ast::Statement::ExpressionStatement(es) = stmt {
+            check_expr_assignments(&es.expression)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_expr_assignments(expr: &oxc::ast::ast::Expression) -> Result<(), JsError> {
+    if let oxc::ast::ast::Expression::AssignmentExpression(assign) = expr {
+        if let oxc::ast::ast::AssignmentTarget::AssignmentTargetIdentifier(ident) = &assign.left {
+            let name = ident.name.as_str();
+            if name == "eval" || name == "arguments" {
+                return Err(JsError(format!(
+                    "SyntaxError: Cannot assign to '{}' in strict mode",
+                    name
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -355,6 +492,26 @@ mod tests {
     fn test_parse_function() {
         let result = parse_script("function add(a, b) { return a + b; }");
         assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_strict_fn_body_rejects_eval_assignment() {
+        let result = parse_script("function f() { 'use strict'; eval = 42; }");
+        assert!(
+            result.is_err(),
+            "Should reject eval=42 in strict body: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_strict_fn_body_accepts_non_strict_eval_assignment() {
+        let result = parse_script("function f() { eval = 42; }");
+        assert!(
+            result.is_ok(),
+            "Should allow eval=42 in sloppy body: {:?}",
+            result
+        );
     }
 
     #[test]

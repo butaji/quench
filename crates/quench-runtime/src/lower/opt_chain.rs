@@ -100,15 +100,6 @@ fn lower_chain_recursive(
             }
         }
         ast::ChainElement::CallExpression(call) => {
-            // Determine the object to check for nullish
-            let base_for_check = if let Some(prev) = prev_expr {
-                // Previous element's result is what we check
-                prev.clone()
-            } else {
-                // First element - extract from callee if it's a member access
-                extract_base_from_callee(&call.callee)?
-            };
-
             // Lower arguments
             let args: Vec<Expression> = call
                 .arguments
@@ -124,21 +115,34 @@ fn lower_chain_recursive(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            // Build the full call expression: base(args)
             let full_call = Expression::Call {
                 callee: Box::new(lower_expr(&call.callee)?),
                 arguments: args,
             };
 
-            // Check base for nullish
-            let undefined = Expression::Undefined;
-            let is_nullish = make_nullish_check(&base_for_check);
-
-            Ok(Expression::Conditional {
-                condition: Box::new(is_nullish),
-                consequent: Box::new(undefined),
-                alternate: Box::new(full_call),
-            })
+            if let Some(prev) = prev_expr {
+                // Chained: check prev for nullish
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(prev);
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(full_call),
+                })
+            } else if call.optional {
+                // First element, optional: check base for nullish
+                let base_for_check = extract_base_from_callee(&call.callee)?;
+                let undefined = Expression::Undefined;
+                let is_nullish = make_nullish_check(&base_for_check);
+                Ok(Expression::Conditional {
+                    condition: Box::new(is_nullish),
+                    consequent: Box::new(undefined),
+                    alternate: Box::new(full_call),
+                })
+            } else {
+                // First element, non-optional: direct call
+                Ok(full_call)
+            }
         }
         ast::ChainElement::PrivateFieldExpression(member) => {
             let base_expr = lower_chain_base(&member.object)?;
@@ -158,7 +162,7 @@ fn lower_chain_recursive(
                     consequent: Box::new(undefined),
                     alternate: Box::new(member_access),
                 })
-            } else {
+            } else if member.optional {
                 let undefined = Expression::Undefined;
                 let is_nullish = make_nullish_check(&base_expr);
                 let member_access = Expression::Member {
@@ -170,6 +174,12 @@ fn lower_chain_recursive(
                     condition: Box::new(is_nullish),
                     consequent: Box::new(undefined),
                     alternate: Box::new(member_access),
+                })
+            } else {
+                Ok(Expression::Member {
+                    object: Box::new(base_expr),
+                    property,
+                    computed: false,
                 })
             }
         }

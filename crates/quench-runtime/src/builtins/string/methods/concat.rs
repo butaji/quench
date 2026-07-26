@@ -24,8 +24,8 @@ pub fn install_split_concat_methods(proto: &Rc<RefCell<Object>>) {
 }
 
 fn string_split_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => {
+    match super::this_js_string() {
+        Some(s) => {
             let sep = args.first().map(to_js_string).unwrap_or_default();
             let limit = args.get(1).map(|v| to_number(v) as usize);
             let parts: Vec<Value> = if sep.is_empty() {
@@ -48,8 +48,8 @@ fn string_split_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 }
 
 fn string_concat_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => {
+    match super::this_js_string() {
+        Some(s) => {
             let rest: String = args.iter().map(to_js_string).collect();
             Ok(Value::String(format!("{}{}", s, rest)))
         }
@@ -58,8 +58,8 @@ fn string_concat_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 }
 
 fn string_repeat_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => {
+    match super::this_js_string() {
+        Some(s) => {
             let count = args.first().map(to_number).unwrap_or(0.0);
             if count < 0.0 || count.is_infinite() {
                 return Err(crate::JsError::new(

@@ -26,9 +26,9 @@ fn install_pad_start_method(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
         "padStart",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => {
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => {
                     let target = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
                     let pad = args
                         .get(1)
@@ -37,8 +37,8 @@ fn install_pad_start_method(proto: &Rc<RefCell<Object>>) {
                     Ok(pad_impl(&s, target, &pad, true))
                 }
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }
 
@@ -47,9 +47,9 @@ fn install_pad_end_method(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
         "padEnd",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => {
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => {
                     let target = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
                     let pad = args
                         .get(1)
@@ -58,8 +58,8 @@ fn install_pad_end_method(proto: &Rc<RefCell<Object>>) {
                     Ok(pad_impl(&s, target, &pad, false))
                 }
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }
 

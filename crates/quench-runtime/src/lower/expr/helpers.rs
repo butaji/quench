@@ -28,7 +28,9 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
                 Ok(Expression::Undefined)
             }
         }
-        ast::Expression::AwaitExpression(await_expr) => lower_expr(&await_expr.argument),
+        ast::Expression::AwaitExpression(await_expr) => Ok(Expression::Await(Box::new(
+            lower_expr(&await_expr.argument)?,
+        ))),
         ast::Expression::ParenthesizedExpression(paren) => lower_expr(&paren.expression),
         ast::Expression::BinaryExpression(bin) => expr_helpers::lower_bin_expr_pub(bin),
         ast::Expression::LogicalExpression(logical) => {
@@ -217,8 +219,8 @@ fn lower_method_prop_from_value(
                 name: None,
                 params,
                 body,
-                is_async: false,
-                is_generator: false,
+                is_async: func.r#async,
+                is_generator: func.generator,
             }),
         ))
     } else {

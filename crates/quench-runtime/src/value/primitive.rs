@@ -103,22 +103,29 @@ fn to_primitive_function(
         }
     }
 
-    // No own properties found — try inherited toString/valueOf from Function.prototype.
-    // This is safe: Function.prototype.toString returns the function's source text,
-    // not "[object Function]" like Object.prototype.toString.
+    // No own properties found — try inherited toString/valueOf from
+    // Function.prototype (the [[Prototype]] of function objects), not from
+    // the function's `.prototype` property (which is the prototype for
+    // instances created via `new` and has Object.prototype as its own
+    // [[Prototype]]).
+    let func_proto = crate::builtins::get_function_prototype();
     if !first_found {
-        if let Some(proto) = f.get_prototype().borrow().get(first) {
-            let v = crate::eval::call_value_with_this(proto.clone(), vec![], this_val.clone())?;
-            if !matches!(v, Value::Object(_) | Value::Function(_)) {
-                return Ok(v);
+        if let Some(ref fp) = func_proto {
+            if let Some(m) = fp.borrow().get(first) {
+                let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
+                if !matches!(v, Value::Object(_) | Value::Function(_)) {
+                    return Ok(v);
+                }
             }
         }
     }
     if !second_found {
-        if let Some(proto) = f.get_prototype().borrow().get(second) {
-            let v = crate::eval::call_value_with_this(proto.clone(), vec![], this_val.clone())?;
-            if !matches!(v, Value::Object(_) | Value::Function(_)) {
-                return Ok(v);
+        if let Some(ref fp) = func_proto {
+            if let Some(m) = fp.borrow().get(second) {
+                let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
+                if !matches!(v, Value::Object(_) | Value::Function(_)) {
+                    return Ok(v);
+                }
             }
         }
     }
@@ -147,9 +154,6 @@ fn to_primitive_object(
         PrimitiveHint::String => ("toString", "valueOf"),
     };
 
-    let first_method_exists = obj.borrow().get(first).is_some();
-    let second_method_exists = obj.borrow().get(second).is_some();
-
     if let Some(result) = try_method(obj, first)? {
         return Ok(result);
     }
@@ -158,19 +162,15 @@ fn to_primitive_object(
     }
 
     // ES 7.1.1.1 OrdinaryToPrimitive: both methods were called and returned
-    // non-primitive (object) values, OR neither method exists → throw TypeError.
-    if (first_method_exists && second_method_exists)
-        || (!first_method_exists && !second_method_exists)
-    {
-        let (err, _) = crate::value::create_js_error_with_type(
-            "Cannot convert object to primitive value",
-            "TypeError",
-        );
-        crate::value::set_thrown_value(err);
-        return Err(crate::value::JsError("TypeError".to_string()));
-    }
-
-    Ok(Value::String("[object Object]".to_string()))
+    // non-primitive (object) values → throw TypeError (covers the case where
+    // exactly one method exists and returns an object, and the case where
+    // both exist and both return objects, and the case where neither exists).
+    let (err, _) = crate::value::create_js_error_with_type(
+        "Cannot convert object to primitive value",
+        "TypeError",
+    );
+    crate::value::set_thrown_value(err);
+    Err(crate::value::JsError("TypeError".to_string()))
 }
 
 fn try_to_primitive_symbol(
@@ -239,22 +239,27 @@ fn try_method(
 // ─── to_object ──────────────────────────────────────────────────────────────
 
 /// ToObject per ECMAScript spec — converts primitives to boxed objects
-pub fn to_object(value: &Value) -> Value {
+pub fn to_object(value: &Value) -> Result<Value, JsError> {
     match value {
-        Value::Undefined | Value::Null => Value::Object(Rc::new(RefCell::new(
-            crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
-        ))),
+        Value::Undefined | Value::Null => {
+            let (err, js_err) = crate::value::error::create_js_error_with_type(
+                "Cannot convert undefined or null to object",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err);
+            Err(js_err)
+        }
         Value::Boolean(_b) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
-            Value::Object(Rc::new(RefCell::new(obj)))
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::Number(_n) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
-            Value::Object(Rc::new(RefCell::new(obj)))
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::String(s) => {
             let mut obj =
@@ -265,23 +270,23 @@ pub fn to_object(value: &Value) -> Value {
             obj.elements = vec![Value::String(s.clone())];
             obj.properties
                 .insert("length".to_string(), Value::Number(s.len() as f64));
-            Value::Object(Rc::new(RefCell::new(obj)))
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::Object(_)
         | Value::Function(_)
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Generator(_)
-        | Value::Class(_) => value.clone(),
-        Value::Symbol(_s) => Value::Object(Rc::new(RefCell::new(
+        | Value::Class(_) => Ok(value.clone()),
+        Value::Symbol(_s) => Ok(Value::Object(Rc::new(RefCell::new(
             crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
-        ))),
+        )))),
         Value::BigInt(_) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::BigInt);
             obj.properties.insert("_value".to_string(), value.clone());
-            Value::Object(Rc::new(RefCell::new(obj)))
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
     }
 }

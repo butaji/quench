@@ -42,11 +42,19 @@ fn realm_eval_script(
         .first()
         .map(crate::value::to_js_string)
         .unwrap_or_default();
-    let mut ctx = realm_ctx
-        .borrow_mut()
-        .take()
-        .expect("realm context missing");
+    let taken = realm_ctx.borrow_mut().take();
+    let Some(mut ctx) = taken else {
+        let msg = "realm.evalScript: realm context missing (reentrant call)".to_string();
+        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    };
+    // evalScript runs a NEW script: non-strict unless the source itself
+    // declares 'use strict' — never inherit the caller's strictness.
+    let was_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(false);
     let result = ctx.eval(&code);
+    crate::interpreter::set_strict_mode(was_strict);
     // Put the context back for the next call
     *realm_ctx.borrow_mut() = Some(ctx);
     result
@@ -56,8 +64,13 @@ fn realm_eval_script(
 /// The realm stores its own Context so that builtin modifications persist across
 /// eval calls (e.g., Object.setPrototypeOf(other.Number.prototype, proxy)).
 fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
+    // Building the sub-realm overwrites the shared thread-local intrinsic
+    // caches; snapshot them first and restore afterwards so the main realm
+    // keeps its own intrinsics.
+    let snapshot = crate::context::intrinsics::IntrinsicSnapshot::save();
     let mut ctx = Context::new()?;
     crate::test262::harness::inject_harness(&mut ctx);
+    snapshot.restore();
     let Value::Object(global) = ctx.get_global("globalThis").unwrap_or(Value::Undefined) else {
         return Err(JsError("createRealm: globalThis missing".to_string()));
     };
@@ -103,7 +116,13 @@ fn host_262_eval_script(args: Vec<Value>) -> Result<Value, JsError> {
         return Err(js_err);
     }
     let ctx = unsafe { &mut *ctx_ptr };
-    ctx.eval(&code)
+    // evalScript runs a NEW script: non-strict unless the source itself
+    // declares 'use strict' — never inherit the caller's strictness.
+    let was_strict = crate::interpreter::is_strict_mode();
+    crate::interpreter::set_strict_mode(false);
+    let result = ctx.eval(&code);
+    crate::interpreter::set_strict_mode(was_strict);
+    result
 }
 
 /// Inject $262.agent stub BEFORE loading harness files.
@@ -249,10 +268,87 @@ mod tests {
     }
 
     #[test]
+    fn test_create_realm_does_not_contaminate_main_realm_intrinsics() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); \
+             Object.getPrototypeOf([]) === Array.prototype && \
+             Object.getPrototypeOf({}) === Object.prototype && \
+             Object.getPrototypeOf(function(){}) === Function.prototype && \
+             Object.getPrototypeOf(/x/) === RegExp.prototype",
+        );
+        assert_eq!(
+            result,
+            Ok(crate::Value::Boolean(true)),
+            "createRealm must not repoint main-realm intrinsic caches"
+        );
+    }
+
+    #[test]
+    fn test_create_realm_restores_harness_caches() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var before = fnGlobalObject(); var realm = $262.createRealm(); \
+             fnGlobalObject() === before && fnGlobalObject() === globalThis",
+        );
+        assert_eq!(
+            result,
+            Ok(crate::Value::Boolean(true)),
+            "createRealm must restore harness GLOBAL_OBJECT cache"
+        );
+    }
+
+    #[test]
     fn test_eval_script_runs() {
         let mut ctx = harness_ctx();
         let result = ctx.eval("$262.evalScript('var y = 123'); y === 123");
         assert!(result.is_ok(), "$262.evalScript should run: {:?}", result);
+    }
+
+    #[test]
+    fn test_eval_script_runs_sloppy_in_strict_context() {
+        // Official evalScript runs a NEW script: always non-strict unless the
+        // source itself declares 'use strict'. Inside a strict context,
+        // sloppy-only syntax (strict reserved word as binding) must parse.
+        let mut ctx = harness_ctx();
+        let prev = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
+        let result = ctx.eval("$262.evalScript('var public = 1;')");
+        crate::interpreter::set_strict_mode(prev);
+        assert!(
+            result.is_ok(),
+            "$262.evalScript must run as a new sloppy script: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_realm_eval_script_runs_sloppy_in_strict_context() {
+        let mut ctx = harness_ctx();
+        let prev = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(true);
+        let result =
+            ctx.eval("var realm = $262.createRealm(); realm.evalScript('var public = 1;')");
+        crate::interpreter::set_strict_mode(prev);
+        assert!(
+            result.is_ok(),
+            "realm.evalScript must run as a new sloppy script: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_realm_eval_script_reentrant_returns_error_not_panic() {
+        // Nested realm.evalScript must return a JsError, never panic.
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            "var realm = $262.createRealm(); realm.global.trigger = function() { realm.evalScript('1'); }; realm.evalScript('trigger()');",
+        );
+        assert!(
+            result.is_err(),
+            "reentrant realm.evalScript should return an error, not panic: {:?}",
+            result
+        );
     }
 
     #[test]

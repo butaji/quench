@@ -18,6 +18,9 @@ echo "|-------|------|--------|-------|---|" >> "$REPORT"
 TOTAL_PASSED=0
 TOTAL_TESTS=0
 CRASHED=""
+TIMED_OUT=""
+HAS_TIMEOUT=1
+command -v timeout >/dev/null 2>&1 || HAS_TIMEOUT=0
 
 for stage in $(seq 0 121); do
     echo "Stage $stage..."
@@ -30,32 +33,44 @@ for s in d['stages']:
         print(f\"{s['path']}|{s['tests']}\")
         break
 " 2>/dev/null || echo "unknown|0")
-    
+
     STAGE_PATH=$(echo "$STAGE_INFO" | cut -d'|' -f1)
     STAGE_COUNT=$(echo "$STAGE_INFO" | cut -d'|' -f2)
-    
+
     if [ "$STAGE_COUNT" = "0" ] || [ -z "$STAGE_PATH" ]; then
         echo "| $stage | MISSING | - | - | - |" >> "$REPORT"
         continue
     fi
-    
-    # Run digest with timeout (60s per stage)
-    OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout 60 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1 || true)
-    
-    PASSED=$(echo "$OUTPUT" | grep "Passed:" | head -1 | awk '{print $2}' | cut -d/ -f1)
-    TOTAL=$(echo "$OUTPUT" | grep "Passed:" | head -1 | awk '{print $2}' | cut -d/ -f2)
-    
-    if [ -z "$PASSED" ]; then
-        # Stage likely crashed
+
+    # Per-stage timeout scaled to its test count: 10s + 0.2s/test, min 120s.
+    STAGE_TIMEOUT=$((10 + STAGE_COUNT / 5))
+    [ "$STAGE_TIMEOUT" -lt 120 ] && STAGE_TIMEOUT=120
+
+    EXIT_CODE=0
+    if [ "$HAS_TIMEOUT" = "1" ]; then
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout "$STAGE_TIMEOUT" cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+    else
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+    fi
+
+    # Digest prints "Passed:  N" and "Total:   N (files)" on separate lines.
+    PASSED=$(echo "$OUTPUT" | grep "^Passed:" | head -1 | awk '{print $2}')
+    TOTAL=$(echo "$OUTPUT" | grep "^Total:" | head -1 | awk '{print $2}')
+
+    if [ "$EXIT_CODE" = "124" ]; then
+        TIMED_OUT="$TIMED_OUT $stage"
+        PCT="TIMEOUT"
+    elif [ -z "$PASSED" ] || [ -z "$TOTAL" ]; then
+        # Stage likely crashed (no digest summary printed)
         CRASHED="$CRASHED $stage"
         PCT="CRASH"
     else
-        PCT=$(python3 -c "print(f'{$PASSED/$TOTAL*100:.0f}')" 2>/dev/null || echo "$((PASSED * 100 / TOTAL))%")
+        PCT=$(python3 -c "print(f'{$PASSED/$TOTAL*100:.0f}')" 2>/dev/null || echo "$((PASSED * 100 / TOTAL))")
         TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
         TOTAL_TESTS=$((TOTAL_TESTS + TOTAL))
     fi
-    
-    echo "| $stage | $STAGE_PATH | $PASSED | $TOTAL | $PCT |" >> "$REPORT"
+
+    echo "| $stage | $STAGE_PATH | ${PASSED:--} | ${TOTAL:--} | $PCT |" >> "$REPORT"
 done
 
 echo "" >> "$REPORT"
@@ -64,6 +79,9 @@ echo "" >> "$REPORT"
 echo "**Total**: $TOTAL_PASSED / $TOTAL_TESTS passed" >> "$REPORT"
 if [ -n "$CRASHED" ]; then
     echo "**Crashed stages**:$CRASHED" >> "$REPORT"
+fi
+if [ -n "$TIMED_OUT" ]; then
+    echo "**Timed-out stages** (raise timeout or investigate):$TIMED_OUT" >> "$REPORT"
 fi
 echo "" >> "$REPORT"
 echo "Report saved to $REPORT"

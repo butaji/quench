@@ -11,6 +11,7 @@ use crate::test262::harness::HarnessLoader;
 use crate::test262::host::{Test262Host, TestOutcome};
 
 pub use execute::run_single_test;
+pub use flags::default_stage;
 use flags::RunnerFlags;
 
 /// Absolute test262 root (`tests/test262`), for subprocess runners whose cwd may differ.
@@ -202,7 +203,7 @@ impl Test262Runner {
             }
             stage += 1;
         }
-        if flags.all_stages && total.failed == 0 {
+        if flags.all_stages && total.failed == 0 && total.skipped == 0 {
             println!(
                 "\n=== ALL STAGES COMPLETE — {} stages passed ===",
                 STAGES.len()
@@ -214,8 +215,7 @@ impl Test262Runner {
     fn digest_stage(&self, stage: usize, stage_dir: &str, flags: &RunnerFlags) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
-            println!("[MISSING] {}", full_path.display());
-            return RunSummary::default();
+            return missing_stage_summary(stage_dir, &full_path);
         }
         let mut tests = collect::collect_tests(&full_path);
         if let Some(ref json) = flags.failed_json {
@@ -242,8 +242,7 @@ impl Test262Runner {
     ) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
-            println!("[MISSING] {}", full_path.display());
-            return RunSummary::default();
+            return missing_stage_summary(stage_dir, &full_path);
         }
         let tests = collect::collect_tests(&full_path);
         let count = tests.len();
@@ -304,7 +303,12 @@ fn print_first_failure(stage: usize, i: usize, path: &std::path::Path, reason: &
 }
 
 fn print_stage_footer(stage: usize, count: usize, summary: &RunSummary) {
-    if summary.failed == 0 {
+    if summary.failed == 0 && summary.skipped > 0 {
+        println!(
+            "STAGE INCOMPLETE — Stage {}: {}/{} passed, {} skipped (skips block completion)",
+            stage, summary.passed, count, summary.skipped
+        );
+    } else if summary.failed == 0 {
         println!(
             "ALL STAGES COMPLETE — Stage {}: {}/{} (skipped {})",
             stage, summary.passed, count, summary.skipped
@@ -314,5 +318,56 @@ fn print_stage_footer(stage: usize, count: usize, summary: &RunSummary) {
             "Stage {}: {}/{} passed, {} skipped (first failure reported)",
             stage, summary.passed, count, summary.skipped
         );
+    }
+}
+
+/// A stage is complete only with zero failures and zero skips.
+pub fn stage_is_complete(summary: &RunSummary) -> bool {
+    summary.failed == 0 && summary.skipped == 0
+}
+
+/// Summary for a missing stage directory — a failure, never a silent pass.
+fn missing_stage_summary(stage_dir: &str, full_path: &std::path::Path) -> RunSummary {
+    println!("[MISSING] {}", full_path.display());
+    RunSummary {
+        failed: 1,
+        first_failure: Some((
+            stage_dir.to_string(),
+            format!("missing stage directory: {}", full_path.display()),
+        )),
+        ..RunSummary::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_stage_dir_is_a_failure() {
+        let s = missing_stage_summary("test/nope", std::path::Path::new("/x/test/nope"));
+        assert_eq!(s.failed, 1);
+        let (stage, reason) = s.first_failure.unwrap();
+        assert_eq!(stage, "test/nope");
+        assert!(reason.contains("missing stage directory"));
+    }
+
+    #[test]
+    fn stage_with_skips_is_not_complete() {
+        let s = RunSummary {
+            passed: 10,
+            skipped: 1,
+            ..RunSummary::default()
+        };
+        assert!(!stage_is_complete(&s));
+    }
+
+    #[test]
+    fn stage_without_failures_or_skips_is_complete() {
+        let s = RunSummary {
+            passed: 10,
+            ..RunSummary::default()
+        };
+        assert!(stage_is_complete(&s));
     }
 }

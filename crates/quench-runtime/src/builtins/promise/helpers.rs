@@ -26,10 +26,14 @@ pub fn set_promise_proto(proto: Rc<RefCell<Object>>) {
     PROMISE_PROTO.with(|p| *p.borrow_mut() = Some(Rc::clone(&proto)));
 }
 
-/// Clear the stored Promise prototype (called on context reset, so a reset
-/// context never hands out promises with a previous context's prototype)
-pub fn clear_promise_proto() {
-    PROMISE_PROTO.with(|p| *p.borrow_mut() = None);
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_promise_proto() -> Option<Rc<RefCell<Object>>> {
+    PROMISE_PROTO.with(|p| p.borrow().clone())
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_promise_proto(proto: Option<Rc<RefCell<Object>>>) {
+    PROMISE_PROTO.with(|p| *p.borrow_mut() = proto);
 }
 
 /// Create a new Promise prototype object

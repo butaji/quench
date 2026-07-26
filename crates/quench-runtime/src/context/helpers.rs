@@ -18,6 +18,17 @@ thread_local! {
         std::cell::RefCell::new(rustc_hash::FxHashMap::default());
 }
 
+/// Save the single-char regex cache (realm snapshot support; cached values
+/// carry the current realm's RegExp.prototype)
+pub(crate) fn save_regex_cache() -> rustc_hash::FxHashMap<char, Value> {
+    REGEX_CACHE.with(|c| c.borrow().clone())
+}
+
+/// Restore the single-char regex cache (realm snapshot support)
+pub(crate) fn restore_regex_cache(saved: rustc_hash::FxHashMap<char, Value>) {
+    REGEX_CACHE.with(|c| *c.borrow_mut() = saved);
+}
+
 /// eval function implementation - executes JavaScript code in the current context.
 /// Per ES spec §19.2.1, eval code inherits strict mode from its calling context.
 /// We check for legacy octals here (before parsing the eval string) so that

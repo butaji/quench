@@ -28,6 +28,7 @@ pub struct Context {
 }
 
 pub mod helpers;
+pub(crate) mod intrinsics;
 #[cfg(test)]
 mod tests;
 
@@ -62,8 +63,9 @@ impl Context {
         interpreter::reset_depth();
         self.env = Rc::new(RefCell::new(Environment::new()));
         self.string_interner = crate::interner::StringInterner::new();
-        // Clear the stale Promise prototype before it is rebuilt by init_builtins
-        crate::builtins::promise::clear_promise_proto();
+        // Clear every thread-local intrinsic cache before init_builtins rebuilds
+        // them, so a reset context never hands out previous-realm intrinsics.
+        intrinsics::clear_intrinsics();
         // Reset global symbol registry for new realm
         crate::builtins::symbol::reset_global_symbol_registry();
         helpers::init_builtins(self)?;
@@ -117,10 +119,13 @@ impl Context {
     pub fn eval_es_module(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
 
-        // Set thread-local for eval function to access this context
+        // Set thread-locals for eval function to access this context and source
         let ctx_ptr: *mut Context = self;
         CURRENT_CONTEXT.with(|cell| {
             *cell.borrow_mut() = Some(ctx_ptr);
+        });
+        CURRENT_SOURCE.with(|cell| {
+            *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source) });
         });
 
         let result = (|| {
@@ -133,8 +138,11 @@ impl Context {
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
 
-        // Clear thread-local after eval completes
+        // Clear thread-locals after eval completes
         CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
         });
 
@@ -164,6 +172,9 @@ impl Context {
         CURRENT_CONTEXT.with(|cell| {
             *cell.borrow_mut() = Some(ctx_ptr);
         });
+        CURRENT_SOURCE.with(|cell| {
+            *cell.borrow_mut() = Some(unsafe { std::mem::transmute::<&str, &str>(source) });
+        });
         let result = (|| {
             let program = self.parse_typescript(source)?;
             // Script code: set `this = globalThis`
@@ -172,6 +183,9 @@ impl Context {
         // Microtask checkpoint (see Context::eval)
         let microtask_result = crate::builtins::execute_pending_microtasks();
         CURRENT_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
         });
         match result {

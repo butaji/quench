@@ -5,46 +5,63 @@ use std::rc::Rc;
 
 use crate::value::{JsError, Object, ObjectKind, Value};
 
-fn get_this_array(args: &[Value]) -> Result<Rc<RefCell<Object>>, JsError> {
-    match args.first() {
-        Some(Value::Object(o)) => Ok(o.clone()),
+fn get_this_value() -> Result<Rc<RefCell<Object>>, JsError> {
+    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    match this_val {
+        Value::Object(o) => Ok(o.clone()),
         _ => Err(JsError::new(
             "Array.prototype.groupBy: this is not an object",
         )),
     }
 }
 
-/// Array.prototype.groupBy(callback, thisArg?)
-pub fn proto_group_by(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = get_this_array(&args)?;
-    let elements = obj.borrow().elements.clone();
+fn get_callback_arg(args: &[Value]) -> Result<Value, JsError> {
+    // callback is the first argument
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
         return Err(JsError::new("TypeError: callback is not a function"));
     }
+    Ok(callback)
+}
+
+/// Array.prototype.groupBy(callback, thisArg?)
+pub fn proto_group_by(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = get_this_value()?;
+    let elements = obj.borrow().elements.clone();
+    let callback = get_callback_arg(&args)?;
 
     let mut result = Object::new(ObjectKind::Ordinary);
     result.prototype = None; // null prototype for plain object
     let result_rc = Rc::new(RefCell::new(result));
 
     for (i, elem) in elements.iter().enumerate() {
-        let arg_array = Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
-            elem.clone(),
-            Value::Number(i as f64),
-            Value::Object(Rc::clone(&obj)),
-        ]))));
-        let key_val = crate::eval::call_value(callback.clone(), vec![arg_array])?;
+        // Per spec: callback(elem, index, array) — three separate arguments
+        let key_val = crate::eval::call_value(
+            callback.clone(),
+            vec![
+                elem.clone(),
+                Value::Number(i as f64),
+                Value::Object(Rc::clone(&obj)),
+            ],
+        )?;
         let key_str = crate::value::to_js_string(&key_val);
 
-        let group_rc = if let Some(Value::Object(existing)) = result_rc.borrow().get(&key_str) {
-            Rc::clone(&existing)
-        } else {
-            let arr = Object::new_array(0);
-            let arr_rc = Rc::new(RefCell::new(arr));
-            result_rc
-                .borrow_mut()
-                .set(&key_str, Value::Object(Rc::clone(&arr_rc)));
-            arr_rc
+        let group_rc = {
+            let existing = result_rc.borrow().get(&key_str);
+            let existing = existing.and_then(|v| match &v {
+                Value::Object(o) => Some(Rc::clone(o)),
+                _ => None,
+            });
+            if let Some(existing) = existing {
+                existing
+            } else {
+                let arr = Object::new_array(0);
+                let arr_rc = Rc::new(RefCell::new(arr));
+                result_rc
+                    .borrow_mut()
+                    .set(&key_str, Value::Object(Rc::clone(&arr_rc)));
+                arr_rc
+            }
         };
         group_rc.borrow_mut().elements.push(elem.clone());
     }
@@ -54,12 +71,9 @@ pub fn proto_group_by(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.groupByToMap(callback, thisArg?)
 pub fn proto_group_by_to_map(args: Vec<Value>) -> Result<Value, JsError> {
-    let obj = get_this_array(&args)?;
+    let obj = get_this_value()?;
     let elements = obj.borrow().elements.clone();
-    let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
-        return Err(JsError::new("TypeError: callback is not a function"));
-    }
+    let callback = get_callback_arg(&args)?;
 
     // Create a new Map object
     let mut map_obj = Object::new(ObjectKind::Map);
@@ -69,12 +83,15 @@ pub fn proto_group_by_to_map(args: Vec<Value>) -> Result<Value, JsError> {
     let map_rc = Rc::new(RefCell::new(map_obj));
 
     for (i, elem) in elements.iter().enumerate() {
-        let arg_array = Value::Object(Rc::new(RefCell::new(Object::new_array_from(vec![
-            elem.clone(),
-            Value::Number(i as f64),
-            Value::Object(Rc::clone(&obj)),
-        ]))));
-        let key_val = crate::eval::call_value(callback.clone(), vec![arg_array])?;
+        // Per spec: callback(elem, index, array) — three separate arguments
+        let key_val = crate::eval::call_value(
+            callback.clone(),
+            vec![
+                elem.clone(),
+                Value::Number(i as f64),
+                Value::Object(Rc::clone(&obj)),
+            ],
+        )?;
         let key_str = crate::value::to_js_string(&key_val);
 
         // Check if key already exists in entries

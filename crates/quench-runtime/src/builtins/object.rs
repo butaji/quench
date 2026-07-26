@@ -10,10 +10,11 @@ pub mod prototype_methods;
 mod tests;
 
 use crate::builtins::object_static::{
-    object_assign, object_create, object_define_property, object_entries, object_freeze,
-    object_from_entries, object_get_own_property_descriptor, object_get_own_property_names,
-    object_get_prototype_of, object_has_own, object_is, object_is_extensible, object_is_frozen,
-    object_keys, object_prevent_extensions, object_set_prototype_of, object_values,
+    object_assign, object_create, object_define_properties, object_define_property, object_entries,
+    object_freeze, object_from_entries, object_get_own_property_descriptor,
+    object_get_own_property_descriptors, object_get_own_property_names, object_get_prototype_of,
+    object_has_own, object_is, object_is_extensible, object_is_frozen, object_is_sealed,
+    object_keys, object_prevent_extensions, object_seal, object_set_prototype_of, object_values,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -26,6 +27,16 @@ thread_local! {
 
 pub fn get_object_prototype() -> Option<Rc<RefCell<Object>>> {
     OBJECT_PROTOTYPE.with(|op| op.borrow().clone())
+}
+
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_object_prototype() -> Option<Rc<RefCell<Object>>> {
+    get_object_prototype()
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_object_prototype(proto: Option<Rc<RefCell<Object>>>) {
+    OBJECT_PROTOTYPE.with(|op| *op.borrow_mut() = proto);
 }
 
 pub fn register_object(ctx: &mut Context) {
@@ -75,9 +86,19 @@ pub fn register_object(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(object_define_property))),
     );
     constructor.set_static_method(
+        "defineProperties",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_define_properties))),
+    );
+    constructor.set_static_method(
         "getOwnPropertyDescriptor",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_get_own_property_descriptor,
+        ))),
+    );
+    constructor.set_static_method(
+        "getOwnPropertyDescriptors",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_get_own_property_descriptors,
         ))),
     );
     constructor.set_static_method(
@@ -91,6 +112,14 @@ pub fn register_object(ctx: &mut Context) {
     constructor.set_static_method(
         "isFrozen",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_is_frozen))),
+    );
+    constructor.set_static_method(
+        "seal",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_seal))),
+    );
+    constructor.set_static_method(
+        "isSealed",
+        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_sealed))),
     );
     constructor.set_static_method(
         "hasOwn",
@@ -163,6 +192,20 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
         }))),
     );
 
+    // Object.prototype.toLocaleString — delegates to toString per spec
+    object_proto_rc.borrow_mut().set_builtin_method(
+        "toLocaleString",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            // Per ES §19.1.3.5: Return ? Invoke(this, "toString").
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            use std::rc::Rc;
+            let scratch_env = Rc::new(std::cell::RefCell::new(crate::env::Environment::new()));
+            let method =
+                crate::eval::member::eval_member_access(&this_val, "toString", &scratch_env)?;
+            crate::eval::function::call_value_with_this(method, args.to_vec(), this_val)
+        }))),
+    );
+
     // Object.prototype.valueOf
     object_proto_rc.borrow_mut().set_builtin_method(
         "valueOf",
@@ -176,7 +219,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
                 | Value::NativeConstructor(_)
                 | Value::Generator(_)
                 | Value::Class(_) => Ok(this_val),
-                _ => Ok(crate::value::to_object(&this_val)),
+                _ => crate::value::to_object(&this_val),
             }
         }))),
     );

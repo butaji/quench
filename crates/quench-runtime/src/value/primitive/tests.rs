@@ -229,17 +229,17 @@ fn test_to_primitive_function_with_custom_value_of() {
 
 #[test]
 fn test_to_object_undefined_returns_ordinary_object() {
-    assert!(matches!(to_object(&Value::Undefined), Value::Object(_)));
+    assert!(to_object(&Value::Undefined).is_err());
 }
 
 #[test]
 fn test_to_object_null_returns_ordinary_object() {
-    assert!(matches!(to_object(&Value::Null), Value::Object(_)));
+    assert!(to_object(&Value::Null).is_err());
 }
 
 #[test]
 fn test_to_object_bigint_sets_value_property() {
-    let r = to_object(&big(55));
+    let r = to_object(&big(55)).unwrap();
     let obj = match r {
         Value::Object(o) => o,
         _ => panic!("expected Object"),
@@ -249,7 +249,7 @@ fn test_to_object_bigint_sets_value_property() {
 
 #[test]
 fn test_to_object_symbol_returns_ordinary_object() {
-    assert!(matches!(to_object(&sym("x")), Value::Object(_)));
+    assert!(matches!(to_object(&sym("x")), Ok(Value::Object(_))));
 }
 
 // ── PrimitiveHint ───────────────────────────────────────────────────────────
@@ -422,7 +422,7 @@ fn test_to_js_string_objects() {
 
 #[test]
 fn test_to_object_boolean_boxed() {
-    let r = to_object(&Value::Boolean(true));
+    let r = to_object(&Value::Boolean(true)).unwrap();
     match r {
         Value::Object(o) => {
             assert_eq!(o.borrow().exotic_kind, Some(ExoticKind::Boolean));
@@ -433,7 +433,7 @@ fn test_to_object_boolean_boxed() {
 
 #[test]
 fn test_to_object_number_boxed() {
-    let r = to_object(&Value::Number(42.0));
+    let r = to_object(&Value::Number(42.0)).unwrap();
     match r {
         Value::Object(o) => {
             assert_eq!(o.borrow().exotic_kind, Some(ExoticKind::Number));
@@ -444,7 +444,7 @@ fn test_to_object_number_boxed() {
 
 #[test]
 fn test_to_object_string_boxed() {
-    let r = to_object(&Value::String("abc".to_string()));
+    let r = to_object(&Value::String("abc".to_string())).unwrap();
     match r {
         Value::Object(o) => {
             let obj = o.borrow();
@@ -458,7 +458,7 @@ fn test_to_object_string_boxed() {
 
 #[test]
 fn test_to_object_identity_preserved() {
-    assert!(matches!(to_object(&obj()), Value::Object(_)));
+    assert!(matches!(to_object(&obj()), Ok(Value::Object(_))));
     let f = Value::Function(crate::value::ValueFunction::new(
         None,
         vec![],
@@ -467,8 +467,8 @@ fn test_to_object_identity_preserved() {
         false,
         false,
     ));
-    assert!(matches!(to_object(&f), Value::Function(_)));
-    assert!(matches!(to_object(&nf()), Value::NativeFunction(_)));
+    assert!(matches!(to_object(&f), Ok(Value::Function(_))));
+    assert!(matches!(to_object(&nf()), Ok(Value::NativeFunction(_))));
     let cls_val = Value::Class(Box::new(ClassValue {
         id: 0,
         name: None,
@@ -500,12 +500,12 @@ fn test_to_object_identity_preserved() {
         private_element_cache: Rc::new(RefCell::new(HashMap::new())),
         declared_private_names: HashSet::new(),
     }));
-    assert!(matches!(to_object(&cls_val), Value::Class(_)));
+    assert!(matches!(to_object(&cls_val), Ok(Value::Class(_))));
     let gen_val = Value::Generator(Rc::new(RefCell::new(GeneratorObject::new(
         Rc::new(vec![]),
         vec![],
         make_env(),
         false,
     ))));
-    assert!(matches!(to_object(&gen_val), Value::Generator(_)));
+    assert!(matches!(to_object(&gen_val), Ok(Value::Generator(_))));
 }

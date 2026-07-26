@@ -2,6 +2,7 @@
 //!
 //! Contains the expression and statement evaluators for the interpreter.
 
+pub(crate) mod r#await;
 pub mod call;
 pub mod class;
 pub mod expression;

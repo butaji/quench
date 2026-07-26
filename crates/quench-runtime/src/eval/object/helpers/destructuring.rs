@@ -76,12 +76,56 @@ pub fn init_array_destructuring(
     array_destructuring_impl(bindings, value, env, true)
 }
 
+/// Obtain the iterator for a destructuring source value (for IteratorClose).
+fn iterator_from_value(value: &Value) -> Result<Rc<RefCell<Object>>, JsError> {
+    match value {
+        Value::String(s) => {
+            let mut arr = Object::new(ObjectKind::Array);
+            arr.elements = s.chars().map(|c| Value::String(c.to_string())).collect();
+            Ok(Rc::new(RefCell::new(arr)))
+        }
+        Value::Generator(gen) => Ok(crate::value::generator::generator_as_iterator_object(
+            Rc::clone(gen),
+        )),
+        Value::Object(o) => obtain_iterator(o),
+        _ => Err(JsError("Cannot destructure non-iterable value".to_string())),
+    }
+}
+
 fn array_destructuring_impl(
     bindings: &[BindingElement],
     value: &Value,
     env: &Rc<RefCell<Environment>>,
     init: bool,
 ) -> Result<(), JsError> {
+    // When a generator is resumed with an abrupt completion (generator.return()
+    // / generator.throw()), the destructuring restarts from the top with the
+    // Return/Throw control flow pending. Close the iterator and propagate the
+    // completion BEFORE re-running anything — obtaining the iterator calls
+    // user code (@@iterator) which would clobber the pending completion.
+    if !crate::interpreter::peek_generator_yield() {
+        match crate::interpreter::take_control_flow() {
+            Some(crate::interpreter::ControlFlow::Return(val)) => {
+                if let Ok(iter) = iterator_from_value(value) {
+                    if let Some(err) = call_iterator_return(&iter) {
+                        return Err(err);
+                    }
+                }
+                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(val));
+                return Ok(());
+            }
+            Some(crate::interpreter::ControlFlow::Throw(val)) => {
+                if let Ok(iter) = iterator_from_value(value) {
+                    // IteratorClose on throw: original throw takes precedence.
+                    let _close_err = call_iterator_return(&iter);
+                }
+                crate::value::set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
+            }
+            Some(other) => crate::interpreter::set_control_flow(other),
+            None => {}
+        }
+    }
     if let Value::String(s) = value {
         let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
         let len = chars.len();
@@ -166,6 +210,43 @@ pub fn assign_array_with_iterator(
     array_with_iterator_impl(bindings, iterator, env, false)
 }
 
+/// Check for generator yield or pending control flow after an expression evaluation
+/// step. If the generator yielded, return `Ok` to let the suspension propagate.
+/// If there's a Return or Throw control flow, close the iterator and propagate.
+#[must_use]
+fn check_generator_flow(
+    iterator: &Rc<RefCell<Object>>,
+    iterator_done: &mut bool,
+) -> Option<Result<(), JsError>> {
+    if crate::interpreter::peek_generator_yield() {
+        return Some(Ok(()));
+    }
+    let cf = crate::interpreter::take_control_flow()?;
+    match cf {
+        crate::interpreter::ControlFlow::Return(val) => {
+            if !*iterator_done {
+                let close_err = call_iterator_return(iterator);
+                if let Some(err) = close_err {
+                    return Some(Err(err));
+                }
+            }
+            crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(val));
+            Some(Ok(()))
+        }
+        crate::interpreter::ControlFlow::Throw(val) => {
+            if !*iterator_done {
+                let _close_err = call_iterator_return(iterator);
+            }
+            crate::value::set_thrown_value(val);
+            Some(Err(JsError("Generator threw".to_string())))
+        }
+        other => {
+            crate::interpreter::set_control_flow(other);
+            None
+        }
+    }
+}
+
 fn array_with_iterator_impl(
     bindings: &[BindingElement],
     iterator: &Rc<RefCell<Object>>,
@@ -182,11 +263,18 @@ fn array_with_iterator_impl(
         }
     };
     for binding in bindings {
+        // When the generator is resumed with a pending Return/Throw (from
+        // generator.return()/throw()), close the iterator and propagate
+        // BEFORE re-running iterator steps for this binding.
+        if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+            return result;
+        }
         if let BindingElement::Rest(inner) = binding {
             if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
-                if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
-                    // touch_assignment_target pre-check may throw before any step
-                    return Err(error);
+                // touch_assignment_target pre-check may throw before any step
+                crate::eval::object::touch_assignment_target(target, env)?;
+                if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+                    return result;
                 }
             }
             let rest_array = collect_remaining_array(iterator, &mut index, env)?;
@@ -199,6 +287,9 @@ fn array_with_iterator_impl(
                 }
                 return Err(error);
             }
+            if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+                return result;
+            }
             return Ok(());
         }
         if let BindingElement::AssignmentTarget(target) = binding {
@@ -207,6 +298,9 @@ fn array_with_iterator_impl(
                     let _close_err = call_iterator_return(iterator);
                 }
                 return Err(error);
+            }
+            if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+                return result;
             }
         }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
@@ -220,6 +314,9 @@ fn array_with_iterator_impl(
                 crate::value::set_thrown_value(thrown);
             }
             return Err(error);
+        }
+        if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+            return result;
         }
     }
     if !iterator_done {
@@ -393,66 +490,52 @@ fn invoke_iterator_return_inner(
     iterator: &Rc<RefCell<Object>>,
     iter_this: Value,
 ) -> IteratorReturnResult {
-    let binding = iterator.borrow();
-    if let Some(getter) = binding.get_getter("return") {
+    let binding = iterator.borrow_mut();
+    // Resolve the "return" method per GetMethod (ES §7.3.9):
+    // call the accessor if present, then check the value.
+    let resolved = if let Some(getter) = binding.get_getter("return") {
         let params: Vec<crate::ast::Param> = Vec::new();
         let body: Vec<crate::ast::Statement> = (*getter.body).clone();
         let closure = getter.closure.clone();
         drop(binding);
-        return finish_iterator_return_call(crate::eval::function::call_value_with_this(
+        match crate::eval::function::call_value_with_this(
             crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
                 params,
                 Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
                 closure,
             )),
             vec![],
-            iter_this,
-        ));
-    }
-    let return_value = binding.get("return");
-    let callable = match return_value {
-        Some(Value::Object(_)) => true,
-        Some(Value::Function(_)) => true,
-        Some(Value::NativeFunction(_)) => true,
-        Some(Value::NativeConstructor(_)) => true,
-        Some(Value::Undefined) | None => return IteratorReturnResult::Skipped,
-        _ => false,
+            iter_this.clone(),
+        ) {
+            Ok(val) => val,
+            Err(err) => return IteratorReturnResult::Throw(err),
+        }
+    } else {
+        binding.get("return").unwrap_or(Value::Undefined)
     };
-    drop(binding);
-    if !callable {
+    // GetMethod step: if func is undefined or null, return undefined.
+    if matches!(resolved, Value::Undefined | Value::Null) {
+        return IteratorReturnResult::Skipped;
+    }
+    // Check callable.
+    if !matches!(
+        resolved,
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+    ) {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "iterator.return is not a function",
             "TypeError",
         );
         return IteratorReturnResult::Throw(js_err);
     }
-    let return_value = return_value.unwrap();
-    let (body, closure) = {
-        let binding = iterator.borrow();
-        let getter = binding.get_getter("return");
-        match getter {
-            Some(getter) => (Some((*getter.body).clone()), Some(getter.closure.clone())),
-            None => (None, None),
-        }
-    };
-    match (body, closure) {
-        (Some(body), Some(closure)) => {
-            finish_iterator_return_call(crate::eval::function::call_value_with_this(
-                crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
-                    Vec::new(),
-                    Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
-                    closure,
-                )),
-                vec![],
-                iter_this,
-            ))
-        }
-        (_, _) => finish_iterator_return_call(crate::eval::function::call_value_with_this(
-            return_value,
-            vec![],
-            iter_this,
-        )),
-    }
+    finish_iterator_return_call(crate::eval::function::call_value_with_this(
+        resolved,
+        vec![],
+        iter_this,
+    ))
 }
 
 fn finish_iterator_return_call(result: Result<Value, JsError>) -> IteratorReturnResult {
@@ -511,7 +594,7 @@ fn object_destructuring_impl(
         }
         Value::Object(o) => o.clone(),
         other => {
-            let Value::Object(o) = crate::value::to_object(other) else {
+            let Value::Object(o) = crate::value::to_object(other)? else {
                 return Err(JsError("Cannot destructure non-object value".to_string()));
             };
             o
@@ -755,10 +838,30 @@ fn assign_binding_elem_with_default(
         }
         BindingElement::Default(binding, default) => {
             let (value, name_default) = if matches!(value, Value::Undefined) {
-                (
-                    eval_expression(default, env, false)?,
-                    Some(default.as_ref()),
-                )
+                let default_val = eval_expression(default, env, false)?;
+                // If the default evaluation triggered a generator yield or
+                // pending control flow, propagate without proceeding.
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(());
+                }
+                if let Some(cf) = crate::interpreter::take_control_flow() {
+                    match cf {
+                        crate::interpreter::ControlFlow::Return(val) => {
+                            crate::interpreter::set_control_flow(
+                                crate::interpreter::ControlFlow::Return(val),
+                            );
+                            return Ok(());
+                        }
+                        crate::interpreter::ControlFlow::Throw(val) => {
+                            crate::value::set_thrown_value(val);
+                            return Err(JsError("Generator threw".to_string()));
+                        }
+                        other => {
+                            crate::interpreter::set_control_flow(other);
+                        }
+                    }
+                }
+                (default_val, Some(default.as_ref()))
             } else {
                 (value.clone(), None)
             };
@@ -858,7 +961,10 @@ pub fn assign_to_identifier(
             // Check if this is a TDZ violation.
             if env.borrow().is_tdz(name) {
                 let (_, js_err) = crate::value::error::create_js_error_with_type(
-                    &format!("ReferenceError: Cannot access '{}' before initialization", name),
+                    &format!(
+                        "ReferenceError: Cannot access '{}' before initialization",
+                        name
+                    ),
                     "ReferenceError",
                 );
                 return Err(js_err);
@@ -872,7 +978,10 @@ pub fn assign_to_identifier(
         // Also check TDZ when set succeeded (set now returns false for TDZ).
         if env.borrow().is_tdz(name) {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
-                &format!("ReferenceError: Cannot access '{}' before initialization", name),
+                &format!(
+                    "ReferenceError: Cannot access '{}' before initialization",
+                    name
+                ),
                 "ReferenceError",
             );
             return Err(js_err);
@@ -880,7 +989,9 @@ pub fn assign_to_identifier(
         // Workaround: if set returned true but get still returns undefined,
         // the global object likely has a non-writable property (e.g. `eval`).
         let fix_name = name.to_string();
-        if !crate::interpreter::is_strict_mode() && matches!(env.borrow().get(&fix_name), Some(Value::Undefined)) {
+        if !crate::interpreter::is_strict_mode()
+            && matches!(env.borrow().get(&fix_name), Some(Value::Undefined))
+        {
             for scope_rc in env.borrow().scopes.iter().rev() {
                 let mut scope = scope_rc.borrow_mut();
                 if scope.is_declared_only(&fix_name) {
@@ -1673,6 +1784,68 @@ mod tests {
             msg.contains("ReferenceError"),
             "expected ReferenceError before getter runs, got {msg}"
         );
+    }
+
+    #[test]
+    fn destructure_yield_iterator_close_throw_propagates() {
+        // Tests IteratorClose error propagation: when destructuring encounters
+        // a return completion (from generator.return()) AND the iterator's
+        // return() throws, the throw should propagate per IteratorClose step 6.
+        let err = eval(
+            "var returnCount = 0; \
+             var iterable = {}; \
+             var iterator = { \
+               return: function() { returnCount += 1; throw new Error('CLOSE_ERR'); } \
+             }; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             function* g() { var result; result = [ {}[yield] ] = iterable; } \
+             var iter = g(); iter.next(); \
+             try { iter.return(); 'no throw'; } catch (e) { e.message; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("CLOSE_ERR".into()));
+    }
+
+    #[test]
+    fn destructure_yield_iterator_return_non_object_throws_typeerror() {
+        // Tests IteratorClose throws TypeError when `return` returns non-Object.
+        let err = eval(
+            "var nextCount = 0; \
+             var iterable = {}; \
+             var x; \
+             var iterator = { \
+               next: function() { nextCount += 1; return { done: nextCount > 10 }; }, \
+               return: function() { return null; } \
+             }; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             function* g() { var result; result = [ x , ...{}[yield] ] = iterable; } \
+             var iter = g(); iter.next(); \
+             try { iter.return(); 'no throw'; } catch (e) { e.name; }",
+        )
+        .unwrap();
+        assert_eq!(err, Value::String("TypeError".into()));
+    }
+
+    #[test]
+    fn destructure_yield_default_suspends_generator() {
+        // Tests that yield in a default value suspends the generator,
+        // and then iter.return() properly closes the iterator.
+        let v = eval(
+            "var nextCount = 0; var returnCount = 0; \
+             var iterator = { \
+               next: function() { nextCount += 1; return {done: false, value: undefined}; }, \
+               return: function() { returnCount += 1; return {}; } \
+             }; \
+             var iterable = {}; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             function* g() { var result; result = [ {} = yield ] = iterable; } \
+             var iter = g(); \
+             var n = iter.next(); \
+             var rc1 = iter.return(777); \
+             JSON.stringify([nextCount, returnCount, rc1.value, rc1.done])",
+        )
+        .unwrap();
+        assert_eq!(v, Value::String("[1,1,777,true]".into()));
     }
 
     #[test]

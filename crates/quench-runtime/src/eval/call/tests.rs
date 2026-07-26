@@ -28,7 +28,6 @@ fn test_spread_call_arguments_sloppy() {
 /// helpers like `get_array_elements`) returned `undefined`.
 #[test]
 fn test_spread_call_arguments_sloppy_no_params_object_get() {
-
     let mut ctx = Context::new().unwrap();
     builtins::register_builtins(&mut ctx);
     let args_obj = ctx

@@ -51,40 +51,61 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
 
     if let Value::Object(desc_obj) = desc {
         let desc_borrowed = desc_obj.borrow();
-        if let Some(val) = desc_borrowed.properties.get("value") {
-            flags.value = Some(val.clone());
+        // Per ES §10.1.6.1 ToPropertyDescriptor: use Get(desc, key) which
+        // walks the prototype chain — the descriptor may inherit get/set/etc.
+        // from prototype (e.g. using Math as a descriptor after modifying
+        // Object.prototype.get).
+        if let Some(val) = desc_borrowed.get("value") {
+            flags.value = Some(val);
         }
-        if let Some(writable) = desc_borrowed.properties.get("writable") {
-            has_writable = true;
-            flags.writable = to_bool(writable);
-        }
-        if let Some(enumerable) = desc_borrowed.properties.get("enumerable") {
-            has_enumerable = true;
-            flags.enumerable = to_bool(enumerable);
-        }
-        if let Some(configurable) = desc_borrowed.properties.get("configurable") {
-            has_configurable = true;
-            flags.configurable = to_bool(configurable);
-        }
+        // Per spec §10.1.6.1 ToPropertyDescriptor: use Get(desc, key) which
+        // invokes getters. For accessor properties, also check getters map.
+        // Helper: read a descriptor boolean flag, invoking accessor getter if needed.
+        let read_flag = |key: &str, has: &mut bool, flag: &mut bool| {
+            if let Some(val) = desc_borrowed.get(key) {
+                *has = true;
+                *flag = to_bool(&val);
+            } else if let Some(g) = desc_borrowed.get_getter(key) {
+                if let Some(ref fn_val) = g.func {
+                    if let Ok(Value::Boolean(b)) = crate::eval::function::call_value_with_this(
+                        fn_val.clone(),
+                        vec![],
+                        Value::Object(desc_obj.clone()),
+                    ) {
+                        *has = true;
+                        *flag = b;
+                    }
+                }
+            }
+        };
+        read_flag("writable", &mut has_writable, &mut flags.writable);
+        read_flag("enumerable", &mut has_enumerable, &mut flags.enumerable);
+        read_flag(
+            "configurable",
+            &mut has_configurable,
+            &mut flags.configurable,
+        );
         // Per ES §10.1.6.1 ToPropertyDescriptor: "get" in desc → accessor descriptor.
-        // Check regular property map for "get"/"set" keys from descriptor objects like
-        // { get: fn } or { set: fn } (stored as data properties in our lowering).
         if getter.is_none() {
-            if let Some(Value::Function(f)) = desc_borrowed.properties.get("get") {
-                getter = Some(Value::Function(f.clone()));
-            } else if let Some(Value::NativeFunction(_)) = desc_borrowed.properties.get("get") {
-                getter = desc_borrowed.properties.get("get").cloned();
-            } else if let Some(Value::NativeConstructor(_)) = desc_borrowed.properties.get("get") {
-                getter = desc_borrowed.properties.get("get").cloned();
+            if let Some(g) = desc_borrowed.get("get") {
+                match &g {
+                    Value::Function(f) => getter = Some(Value::Function(f.clone())),
+                    Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+                        getter = Some(g.clone())
+                    }
+                    _ => {}
+                }
             }
         }
         if setter.is_none() {
-            if let Some(Value::Function(f)) = desc_borrowed.properties.get("set") {
-                setter = Some(Value::Function(f.clone()));
-            } else if let Some(Value::NativeFunction(_)) = desc_borrowed.properties.get("set") {
-                setter = desc_borrowed.properties.get("set").cloned();
-            } else if let Some(Value::NativeConstructor(_)) = desc_borrowed.properties.get("set") {
-                setter = desc_borrowed.properties.get("set").cloned();
+            if let Some(s) = desc_borrowed.get("set") {
+                match &s {
+                    Value::Function(f) => setter = Some(Value::Function(f.clone())),
+                    Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+                        setter = Some(s.clone())
+                    }
+                    _ => {}
+                }
             }
         }
         // Fallback: check getters/setters maps for accessor properties
@@ -134,9 +155,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             let mut obj = o.borrow_mut();
             // Per ES §9.4.2.1: if defining an array index >= length, update length.
             if let Some(idx) = as_array_index(&prop) {
-                let current_len = obj.get("length").and_then(|v| {
-                    if let Value::Number(n) = v { Some(n as usize) } else { None }
-                }).unwrap_or(0);
+                let current_len = obj
+                    .get("length")
+                    .and_then(|v| {
+                        if let Value::Number(n) = v {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
                 if idx + 1 > current_len {
                     obj.set("length", Value::Number((idx + 1) as f64));
                 }
@@ -171,9 +199,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         let mut obj = o.borrow_mut();
         // Per ES §9.4.2.1: if defining an array index >= length, update length.
         if let Some(idx) = as_array_index(&prop) {
-            let current_len = obj.get("length").and_then(|v| {
-                if let Value::Number(n) = v { Some(n as usize) } else { None }
-            }).unwrap_or(0);
+            let current_len = obj
+                .get("length")
+                .and_then(|v| {
+                    if let Value::Number(n) = v {
+                        Some(n as usize)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
             if idx + 1 > current_len {
                 obj.set("length", Value::Number((idx + 1) as f64));
             }
@@ -259,15 +294,11 @@ pub fn get_object_property_descriptor(
         } else {
             Value::Undefined
         };
-        let mut desc = Object::new(ObjectKind::Ordinary);
-        // Store getter/setter as data properties — the same Value object we
-        // received, preserving reference identity for `d.get === desc.get`.
-        if get_val != Value::Undefined {
-            desc.set("get", get_val);
-        }
-        if set_val != Value::Undefined {
-            desc.set("set", set_val);
-        }
+        let mut desc = new_ordinary_with_object_proto();
+        // Per ES FromPropertyDescriptor, get/set keys are always present,
+        // set to undefined when no getter/setter exists on the accessor.
+        desc.set("get", get_val);
+        desc.set("set", set_val);
         desc.set("enumerable", Value::Boolean(flags.enumerable));
         desc.set("configurable", Value::Boolean(flags.configurable));
         return Ok(Value::Object(Rc::new(RefCell::new(desc))));
@@ -323,12 +354,15 @@ pub fn get_function_property_descriptor(
     }
     if prop == "prototype" {
         let proto = Value::Object(f.get_prototype());
+        // Per ES §14.4.11, generator function .prototype is non-configurable.
+        // Per ES §9.2.4, regular function .prototype is configurable.
+        let configurable = !f.empty_prototype && !f.is_generator;
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(proto.clone()),
                 writable: true,
                 enumerable: false,
-                configurable: !f.empty_prototype,
+                configurable,
             },
             proto,
         ));
@@ -397,12 +431,37 @@ pub fn get_native_constructor_property_descriptor(
         let len = if is_function_constructor { 1.0 } else { 0.0 };
         return make_property_descriptor_number(len, false, false, true);
     }
+    if prop == "prototype" {
+        // Per ES §19.1.2.15: Object.prototype is { Writable: false, Enumerable: false,
+        // Configurable: false }. Other constructors vary, but prototype is always
+        // non-enumerable.
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(Value::Object(std::rc::Rc::clone(&nc.prototype))),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+            Value::Undefined,
+        ));
+    }
     Ok(Value::Undefined)
+}
+
+/// Create an ordinary Object with Object.prototype as its [[Prototype]].
+/// Use this for all internal descriptor/result objects that need
+/// inherited methods like hasOwnProperty, toString, etc.
+fn new_ordinary_with_object_proto() -> Object {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    if let Some(proto) = crate::builtins::get_object_prototype() {
+        obj.prototype = Some(proto);
+    }
+    obj
 }
 
 /// Create a property descriptor value object from flags and value.
 pub fn make_descriptor_value(flags: PropertyFlags, value: Value) -> Value {
-    let mut desc = Object::new(ObjectKind::Ordinary);
+    let mut desc = new_ordinary_with_object_proto();
     desc.properties
         .insert("value".to_string(), flags.value.unwrap_or(value));
     desc.properties
@@ -423,7 +482,7 @@ pub fn make_property_descriptor_string(
     enumerable: bool,
     configurable: bool,
 ) -> Result<Value, JsError> {
-    let mut desc = Object::new(ObjectKind::Ordinary);
+    let mut desc = new_ordinary_with_object_proto();
     desc.properties
         .insert("value".to_string(), Value::String(value.to_string()));
     desc.properties
@@ -442,7 +501,7 @@ pub fn make_property_descriptor_number(
     enumerable: bool,
     configurable: bool,
 ) -> Result<Value, JsError> {
-    let mut desc = Object::new(ObjectKind::Ordinary);
+    let mut desc = new_ordinary_with_object_proto();
     desc.properties
         .insert("value".to_string(), Value::Number(value));
     desc.properties
@@ -469,7 +528,7 @@ pub fn get_class_property_descriptor(
             .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
 
         if let Some(val) = c.get_static_field(prop) {
-            let mut desc = Object::new(ObjectKind::Ordinary);
+            let mut desc = new_ordinary_with_object_proto();
             desc.set("value", val);
             desc.set("writable", Value::Boolean(true));
             desc.set("enumerable", Value::Boolean(false));
@@ -498,7 +557,7 @@ pub fn get_class_property_descriptor(
                 );
                 func.strict = true;
                 func.is_method = true;
-                let mut desc = Object::new(ObjectKind::Ordinary);
+                let mut desc = new_ordinary_with_object_proto();
                 desc.set("value", Value::Function(func));
                 desc.set("writable", Value::Boolean(true));
                 desc.set("enumerable", Value::Boolean(false));
@@ -522,7 +581,7 @@ pub fn get_class_property_descriptor(
         });
 
         if static_getter_info.is_some() || static_setter_info.is_some() {
-            let mut desc = Object::new(ObjectKind::Ordinary);
+            let mut desc = new_ordinary_with_object_proto();
 
             if let Some((key, body)) = static_getter_info {
                 let fn_name = accessor_function_name(&key, prop, &eval_env, "get")?;
@@ -573,7 +632,7 @@ pub fn get_class_property_descriptor(
                 .as_ref()
                 .map(|o| Value::Object(Rc::clone(o)))
                 .unwrap_or(Value::Undefined);
-            let mut desc = Object::new(ObjectKind::Ordinary);
+            let mut desc = new_ordinary_with_object_proto();
             desc.properties.insert("value".to_string(), proto_val);
             desc.properties
                 .insert("writable".to_string(), Value::Boolean(false));

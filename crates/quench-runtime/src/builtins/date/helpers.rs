@@ -135,6 +135,13 @@ fn parse_float_sign(chars: &mut std::iter::Peekable<std::str::Chars>) -> f64 {
     }
 }
 
+/// Parse a hex float from a string (without the "0x" prefix).
+/// Used from both parseFloat and ToNumber.
+pub fn parse_hex_float_from_str(s: &str) -> Option<f64> {
+    let mut chars = s.chars().peekable();
+    try_parse_hex_float(&mut chars)
+}
+
 fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<f64> {
     if chars.peek() != Some(&'0') {
         return None;
@@ -144,7 +151,8 @@ fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Opti
     if !c.peek()?.eq_ignore_ascii_case(&'x') {
         return None;
     }
-    chars.next();
+    chars.next(); // consume '0'
+    chars.next(); // consume 'x'
     let mut significand = 0.0;
     let mut has_digit = false;
 
@@ -161,6 +169,21 @@ fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Opti
         return Some(f64::NAN);
     }
 
+    // Handle fractional part: 0x1.2p3
+    if chars.peek() == Some(&'.') {
+        chars.next(); // consume '.'
+        let mut frac_divisor = 16.0;
+        while let Some(&ch) = chars.peek() {
+            if let Some(d) = ch.to_digit(16) {
+                significand += (d as f64) / frac_divisor;
+                frac_divisor *= 16.0;
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+
     if chars.peek().map(|c| c.to_ascii_lowercase()) == Some('p') {
         chars.next();
         let exp_sign = if chars.peek() == Some(&'-') {
@@ -173,7 +196,7 @@ fn try_parse_hex_float(chars: &mut std::iter::Peekable<std::str::Chars>) -> Opti
             1.0
         };
         let exp = parse_exponent(chars);
-        significand *= 10.0_f64.powf(exp * exp_sign);
+        significand *= 2.0_f64.powf(exp * exp_sign);
     }
     Some(significand)
 }

@@ -323,4 +323,92 @@ mod iterator_protocol_tests {
         );
         assert_eq!(result, Ok(Value::Number(0.0)));
     }
+
+    // ─── for-of array destructuring: IteratorClose on normal completion ─────────
+
+    /// ES spec §7.4.6 IteratorClose: for-of with array destructuring must
+    /// call iterator.return() when the loop completes normally.
+    #[test]
+    fn for_of_destructuring_calls_return_on_normal_completion() {
+        let r = eval(
+            "var returnCount = 0;
+             var iterable = {};
+             var iterator = {
+               next: function() { return { done: false, value: 1 }; },
+               'return': function() { returnCount++; return {}; }
+             };
+             iterable[Symbol.iterator] = function() { return iterator; };
+             for ([x] of [iterable]) {}
+             returnCount;
+            ",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    // ─── for-of array destructuring: IteratorClose on body throw ───────────────
+
+    /// ES spec §7.4.6: for-of with array destructuring calls iterator.return()
+    /// when the body throws.
+    #[test]
+    fn for_of_destructuring_calls_return_on_body_throw() {
+        let r = eval(
+            "var returnCount = 0;
+             var nextCount = 0;
+             var iterable = {};
+             var iterator = {
+               next: function() {
+                 nextCount++;
+                 return { done: nextCount > 1, value: 1 };
+               },
+               'return': function() { returnCount++; return {}; }
+             };
+             iterable[Symbol.iterator] = function() { return iterator; };
+             try {
+               for ([x] of [iterable]) { throw 1; }
+             } catch (e) {}
+             returnCount;
+            ",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+
+    // ─── for-of array destructuring: ReturnError propagates ──────────────────
+
+    /// ES spec §7.4.6 steps 7-8: when completion.type is throw and
+    /// iterator.return() throws ReturnError, ReturnError propagates (the
+    /// original body throw is discarded).
+    #[test]
+    fn for_of_destructuring_return_error_propagates() {
+        let r = eval(
+            "var returnCount = 0;
+             var iterable = {};
+             function ReturnError() {}
+             var iterator = {
+               next: function() { return { done: false, value: 1 }; },
+               'return': function() {
+                 returnCount++;
+                 throw new ReturnError();
+               }
+             };
+             iterable[Symbol.iterator] = function() { return iterator; };
+             var threwReturnError = false;
+             try {
+               for ([x] of [iterable]) { throw 999; }
+             } catch (e) {
+               threwReturnError = (e instanceof ReturnError);
+             }
+             [returnCount, threwReturnError];
+            ",
+        )
+        .unwrap();
+        if let Value::Object(o) = r {
+            let elems = &o.borrow().elements;
+            assert_eq!(elems[0], Value::Number(1.0), "returnCount");
+            assert_eq!(elems[1], Value::Boolean(true), "ReturnError propagated");
+        } else {
+            panic!("Expected array, got {:?}", r);
+        }
+    }
 }

@@ -69,6 +69,121 @@ pub fn object_is_frozen(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
+/// Object.seal(obj) - prevents adding/removing properties, makes all
+/// existing properties non-configurable.
+pub fn object_seal(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(o) = &obj {
+        let mut obj_mut = o.borrow_mut();
+        obj_mut.extensible = false;
+        // Make every own data property non-configurable
+        let entries: Vec<(String, Value)> = obj_mut
+            .properties
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for (k, v) in entries {
+            let desc = obj_mut.get_descriptor(&k);
+            if let Some(desc) = desc {
+                obj_mut.define(
+                    &k,
+                    v,
+                    PropertyFlags {
+                        value: None,
+                        writable: desc.writable,
+                        enumerable: desc.enumerable,
+                        configurable: false,
+                    },
+                );
+            }
+        }
+        // Also seal accessor properties
+        let accessor_keys: Vec<String> = obj_mut.getters.keys().cloned().collect();
+        for k in accessor_keys {
+            let desc = obj_mut.get_descriptor(&k);
+            let getter = obj_mut.get_getter(&k).and_then(|g| g.func.clone());
+            let setter = obj_mut.get_setter(&k).and_then(|s| s.func.clone());
+            if let Some(desc) = desc {
+                obj_mut.define_accessor(
+                    &k,
+                    getter,
+                    setter,
+                    PropertyFlags {
+                        value: None,
+                        writable: false,
+                        enumerable: desc.enumerable,
+                        configurable: false,
+                    },
+                );
+            }
+        }
+        // Also handle array elements
+        for i in 0..obj_mut.elements.len() {
+            let key = i.to_string();
+            if obj_mut.has_own(&key) {
+                let desc = obj_mut.get_descriptor(&key);
+                let val = obj_mut.elements[i].clone();
+                if let Some(desc) = desc {
+                    obj_mut.define(
+                        &key,
+                        val,
+                        PropertyFlags {
+                            value: None,
+                            writable: desc.writable,
+                            enumerable: desc.enumerable,
+                            configurable: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    Ok(obj)
+}
+
+/// Object.isSealed(obj) - checks if object is sealed
+pub fn object_is_sealed(args: Vec<Value>) -> Result<Value, JsError> {
+    match args.first() {
+        Some(Value::Object(o)) => {
+            let obj = o.borrow();
+            // Must be non-extensible
+            if obj.extensible {
+                return Ok(Value::Boolean(false));
+            }
+            // All own data properties must be non-configurable
+            for (k, _v) in &obj.properties {
+                if let Some(desc) = obj.get_descriptor(k) {
+                    if desc.configurable {
+                        return Ok(Value::Boolean(false));
+                    }
+                }
+            }
+            // Check accessor properties
+            for k in obj.getters.keys() {
+                if let Some(desc) = obj.get_descriptor(k) {
+                    if desc.configurable {
+                        return Ok(Value::Boolean(false));
+                    }
+                }
+            }
+            // Check array elements
+            for i in 0..obj.elements.len() {
+                let key = i.to_string();
+                if obj.has_own(&key) {
+                    if let Some(desc) = obj.get_descriptor(&key) {
+                        if desc.configurable {
+                            return Ok(Value::Boolean(false));
+                        }
+                    }
+                }
+            }
+            Ok(Value::Boolean(true))
+        }
+        Some(_) => Ok(Value::Boolean(true)), // Primitives are sealed
+        None => Ok(Value::Boolean(false)),
+    }
+}
+
 /// Object.getPrototypeOf(obj) - returns the prototype of an object
 pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
     let obj = args
@@ -122,14 +237,19 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
         }
         Value::Generator(gen) => {
             let g = gen.borrow();
-            // Generator objects have %GeneratorPrototype% as prototype,
-            // async generators have %AsyncGeneratorPrototype%.
-            let proto = if g.is_async {
-                crate::builtins::function::get_async_generator_function_prototype()
+            // Generator instances have their [[Prototype]] set to the generator
+            // function's `.prototype` at creation time (OrdinaryCreateFromConstructor).
+            // If `.prototype` is not an object, fall back to %GeneratorPrototype%
+            // (%AsyncGeneratorPrototype% for async generators).
+            if let Some(ref proto) = g.prototype {
+                return Ok(Value::Object(Rc::clone(proto)));
+            }
+            let fallback = if g.is_async {
+                crate::builtins::function::get_async_generator_prototype()
             } else {
-                crate::builtins::function::get_generator_function_prototype()
+                crate::builtins::function::get_generator_prototype()
             };
-            Ok(proto.map(Value::Object).unwrap_or(Value::Null))
+            Ok(fallback.map(Value::Object).unwrap_or(Value::Null))
         }
         _ => Err(JsError::from("Object.getPrototypeOf called on non-object")),
     }

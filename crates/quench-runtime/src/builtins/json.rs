@@ -44,7 +44,9 @@ fn value_to_json_string(val: &Value) -> Option<String> {
         Value::Number(n) => Some(json_number_string(*n)),
         Value::String(s) => Some(quote_string(s)),
         Value::Object(_) => None,
-        _ => Some("null".to_string()),
+        // Functions, Symbols, and other non-serializable values: skip
+        // (return None for objects → key omitted; for arrays → element becomes null)
+        _ => None,
     }
 }
 
@@ -170,7 +172,11 @@ fn get_keys(obj: &Object, replacer: Option<&Value>) -> Vec<String> {
     let mut keys: Vec<String> = obj
         .properties
         .keys()
-        .filter(|k| *k != "constructor" && *k != "prototype")
+        .filter(|k| {
+            // Exclude non-data-string keys: constructor, prototype, and
+            // symbol-keyed properties (stored internally as "desc\0id").
+            *k != "constructor" && *k != "prototype" && !k.contains('\0')
+        })
         .cloned()
         .collect();
 
@@ -212,22 +218,37 @@ fn json_stringify(args: &[Value]) -> Result<Value, JsError> {
 // ============================================================================
 
 /// Convert serde_json::Value to runtime Value.
-fn from_serde_value(v: serde_json::Value) -> Value {
+fn from_serde_value(v: serde_json::Value) -> Result<Value, JsError> {
     match v {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Boolean(b),
-        serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
-        serde_json::Value::String(s) => Value::String(s),
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Bool(b) => Ok(Value::Boolean(b)),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                Ok(Value::Number(f))
+            } else {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    "JSON.parse: number out of range",
+                    "SyntaxError",
+                );
+                Err(js_err)
+            }
+        }
+        serde_json::Value::String(s) => Ok(Value::String(s)),
         serde_json::Value::Array(arr) => {
-            let elements: Vec<Value> = arr.into_iter().map(from_serde_value).collect();
-            Value::Object(Rc::new(RefCell::new(Object::new_array_from(elements))))
+            let mut elements = Vec::new();
+            for v in arr {
+                elements.push(from_serde_value(v)?);
+            }
+            Ok(Value::Object(Rc::new(RefCell::new(
+                Object::new_array_from(elements),
+            ))))
         }
         serde_json::Value::Object(map) => {
             let mut obj = Object::new(ObjectKind::Ordinary);
             for (k, val) in map {
-                obj.properties.insert(k, from_serde_value(val));
+                obj.properties.insert(k, from_serde_value(val)?);
             }
-            Value::Object(Rc::new(RefCell::new(obj)))
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
     }
 }
@@ -309,7 +330,7 @@ fn json_parse(args: &[Value]) -> Result<Value, JsError> {
         js_err
     })?;
 
-    let native_val = from_serde_value(parsed);
+    let native_val = from_serde_value(parsed)?;
 
     // Apply reviver if provided and is a function
     if let Some(reviver) = args.get(1) {
@@ -335,7 +356,10 @@ fn json_parse(args: &[Value]) -> Result<Value, JsError> {
 // ============================================================================
 
 pub fn register_json(ctx: &mut Context) {
-    let json_obj = Object::new(crate::value::ObjectKind::Ordinary);
+    let mut json_obj = Object::new(crate::value::ObjectKind::Ordinary);
+    if let Some(proto) = crate::builtins::get_object_prototype() {
+        json_obj.prototype = Some(proto);
+    }
     let json = Rc::new(RefCell::new(json_obj));
 
     // Per ES spec, JSON.stringify and JSON.parse are:
@@ -749,16 +773,12 @@ mod tests {
 
     #[test]
     fn test_stringify_function_member_skipped() {
-        // Functions are stored as Value::Object, and value_to_json_string returns None
-        // for objects → parent serializes as null. Arrays also convert None to null.
+        // Per spec, functions in objects are skipped (not serialized).
         let mut ctx = create_test_context();
         let result = ctx
             .eval("JSON.stringify({a: 1, b: function() {}})")
             .unwrap();
-        assert_eq!(
-            result,
-            crate::value::Value::String("{\"a\":1,\"b\":null}".into())
-        );
+        assert_eq!(result, crate::value::Value::String("{\"a\":1}".into()));
     }
 
     #[test]

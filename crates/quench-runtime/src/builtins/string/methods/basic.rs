@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::value::{to_number, NativeFunction, Object, Value};
 
 fn string_length_impl(_args: &[Value]) -> Value {
-    match crate::builtins::get_native_this() {
-        Some(Value::String(s)) => Value::Number(s.encode_utf16().count() as f64),
+    match super::this_js_string() {
+        Some(s) => Value::Number(s.encode_utf16().count() as f64),
         _ => Value::Undefined,
     }
 }
@@ -52,20 +52,20 @@ pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
     );
     proto_clone.borrow_mut().set(
         "charAt",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(char_at_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(char_at_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
     proto_clone.borrow_mut().set(
         "charCodeAt",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(char_code_at_impl(&args, &s)),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(char_code_at_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }

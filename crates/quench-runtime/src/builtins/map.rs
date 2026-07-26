@@ -100,10 +100,8 @@ fn map_clear_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 
 fn map_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let items = map_entries(&this)
-        .map(|e| e.borrow().elements.clone())
-        .unwrap_or_default();
-    Ok(self::helpers::make_iterator(items))
+    let entries = map_entries(&this).unwrap_or_else(|| Rc::new(RefCell::new(Object::new_array(0))));
+    Ok(self::helpers::make_live_entry_iterator(entries))
 }
 
 pub fn register_map_and_set(ctx: &mut Context) {

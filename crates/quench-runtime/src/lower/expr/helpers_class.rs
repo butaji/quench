@@ -51,12 +51,9 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
     let mut ps = ps;
     let mut has_rest = false;
     if let Some(rest) = &constructor.value.params.rest {
-        match &rest.argument.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
-                ps.push(ident.name.as_str().to_string());
-                has_rest = true;
-            }
-            _ => {}
+        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.argument.kind {
+            ps.push(ident.name.as_str().to_string());
+            has_rest = true;
         }
     }
     let body = constructor

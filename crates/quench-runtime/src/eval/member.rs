@@ -115,11 +115,15 @@ pub fn eval_member_access(
                     }
                 }
                 _ => {
-                    // Look up on Generator.prototype
-                    let proto = std::rc::Rc::new(std::cell::RefCell::new(
-                        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
-                    ));
-                    eval_object_member(&proto, prop_name, Some(env))
+                    // Fall through to the instance's [[Prototype]] chain.
+                    // The GeneratorObject stores its prototype at creation time
+                    // (the function's `.prototype` or %GeneratorPrototype%).
+                    let g = gen.borrow();
+                    if let Some(ref proto) = g.prototype {
+                        eval_object_member(proto, prop_name, Some(env))
+                    } else {
+                        Ok(Value::Undefined)
+                    }
                 }
             }
         }

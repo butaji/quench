@@ -205,9 +205,8 @@ pub fn proto_entries(_args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.keys() - returns an iterator of indices
 pub fn proto_keys(_args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().ok_or_else(|| {
-        JsError("Array.prototype.keys called on null or undefined".to_string())
-    })?;
+    let this = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype.keys called on null or undefined".to_string()))?;
     match this {
         Value::Object(o) => {
             let iter = crate::builtins::map::helpers::make_live_index_iterator(

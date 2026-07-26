@@ -710,6 +710,20 @@ fn test262_staged() {
     let runner = Test262Runner::new(test262_dir);
     let mut host = QuenchHost::new();
     let summary = runner.run(&mut host);
+    if summary.skipped > 0 && !digest {
+        let mut reason_counts: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for (_path, reason) in quench_runtime::test262::skip::crash_files() {
+            *reason_counts.entry(*reason).or_default() += 1;
+        }
+        panic!(
+            "Stage {} incomplete: {} skipped (skips never count as passes). \
+             Configured skip reasons: {:?}. Fix the crash or remove the stale skip entry.",
+            current_stage_label(),
+            summary.skipped,
+            reason_counts,
+        );
+    }
     if summary.failed > 0 {
         if digest {
             // In digest mode, failures are already reported by the runner.
@@ -719,13 +733,19 @@ fn test262_staged() {
         } else {
             panic!(
                 "Stage {} failed: {}/{} passed. First failure: {:?}",
-                std::env::var("TEST262_STAGE").unwrap_or_else(|_| "0".into()),
+                current_stage_label(),
                 summary.passed,
                 summary.passed + summary.failed,
                 summary.first_failure,
             );
         }
     }
+}
+
+/// Stage label for gate messages: TEST262_STAGE or the tasks/index.json default.
+fn current_stage_label() -> String {
+    std::env::var("TEST262_STAGE")
+        .unwrap_or_else(|_| quench_runtime::test262::runner::default_stage().to_string())
 }
 
 #[test]

@@ -125,7 +125,7 @@ impl fmt::Debug for ValueFunction {
 pub(crate) fn expected_argument_count(params: &[Param]) -> f64 {
     let mut count = 0;
     for p in params {
-        if p.default.is_some() {
+        if p.default.is_some() || p.rest {
             break;
         }
         count += 1;
@@ -200,6 +200,20 @@ impl ValueFunction {
         }
     }
 
+    /// Get the function's `.prototype` object only if it is an object (not null/undefined).
+    /// Returns None when `.prototype` is not an object (to trigger intrinsic fallback,
+    /// e.g. %GeneratorPrototype% for generator instances when user sets g.prototype = null).
+    pub fn get_prototype_if_object(&self) -> Option<Rc<RefCell<Object>>> {
+        // Check if prototype has been explicitly set to something
+        if let Some(val) = self.properties.borrow().get("prototype") {
+            match val {
+                Value::Object(o) => return Some(Rc::clone(o)),
+                _ => return None, // explicitly set to non-object (null, number, etc.)
+            }
+        }
+        Some(self.get_prototype())
+    }
+
     /// Get the prototype object for this function, creating it if needed.
     pub fn get_prototype(&self) -> Rc<RefCell<Object>> {
         if let Some(Value::Object(proto)) = self.properties.borrow().get("prototype") {
@@ -227,13 +241,18 @@ impl ValueFunction {
     }
 
     /// Build the prototype object for this function.
+    /// Per ES spec §19.2.4.3, a function's `.prototype` is a plain object
+    /// with `constructor` pointing back to the function. Its [[Prototype]]
+    /// is `Object.prototype`, NOT `Function.prototype` — otherwise inherited
+    /// methods like `Function.prototype.toString` would shadow
+    /// `Object.prototype.toString` and break `fun.prototype.toString()`.
     fn new_prototype_object(&self) -> Object {
         let mut proto = Object::new(ObjectKind::Ordinary);
         if !self.empty_prototype {
             proto.set("constructor", self.constructor_value());
         }
-        if let Some(func_proto) = crate::builtins::get_function_prototype() {
-            proto.prototype = Some(func_proto);
+        if let Some(obj_proto) = crate::builtins::get_object_prototype() {
+            proto.prototype = Some(obj_proto);
         }
         proto
     }
@@ -271,13 +290,14 @@ impl ValueFunction {
         self.properties.borrow().get(key).cloned()
     }
 
-    /// Own property names including non-enumerable `length` and `name`.
+    /// Own property names including non-enumerable `length`, `name`, and `prototype`.
     pub fn own_property_names(&self) -> Vec<String> {
         let mut names = vec!["length".to_string()];
         if self.get_property("name").is_some() || self.name.is_some() {
             names.push("name".to_string());
         }
-        if self.get_property("prototype").is_some() {
+        // Non-arrow functions always have a .prototype property.
+        if !self.is_arrow {
             names.push("prototype".to_string());
         }
         for key in self.properties.borrow().keys() {
@@ -1000,6 +1020,9 @@ fn generate_source_text(f: &ValueFunction) -> String {
             }
             Expression::Spread(expr) => {
                 format!("...{}", expr_to_string(expr))
+            }
+            Expression::Await(expr) => {
+                format!("await {}", expr_to_string(expr))
             }
         }
     }

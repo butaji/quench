@@ -144,6 +144,16 @@ pub fn get_regexp_prototype() -> Rc<RefCell<Object>> {
     proto_rc
 }
 
+/// Save the thread-local prototype cache (realm snapshot support)
+pub(crate) fn save_regexp_prototype() -> Option<Rc<RefCell<Object>>> {
+    REGEXP_PROTOTYPE.with(|rp| rp.borrow().clone())
+}
+
+/// Restore the thread-local prototype cache (realm snapshot support)
+pub(crate) fn restore_regexp_prototype(proto: Option<Rc<RefCell<Object>>>) {
+    REGEXP_PROTOTYPE.with(|rp| *rp.borrow_mut() = proto);
+}
+
 /// Create the RegExp prototype object
 fn create_regexp_prototype() -> Rc<RefCell<Object>> {
     let proto = Object::new(ObjectKind::Ordinary);

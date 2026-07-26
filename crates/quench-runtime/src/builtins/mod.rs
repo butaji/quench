@@ -127,10 +127,11 @@ impl Object {
 
 /// Register all built-in globals into the context
 pub fn register_builtins(ctx: &mut Context) {
+    // Object must be registered first — all other builtins need Object.prototype
+    object::register_object(ctx);
     console::register_console(ctx);
     json::register_json(ctx);
     math::register_math(ctx);
-    object::register_object(ctx);
     array::register_array(ctx);
     // Symbol must be registered before Map/Set so their prototypes can carry
     // the Symbol.iterator method.

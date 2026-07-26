@@ -11,21 +11,21 @@ pub fn install_case_methods(proto: &Rc<RefCell<Object>>) {
 
     proto_clone.borrow_mut().set(
         "toUpperCase",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |_| match super::this_js_string() {
+                Some(s) => Ok(Value::String(s.to_uppercase())),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 
     proto_clone.borrow_mut().set(
         "toLowerCase",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
-            match crate::builtins::get_native_this() {
-                Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |_| match super::this_js_string() {
+                Some(s) => Ok(Value::String(s.to_lowercase())),
                 _ => Ok(Value::Undefined),
-            }
-        }))),
+            },
+        ))),
     );
 }

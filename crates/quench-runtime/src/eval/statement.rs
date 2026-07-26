@@ -181,6 +181,12 @@ pub fn eval_statements(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
+            // Throw (from generator.throw()): surface as a real error at the
+            // yield point so enclosing try/catch observes the thrown value.
+            Some(ControlFlow::Throw(val)) => {
+                set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
+            }
             // Propagate break/continue so enclosing loops can observe them.
             Some(cf @ (ControlFlow::Break(_) | ControlFlow::Continue(_))) => {
                 set_control_flow(cf);
@@ -316,6 +322,10 @@ fn eval_function_body_impl(
             Some(ControlFlow::Return(val)) => {
                 set_explicit_return_for_current_body();
                 return Ok(val);
+            }
+            Some(ControlFlow::Throw(val)) => {
+                set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
             }
             Some(
                 cf @ (ControlFlow::Break(_)
@@ -639,19 +649,22 @@ pub fn eval_statement(
                 let obj_borrowed = obj_rc.borrow();
                 // Check Symbol.unscopables (§13.11.7): properties blocked by
                 // unscopables are not added to the with-scope.
-                let unscopables_val = obj_borrowed
-                    .symbol_properties
-                    .iter()
-                    .find_map(|(k, v)| {
-                        if k.starts_with("Symbol(") && k.contains("unscopables") {
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    // Also check regular properties (the key might be the
-                    // Symbol description string like "Symbol.unscopables")
-                    .or_else(|| obj_borrowed.properties.get("Symbol.unscopables").cloned());
+                let unscopables_val = (|| {
+                    let unscopables_sym =
+                        crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")?;
+                    let key = match &unscopables_sym {
+                        crate::value::Value::Symbol(s) => s.property_key(),
+                        _ => return None,
+                    };
+                    // Symbol-keyed properties like @@unscopables are stored in
+                    // `self.properties` (via Object::set with the property_key string),
+                    // not in `symbol_properties`. Check both locations.
+                    obj_borrowed
+                        .properties
+                        .get(&key)
+                        .or_else(|| obj_borrowed.symbol_properties.get(&key))
+                        .cloned()
+                })();
                 let blocked: std::collections::HashSet<String> =
                     if let Some(Value::Object(u_obj)) = unscopables_val {
                         let u = u_obj.borrow();
@@ -860,6 +873,10 @@ fn eval_while_with_labels(
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
+            Some(ControlFlow::Throw(val)) => {
+                set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
+            }
             None => {}
         }
     }
@@ -915,6 +932,10 @@ fn eval_do_while_impl(
             Some(ControlFlow::YieldDelegate(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
+            }
+            Some(ControlFlow::Throw(val)) => {
+                set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
             }
             None => {}
         }
@@ -1018,7 +1039,9 @@ fn eval_for(
             in_per_iter = true;
         }
         if !eval_for_loop_condition(condition, env, in_arrow_function)? {
-            eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+            if in_per_iter {
+                env.borrow_mut().pop_scope();
+            }
             break;
         }
         take_control_flow();
@@ -1050,6 +1073,11 @@ fn eval_for(
                 eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
+            }
+            Some(ControlFlow::Throw(val)) => {
+                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
             }
             None => {}
         }

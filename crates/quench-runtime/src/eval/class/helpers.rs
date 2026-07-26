@@ -371,7 +371,10 @@ pub fn build_constructor_env(
             // Rest parameter: collect all remaining arguments into an array.
             let rest_args: Vec<Value> = args[non_rest_count..].to_vec();
             let rest_arr = Object::new_array_from(rest_args);
-            call_env.define(param.clone(), Value::Object(Rc::new(RefCell::new(rest_arr))));
+            call_env.define(
+                param.clone(),
+                Value::Object(Rc::new(RefCell::new(rest_arr))),
+            );
         } else {
             let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
             call_env.define(param.clone(), arg);

@@ -17,6 +17,7 @@ pub fn promise_resolve_impl_static(
 ) -> Result<Value, JsError> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
 
+    // If value is already a Promise, return it directly
     if let Value::Object(ref obj) = value {
         let obj_ref = obj.borrow();
         if obj_ref.kind == ObjectKind::Promise {
@@ -24,16 +25,16 @@ pub fn promise_resolve_impl_static(
         }
     }
 
+    // Create a new pending promise and settle it with the value.
+    // Using settle_resolve ensures thenable unwrapping (B9 fix).
     let promise_obj = Object::new(ObjectKind::Promise);
     let promise_rc = Rc::new(RefCell::new(promise_obj));
     {
         let mut obj = promise_rc.borrow_mut();
         obj.prototype = Some(proto);
         obj.promise_data = Some(PromiseObjectData::new());
-        if let Some(ref mut data) = obj.promise_data {
-            data.fulfill(value);
-        }
     }
+    crate::builtins::promise::callbacks::settle_resolve(&promise_rc, value);
     Ok(Value::Object(promise_rc))
 }
 

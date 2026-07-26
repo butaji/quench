@@ -333,8 +333,33 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             let mut g = gen.borrow_mut();
-            g.state = GeneratorState::Completed;
-            Err(crate::value::JsError(format!("Generator threw: {:?}", arg)))
+            if g.state == GeneratorState::Completed {
+                return Ok(IteratorResult {
+                    value: Value::Undefined,
+                    done: true,
+                }
+                .to_object());
+            }
+            let suspended_start = g.state == GeneratorState::Suspended
+                && g.yield_index == 0
+                && g.pending_stmt.is_none();
+            if suspended_start {
+                g.state = GeneratorState::Completed;
+                g.call_env = None;
+                return Ok(IteratorResult {
+                    value: arg,
+                    done: true,
+                }
+                .to_object());
+            }
+            crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Throw(
+                arg.clone(),
+            ));
+            let result = g.next(Value::Undefined);
+            match result {
+                Ok(ir) => Ok(ir.to_object()),
+                Err(e) => Err(e),
+            }
         },
     )))
 }
@@ -706,6 +731,7 @@ mod tests {
             .eval(
                 "function* g() { yield 1; } \
              let gen = g(); \
+             gen.next(); \
              try { gen.throw(new Error('test')); 'no_error' } catch(e) { 'error' }",
             )
             .unwrap();

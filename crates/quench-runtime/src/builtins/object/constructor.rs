@@ -54,7 +54,13 @@ pub fn create_object_from_arg(args: &[Value]) -> Result<Value, JsError> {
         return Ok(Value::Object(Rc::new(RefCell::new(obj))));
     }
     let obj = match &args[0] {
-        Value::Undefined | Value::Null => Object::new(ObjectKind::Ordinary),
+        Value::Undefined | Value::Null => {
+            let mut obj = Object::new(ObjectKind::Ordinary);
+            if let Some(proto) = crate::builtins::get_object_prototype() {
+                obj.prototype = Some(proto);
+            }
+            obj
+        }
         Value::Boolean(b) => {
             let mut obj = boxed_object("Boolean");
             obj.exotic_kind = Some(ExoticKind::Boolean);

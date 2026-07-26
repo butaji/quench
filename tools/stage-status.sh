@@ -36,4 +36,4 @@ print(f'Done: {done}/{len(d[\"stages\"])} stages ({done_tests}/{total_tests} tes
 print(f'Pending: {pending} stages ({total_tests - done_tests} tests)')
 print(f'Current: Stage {current}')
 print(f'Progress: {done_tests * 100 / total_tests:.1f}%')
-" 2>/dev/null
+" || { echo "error: failed to read/parse tasks/index.json" >&2; exit 1; }

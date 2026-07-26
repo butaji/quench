@@ -20,7 +20,8 @@ pub use descriptors::{
 };
 pub use freezing::{
     is_frozen_object, object_freeze, object_get_prototype_of, object_is_extensible,
-    object_is_frozen, object_prevent_extensions, object_set_prototype_of,
+    object_is_frozen, object_is_sealed, object_prevent_extensions, object_seal,
+    object_set_prototype_of,
 };
 
 use crate::value::{JsError, Value};
@@ -214,16 +215,38 @@ pub fn object_assign(args: Vec<Value>) -> Result<Value, JsError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     for arg in args.iter().skip(1) {
         if let Value::Object(src) = arg {
-            let src = src.borrow();
-            for (k, v) in src.properties.iter() {
-                if is_internal_key(k) || !src.is_enumerable(k) {
-                    continue;
-                }
+            let src_borrowed = src.borrow();
+            // Collect keys before iterating to avoid borrow issues
+            let enumerable_keys: Vec<(String, Value)> = src_borrowed
+                .properties
+                .iter()
+                .filter(|(k, _)| !is_internal_key(k) && src_borrowed.is_enumerable(k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            drop(src_borrowed);
+            for (k, v) in enumerable_keys {
                 if let Value::Object(to) = &target {
                     if is_frozen_object(to) {
                         continue;
                     }
-                    to.borrow_mut().set(k, v.clone());
+                    // Check for accessor property (setter) — invoke it instead of storing
+                    let has_setter = to.borrow().has_setter(&k);
+                    let has_getter_only = to.borrow().has_getter(&k) && !has_setter;
+                    if has_setter {
+                        let setter_fn = to.borrow().get_setter(&k).and_then(|s| s.func.clone());
+                        if let Some(fn_val) = setter_fn {
+                            crate::eval::function::call_value_with_this(
+                                fn_val,
+                                vec![v],
+                                Value::Object(Rc::clone(to)),
+                            )?;
+                            continue;
+                        }
+                    }
+                    if has_getter_only {
+                        continue;
+                    }
+                    to.borrow_mut().set(&k, v);
                 }
             }
         }
@@ -262,4 +285,44 @@ pub fn object_create(args: Vec<Value>) -> Result<Value, JsError> {
 /// Check whether a property key is internal (not user data)
 fn is_internal_key(key: &str) -> bool {
     key.starts_with('_') || key == "constructor" || key == "prototype"
+}
+
+/// Object.defineProperties(obj, props) - defines multiple properties at once
+pub fn object_define_properties(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(props_obj)) = args.get(1) {
+        let props = props_obj.borrow().properties.clone();
+        for (k, desc_val) in props {
+            object_define_property(vec![obj.clone(), Value::String(k), desc_val])?;
+        }
+    }
+    Ok(obj)
+}
+
+/// Object.getOwnPropertyDescriptors(obj) - returns descriptors for all own properties
+pub fn object_get_own_property_descriptors(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let keys: Vec<String> = match &obj {
+        Value::Object(o) => o.borrow().own_property_names(),
+        _ => {
+            return Err(JsError::from(
+                "TypeError: Object.getOwnPropertyDescriptors called on non-object",
+            ))
+        }
+    };
+    let mut result = Object::new(ObjectKind::Ordinary);
+    if let Some(proto) = crate::builtins::get_object_prototype() {
+        result.prototype = Some(proto);
+    }
+    for k in keys {
+        let desc = descriptors::get_object_property_descriptor(
+            match &obj {
+                Value::Object(o) => o,
+                _ => unreachable!(),
+            },
+            &k,
+        )?;
+        result.set(&k, desc);
+    }
+    Ok(Value::Object(Rc::new(RefCell::new(result))))
 }
