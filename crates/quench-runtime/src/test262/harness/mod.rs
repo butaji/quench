@@ -77,7 +77,7 @@ impl HarnessLoader {
         // Reflect.ownKeys, Symbol.toStringTag, Symbol.iterator, Array.isArray,
         // Map, Set, all TypedArrays, Promise, and boxed primitives being
         // fully wired up. Once those exist, delete this override and load the
-        // JS version. See docs/test-harness-overrides.md, R23 in refactor-plan.
+        // JS version. See docs/test-harness-overrides.md.
         let patched = if name == "deepEqual.js" {
             String::new() // empty = no-op, assert.deepEqual stays native
         } else {
@@ -103,7 +103,7 @@ impl HarnessLoader {
             // typeof f.prototype === 'function' was wrong. Keep the skip
             // because the native version is simpler and already used by
             // builtins code. Remove once builtins route through JS only.
-            // See docs/test-harness-overrides.md, R23 in refactor-plan.
+            // See docs/test-harness-overrides.md.
             if inc == "isConstructor.js" {
                 continue;
             }
@@ -663,7 +663,7 @@ assert._toString = function (value) {
         // Quench's runtime doesn't have all the primitives the upstream JS
         // version needs yet (Reflect.ownKeys, Map, Set, TypedArrays, etc.).
         // The upstream file is spec-correct — load it once the runtime is
-        // complete. See docs/test-harness-overrides.md, R23 in refactor-plan.
+        // complete. See docs/test-harness-overrides.md.
         "fnGlobalObject.js",
         // isConstructor.js is NOT loaded here. The upstream JS file
         // (identical to the local copy) uses Reflect.construct and is

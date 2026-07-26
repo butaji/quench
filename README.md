@@ -5,7 +5,7 @@ JavaScript runtime targeting **100% test262 conformance**, staged to
 plus a self-hosted JS builtins layer. Native TS/TSX/JSX via OXC.
 
 See `AGENTS.md` for the rules, `docs/architecture.md` for the split,
-and `tasks/refactor-plan.md` for the active queue.
+and `tasks/plan.md` for the shortest path to 100%.
 
 ## Quick Start
 
