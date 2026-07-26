@@ -46,6 +46,7 @@ macro_rules! throw {
 pub mod ast;
 pub mod builtins;
 pub mod context;
+pub mod early_errors;
 pub mod env;
 pub mod eval;
 pub mod host;

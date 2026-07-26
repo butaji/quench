@@ -77,7 +77,7 @@ embedded via `include_str!`, evaluated once per Realm by
 
 | Spec area | Crate | Rust file |
 |---|---|---|
-| Parsing / early errors | `oxc` (+ `oxc_semantic`) | `parser.rs` |
+| Parsing / early errors | `oxc` (+ `oxc_semantic`), latest version — see `DEPENDENCIES.md` policy | `parser.rs` |
 | RegExp exec | `regress` | `builtins/core/regex.rs` |
 | Date math | `chrono` | `builtins/core/date.rs` |
 | BigInt | `num-bigint` | `builtins/core/bigint.rs` |

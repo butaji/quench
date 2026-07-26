@@ -30,9 +30,11 @@ Measured evidence, not preference:
 
 ```
 Phase A — language stages (now, stage 25 → 56)
+  A0. Upgrade oxc 0.47 → latest (0.141), fix parser.rs/lower/ breakage
+      (mandatory — DEPENDENCIES.md OXC version policy)
   A1. oxc_semantic early errors        ← top lever, unblocks every
       (parse → oxc_semantic → SyntaxError before lowering;
-       DEPENDENCIES.md row in same diff)
+       same version as oxc; DEPENDENCIES.md row in same diff)
   A2. Fix remaining stages by digest cluster, in index order
       (one reproducer #[test] per dominant cluster → fix → re-digest)
   A3. url crate replaces urlencoding   (before stage 53 modules)

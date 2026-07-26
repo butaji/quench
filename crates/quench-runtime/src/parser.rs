@@ -4,6 +4,7 @@
 //! then lower to our runtime AST via lower.rs.
 
 use crate::ast::Program;
+use crate::early_errors;
 use crate::lower::stmt::lower_program;
 use crate::value::JsError;
 use oxc::allocator::Allocator;
@@ -24,6 +25,7 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     check_strict_reserved(&ret.program)?;
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
+    early_errors::check_early_errors(&ret.program)?;
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 

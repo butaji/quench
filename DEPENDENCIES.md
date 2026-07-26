@@ -5,6 +5,15 @@ by covering spec semantics no hand-rolled code can match. A hand-rolled copy
 —including a thinly-disguised `chrono_*` helper that never imports the crate—is
 forbidden. A new crate needs a row here in the same diff.
 
+**OXC version policy (mandatory):** all OXC crates (`oxc`, `oxc_parser`,
+`oxc_semantic`, …) must track the **latest published version** — currently
+**0.141.0** (they release in lockstep; verify with
+`curl -sH "User-Agent: quench" https://crates.io/api/v1/crates/oxc`).
+The pinned `oxc = "0.47"` in `crates/quench-runtime/Cargo.toml` is tech
+debt, not a choice: upgrade to latest and add `oxc_semantic` at the same
+version in one diff (plan A0/A1, `tasks/plan.md`). Never add a new OXC
+crate at an older version than the latest.
+
 Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 `urlencoding`, `indexmap`, `rustc-hash`, `phf`, `tracing`, `anyhow`,
 `walkdir`, `tempfile`, `serial_test`.
@@ -15,7 +24,7 @@ Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 
 | Crate | Version | Purpose | File |
 |---|---|---|---|
-| `oxc` | 0.47 | Parser (oxc → internal AST) | `Cargo.toml` |
+| `oxc` | 0.47 → **0.141 (latest, required)** | Parser (oxc → internal AST) | `Cargo.toml` |
 | `regress` | 0.11 | RegExp exec (ES2018 syntax targeting) | `Cargo.toml` |
 | `chrono` | 0.4 | Date math, timestamp conversion | `Cargo.toml` |
 | `num-bigint` | 0.4 | BigInt arithmetic | `Cargo.toml` |
@@ -50,7 +59,7 @@ run before landing.
 |---|---|---|---|---|
 | `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. 244.6M+ downloads, stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. 2–4× speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
 | `url` | 53 `modules` | 5 | Supersedes `urlencoding` for URL Standard compliance. Covers `import "https://..."`, bare specifier resolution, and `data:` URLs. | Low. Drop-in upgrade. |
-| `oxc_semantic` | R17 | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
+| `oxc_semantic` | A1 (at latest oxc version, 0.141+) | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
 | `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa (94.12% test262), Kiesel, and **V8/Chrome 144**. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
 | `regex` + `unicode-perl` | 84 `RegExp` | 7 | `regress` (ES2018) does NOT support Unicode property escapes `\p{}`. `regex` with `unicode-perl` covers `\p{Script}`, `\p{Emoji}`, etc. | Low. Evaluate replacing `regress` if `regex` covers ES2018 backreferences + lookbehind too. |
 
