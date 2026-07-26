@@ -8,11 +8,9 @@ use crate::test262::harness::HarnessLoader;
 use crate::test262::host::{QuenchHost, Test262Host, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
 
-/// Per-test timeout in seconds.
-pub const TEST_TIMEOUT_SECS: u64 = 10;
-
-/// Subprocess (isolated) per-test timeout in seconds.
-const ISOLATED_TIMEOUT_SECS: u64 = 15;
+/// Per-test timeout in seconds — one value shared by the in-process and
+/// subprocess (isolated) paths so a test cannot pass one way and fail the other.
+pub const TEST_TIMEOUT_SECS: u64 = 15;
 
 /// Async prelude: `$DONE` records invocations and rethrows error arguments.
 /// The count is verified after the microtask drain by `async_done_probe`.
@@ -265,7 +263,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
             }
         }
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(ISOLATED_TIMEOUT_SECS);
+    let deadline = std::time::Instant::now() + Duration::from_secs(TEST_TIMEOUT_SECS);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
@@ -283,7 +281,7 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
                 let _ = child.kill();
                 let _ = child.wait();
                 return TestOutcome::Fail {
-                    reason: format!("timed out after {}s", ISOLATED_TIMEOUT_SECS),
+                    reason: format!("timed out after {}s", TEST_TIMEOUT_SECS),
                 };
             }
             Err(e) => {
@@ -361,11 +359,17 @@ fn run_test_binary() -> std::path::PathBuf {
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or(&manifest);
-    let candidate = ws.join("target/debug/run-test");
-    if candidate.is_file() {
-        return candidate;
-    }
-    std::path::PathBuf::from("target/debug/run-test")
+    // Prefer the release binary when built (digest runs are ~4x faster in
+    // release); fall back to debug. RUN_TEST_BIN overrides both.
+    first_existing(&[
+        ws.join("target/release/run-test"),
+        ws.join("target/debug/run-test"),
+    ])
+    .unwrap_or_else(|| std::path::PathBuf::from("target/debug/run-test"))
+}
+
+fn first_existing(candidates: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    candidates.iter().find(|p| p.is_file()).cloned()
 }
 
 #[cfg(test)]

@@ -9,6 +9,20 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# Release by default: digest shells out to run-test per test and release is
+# ~4x faster (~10ms vs ~40ms per-test overhead). TEST262_PROFILE=debug to
+# run the debug binaries instead.
+PROFILE=${TEST262_PROFILE:-release}
+if [ "$PROFILE" = "release" ]; then
+    cargo build --release --bin run-test
+    CARGO_TEST=(cargo test --release -p quench-runtime --test test262 test262_staged -- --ignored --nocapture)
+else
+    cargo build --bin run-test
+    CARGO_TEST=(cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture)
+fi
+export RUN_TEST_BIN="$PWD/target/$PROFILE/run-test"
+echo "Digest profile: $PROFILE (run-test: $RUN_TEST_BIN)"
+
 REPORT="tasks/digest-report.md"
 echo "# Digest Report — $(date)" > "$REPORT"
 echo "" >> "$REPORT"
@@ -48,9 +62,9 @@ for s in d['stages']:
 
     EXIT_CODE=0
     if [ "$HAS_TIMEOUT" = "1" ]; then
-        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout "$STAGE_TIMEOUT" cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout "$STAGE_TIMEOUT" "${CARGO_TEST[@]}" 2>&1) || EXIT_CODE=$?
     else
-        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 "${CARGO_TEST[@]}" 2>&1) || EXIT_CODE=$?
     fi
 
     # Digest prints "Passed:  N" and "Total:   N (files)" on separate lines.

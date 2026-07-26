@@ -2,6 +2,29 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
+fn in_process_and_isolated_share_one_timeout() {
+    // Both paths read TEST_TIMEOUT_SECS; pin the value so a slow test cannot
+    // pass in-process (formerly 10s) and fail isolated (formerly 15s).
+    assert_eq!(TEST_TIMEOUT_SECS, 15);
+}
+
+#[test]
+fn first_existing_picks_release_before_debug() {
+    let dir = std::env::temp_dir().join(format!("quench-binpick-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let release = dir.join("release");
+    let debug = dir.join("debug");
+    std::fs::write(&debug, "").unwrap();
+    assert_eq!(
+        first_existing(&[release.clone(), debug.clone()]),
+        Some(debug.clone())
+    );
+    std::fs::write(&release, "").unwrap();
+    assert_eq!(first_existing(&[release, debug]), Some(dir.join("release")));
+    assert_eq!(first_existing(&[dir.join("nope")]), None);
+}
+
+#[test]
 fn isolated_run_finds_property_helper_from_any_cwd() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

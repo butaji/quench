@@ -10,7 +10,7 @@ TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --
 TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored
 ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored
 
-TEST262_STAGE=N bash tools/run-each.sh        # process-isolated (survives crashes)
+TEST262_STAGE=N bash tools/run-each.sh        # process-isolated, parallel (release by default)
 bash tools/digest-all.sh                      # digest all stages → report
 bash tools/stage-status.sh                    # stage table + progress
 bash tools/advance-stage.sh                   # mark current stage done if 100%
@@ -38,11 +38,26 @@ editing `tasks/index.json`.
 Signals (segfault/abort/stack overflow) are always failures, never
 passes — including for negative tests.
 
-> **Stale-binary hazard:** digest mode and `run-each.sh` execute the
-> prebuilt `target/debug/run-test` binary — they do NOT rebuild it.
+> **Stale-binary hazard:** digest mode and `run-each.sh` execute a
+> prebuilt `run-test` binary — the test harness does NOT rebuild it.
+> The runner picks `target/release/run-test` when it exists, else
+> `target/debug/run-test` (`RUN_TEST_BIN=<path>` overrides both).
 > After changing `tools/run-test/` or runner judging logic, rebuild it
-> first (`cargo build --manifest-path tools/run-test/Cargo.toml`) or
-> the digest silently uses outdated judging.
+> first (`cargo build --release --bin run-test`) or the digest silently
+> uses outdated judging.
+
+## Release-mode digests (the fast path)
+
+Digest mode spawns one `run-test` subprocess per test; per-test overhead
+is ~40ms in debug vs ~10ms in release, so digests should run in release:
+
+```bash
+cargo build --release --bin run-test
+TEST262_STAGE=N TEST262_DIGEST=1 cargo test --release -p quench-runtime --test test262 test262_staged -- --ignored
+```
+
+`tools/digest-all.sh` builds and uses the release binaries by default;
+`TEST262_PROFILE=debug bash tools/digest-all.sh` opts back into debug.
 
 ## Digest mode — fix by root cause
 
@@ -65,8 +80,12 @@ Collects ALL failures, groups them by error, writes
 
 ## Timeouts and crashes
 
-In-process: 10s per test. Isolated (`run-each.sh`, default in digest):
-15s watchdog, then kill → Fail. Crash-looping files live in
+One shared per-test timeout, `TEST_TIMEOUT_SECS = 15`
+(`src/test262/runner/execute.rs`), used by both the in-process and the
+isolated paths — a test cannot pass one way and fail the other. Isolated
+runs (`run-each.sh`, default in digest) kill the subprocess after 15s →
+Fail; `run-each.sh` enforces the same 15s via a perl watchdog (stock
+macOS has no GNU `timeout`). Crash-looping files live in
 `src/test262/skip.rs::CRASH_FILES` as **full stage-relative paths**;
 each skip blocks stage completion until the crash is fixed.
 
