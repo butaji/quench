@@ -11,7 +11,7 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 tes
 ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored
 
 TEST262_STAGE=N bash tools/run-each.sh        # process-isolated (survives crashes)
-bash tools/digest-all.sh                      # digest all 122 stages → report
+bash tools/digest-all.sh                      # digest all stages → report
 bash tools/stage-status.sh                    # stage table + progress
 bash tools/advance-stage.sh                   # mark current stage done if 100%
 ```

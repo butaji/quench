@@ -17,9 +17,9 @@ builtins. Three minimal layers:
 3. **Walk** — `eval/` walks the internal AST node by node. No
    bytecode, no JIT — each node maps to one `eval_*` function.
 
-Why shortest: no hand-written parser (~20k LOC saved), no bytecode
-layer (~5–10k LOC saved, zero conformance value), spec ops written
-once, builtins in JS (~1/3 the LOC of Rust).
+Why shortest: no hand-written parser, no bytecode layer (large LOC
+cost, zero conformance value), spec ops written once, builtins in JS
+(~1/3 the LOC of Rust).
 
 ## Rust core
 
@@ -85,7 +85,7 @@ embedded via `include_str!`, evaluated once per Realm by
 | BigInt | `num-bigint` | `builtins/core/bigint.rs` |
 | JSON | `serde_json` | `builtins/core/json.rs` |
 | URL/URI | `url` (plan A3) | `builtins/core/uri.rs` |
-| Temporal (stage 120) | `temporal_rs` | planned |
+| Temporal | `temporal_rs` | planned |
 
 Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
 Hand-rolled copies are forbidden; new crates need a `DEPENDENCIES.md`
@@ -93,9 +93,10 @@ row in the same diff.
 
 ## Limits — enforced
 
-`.clippy.toml` + `-D warnings` gate every build: ≤500 lines/file,
-≤40 lines/function, cognitive complexity ≤10, zero clippy warnings,
-no `#[allow]`. Split offenders before adding to them.
+`.clippy.toml` + `-D warnings` gate every build: file/function size,
+cognitive complexity, and warning limits as configured there — this
+file does not duplicate the values. No `#[allow]`. Split offenders
+before adding to them.
 
 ## Workflow
 

@@ -55,7 +55,7 @@ and the object model reach spec correctness, the native shims die.
       stages pass.
 - [ ] **`$262.gc`**, **`$262.agent.*`**, **`$262.IsHTMLDDA`** —
       Implement when their stages (ArrayBuffer, Atomics, annexB) are
-      reached. `IsHTMLDDA` is referenced by 42+ annexB tests and is
+      reached. `IsHTMLDDA` is referenced by annexB tests and is
       currently missing entirely.
 
 ## Verification per step

@@ -9,56 +9,54 @@ errors, destructuring, and TDZ, not completion plumbing.
 Each item enters through the standard gate (failing reproducer
 `#[test]` first where behavior changes; pure moves are refactor pins).
 
+No occurrence counts or line references below — they rot with a
+single commit. Locate current sites with `grep` when starting an item.
+
 ## R0. `throw_type_error(msg) -> JsError` helper
 
-AGENTS.md mandates this one-liner; it does not exist. The 3-line
-idiom — `create_js_error_with_type` + `set_thrown_value` + `Err` —
-appears at ~150 sites (`create_js_error_with_type`: 166 calls in 42
-files, e.g. `eval/class/helpers.rs:37-54` twice in 10 lines).
+AGENTS.md mandates this one-liner; it does not exist. The idiom —
+`create_js_error_with_type` + `set_thrown_value` + `Err` — is
+repeated throughout `builtins/` and `eval/`.
 
-- Add `value::error::throw_type_error(msg)` (and siblings for the
-  other error kinds only where ~10+ sites exist).
-- Convert call sites module by module; unit test per module converted.
-- Est. −300 LOC. Zero behavior change.
+- Add `value::error::throw_type_error(msg)` (and siblings for other
+  error kinds only where they recur heavily).
+- Convert call sites module by module; unit test per module.
+- Zero behavior change; pure deletion.
 
 ## R1. Arg/receiver helpers for Rust builtins
 
-- `args.first().cloned().unwrap_or(Value::Undefined)` — 100 sites in
-  32 files → `Args::at(i)`-style helper returning `Value::Undefined`.
-- `builtins::get_native_this().unwrap_or(Value::Undefined)` — 60
-  sites in 22 files → a *checked* receiver helper that throws
-  TypeError on wrong receiver (fixes latent bug farm, e.g.
-  `Map.prototype.add.call(5)` should throw). Each conversion needs a
-  reproducer test where behavior changes.
-- Est. −100–150 LOC.
+- The `args.first().cloned().unwrap_or(Value::Undefined)` idiom → an
+  `Args::at(i)`-style helper returning `Value::Undefined`.
+- The `builtins::get_native_this().unwrap_or(Value::Undefined)`
+  idiom → a *checked* receiver helper that throws TypeError on wrong
+  receiver (fixes a latent bug class: e.g. `Map.prototype.add.call(5)`
+  must throw). Each behavioral conversion needs a reproducer test.
 
 ## R2. Const-table builtin registration + constructor cleanup
 
-- `p.set("add", native_fn(...))` registration blocks (e.g.
-  `builtins/map/set.rs:75-85`) → `const METHODS: &[(&str, NativeFn,
-  u32)]` + one `register_methods` function (sets name/length/
-  configurability in one place). Start with map/set/weak (27
-  `native_fn` sites) as the proving ground.
-- `NativeFunction`'s 5 near-identical constructors
-  (`value/function/native_function.rs:46-148`, ~60 duplicated field
-  inits) → one constructor + builder or `..Default`.
-- Est. −100–150 LOC; every future builtin becomes table rows.
+- `p.set("name", native_fn(...))` registration blocks →
+  `const METHODS: &[(&str, NativeFn, u32)]` + one `register_methods`
+  function (sets name/length/configurability in one place). Prove the
+  pattern on the map/set/weak modules first.
+- `NativeFunction`'s several near-identical constructors → one
+  constructor + builder or `..Default`.
+- Payoff compounds: every future builtin becomes table rows.
 
 ## R3. `Completion` type — kill the control-flow side channels
 
 The dominant structural win. Today abrupt completion is smuggled
-through two thread-locals plus a sentinel:
+through side channels instead of the return type:
 
-- `CONTROL_FLOW` thread-local (`interpreter.rs:24,49-69`) — 257
-  occurrences in 16 files (`statement.rs` 92, `iteration.rs` 41).
-- `THROWN_VALUE` thread-local (`value/error.rs:48-67`) — 182
-  occurrences in 36 files.
-- Sentinel `Err(JsError("Generator threw"))` — 11 sites, one
-  string-matched (`eval/object/helpers/destructuring.rs:241`).
-- ~30 hand-rolled take/match/re-set propagation blocks (e.g.
-  `statement.rs:174,321,853,915,1051`, `iteration.rs:384,593`);
-  try/finally hand-encodes §13.15 with 4 save/restore passes
-  (`statement.rs:1131-1236`).
+- a `CONTROL_FLOW` thread-local (`interpreter.rs`) with set/take
+  accessors and hand-rolled take/match/re-set propagation blocks at
+  every statement and loop boundary (`statement.rs`, `iteration.rs`,
+  `destructuring.rs`);
+- a `THROWN_VALUE` thread-local (`value/error.rs`) because `JsError`
+  is just a string and the real thrown value rides alongside `Err`;
+- a magic sentinel error string for generator throws, including one
+  site that string-matches on it;
+- try/finally hand-encoding §13.15 completion semantics with repeated
+  save/restore passes.
 
 Target shape:
 
@@ -71,19 +69,17 @@ type JsResult = Result<Completion, Value>; // throw = Err, carrying the value
 
 Deletions this unlocks:
 
-- `CONTROL_FLOW`, `THROWN_VALUE`, the sentinel, ~30 plumbing blocks
-  → `?` plus `match` only where an abrupt can be *consumed* (loops,
-  labeled statements, try/finally).
-- `ForOfIterResult`/`ForInIterResult` (`iteration.rs:102-107,570-574`)
-  — adapters that re-encode completion.
-- Triplicated `is_empty_completion` (`interpreter.rs:410-417`,
-  `statement.rs:150-159,301-310`) → one method.
-- `EXPLICIT_RETURN_STACK` and per-statement-kind tail-call
-  special-casing (`statement.rs:260-295`).
-- `abrupt_close`'s manual save/restore (`iteration.rs:82-100`).
-
-Est. −400–700 LOC, and removes the "forgot to re-set control flow"
-bug class (see comment trail `statement.rs:166-170,314-317`).
+- both thread-locals, the sentinel, and every take/match/re-set block
+  → `?`, plus `match` only where an abrupt can be *consumed* (loops,
+  labeled statements, try/finally);
+- the for-of/for-in per-iteration result enums that re-encode
+  completion;
+- the copy-pasted `is_empty_completion` matches → one method;
+- the explicit-return stack and per-statement-kind tail-call
+  special-casing;
+- the manual save/restore around `IteratorClose`;
+- the entire "forgot to re-set control flow" bug class (see the
+  apologetic comment trail in `statement.rs`).
 
 Sequencing: R0 first (it aligns error creation so thrown values can
 move into `Err` in R3 without churn). R3 lands per-module
@@ -92,9 +88,9 @@ passing full unit suite + relevant test262 stages.
 
 ## R4. Explicit eval context (after R3)
 
-40 `thread_local!` blocks in 22 files (15 in `interpreter.rs`:
-`CURRENT_THIS`, `STRICT_MODE`, `NEW_TARGET`, `LABEL_STACK`,
-`SUPER_CLASS`, …) collapse into an explicit context/frame parameter.
+The remaining `thread_local!` blocks (`CURRENT_THIS`, `STRICT_MODE`,
+`NEW_TARGET`, `LABEL_STACK`, `SUPER_CLASS`, …, concentrated in
+`interpreter.rs`) collapse into an explicit context/frame parameter.
 Only slots that genuinely cannot ride the call stack (generators,
 `CURRENT_CONTEXT`) survive. Do after R3 — the completion refactor
 removes the biggest consumer first and shows which slots remain.
