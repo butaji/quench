@@ -1,7 +1,11 @@
 # Refactor — simplicity program (principles: docs/principles.md)
 
-Structural simplifications identified by a full-core audit. Ordered
-by payoff/risk: R0–R2 are mechanical quick wins; R3 is the big one.
+Structural simplifications identified by a full-core audit.
+**Sequencing vs. the conformance path (tasks/plan.md): R0–R2 ride
+inline during stage fixes; R3 lands at the A→B boundary, strictly
+before plan B2/B3; R4 after plan B1.** R3/R4 are LOC/clarity levers,
+not conformance levers — stage digests show failures cluster in early
+errors, destructuring, and TDZ, not completion plumbing.
 Each item enters through the standard gate (failing reproducer
 `#[test]` first where behavior changes; pure moves are refactor pins).
 

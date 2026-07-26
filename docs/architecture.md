@@ -3,6 +3,8 @@
 **Goal:** 100% of test262 (no skips), staged, minimum LOC.
 **Execution order:** `tasks/plan.md` (the single source — do not
 duplicate it here).
+**Design principles:** `docs/principles.md` (effects in return types,
+functions before macros, tables over code, one canonical path).
 
 **Shape:** OXC parser + tree-walking interpreter + self-hosted JS
 builtins. Three minimal layers:
