@@ -540,7 +540,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC parse errors: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC parse errors: {:?}", ret.diagnostics);
         // Can't return ret.program because it borrows allocator.
         // Instead just run checks inside.
         unimplemented!()
@@ -552,7 +552,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err(), "Expected SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -564,7 +564,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -576,7 +576,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err(), "var init should be SyntaxError in for-of: {:?}", result);
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -588,7 +588,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_ok(), "no init should be ok: {:?}", result);
     }
@@ -599,7 +599,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err(), "rest init should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -611,7 +611,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -623,7 +623,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -635,7 +635,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -647,7 +647,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -659,7 +659,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_ok(), "let y should not conflict: {:?}", result);
     }
@@ -670,7 +670,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_ok());
     }
@@ -681,7 +681,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err(), "let as bound name should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -693,7 +693,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_ok());
     }
@@ -706,7 +706,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "rest+default should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -718,7 +718,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "rest+default should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -730,7 +730,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "duplicate params+default should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -742,7 +742,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "array destr in strict body should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -754,7 +754,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "obj destr in strict body should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -766,7 +766,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_early_errors(&ret.program);
         assert!(result.is_ok(), "plain params in strict body should be ok: {:?}", result);
     }
@@ -777,7 +777,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "nested rest init should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -790,7 +790,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty(), "OXC should accept: {:?}", ret.errors);
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
         let result = check_early_errors(&ret.program);
         assert!(result.is_err(), "nested rest init should be SyntaxError");
         assert!(result.unwrap_err().0.contains("SyntaxError"));
@@ -802,7 +802,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_early_errors(&ret.program);
         assert!(result.is_ok(), "rest without init should be ok: {:?}", result);
     }
@@ -813,7 +813,7 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        assert!(ret.errors.is_empty());
+        assert!(ret.diagnostics.is_empty());
         let result = check_early_errors(&ret.program);
         assert!(result.is_ok(), "rest without default should be ok: {:?}", result);
     }
@@ -826,11 +826,11 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        println!("OXC duplicate params+default: {} errors", ret.errors.len());
-        for e in &ret.errors {
+        println!("OXC duplicate params+default: {} errors", ret.diagnostics.len());
+        for e in &ret.diagnostics {
             println!("  OXC error: {:?}", e);
         }
-        assert!(ret.errors.is_empty(), "OXC should parse but our early errors check catches it");
+        assert!(ret.diagnostics.is_empty(), "OXC should parse but our early errors check catches it");
     }
 
     #[test]
@@ -839,11 +839,11 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        println!("OXC rest+default: {} errors", ret.errors.len());
-        for e in &ret.errors {
+        println!("OXC rest+default: {} errors", ret.diagnostics.len());
+        for e in &ret.diagnostics {
             println!("  OXC error: {:?}", e);
         }
-        assert!(ret.errors.is_empty(), "OXC should parse but our check catches it");
+        assert!(ret.diagnostics.is_empty(), "OXC should parse but our check catches it");
     }
 
     #[test]
@@ -852,6 +852,6 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
-        println!("OXC arrow strict body + array destr: {} errors", ret.errors.len());
+        println!("OXC arrow strict body + array destr: {} errors", ret.diagnostics.len());
     }
 }
