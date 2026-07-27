@@ -26,10 +26,10 @@ This is the fastest path to 100% conformance with minimum LOC because:
   LOC) with no conformance benefit — test262 tests behavior, not speed.
 - **Spec ops in one place.** `eval/ops.rs` owns every canonical
   abstract operation (`ToPrimitive`, `ToObject`, `IteratorNext`, …),
-  exposed to JS as `%ops%`. Every eval node and every builtin routes
+  exposed to JS as `__ops__`. Every eval node and every builtin routes
   through them — no duplicate implementations.
 - **Builtins self-hosted in JS.** JS is ~1/3 the LOC of equivalent
-  Rust for spec algorithms. Once `%ops%` is complete, builtins move
+  Rust for spec algorithms. Once `__ops__` is complete, builtins move
   to JS (`builtins/*.js`) and the Rust core shrinks.
 
 ## Rust core
@@ -43,12 +43,12 @@ src/
 ├── ast.rs           # internal AST
 ├── interpreter.rs   # eval entry points
 ├── eval/
-│   └── ops.rs       # canonical spec abstract ops, exposed as %ops%
+│   └── ops.rs       # canonical spec abstract ops, exposed as __ops__
 ├── env/             # lexical environments
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
 └── builtins/
-    ├── core/            # %ops% wrapper infrastructure
+    ├── core/            # __ops__ wrapper infrastructure
     ├── regex/           # regress-backed (crate)
     ├── date/            # chrono-backed (crate)
     ├── bigint.rs        # num-bigint-backed (crate)
@@ -64,12 +64,12 @@ Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 ## JS builtins (target — R0 not started)
 
 All builtins are currently Rust (`src/builtins/`). The plan is to
-self-host them as JS once `%ops%` is fleshed out (R0 in
+self-host them as JS once `__ops__` is fleshed out (R0 in
 `tasks/refactor-plan.md`):
 
 ```
 builtins/
-├── _intrinsics.js   # %ops% destructure (resolved at parse time)
+├── _intrinsics.js   # __ops__ destructure (resolved at parse time)
 ├── Object.js, Function.js, Error.js, Symbol.js,
 ├── Number.js, Boolean.js, String.js, Math.js,
 ├── Array.js, Iterator.js,
@@ -82,10 +82,10 @@ builtins/
 
 Once built, all `*.prototype.*`, intrinsic iterator prototypes,
 `Object.*`, `Reflect.*`, `Promise.prototype.*`, etc. are authored here.
-Pure spec algorithms on top of `%ops%`. Embedded via `include_str!`;
+Pure spec algorithms on top of `__ops__`. Embedded via `include_str!`;
 parsed once per `Realm` by `builtins/bootstrap.rs` (R0 planned).
 
-## `%ops%` — the only Rust↔JS bridge for spec ops
+## `__ops__` — the only Rust↔JS bridge for spec ops
 
 Frozen object exposed at realm init. Each property is a canonical spec
 abstract op, implemented once in `eval/ops.rs` and bound as a
@@ -93,7 +93,7 @@ abstract op, implemented once in `eval/ops.rs` and bound as a
 
 ```js
 // builtins/Array.js (excerpt)
-const { IsCallable, ToObject, ThrowTypeError } = %ops%;
+const { IsCallable, ToObject, ThrowTypeError } = __ops__;
 
 Array.prototype.map = function (callback, thisArg) {
   const O = ToObject(this);
@@ -106,14 +106,14 @@ Array.prototype.map = function (callback, thisArg) {
 };
 ```
 
-New op → add to `eval/ops.rs` with a failing test → expose on `%ops%` →
+New op → add to `eval/ops.rs` with a failing test → expose on `__ops__` →
 JS callsite. No second copy anywhere.
 
 ## Object model — one canonical store
 
 `Object` has a single own-property store (R5 target:
 `IndexMap<Key, Prop>`, `Key::Sym` carrying unique symbol identity).
-eval nodes, builtins, and `%ops%` all route through it — no parallel
+eval nodes, builtins, and `__ops__` all route through it — no parallel
 lookup paths, no per-callsite prototype walks, no shadow stores (the
 dead `props`/`VTable` layer was removed in R4). Descriptor semantics
 follow the spec: `defineProperty` defaults absent attributes to `false`,

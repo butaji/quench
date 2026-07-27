@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Do TDD. Dont do debug code. Dont do debug prints. Never guess — write a
-failing unit test first, every time.
+Do TDD. Dont do debug code. Dont do comments. Dont do debug prints. Never guess — write a
+failing unit test first, every time. Unit test is the best comment and the best debug print you can make.
 
 Unit tests exist to get us to 100% test262 faster, not to duplicate it.
 test262 (50k+ cases, run per stage) is the conformance gate for all
@@ -12,7 +12,7 @@ a unit test**. A unit test is admitted in exactly three categories:
    change enters via one failing `#[test]` asserting the exact
    behavior, written before any production change and left in after.
 2. **Core invariants test262 cannot observe** — panic-freedom of
-   builtins, realm/`Context::reset` hygiene, `%ops%` semantics,
+   builtins, realm/`Context::reset` hygiene, `__ops__` semantics,
    storage/key identity, soundness holes (e.g. `FROZEN_OBJECTS`).
 3. **Refactor pins** — behavior locked with a test before a delete,
    move, or storage/prototype migration (R0–R16).
@@ -27,7 +27,7 @@ staged to 100% per stage, with the **minimum possible LOC** as a
 **small Rust core** plus a **self-hosted JS builtins layer**. Single
 crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
-- `docs/architecture.md` — the Rust↔JS split, `%ops%` contract, bootstrap order.
+- `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
 - `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R17).
 - `tasks/10-ways-to-speed-up.md` — speed strategy (S1–S7); the plan above serves it.
 - `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
@@ -123,14 +123,14 @@ not per-PR diffs. Two compounding levers:
 
 1. **Small Rust core.** Parser/lower/eval/value/env/context + a handful
    of crate-backed primitives in `builtins/core/`. Every pure spec
-   algorithm on top of `%ops%` is authored in JS (`builtins/*.js`). JS
+   algorithm on top of `__ops__` is authored in JS (`builtins/*.js`). JS
    is ~1/3 the LOC of equivalent Rust; that is the entire reason the
    split exists.
 2. **One canonical spec-op path.** `ToPrimitive`, `ToPropertyKey`,
    `ToObject`, `IteratorNext`, `IteratorClose`,
    `CreateDataPropertyOrThrow`, `OrdinaryHasProperty`, `IsCallable`,
    `SameValueZero`, … live in exactly one place: `src/eval/ops.rs`,
-   exposed to JS as a frozen `%ops%` object. Every builtin (Rust or
+   exposed to JS as a frozen `__ops__` object. Every builtin (Rust or
    JS) and every eval node routes through them. Before writing any
    `to_*` / `same_value*` / `is_callable` / `native_fn` / `iterator_*`
    helper, grep `src/eval/ops.rs`. Use it if it exists; add it there
@@ -184,8 +184,8 @@ extract it (with a test) and reuse it. New spec-op extractions go into
 
 - **Self-hosted builtins** live as JS in `builtins/*.js`, embedded via
   `include_str!`, parsed once per realm by `builtins/bootstrap.rs`.
-  They never reach into `Object` storage directly — they call `%ops%`.
-  New op: `eval/ops.rs` + failing test → `%ops%` property → JS callsite.
+  They never reach into `Object` storage directly — they call `__ops__`.
+  New op: `eval/ops.rs` + failing test → `__ops__` property → JS callsite.
 - **Crate-backed primitives** (regress / chrono / num-bigint /
   serde_json / urlencoding) live in `builtins/core/` as small Rust
   fns; the `.prototype.*` and constructor wiring is JS.

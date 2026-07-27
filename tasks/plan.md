@@ -25,7 +25,7 @@ digest before acting on any of these):
   need targeted fixes, not rewrites.
 - Built-ins are the bottleneck by an order of magnitude (see
   `index.json`: the overwhelming majority of recorded failures).
-  Builtins in JS are ~1/3 the LOC of Rust and ride on one `%ops%`
+  Builtins in JS are ~1/3 the LOC of Rust and ride on one `__ops__`
   path → **self-host before grinding built-ins**; every Rust builtin
   line written now is deleted later.
 - `Temporal` is solved by `temporal_rs` (Boa/V8-proven) with zero
@@ -53,8 +53,8 @@ Phase B — gate before built-ins (the Object stage)
       kills thread-local proto caches AND the IntrinsicSnapshot
       bridge; $262.createRealm/bootstrap become trivial; required
       later by ShadowRealm anyway
-  B2. Finish %ops%: eval/ops.rs owns implementations (no re-exports)
-  B3. Self-host builtins in JS on %ops%, Object first, then the
+  B2. Finish __ops__: eval/ops.rs owns implementations (no re-exports)
+  B3. Self-host builtins in JS on __ops__, Object first, then the
       dependency order in docs/architecture.md
   B4. One iterator protocol (%IteratorPrototype%); chrono Date core
 
@@ -85,7 +85,7 @@ inline during stage fixes (mechanical, quick). R3 (Completion type)
 is a LOC/clarity lever, NOT a conformance lever — digests show
 failure clusters are early-errors/destructuring/TDZ, not completion
 plumbing — so it lands at the A→B boundary, strictly before B2/B3 so
-%ops% and the JS builtins aren't re-churned. R4 after B1.
+__ops__ and the JS builtins aren't re-churned. R4 after B1.
 
 ## LOC budget (remaining, rough sizing)
 
@@ -95,7 +95,7 @@ a phase boundary is crossed, never per-fix.
 | Work | Rust | JS |
 |---|---|---|
 | Phase A (early errors + language fixes) | ~3,000 | 0 |
-| Phase B (Realm intrinsics, %ops%, bootstrap) | ~800 | ~1,000 |
+| Phase B (Realm intrinsics, __ops__, bootstrap) | ~800 | ~1,000 |
 | Temporal (temporal_rs wrapper, B0) | ~500 | ~600 |
 | Built-ins in JS (Object→Atomics) | ~1,500 | ~12,000 |
 | Async (remainder) / RegExp / Proxy / buffers | ~1,200 | ~1,000 |

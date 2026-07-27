@@ -3,14 +3,156 @@
 //! This module is the single source of truth for spec abstract operations.
 //! All `eval/` nodes and JS builtins must use these, not local copies.
 //!
-//! Ops are exposed on `%ops%` (the JS-Rust bridge) so JS builtins can call them.
-//! New op: add here → expose on `%ops%` → use from JS.
+//! Ops are exposed on `__ops__` (the JS-Rust bridge) so JS builtins can call them.
+//! JS builtins destructure it at parse time: `const { IsCallable, ToObject } = __ops__;`
+//! New op: add here → expose on `__ops__` → use from JS.
 
 // Re-export the canonical implementations from their homes.
 pub use crate::builtins::object_static::to_property_key;
 pub use crate::value::coerce::to_number;
 pub use crate::value::primitive::to_primitive;
 pub use crate::value::primitive::PrimitiveHint;
+
+use crate::value::{JsError, Value};
+use std::rc::Rc;
+
+/// Build the `__ops__` frozen object — the Rust↔JS bridge for spec abstract ops.
+/// JS builtins destructure this at parse time: `const { IsCallable, ToObject } = __ops__;`
+pub fn make_ops_object() -> Value {
+    use crate::value::function::NativeFunction;
+    use crate::value::object::helpers::PropertyFlags;
+    use crate::value::object::Object;
+    use std::cell::RefCell;
+
+    let mut obj = Object::new(crate::value::ObjectKind::Ordinary);
+
+    let set_op = |obj: &mut Object, name: &str, f: fn(Vec<Value>) -> Result<Value, JsError>| {
+        let nf = NativeFunction::new_named(name, f);
+        let val = Value::NativeFunction(Rc::new(nf));
+        obj.define(
+            name,
+            val,
+            PropertyFlags {
+                value: None,
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+        );
+    };
+
+    set_op(&mut obj, "IsCallable", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(matches!(
+            v,
+            Value::Function(_)
+                | Value::NativeFunction(_)
+                | Value::NativeConstructor(_)
+                | Value::Class(_)
+        )))
+    });
+
+    set_op(&mut obj, "ToObject", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        crate::value::to_object(&v)
+    });
+
+    set_op(&mut obj, "ToBoolean", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::value::to_bool(&v)))
+    });
+
+    set_op(&mut obj, "ToString", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::String(crate::value::to_js_string(&v)))
+    });
+
+    set_op(&mut obj, "ToNumber", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Number(crate::eval::ops::to_number(&v)))
+    });
+
+    set_op(&mut obj, "ToPropertyKey", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = crate::eval::ops::to_property_key(&v)?;
+        Ok(Value::String(key))
+    });
+
+    set_op(&mut obj, "SameValue", |args| {
+        let x = args.first().cloned().unwrap_or(Value::Undefined);
+        let y = args.get(1).cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::value::same_value(&x, &y)))
+    });
+
+    set_op(&mut obj, "SameValueZero", |args| {
+        let x = args.first().cloned().unwrap_or(Value::Undefined);
+        let y = args.get(1).cloned().unwrap_or(Value::Undefined);
+        Ok(Value::Boolean(crate::value::same_value(&x, &y)))
+    });
+
+    set_op(&mut obj, "TypeOf", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        let t = match v {
+            Value::Undefined => "undefined",
+            Value::Null => "object",
+            Value::Boolean(_) => "boolean",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Symbol(_) => "symbol",
+            Value::BigInt(_) => "bigint",
+            Value::Function(_) => "function",
+            Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => "function",
+            Value::Object(_) | Value::Generator(_) => "object",
+        };
+        Ok(Value::String(t.to_string()))
+    });
+
+    set_op(&mut obj, "ThrowTypeError", |args| {
+        let msg = args
+            .first()
+            .map(crate::value::to_js_string)
+            .unwrap_or_else(|| "TypeError".to_string());
+        let (_, err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
+        Err(err)
+    });
+
+    set_op(&mut obj, "IsArray", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        let is_array = matches!(&v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Array);
+        Ok(Value::Boolean(is_array))
+    });
+
+    set_op(&mut obj, "IsConstructor", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        let is_ctor = matches!(v, Value::NativeConstructor(_) | Value::Class(_))
+            || matches!(&v, Value::Function(f) if !f.is_arrow);
+        Ok(Value::Boolean(is_ctor))
+    });
+
+    set_op(&mut obj, "CreateDataProperty", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let val = args.get(2).cloned().unwrap_or(Value::Undefined);
+        if let Value::Object(obj_rc) = &o {
+            obj_rc.borrow_mut().set(&key, val);
+            Ok(Value::Boolean(true))
+        } else {
+            Ok(Value::Boolean(false))
+        }
+    });
+
+    set_op(&mut obj, "HasProperty", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        if let Value::Object(obj_rc) = &o {
+            Ok(Value::Boolean(obj_rc.borrow().has_own(&key)))
+        } else {
+            Ok(Value::Boolean(false))
+        }
+    });
+
+    Value::Object(Rc::new(RefCell::new(obj)))
+}
 
 /// PreferredType for ToPrimitive hint (ES spec §7.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,5 +326,113 @@ mod tests {
         assert_eq!(PreferredType::Default.as_option_str(), None);
         assert_eq!(PreferredType::Number.as_option_str(), Some("number"));
         assert_eq!(PreferredType::String.as_option_str(), Some("string"));
+    }
+
+    // ── __ops__ bridge tests ───────────────────────────────────────────────────
+    // Note: these use __ops__.X directly rather than destructuring const { X } = __ops__
+    // because the current const destructuring implementation has a TDZ issue with
+    // bindings that share names with properties on the source object.
+
+    #[test]
+    fn test_ops_bridge_is_callable() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var IsCallable = __ops__.IsCallable; \
+             IsCallable(function(){}) && !IsCallable(42) && !IsCallable(null)",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_to_object() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var ToObject = __ops__.ToObject; \
+             typeof ToObject('hello') === 'object'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_typeof() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var TypeOf = __ops__.TypeOf; \
+             TypeOf(42) === 'number' && TypeOf('x') === 'string' && TypeOf(null) === 'object'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_throw_type_error() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var ThrowTypeError = __ops__.ThrowTypeError; \
+             try { ThrowTypeError('my error'); false } catch(e) { e instanceof TypeError }",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_is_array() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var IsArray = __ops__.IsArray; \
+             IsArray([]) && !IsArray({})",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_same_value() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var SameValue = __ops__.SameValue; \
+             SameValue(42, 42)",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_create_data_property() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var CreateDataProperty = __ops__.CreateDataProperty; \
+             var o = {}; \
+             CreateDataProperty(o, 'x', 99); \
+             o.x === 99",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_has_property() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var HasProperty = __ops__.HasProperty; \
+             var o = { a: 1 }; \
+             HasProperty(o, 'a') && !HasProperty(o, 'b')",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_is_constructor() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var IsConstructor = __ops__.IsConstructor; \
+             IsConstructor(Array) && !IsConstructor(() => {})",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_typeof_function() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx.eval(
+            "var TypeOf = __ops__.TypeOf; \
+             TypeOf(function(){}) === 'function'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 }

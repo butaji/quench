@@ -5,8 +5,8 @@ stage, **as soon as possible**, with **minimum LOC**.
 
 Architecture: **OXC + walker** (see `docs/architecture.md`) — OXC
 parses, `lower/` converts to internal AST, `eval/` walks it. Spec ops
-in one place (`eval/ops.rs` → `%ops%`). Builtins self-host in JS on
-top of `%ops%`. Execution order is decided by
+in one place (`eval/ops.rs` → `__ops__`). Builtins self-host in JS on
+top of `__ops__`. Execution order is decided by
 `tasks/10-ways-to-speed-up.md` (Phases A → B → C) — this file is the
 work queue behind that path.
 
@@ -37,7 +37,7 @@ Per-stage pass/fail counts live in `tasks/index.json` and
 | Production Rust LOC | ~57k (`src/`; tests excluded) |
 | Builtins Rust LOC | ~14k |
 | JS builtins | **0** — R0 not started |
-| `%ops%` / `eval/ops.rs` | **scaffold** — re-exports + thin `%ops%` wrapper; not yet the single owner |
+| `__ops__` / `eval/ops.rs` | **scaffold** — re-exports + thin `__ops__` wrapper; not yet the single owner |
 | Target (realistic) | **~20–28k Rust** + **~8–12k JS** for 95%+ |
 | Target (aspirational) | **~8–12k Rust** + **~19k JS** (100%) |
 | Benchmarks | Boa ~25k Rust → 94%; Kiesel ~50k Zig → 94%; QuickJS ~80k C → 83% |
@@ -135,10 +135,10 @@ under the main oxc crate — verify if a feature flag is needed or if
 - [ ] Parse → semantic check → SyntaxError before lowering; delete
       redundant hand-rolled checks.
 
-## R1 — `eval/ops.rs` + `%ops%` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
+## R1 — `eval/ops.rs` + `__ops__` bridge  *(incremental NOW; finish PHASE-B, diff=3)*
 
 **Status:** `src/eval/ops.rs` and `builtins/core/ops_wrapper.rs` exist
-as a scaffold (re-exports + frozen `%ops%`). Not yet the single owner —
+as a scaffold (re-exports + frozen `__ops__`). Not yet the single owner —
 private copies remain in `builtins/*.rs` and `eval/`.
 
 - [ ] Own the implementations in `eval/ops.rs` (or thin wrappers that
@@ -150,7 +150,7 @@ private copies remain in `builtins/*.rs` and `eval/`.
       `iterator_close`, `create_iter_result_object`, `native_fn`,
       `throw_type_error`.
 - [ ] One `#[test]` per op when it becomes owned here.
-- [ ] `%ops%` stays frozen; parser resolves `%ops%` at parse time
+- [ ] `__ops__` stays frozen; parser resolves `__ops__` at parse time
       (never user-visible).
 - [ ] On touch: replace the local duplicate; do not leave two owners.
 - [ ] **Phase B gate:** before R0 / Object stage, zero private copies of

@@ -65,6 +65,21 @@ pub fn same_value(a: &Value, b: &Value) -> bool {
     same_value_same_type(a, b)
 }
 
+/// SameValueZero (ES2025 §7.2.11): like SameValue, but `-0` and `+0` are equal.
+pub fn same_value_zero(a: &Value, b: &Value) -> bool {
+    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+        return false;
+    }
+    match (a, b) {
+        (Value::Number(ai), Value::Number(bi)) => *ai == *bi,
+        (Value::Function(_), Value::Function(_))
+        | (Value::NativeFunction(_), Value::NativeFunction(_))
+        | (Value::NativeConstructor(_), Value::NativeConstructor(_))
+        | (Value::Class(_), Value::Class(_)) => strict_eq_funcs(a, b),
+        _ => a == b,
+    }
+}
+
 #[allow(clippy::complexity)]
 fn same_value_same_type(a: &Value, b: &Value) -> bool {
     match (a, b) {

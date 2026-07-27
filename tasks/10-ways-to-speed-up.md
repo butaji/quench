@@ -2,7 +2,7 @@
 
 Architecture: **OXC + walker** (see `docs/architecture.md`) — OXC parses,
 `lower/` converts to internal AST, `eval/` walks it. No hand-written
-parser, no bytecode layer. Builtins self-host in JS on top of `%ops%`.
+parser, no bytecode layer. Builtins self-host in JS on top of `__ops__`.
 
 Data-driven (per-stage counts live in `tasks/index.json`):
 
@@ -28,7 +28,7 @@ Phase A — clear language stages (now → ~stage 70)
       — grow R1 only for ops you touch
 
 Phase B — before grinding built-ins (~stage 71 Object)
-  B1. Finish R1 (%ops% owns impls, not re-exports)
+  B1. Finish R1 (__ops__ owns impls, not re-exports)
   B2. R0 self-host builtins in JS   (Object first, then dependency order)
   B3. R2 one iterator protocol      (with R0 Iterator.js)
   B4. R3 chrono for Date core       (builtins/core/date.rs)
