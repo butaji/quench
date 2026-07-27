@@ -34,6 +34,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("Boolean", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Boolean.js"))),
     // Phase 9: Symbol
     ("Symbol", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Symbol.js"))),
+    // Phase 10: Date
+    ("Date", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Date.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
