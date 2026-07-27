@@ -211,7 +211,8 @@ pub fn register_regexp(ctx: &mut Context) {
     )));
 
     // Create RegExp object to hold the constructor
-    let regexp_obj = Object::new(ObjectKind::Ordinary);
+    let mut regexp_obj = Object::new(ObjectKind::Ordinary);
+    regexp_obj.callable = true;
     let regexp_obj_rc = Rc::new(RefCell::new(regexp_obj));
     regexp_obj_rc
         .borrow_mut()

@@ -200,6 +200,16 @@ pub struct Object {
     /// Internal [[Call]] slot: set when Function constructor is called via
     /// super() from a derived class, so we can invoke the stored function.
     pub call_slot: Option<Value>,
+    /// True if this object is a callable function (has [[Call]]).
+    /// Used for `Value::Object` wrappers around NativeFunction/NativeConstructor.
+    pub callable: bool,
+}
+
+impl Object {
+    /// Returns true if this object is callable (has [[Call]]).
+    pub fn is_callable(&self) -> bool {
+        self.callable
+    }
 }
 
 impl fmt::Debug for Object {

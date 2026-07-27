@@ -144,6 +144,7 @@ fn create_string_constructor_object(
 ) -> Rc<RefCell<Object>> {
     let string_obj = Object::new(ObjectKind::Ordinary);
     let string_obj_rc = Rc::new(RefCell::new(string_obj));
+    string_obj_rc.borrow_mut().callable = true;
     string_obj_rc
         .borrow_mut()
         .set("prototype", Value::Object(string_proto));
@@ -444,6 +445,7 @@ pub fn register_date(ctx: &mut Context) {
 
     let date_wrapper = Object::new(ObjectKind::Ordinary);
     let date_wrapper_rc = Rc::new(RefCell::new(date_wrapper));
+    date_wrapper_rc.borrow_mut().callable = true;
     date_wrapper_rc.borrow_mut().set(
         "constructor",
         Value::NativeConstructor(Rc::new(date_constructor)),

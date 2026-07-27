@@ -53,6 +53,7 @@ impl Object {
             extensible: true,
             data,
             call_slot: None,
+            callable: false,
         }
     }
 
@@ -80,6 +81,7 @@ impl Object {
             extensible: true,
             data,
             call_slot: None,
+            callable: false,
         }
     }
 

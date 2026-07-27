@@ -693,13 +693,11 @@ impl Value {
 
     /// Check if this value is callable (a function).
     pub fn is_callable(&self) -> bool {
-        matches!(
-            self,
-            Value::Function(_)
-                | Value::NativeFunction(_)
-                | Value::NativeConstructor(_)
-                | Value::Class(_)
-        )
+        match self {
+            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => true,
+            Value::Object(o) => o.borrow().is_callable(),
+            _ => false,
+        }
     }
 
     /// Get a method by name from this value (for objects).

@@ -435,10 +435,19 @@ pub fn eval_new(
 
     let actual_constructor = match &constructor_val {
         Value::Object(o) => {
+            // Per spec, [[Construct]] is only defined for Function/Class/NativeConstructor.
+            // Plain objects like Math have no [[Construct]] — throw TypeError.
             let obj = o.borrow();
+            if !Value::Object(Rc::clone(o)).is_callable() {
+                drop(obj);
+                let (_, js_err) =
+                    create_js_error_with_type("object is not a constructor", "TypeError");
+                return Err(js_err);
+            }
             if let Some(constructor) = obj.get("constructor") {
                 constructor.clone()
             } else {
+                drop(obj);
                 let (_, js_err) =
                     create_js_error_with_type("object is not a constructor", "TypeError");
                 return Err(js_err);

@@ -1084,3 +1084,22 @@ fn class_method_default_param_self_reference_throws_reference_error() {
         .unwrap();
     assert_eq!(err, Value::String("ReferenceError:0".into()));
 }
+
+/// Per ES spec §10.2.2 [[Construct]]: plain objects (e.g. Math) have no
+/// [[Construct]] — `new Math()` must throw TypeError.
+#[test]
+fn new_object_without_constructor_throws_typeerror() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let result = ctx.eval("try { new Math(); 'no throw'; } catch(e) { e.name + ':' + e.message; }");
+    let v = result.unwrap();
+    let s = match &v {
+        Value::String(s) => s.as_str(),
+        _ => panic!("expected String, got {:?}", v),
+    };
+    assert!(
+        s.contains("TypeError"),
+        "new Math() should throw TypeError, got: {}",
+        s
+    );
+}
