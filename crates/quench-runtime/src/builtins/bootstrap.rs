@@ -516,4 +516,54 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_fill_fills_range() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3, 4]; \
+             arr.fill(0, 1, 3); \
+             arr[0] === 1 && arr[1] === 0 && arr[2] === 0 && arr[3] === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_reduceRight_reduces_reverse() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].reduceRight(function(acc, v) { return acc + String(v); }, '') === '321'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_keys_returns_indices() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var k = ['a', 'b', 'c'].keys(); \
+             k.length === 3 && k[0] === 0 && k[1] === 1 && k[2] === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_values_returns_values() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var v = ['a', 'b'].values(); \
+             v.length === 2 && v[0] === 'a' && v[1] === 'b'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_entries_returns_pairs() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var e = ['x', 'y'].entries(); \
+             e.length === 2 && e[0][0] === 0 && e[0][1] === 'x' && e[1][0] === 1 && e[1][1] === 'y'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

@@ -277,3 +277,65 @@ Array.prototype.reverse = function ArrayReverse() {
   }
   return O;
 };
+
+// Array.prototype.fill (ES2025 §23.1.3.11)
+Array.prototype.fill = function ArrayFill(value /*, start, end */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.fill called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var relativeStart = arguments.length > 1 ? arguments[1] : 0;
+  var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
+  var relativeEnd = arguments.length > 2 ? arguments[2] : len;
+  var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
+  while (k < final) { O[k] = value; k++; }
+  return O;
+};
+
+// Array.prototype.reduceRight (ES2025 §23.1.3.29)
+Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialValue */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reduceRight called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  if (len === 0 && arguments.length < 2) throw ThrowTypeError("Reduce of empty array with no initial value");
+  var k = len - 1;
+  var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
+  if (arguments.length < 2) {
+    while (k >= 0 && !(k in O)) k--;
+    accumulator = O[k--];
+  }
+  for (; k >= 0; k--) {
+    if (k in O) accumulator = callbackfn.call(undefined, accumulator, O[k], k, O);
+  }
+  return accumulator;
+};
+
+// Array.prototype.keys (ES2025 §23.1.3.21)
+Array.prototype.keys = function ArrayKeys() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.keys called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var keys = new Array(len);
+  for (var i = 0; i < len; i++) keys[i] = i;
+  return keys;
+};
+
+// Array.prototype.values (ES2025 §23.1.3.33)
+Array.prototype.values = function ArrayValues() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.values called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var vals = new Array(len);
+  for (var i = 0; i < len; i++) vals[i] = O[i];
+  return vals;
+};
+
+// Array.prototype.entries (ES2025 §23.1.3.7)
+Array.prototype.entries = function ArrayEntries() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.entries called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var entries = new Array(len);
+  for (var i = 0; i < len; i++) entries[i] = [i, O[i]];
+  return entries;
+};
