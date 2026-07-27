@@ -26,6 +26,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("Math", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Math.js"))),
     // Phase 5: Number
     ("Number", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Number.js"))),
+    // Phase 6: Error
+    ("Error", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Error.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
