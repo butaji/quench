@@ -608,4 +608,65 @@ mod tests {
         let r = ctx.eval("'hello'.indexOf('l') === 2").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_find_index_finds() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("[1, 2, 3].findIndex(function(v) { return v > 1; }) === 1").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn _array_sort_sorts_numbers() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [3, 1, 2]; arr.sort(); arr[0] === 1 && arr[1] === 2 && arr[2] === 3"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_splice_removes() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3, 4]; var removed = arr.splice(1, 2); removed.length === 2 && removed[0] === 2 && arr.length === 2 && arr[0] === 1 && arr[1] === 4"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_unshift_prepends() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [2, 3]; arr.unshift(0, 1) === 4 && arr[0] === 0 && arr[1] === 1 && arr[2] === 2 && arr[3] === 3"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_shift_removes_first() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3]; var first = arr.shift(); first === 1 && arr.length === 2 && arr[0] === 2 && arr[1] === 3"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_flat_flattens() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, [2, [3, 4]], 5].flat(); result.length === 4 && result[0] === 1 && result[1] === 2 && result[2] instanceof Array && result[3] === 5"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_flat_map_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3].flatMap(function(v) { return [v, v * 2]; }); result.length === 6 && result[0] === 1 && result[1] === 2 && result[2] === 2 && result[3] === 4 && result[4] === 3 && result[5] === 6"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

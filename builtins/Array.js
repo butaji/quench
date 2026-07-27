@@ -6,6 +6,9 @@ var ToObject = ops.ToObject;
 var ThrowTypeError = ops.ThrowTypeError;
 var SameValueZero = ops.SameValueZero;
 
+// Save native implementations before overriding
+var _nativeSort = Array.prototype.sort;
+
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
@@ -338,4 +341,147 @@ Array.prototype.entries = function ArrayEntries() {
   var entries = new Array(len);
   for (var i = 0; i < len; i++) entries[i] = [i, O[i]];
   return entries;
+};
+
+// Array.prototype.findIndex (ES2025 §23.1.3.15)
+Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findIndex called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  for (var k = 0; k < len; k++) {
+    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return k;
+  }
+  return -1;
+};
+
+// Array.prototype.sort (ES2025 §23.1.3.31) — basic version
+Array.prototype.sort = function ArraySort(comparefn) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.sort called on null or undefined");
+  if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  if (len <= 1) return O;
+  // Extract non-hole values
+  var items = [];
+  for (var i = 0; i < len; i++) {
+    if (i in O) items.push(O[i]);
+  }
+  // Sort
+  _nativeSort.call(items, comparefn !== undefined ? comparefn : undefined);
+  // Write back
+  for (var i = 0; i < items.length; i++) O[i] = items[i];
+  for (var i = items.length; i < len; i++) delete O[i];
+  return O;
+};
+
+// Array.prototype.splice (ES2025 §23.1.3.30)
+Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.splice called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var relativeStart = start >>> 0;
+  var actualStart = relativeStart >= len ? len : relativeStart;
+  var actualDeleteCount;
+  if (arguments.length === 1) {
+    actualDeleteCount = len - actualStart;
+  } else {
+    actualDeleteCount = Math.min(Math.max(deleteCount >>> 0, 0), len - actualStart);
+  }
+  var itemCount = Math.max(arguments.length - 2, 0);
+  // Gather deleted
+  var removed = new Array(actualDeleteCount);
+  for (var i = 0; i < actualDeleteCount; i++) {
+    if (actualStart + i in O) removed[i] = O[actualStart + i];
+  }
+  // Move elements
+  if (itemCount < actualDeleteCount) {
+    for (var i = actualStart; i < len - actualDeleteCount; i++) {
+      var from = i + actualDeleteCount;
+      var to = i + itemCount;
+      if (from in O) O[to] = O[from]; else delete O[to];
+    }
+    for (var i = len - 1; i >= len - (actualDeleteCount - itemCount); i--) delete O[i];
+  } else if (itemCount > actualDeleteCount) {
+    for (var i = len - 1; i >= actualStart; i--) {
+      var from = i;
+      var to = i + (itemCount - actualDeleteCount);
+      if (from in O) O[to] = O[from]; else delete O[to];
+    }
+  }
+  // Insert new items
+  for (var i = 0; i < itemCount; i++) O[actualStart + i] = arguments[i + 2];
+  O.length = len - actualDeleteCount + itemCount;
+  return removed;
+};
+
+// Array.prototype.unshift (ES2025 §23.1.3.32)
+Array.prototype.unshift = function ArrayUnshift() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.unshift called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var argCount = arguments.length;
+  if (argCount > 0) {
+    for (var k = len - 1; k >= 0; k--) {
+      if (k in O) O[k + argCount] = O[k]; else delete O[k + argCount];
+    }
+    for (var j = 0; j < argCount; j++) O[j] = arguments[j];
+  }
+  var newLen = len + argCount;
+  O.length = newLen;
+  return newLen;
+};
+
+// Array.prototype.shift (ES2025 §23.1.3.29)
+Array.prototype.shift = function ArrayShift() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.shift called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  if (len === 0) { O.length = 0; return undefined; }
+  var first = O[0];
+  for (var k = 1; k < len; k++) {
+    if (k in O) O[k - 1] = O[k]; else delete O[k - 1];
+  }
+  delete O[len - 1];
+  O.length = len - 1;
+  return first;
+};
+
+// Array.prototype.flat (ES2025 §23.1.3.13)
+Array.prototype.flat = function ArrayFlat(depth) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flat called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var d = depth === undefined ? 1 : depth >>> 0;
+  var result = [];
+  for (var i = 0; i < len; i++) {
+    if (i in O) {
+      if (d > 0 && IsArray(O[i])) {
+        var sub = O[i].flat(d - 1);
+        for (var j = 0; j < sub.length; j++) result.push(sub[j]);
+      } else {
+        result.push(O[i]);
+      }
+    }
+  }
+  return result;
+};
+
+// Array.prototype.flatMap (ES2025 §23.1.3.14)
+Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flatMap called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  var result = [];
+  for (var i = 0; i < len; i++) {
+    if (i in O) {
+      var val = callbackfn.call(thisArg, O[i], i, O);
+      if (IsArray(val)) { for (var j = 0; j < val.length; j++) result.push(val[j]); }
+      else { result.push(val); }
+    }
+  }
+  return result;
 };
