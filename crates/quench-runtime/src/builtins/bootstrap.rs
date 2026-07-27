@@ -46,6 +46,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("WeakMap", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakMap.js"))),
     // Phase 15: WeakSet
     ("WeakSet", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakSet.js"))),
+    // Phase 16: Promise
+    ("Promise", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Promise.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
