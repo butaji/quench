@@ -19,6 +19,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     // ("_intrinsics", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/_intrinsics.js"))),
     // Phase 2: Object
     ("Object", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Object.js"))),
+    // Phase 3: Array
+    ("Array", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Array.js"))),
     // Phase 3+: add in dependency order
 ];
 
@@ -283,6 +285,69 @@ mod tests {
         let r = ctx.eval(
             "var obj = Object.fromEntries([]); \
              Object.keys(obj).length === 0",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_is_array_true() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Array.isArray([]) && Array.isArray(new Array(5))").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_is_array_false() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("!Array.isArray({}) && !Array.isArray(null) && !Array.isArray(42)").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_forEach_iterates() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = []; \
+             [1, 2, 3].forEach(function(v) { result.push(v); }); \
+             result.length === 3 && result[0] === 1 && result[1] === 2 && result[2] === 3",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_map_transforms() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3].map(function(v) { return v * 2; }); \
+             result.length === 3 && result[0] === 2 && result[1] === 4 && result[2] === 6",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_filter_filters() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3, 4, 5].filter(function(v) { return v % 2 === 0; }); \
+             result.length === 2 && result[0] === 2 && result[1] === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_reduce_sums() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3, 4, 5].reduce(function(acc, v) { return acc + v; }, 0) === 15",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_reduce_without_initial() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].reduce(function(acc, v) { return acc + v; }) === 6",
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
