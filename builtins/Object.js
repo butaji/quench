@@ -9,6 +9,13 @@ var SetProperty = ops.SetProperty;
 var IsExtensible = ops.IsExtensible;
 var IsCallable = ops.IsCallable;
 var HasProperty = ops.HasProperty;
+var GetPrototypeOf = ops.GetPrototypeOf;
+var SetPrototypeOf = ops.SetPrototypeOf;
+var PreventExtensions = ops.PreventExtensions;
+var SealObject = ops.SealObject;
+var FreezeObject = ops.FreezeObject;
+var IsSealedObject = ops.IsSealedObject;
+var IsFrozenObject = ops.IsFrozenObject;
 
 // Object.is (ES2025 §20.1.2.12)
 Object.is = function ObjectIs(value1, value2) {
@@ -26,9 +33,7 @@ Object.values = function ObjectValues(O) {
   var keys = EnumerableOwnKeys(obj);
   var len = keys.length;
   var values = new Array(len);
-  for (var i = 0; i < len; i++) {
-    values[i] = obj[keys[i]];
-  }
+  for (var i = 0; i < len; i++) values[i] = obj[keys[i]];
   return values;
 };
 
@@ -38,25 +43,20 @@ Object.entries = function ObjectEntries(O) {
   var keys = EnumerableOwnKeys(obj);
   var len = keys.length;
   var entries = new Array(len);
-  for (var i = 0; i < len; i++) {
-    entries[i] = [keys[i], obj[keys[i]]];
-  }
+  for (var i = 0; i < len; i++) entries[i] = [keys[i], obj[keys[i]]];
   return entries;
 };
 
 // Object.assign (ES2025 §20.1.2.1)
 Object.assign = function ObjectAssign(target, ...sources) {
   var to = ToObject(target);
-  var len = sources.length;
-  for (var i = 0; i < len; i++) {
+  for (var i = 0; i < sources.length; i++) {
     var nextSource = sources[i];
     if (nextSource === null || nextSource === undefined) continue;
     var from = ToObject(nextSource);
     var keys = EnumerableOwnKeys(from);
-    var keysLen = keys.length;
-    for (var j = 0; j < keysLen; j++) {
-      var key = keys[j];
-      to[key] = from[key];
+    for (var j = 0; j < keys.length; j++) {
+      to[keys[j]] = from[keys[j]];
     }
   }
   return to;
@@ -86,4 +86,51 @@ Object.fromEntries = function ObjectFromEntries(iterable) {
     obj[entry[0]] = entry[1];
   }
   return obj;
+};
+
+// Object.getPrototypeOf (ES2025 §20.1.2.10)
+Object.getPrototypeOf = function ObjectGetPrototypeOf(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  return GetPrototypeOf(O);
+};
+
+// Object.setPrototypeOf (ES2025 §20.1.2.18)
+Object.setPrototypeOf = function ObjectSetPrototypeOf(O, proto) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  if (proto !== null && typeof proto !== 'object') throw ThrowTypeError("proto must be an object or null");
+  SetPrototypeOf(O, proto);
+  return O;
+};
+
+// Object.preventExtensions (ES2025 §20.1.2.15)
+Object.preventExtensions = function ObjectPreventExtensions(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  PreventExtensions(O);
+  return O;
+};
+
+// Object.seal (ES2025 §20.1.2.19)
+Object.seal = function ObjectSeal(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  SealObject(O);
+  return O;
+};
+
+// Object.freeze (ES2025 §20.1.2.9)
+Object.freeze = function ObjectFreeze(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  FreezeObject(O);
+  return O;
+};
+
+// Object.isSealed (ES2025 §20.1.2.20)
+Object.isSealed = function ObjectIsSealed(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  return IsSealedObject(O);
+};
+
+// Object.isFrozen (ES2025 §20.1.2.13)
+Object.isFrozen = function ObjectIsFrozen(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  return IsFrozenObject(O);
 };

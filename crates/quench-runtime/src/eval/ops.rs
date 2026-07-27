@@ -234,6 +234,97 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "SetPrototypeOf", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let proto = args.get(1).cloned().unwrap_or(Value::Null);
+        match &o {
+            Value::Object(obj_rc) => {
+                let proto_rc = match &proto {
+                    Value::Object(p) => Some(std::rc::Rc::clone(p)),
+                    Value::Null => None,
+                    _ => return Ok(Value::Boolean(false)),
+                };
+                obj_rc.borrow_mut().prototype = proto_rc;
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "PreventExtensions", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => { o.borrow_mut().extensible = false; Ok(Value::Boolean(true)) }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "SealObject", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => {
+                let mut obj = o.borrow_mut();
+                obj.extensible = false;
+                // Make all properties non-configurable
+                for key in obj.properties.keys().cloned().collect::<Vec<_>>() {
+                    if let Some(flags) = obj.descriptors.get_mut(&key) {
+                        flags.configurable = false;
+                    }
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "FreezeObject", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => {
+                let mut obj = o.borrow_mut();
+                obj.extensible = false;
+                for key in obj.properties.keys().cloned().collect::<Vec<_>>() {
+                    if let Some(flags) = obj.descriptors.get_mut(&key) {
+                        flags.configurable = false;
+                        flags.writable = false;
+                    }
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "IsSealedObject", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => {
+                let obj = o.borrow();
+                if obj.extensible { return Ok(Value::Boolean(false)); }
+                for (key, flags) in &obj.descriptors {
+                    if flags.configurable { return Ok(Value::Boolean(false)); }
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "IsFrozenObject", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => {
+                let obj = o.borrow();
+                if obj.extensible { return Ok(Value::Boolean(false)); }
+                for (key, flags) in &obj.descriptors {
+                    if flags.configurable || flags.writable { return Ok(Value::Boolean(false)); }
+                }
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 

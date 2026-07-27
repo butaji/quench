@@ -747,4 +747,79 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_get_prototype_of_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Object.getPrototypeOf({}) === Object.prototype").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_set_prototype_of_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var proto = { a: 1 }; var obj = {}; \
+             Object.setPrototypeOf(obj, proto); \
+             Object.getPrototypeOf(obj) === proto && obj.a === 1"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_prevent_extensions_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = {}; Object.preventExtensions(obj); \
+             !Object.isExtensible(obj)"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_seal_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = { a: 1 }; Object.seal(obj); \
+             !Object.isExtensible(obj) && Object.isSealed(obj) && !Object.isFrozen(obj)"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_freeze_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = { a: 1 }; Object.freeze(obj); \
+             !Object.isExtensible(obj) && Object.isSealed(obj) && Object.isFrozen(obj)"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_is_sealed_true_for_sealed() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = { a: 1 }; Object.seal(obj); Object.isSealed(obj)"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_is_frozen_true_for_frozen() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = { a: 1 }; Object.freeze(obj); Object.isFrozen(obj)"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_get_prototype_of_null_throws() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var ok = false; try { Object.getPrototypeOf(null); } catch(e) { ok = e instanceof TypeError; } ok"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
