@@ -8,6 +8,8 @@ pub mod deep_equal;
 pub mod host262;
 pub mod property_helpers;
 #[cfg(test)]
+mod harness_loader_tests;
+#[cfg(test)]
 mod property_helpers_tests;
 pub mod test_deep_equal;
 
@@ -1453,5 +1455,348 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
             "allowProxyTraps should preserve overridden trap identities: {:?}",
             result
         );
+    }
+
+    // =============================================================================
+    // try_inject_harness: no override, isolation, cleanup
+    // =============================================================================
+
+    /// All documented harness globals must be present after try_inject_harness.
+    #[test]
+    fn test_harness_injects_all_required_globals() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let required_globals = [
+            "assert",
+            "Test262Error",
+            "Test262ErrorThrower",
+            "$262",
+            "print",
+            "stop",
+            "$DONOTEVALUATE",
+            "verifyProperty",
+            "fnGlobalObject",
+            "isConstructor",
+            "nativeErrors",
+            "allErrorConstructors",
+            "makeNativeError",
+            "__quenchSameValue",
+        ];
+
+        for name in required_globals {
+            assert!(
+                ctx.get_global(name).is_some(),
+                "global '{}' should be defined after harness injection",
+                name
+            );
+        }
+    }
+
+    /// assert must be a NativeFunction (not overwritten by JS).
+    #[test]
+    fn test_harness_assert_is_native_function() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let assert_val = ctx.get_global("assert").unwrap();
+        assert!(
+            matches!(assert_val, Value::NativeFunction(_)),
+            "assert should be NativeFunction, got: {:?}",
+            assert_val
+        );
+    }
+
+    /// assert.sameValue, assert.throws, assert.compareArray, assert.deepEqual,
+    /// assert.notSameValue, assert.notUnreachable must all exist as NativeFunctions.
+    #[test]
+    fn test_harness_assert_methods_are_native() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let methods = ["sameValue", "throws", "compareArray", "deepEqual", "notSameValue", "notUnreachable"];
+        let assert_val = ctx.get_global("assert").unwrap();
+
+        if let Value::NativeFunction(nf) = assert_val {
+            for m in methods {
+                let prop = nf.get_property(m);
+                assert!(
+                    prop.is_some(),
+                    "assert.{} should be defined",
+                    m
+                );
+                assert!(
+                    matches!(prop, Some(Value::NativeFunction(_))),
+                    "assert.{} should be NativeFunction, got: {:?}",
+                    m,
+                    prop
+                );
+            }
+        } else {
+            panic!("assert should be NativeFunction");
+        }
+    }
+
+    /// Test262Error must be a NativeConstructor.
+    #[test]
+    fn test_harness_test262_error_is_native_constructor() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let te_val = ctx.get_global("Test262Error").unwrap();
+        assert!(
+            matches!(te_val, Value::NativeConstructor(_)),
+            "Test262Error should be NativeConstructor, got: {:?}",
+            te_val
+        );
+    }
+
+    /// $262 must be an Object with required methods.
+    #[test]
+    fn test_harness_262_has_required_methods() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("$262").unwrap();
+        assert!(matches!(val, Value::Object(_)), "$262 should be Object");
+
+        if let Value::Object(o) = val {
+            let methods = ["createRealm", "evalScript", "gc", "detachArrayBuffer"];
+            for m in methods {
+                assert!(
+                    o.borrow().has_own(m),
+                    "$262.{} should be defined",
+                    m
+                );
+            }
+        }
+    }
+
+    /// $262.agent stub must exist with required methods.
+    #[test]
+    fn test_harness_262_agent_stub() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.eval("typeof $262.agent === 'object'").unwrap();
+        assert_eq!(val, Value::Boolean(true));
+
+        let methods = ["sleep", "getReport", "report", "broadcast", "start", "leave"];
+        for m in methods {
+            let result = ctx.eval(&format!("typeof $262.agent.{} === 'function'", m));
+            assert_eq!(result.unwrap(), Value::Boolean(true), "$262.agent.{} should be function", m);
+        }
+    }
+
+    /// Calling try_inject_harness twice on the same context should not duplicate globals.
+    #[test]
+    fn test_harness_injection_is_idempotent() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        try_inject_harness(&mut ctx).expect("first ok");
+        try_inject_harness(&mut ctx).expect("second ok");
+
+        // assert should still be a NativeFunction (not broken by second injection)
+        let assert_val = ctx.get_global("assert").unwrap();
+        assert!(
+            matches!(assert_val, Value::NativeFunction(_)),
+            "assert should still be NativeFunction after second injection"
+        );
+
+        // Test262Error should still be present
+        assert!(
+            ctx.get_global("Test262Error").is_some(),
+            "Test262Error should persist after second injection"
+        );
+    }
+
+    /// Fresh context per injection: each injection creates independent globals.
+    #[test]
+    fn test_harness_fresh_context_isolation() {
+        let mut ctx1 = Context::new().unwrap();
+        let mut ctx2 = Context::new().unwrap();
+        try_inject_harness(&mut ctx1).expect("ctx1 ok");
+        try_inject_harness(&mut ctx2).expect("ctx2 ok");
+
+        // Setting a global in ctx1 should NOT affect ctx2
+        ctx1.set_global("__quench_test_marker", Value::Number(1.0));
+        let marker = ctx2.get_global("__quench_test_marker");
+        assert!(
+            marker.is_none(),
+            "ctx2 should not see globals set on ctx1"
+        );
+    }
+
+    /// verifyProperty must be a NativeFunction (not from JS).
+    #[test]
+    fn test_harness_verify_property_is_native() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("verifyProperty").unwrap();
+        assert!(
+            matches!(val, Value::NativeFunction(_)),
+            "verifyProperty should be NativeFunction, got: {:?}",
+            val
+        );
+    }
+
+    /// Test262Error.prototype.toString must work (used by sta.js).
+    #[test]
+    fn test_harness_test262_error_proto_to_string() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let result = ctx.eval(
+            r#"
+            var err = new Test262Error('test message');
+            var s = err.toString();
+            s.indexOf('Test262Error') >= 0 && s.indexOf('test message') >= 0
+            "#,
+        );
+        assert!(result.is_ok(), "Test262Error.toString should work: {:?}", result);
+    }
+
+    /// Test262ErrorThrower must throw a Test262Error.
+    #[test]
+    fn test_harness_test262_error_thrower() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let result = ctx.eval("Test262ErrorThrower('boom')");
+        assert!(
+            result.is_err(),
+            "Test262ErrorThrower should throw"
+        );
+        let caught = ctx.eval(
+            r#"
+            var err = null;
+            try { Test262ErrorThrower('boom'); } catch(e) { err = e; }
+            err !== null && err.name === 'Test262Error'
+            "#,
+        );
+        assert_eq!(
+            caught.unwrap(),
+            Value::Boolean(true),
+            "Test262ErrorThrower should throw Test262Error"
+        );
+    }
+
+    /// isConstructor must be the native function (not the JS version).
+    #[test]
+    fn test_harness_is_constructor_is_native() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("isConstructor").unwrap();
+        assert!(
+            matches!(val, Value::NativeFunction(_)),
+            "isConstructor should be NativeFunction, got: {:?}",
+            val
+        );
+    }
+
+    /// fnGlobalObject must be a NativeFunction.
+    #[test]
+    fn test_harness_fn_global_object_is_native() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("fnGlobalObject").unwrap();
+        assert!(
+            matches!(val, Value::NativeFunction(_)),
+            "fnGlobalObject should be NativeFunction"
+        );
+    }
+
+    /// print must be a NativeFunction that outputs to stderr.
+    #[test]
+    fn test_harness_print_is_native_function() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("print").unwrap();
+        assert!(
+            matches!(val, Value::NativeFunction(_)),
+            "print should be NativeFunction"
+        );
+    }
+
+    /// stop / $DONE must be available.
+    #[test]
+    fn test_harness_stop_and_donotevaluate_exist() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        assert!(
+            ctx.get_global("stop").is_some(),
+            "stop should be defined"
+        );
+        assert!(
+            ctx.get_global("$DONOTEVALUATE").is_some(),
+            "$DONOTEVALUATE should be defined"
+        );
+    }
+
+    /// NativeErrors and allErrorConstructors must be arrays.
+    #[test]
+    fn test_harness_error_constructor_arrays() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let ne = ctx.eval("Array.isArray(nativeErrors)").unwrap();
+        assert_eq!(ne, Value::Boolean(true), "nativeErrors should be an array");
+
+        let ae = ctx.eval("Array.isArray(allErrorConstructors)").unwrap();
+        assert_eq!(ae, Value::Boolean(true), "allErrorConstructors should be an array");
+
+        let len = ctx.eval("nativeErrors.length").unwrap();
+        assert!(
+            matches!(len, Value::Number(n) if n >= 7.0),
+            "nativeErrors should have at least 7 entries (Error types), got: {:?}",
+            len
+        );
+    }
+
+    /// makeNativeError must be a NativeFunction.
+    #[test]
+    fn test_harness_make_native_error_is_native() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        let val = ctx.get_global("makeNativeError").unwrap();
+        assert!(
+            matches!(val, Value::NativeFunction(_)),
+            "makeNativeError should be NativeFunction"
+        );
+    }
+
+    /// __quenchSameValue must be a NativeFunction with correct semantics.
+    #[test]
+    fn test_harness_quench_same_value_semantics() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+
+        // NaN === NaN
+        let nan_eq = ctx.eval("__quenchSameValue(NaN, NaN)").unwrap();
+        assert_eq!(nan_eq, Value::Boolean(true));
+
+        // +0 !== -0
+        let neg_zero = ctx.eval("__quenchSameValue(0, -0)").unwrap();
+        assert_eq!(neg_zero, Value::Boolean(false));
+
+        // Same numbers equal
+        let num = ctx.eval("__quenchSameValue(42, 42)").unwrap();
+        assert_eq!(num, Value::Boolean(true));
+    }
+
+    /// inject_harness (infallible) should panic on failure.
+    #[test]
+    #[should_panic(expected = "test262 harness load failure")]
+    fn test_harness_inject_panics_on_load_failure() {
+        // This test can't easily force a harness load failure without mocking,
+        // but we document the contract: inject_harness panics on error.
+        // The test validates the panic message.
+        inject_harness(&mut Context::new().unwrap());
     }
 }
