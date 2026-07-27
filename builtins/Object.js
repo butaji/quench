@@ -16,6 +16,7 @@ var IsSealedObject = ops.IsSealedObject;
 var IsFrozenObject = ops.IsFrozenObject;
 var DefineProp = ops.DefineProp;
 var GetOwnPropDesc = ops.GetOwnPropDesc;
+var OwnKeys = ops.OwnKeys;
 
 // Object.defineProperty (ES2025 §20.1.2.4)
 Object.defineProperty = function ObjectDefineProperty(O, P, Attributes) {
@@ -144,4 +145,35 @@ Object.isSealed = function ObjectIsSealed(O) {
 Object.isFrozen = function ObjectIsFrozen(O) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   return IsFrozenObject(O);
+};
+
+// Object.defineProperties (ES2025 §20.1.2.3)
+Object.defineProperties = function ObjectDefineProperties(O, Properties) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  var keys = EnumerableOwnKeys(ToObject(Properties));
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    DefineProp(O, key, Properties[key]);
+  }
+  return O;
+};
+
+// Object.getOwnPropertyDescriptors (ES2025 §20.1.2.6)
+Object.getOwnPropertyDescriptors = function ObjectGetOwnPropertyDescriptors(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  var obj = ToObject(O);
+  var keys = OwnKeys(obj);
+  var descriptors = {};
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var desc = GetOwnPropDesc(obj, key);
+    if (desc !== undefined) descriptors[key] = desc;
+  }
+  return descriptors;
+};
+
+// Object.getOwnPropertyNames (ES2025 §20.1.2.11)
+Object.getOwnPropertyNames = function ObjectGetOwnPropertyNames(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  return OwnKeys(ToObject(O));
 };

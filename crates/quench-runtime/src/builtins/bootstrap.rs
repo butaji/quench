@@ -857,4 +857,24 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_define_properties_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = {}; Object.defineProperties(o, { a: { value: 1 }, b: { value: 2 } }); \
+             o.a === 1 && o.b === 2"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_get_own_property_names_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 1, b: 2 }; var names = Object.getOwnPropertyNames(o); \
+             names.length === 2 && names.includes('a') && names.includes('b')"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
