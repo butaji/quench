@@ -28,7 +28,8 @@ staged to 100% per stage, with the **minimum possible LOC** as a
 crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 - `docs/architecture.md` — the Rust↔JS split, `%ops%` contract, bootstrap order.
-- `tasks/plan.md` — the shortest path to 100% (phases A→C, levers, rejected work).
+- `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R17).
+- `tasks/10-ways-to-speed-up.md` — speed strategy (S1–S7); the plan above serves it.
 - `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
 
 ## Commands
@@ -74,8 +75,9 @@ out of scope.
 
 A diff that lands a file > 500 lines, a function > 40 lines, a function
 with complexity > 10, or any clippy warning is rejected at review — no
-`#[allow(...)]` exceptions, no deferral to "next refactor". Split
-existing offenders when you touch them.
+`#[allow(...)]` exceptions, no deferral to "next refactor". The
+refactor-plan splits (e.g. R12 for `eval/object.rs`) exist to bring
+existing offenders under these limits.
 
 ## Workflow — unit tests, not guesswork (enforced, no exceptions)
 
@@ -175,7 +177,8 @@ Strategic rules:
 
 Before landing a builtin, ask: "could this be 3 fewer lines by calling
 an existing spec op?" If yes, do that; if the op doesn't exist yet,
-extract it (with a test) and reuse it.
+extract it (with a test) and reuse it. New spec-op extractions go into
+`tasks/refactor-plan.md` if they don't fit an existing Rn.
 
 ## Conventions
 
