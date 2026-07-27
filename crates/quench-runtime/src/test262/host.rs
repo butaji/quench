@@ -97,12 +97,7 @@ impl TestFailure {
                 })
                 .collect();
             self.source_context = ctx_lines.join("\n");
-            // If no hint line, try to find the failing line from the message.
-            if hint_line.is_none() {
-                self.source_line = None;
-            } else {
-                self.source_line = hint_line;
-            }
+            self.source_line = hint_line;
         }
         self
     }

@@ -313,13 +313,13 @@ fn judge(
                 failure = failure.with_source(jc.test_path, None);
             }
             print_failure(&failure, jc.label);
-            inspect_failed(ctx, jc.inspect_exprs);
+            inspect_failed(ctx, jc.is_async, jc.inspect_exprs);
             1
         }
         Ok(v) => {
             if jc.is_async {
                 if let Some(code) = async_done_verdict(ctx, jc.label) {
-                    inspect_failed(ctx, jc.inspect_exprs);
+                    inspect_failed(ctx, jc.is_async, jc.inspect_exprs);
                     return code;
                 }
             }
@@ -395,15 +395,27 @@ fn async_done_verdict(ctx: &mut Context, label: &str) -> Option<i32> {
 }
 
 /// After a failed test, evaluate inspection expressions and print their results.
-fn inspect_failed(ctx: &mut Context, exprs: &[String]) {
-    if exprs.is_empty() {
-        return;
-    }
-    println!("  ─── Inspect ───");
+/// Also auto-inspects common diagnostic variables based on context.
+fn inspect_failed(ctx: &mut Context, is_async: bool, exprs: &[String]) {
+    let mut printed_header = false;
+    let mut print_header = || {
+        if !printed_header {
+            println!("  ─── Inspect ───");
+            printed_header = true;
+        }
+    };
     for expr in exprs {
+        print_header();
         match ctx.eval(expr) {
             Ok(v) => println!("  {expr} => {v:?}"),
             Err(e) => println!("  {expr} => ERR: {e}"),
+        }
+    }
+    if is_async {
+        print_header();
+        match ctx.eval("(globalThis.__test262DoneCount|0)") {
+            Ok(v) => println!("  $DONE calls => {v:?}"),
+            Err(e) => println!("  $DONE count => ERR: {e}"),
         }
     }
 }
