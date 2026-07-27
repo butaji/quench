@@ -68,14 +68,18 @@ impl TestFailure {
     }
 
     /// Attach source context from a test file path and optional line hint.
+    /// When no hint_line is given, tries to locate the failing line by
+    /// searching the source for keywords extracted from the error message.
     pub fn with_source(mut self, path: &Path, hint_line: Option<usize>) -> Self {
         let path_s = path.to_string_lossy().to_string();
         self.source_path = Some(path_s.clone());
         if let Ok(source) = std::fs::read_to_string(path) {
             let lines: Vec<&str> = source.lines().collect();
             let total = lines.len();
-            // If we have a hint line, show context around it; otherwise show first 30 lines.
-            let (start, end) = if let Some(hl) = hint_line {
+            // Determine which line to highlight: provided hint, or auto-detect
+            // from the error message keywords.
+            let target = hint_line.or_else(|| self.locate_message_in_source(&lines));
+            let (start, end) = if let Some(hl) = target {
                 let hl = hl.max(1).min(total);
                 let s = hl.saturating_sub(10);
                 let e = (hl + 10).min(total);
@@ -88,18 +92,74 @@ impl TestFailure {
                 .enumerate()
                 .map(|(i, l)| {
                     let ln = start + i + 1;
-                    let marker = if hint_line == Some(ln) {
-                        " → "
-                    } else {
-                        "   "
-                    };
+                    let marker = if target == Some(ln) { " → " } else { "   " };
                     format!("{}{:4}: {}", marker, ln, l)
                 })
                 .collect();
             self.source_context = ctx_lines.join("\n");
-            self.source_line = hint_line;
+            self.source_line = target;
         }
         self
+    }
+
+    /// Try to locate the failing line in source by matching error message
+    /// keywords against source lines. Falls back to assertion function calls.
+    /// Returns a 1-based line number.
+    fn locate_message_in_source(&self, lines: &[&str]) -> Option<usize> {
+        // Strip JsError("...") wrapper and error-type prefix.
+        let raw = self
+            .message
+            .strip_prefix("JsError(\"")
+            .and_then(|s| s.rsplit_once("\")"))
+            .map(|(inner, _)| inner)
+            .unwrap_or(&self.message);
+        let body = raw.split_once(':').map(|(_, rest)| rest.trim()).unwrap_or(raw);
+
+        // Extract candidate keywords: words > 4 chars, no common tokens.
+        let stop_words = [
+            "Actual", "expected", "should", "have", "same", "contents",
+            "this", "that", "with", "from", "been", "call", "called",
+            "value", "values", "throw", "thrown", "error", "failed",
+            "after", "before", "true", "false",
+        ];
+        let keywords: Vec<&str> = body
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|w| w.len() > 4 && !stop_words.contains(w))
+            .collect();
+
+        // Score each line by how many keywords it contains.
+        let mut scored: Vec<(usize, usize)> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| {
+                let count = keywords.iter().filter(|kw| line.contains(*kw)).count();
+                if count > 0 { Some((i, count)) } else { None }
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        if let Some(best) = scored.first() {
+            return Some(best.0 + 1);
+        }
+
+        // Fallback: search for assertion calls that likely caused the failure.
+        let assertion_pats = [
+            "assert.compareArray",
+            "assert.sameValue",
+            "assert.throws",
+            "assert.notSameValue",
+            "assert.deepEqual",
+            "assert(false",
+            "assert(true",
+            "$DONOTEVALUATE",
+            "verifyProperty",
+        ];
+        for pat in &assertion_pats {
+            if let Some(idx) = lines.iter().position(|l| l.contains(pat)) {
+                return Some(idx + 1);
+            }
+        }
+
+        None
     }
 }
 
