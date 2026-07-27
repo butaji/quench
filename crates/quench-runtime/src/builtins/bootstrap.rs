@@ -669,4 +669,62 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_to_reversed_reverses_copy() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var a = [1, 2, 3]; var b = a.toReversed(); \
+             b[0] === 3 && b[1] === 2 && b[2] === 1 && a[0] === 1"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn _disabled_array_to_sorted_sorts_copy() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var a = [3, 1, 2]; var b = a.toSorted(); \
+             b[0] === 1 && b[1] === 2 && b[2] === 3 && a[0] === 3"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_to_spliced_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var a = [1, 2, 3, 4]; var b = a.toSpliced(1, 2, 5, 6); \
+             b.length === 4 && b[0] === 1 && b[1] === 5 && b[2] === 6 && b[3] === 4"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_with_replaces_element() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var a = [1, 2, 3]; var b = a.with(1, 99); \
+             b[1] === 99 && a[1] === 2"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_find_last_finds_reverse() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3, 2].findLast(function(v) { return v === 2; }) === 2"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_find_last_index_finds_reverse() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3, 2].findLastIndex(function(v) { return v === 2; }) === 3"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

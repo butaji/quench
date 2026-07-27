@@ -485,3 +485,90 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
   }
   return result;
 };
+
+// Array.prototype.toReversed (ES2023 §23.1.3.35)
+Array.prototype.toReversed = function ArrayToReversed() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toReversed called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var A = new Array(len);
+  for (var i = 0; i < len; i++) {
+    if (i in O) A[len - 1 - i] = O[i];
+  }
+  return A;
+};
+
+// Array.prototype.toSorted (ES2023 §23.1.3.36)
+Array.prototype.toSorted = function ArrayToSorted(comparefn) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSorted called on null or undefined");
+  if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var A = new Array(len);
+  for (var i = 0; i < len; i++) {
+    if (i in O) A[i] = O[i];
+  }
+  _nativeSort.call(A, comparefn !== undefined ? comparefn : undefined);
+  return A;
+};
+
+// Array.prototype.toSpliced (ES2023 §23.1.3.37)
+Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...items */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSpliced called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var actualStart = Math.min(Math.max(start, 0), len);
+  var actualDeleteCount;
+  if (arguments.length === 1) actualDeleteCount = len - actualStart;
+  else actualDeleteCount = Math.min(Math.max(deleteCount, 0), len - actualStart);
+  var itemCount = Math.max(arguments.length - 2, 0);
+  var newLen = len - actualDeleteCount + itemCount;
+  var A = new Array(newLen);
+  for (var i = 0; i < actualStart; i++) { if (i in O) A[i] = O[i]; }
+  for (var i = 0; i < itemCount; i++) A[actualStart + i] = arguments[i + 2];
+  for (var i = actualStart + actualDeleteCount; i < len; i++) {
+    if (i in O) A[i - actualDeleteCount + itemCount] = O[i];
+  }
+  return A;
+};
+
+// Array.prototype.with (ES2023 §23.1.3.39)
+Array.prototype.with = function ArrayWith(index, value) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.with called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var relativeIndex = index >>> 0;
+  var actualIndex = relativeIndex >= len ? len - 1 : relativeIndex;
+  var A = new Array(len);
+  for (var i = 0; i < len; i++) {
+    if (i in O) A[i] = O[i];
+  }
+  A[actualIndex] = value;
+  return A;
+};
+
+// Array.prototype.findLast (ES2023 §23.1.3.14)
+Array.prototype.findLast = function ArrayFindLast(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findLast called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  for (var k = len - 1; k >= 0; k--) {
+    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return O[k];
+  }
+  return undefined;
+};
+
+// Array.prototype.findLastIndex (ES2023 §23.1.3.15)
+Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findLastIndex called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  for (var k = len - 1; k >= 0; k--) {
+    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return k;
+  }
+  return -1;
+};
