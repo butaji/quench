@@ -18,51 +18,216 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     // Phase 1: core intrinsics (once _intrinsics.js exists)
     // ("_intrinsics", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/_intrinsics.js"))),
     // Phase 2: Object
-    ("Object", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Object.js"))),
+    (
+        "Object",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Object.js"
+        )),
+    ),
     // Phase 3: Array
-    ("Array", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Array.js"))),
+    (
+        "Array",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Array.js"
+        )),
+    ),
     // Phase 3+: add in dependency order
+    // AsyncIterator — after Array, before Map/Set (prototype chain for async iteration)
+    (
+        "AsyncIterator",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncIterator.js"
+        )),
+    ),
     // Phase 4: Math
-    ("Math", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Math.js"))),
+    (
+        "Math",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Math.js"
+        )),
+    ),
     // Phase 5: Number
-    ("Number", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Number.js"))),
+    (
+        "Number",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Number.js"
+        )),
+    ),
     // Phase 6: Error
-    ("Error", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Error.js"))),
+    (
+        "Error",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Error.js"
+        )),
+    ),
     // Phase 7: RegExp
-    ("RegExp", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/RegExp.js"))),
+    (
+        "RegExp",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/RegExp.js"
+        )),
+    ),
     // Phase 8: Boolean
-    ("Boolean", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Boolean.js"))),
+    (
+        "Boolean",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Boolean.js"
+        )),
+    ),
     // Phase 9: Symbol
-    ("Symbol", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Symbol.js"))),
+    (
+        "Symbol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Symbol.js"
+        )),
+    ),
     // Phase 10: Date
-    ("Date", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Date.js"))),
+    (
+        "Date",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Date.js"
+        )),
+    ),
     // Phase 11: JSON
-    ("JSON", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/JSON.js"))),
+    (
+        "JSON",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/JSON.js"
+        )),
+    ),
     // Phase 12: Map
-    ("Map", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Map.js"))),
+    (
+        "Map",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Map.js"
+        )),
+    ),
     // Phase 13: Set
-    ("Set", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Set.js"))),
+    (
+        "Set",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Set.js"
+        )),
+    ),
     // Phase 14: WeakMap
-    ("WeakMap", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakMap.js"))),
+    (
+        "WeakMap",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/WeakMap.js"
+        )),
+    ),
     // Phase 15: WeakSet
-    ("WeakSet", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakSet.js"))),
+    (
+        "WeakSet",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/WeakSet.js"
+        )),
+    ),
     // Phase 16: Promise
-    ("Promise", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Promise.js"))),
+    (
+        "Promise",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Promise.js"
+        )),
+    ),
     // Phase 17: Reflect
-    ("Reflect", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Reflect.js"))),
+    (
+        "Reflect",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Reflect.js"
+        )),
+    ),
     // Phase 18: Function
-    ("Function", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Function.js"))),
+    (
+        "Function",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/Function.js"
+        )),
+    ),
+    // Phase 18.5: GeneratorFunction (depends on Function and Object)
+    (
+        "GeneratorFunction",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/GeneratorFunction.js"
+        )),
+    ),
+    // Phase 18.6: AsyncGeneratorFunction — sets @@toStringTag on %AsyncGeneratorFunctionPrototype%
+    (
+        "AsyncGeneratorFunction",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncGeneratorFunction.js"
+        )),
+    ),
+    // Phase 18.7: AsyncGeneratorPrototype — wraps native next/return/throw with null/undefined checks
+    (
+        "AsyncGeneratorPrototype",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncGeneratorPrototype.js"
+        )),
+    ),
     // Phase 19: TypedArray
-    ("TypedArray", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/TypedArray.js"))),
+    (
+        "TypedArray",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/TypedArray.js"
+        )),
+    ),
+    // Phase 20: AsyncFunction — sets @@toStringTag on %AsyncFunctionPrototype%
+    (
+        "AsyncFunction",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncFunction.js"
+        )),
+    ),
+    // Phase 21: AsyncFromSyncIterator — placeholder; needs Rust-side
+    // %AsyncIteratorPrototype% + %AsyncFromSyncIteratorPrototype% first.
+    (
+        "AsyncFromSyncIterator",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncFromSyncIterator.js"
+        )),
+    ),
+    // Phase 22: GeneratorPrototype — wraps %GeneratorPrototype% native methods
+    // Depends on Function (which registers GeneratorFunction global).
+    (
+        "GeneratorPrototype",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/GeneratorPrototype.js"
+        )),
+    ),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
 /// Called once per `Context::new()` after `init_builtins` registers `__ops__`.
 pub fn bootstrap_js_builtins(ctx: &mut Context) -> Result<(), JsError> {
     for (name, source) in BUILTIN_FILES {
-        ctx.eval(source).map_err(|e| {
-            JsError(format!("bootstrap {}: {}", name, e))
-        })?;
+        ctx.eval(source)
+            .map_err(|e| JsError(format!("bootstrap {}: {}", name, e)))?;
     }
     Ok(())
 }
@@ -101,10 +266,12 @@ mod tests {
     #[test]
     fn object_is_works_for_objects() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = {}; var b = {}; \
+        let r = ctx
+            .eval(
+                "var a = {}; var b = {}; \
              Object.is(a, a) && !Object.is(a, b)",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -115,57 +282,73 @@ mod tests {
     }
 
     #[test]
+    fn generator_function_to_string_tag() {
+        let mut ctx = Context::new().unwrap();
+        // Check GeneratorFunction.prototype has correct @@toStringTag
+        let r = ctx
+            .eval("GeneratorFunction.prototype[Symbol.toStringTag] === 'GeneratorFunction'")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_keys_returns_own_enumerable_keys() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 1, b: 2 }; \
+        let r = ctx
+            .eval(
+                "var o = { a: 1, b: 2 }; \
              var keys = Object.keys(o); \
              keys.length === 2 && keys[0] === 'a' && keys[1] === 'b'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_keys_does_not_include_inherited() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var proto = { p: 1 }; \
+        let r = ctx
+            .eval(
+                "var proto = { p: 1 }; \
              var o = Object.create(proto); \
              o.own = 2; \
              Object.keys(o).length === 1 && Object.keys(o)[0] === 'own'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_keys_non_enumerable_not_included() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = {}; \
+        let r = ctx
+            .eval(
+                "var o = {}; \
              Object.defineProperty(o, 'hidden', { value: 1, enumerable: false }); \
              o.visible = 2; \
              Object.keys(o).length === 1 && Object.keys(o)[0] === 'visible'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_keys_primitives_return_empty() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "Object.keys(42).length === 0",
-        ).unwrap();
+        let r = ctx.eval("Object.keys(42).length === 0").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 1, b: 2 }; \
+        let r = ctx
+            .eval(
+                "var o = { a: 1, b: 2 }; \
              var vals = Object.values(o); \
              vals.length === 2 && vals[0] === 1 && vals[1] === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -179,12 +362,14 @@ mod tests {
     #[test]
     fn object_entries_returns_entries() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 1, b: 2 }; \
+        let r = ctx
+            .eval(
+                "var o = { a: 1, b: 2 }; \
              var ents = Object.entries(o); \
              ents.length === 2 && ents[0][0] === 'a' && ents[0][1] === 1 && \
              ents[1][0] === 'b' && ents[1][1] === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -198,86 +383,98 @@ mod tests {
     #[test]
     fn object_assign_merges_objects() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var target = { a: 1 }; \
+        let r = ctx
+            .eval(
+                "var target = { a: 1 }; \
              var source = { b: 2, c: 3 }; \
              var result = Object.assign(target, source); \
              result === target && target.a === 1 && target.b === 2 && target.c === 3",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_assign_overwrites_properties() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var target = { a: 1, b: 2 }; \
+        let r = ctx
+            .eval(
+                "var target = { a: 1, b: 2 }; \
              var source = { b: 3, c: 4 }; \
              Object.assign(target, source); \
              target.a === 1 && target.b === 3 && target.c === 4",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_assign_skips_null_source() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var target = { a: 1 }; \
+        let r = ctx
+            .eval(
+                "var target = { a: 1 }; \
              Object.assign(target, null, { b: 2 }); \
              target.a === 1 && target.b === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_assign_multiple_sources() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var target = {}; \
+        let r = ctx
+            .eval(
+                "var target = {}; \
              Object.assign(target, { a: 1 }, { b: 2 }, { c: 3 }); \
              target.a === 1 && target.b === 2 && target.c === 3",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_assign_returns_target() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var target = {}; \
+        let r = ctx
+            .eval(
+                "var target = {}; \
              Object.assign(target, { a: 1 }) === target",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_has_own_own_property() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 1 }; \
+        let r = ctx
+            .eval(
+                "var o = { a: 1 }; \
              Object.hasOwn(o, 'a') && !Object.hasOwn(o, 'b')",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_has_own_inherited_not_found() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var proto = { p: 1 }; \
+        let r = ctx
+            .eval(
+                "var proto = { p: 1 }; \
              var o = Object.create(proto); \
              Object.hasOwn(o, 'p')",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(false));
     }
 
     #[test]
     fn object_has_own_primitive() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "Object.hasOwn(42, 'toString')",
-        ).unwrap();
+        let r = ctx.eval("Object.hasOwn(42, 'toString')").unwrap();
         // 42 is coerced to Object via ToObject, which has toString as an own method
         assert_eq!(r, Value::Boolean(false));
     }
@@ -292,204 +489,210 @@ mod tests {
     #[test]
     fn object_is_extensible_returns_false_after_prevent() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = {}; \
+        let r = ctx
+            .eval(
+                "var o = {}; \
              Object.preventExtensions(o); \
              !Object.isExtensible(o)",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_from_entries_creates_object() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var entries = [['a', 1], ['b', 2]]; \
+        let r = ctx
+            .eval(
+                "var entries = [['a', 1], ['b', 2]]; \
              var obj = Object.fromEntries(entries); \
              obj.a === 1 && obj.b === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_from_entries_empty() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = Object.fromEntries([]); \
+        let r = ctx
+            .eval(
+                "var obj = Object.fromEntries([]); \
              Object.keys(obj).length === 0",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_is_array_true() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("Array.isArray([]) && Array.isArray(new Array(5))").unwrap();
+        let r = ctx
+            .eval("Array.isArray([]) && Array.isArray(new Array(5))")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_is_array_false() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("!Array.isArray({}) && !Array.isArray(null) && !Array.isArray(42)").unwrap();
+        let r = ctx
+            .eval("!Array.isArray({}) && !Array.isArray(null) && !Array.isArray(42)")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_forEach_iterates() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var result = []; \
+        let r = ctx
+            .eval(
+                "var result = []; \
              [1, 2, 3].forEach(function(v) { result.push(v); }); \
              result.length === 3 && result[0] === 1 && result[1] === 2 && result[2] === 3",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_map_transforms() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var result = [1, 2, 3].map(function(v) { return v * 2; }); \
+        let r = ctx
+            .eval(
+                "var result = [1, 2, 3].map(function(v) { return v * 2; }); \
              result.length === 3 && result[0] === 2 && result[1] === 4 && result[2] === 6",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_filter_filters() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var result = [1, 2, 3, 4, 5].filter(function(v) { return v % 2 === 0; }); \
+        let r = ctx
+            .eval(
+                "var result = [1, 2, 3, 4, 5].filter(function(v) { return v % 2 === 0; }); \
              result.length === 2 && result[0] === 2 && result[1] === 4",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_reduce_sums() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3, 4, 5].reduce(function(acc, v) { return acc + v; }, 0) === 15",
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3, 4, 5].reduce(function(acc, v) { return acc + v; }, 0) === 15")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_reduce_without_initial() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].reduce(function(acc, v) { return acc + v; }) === 6",
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3].reduce(function(acc, v) { return acc + v; }) === 6")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_find_finds_element() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var result = [1, 2, 3, 4, 5].find(function(v) { return v > 3; }); \
+        let r = ctx
+            .eval(
+                "var result = [1, 2, 3, 4, 5].find(function(v) { return v > 3; }); \
              result === 4",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_find_returns_undefined() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].find(function(v) { return v > 10; }) === undefined",
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3].find(function(v) { return v > 10; }) === undefined")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_some_returns_true() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].some(function(v) { return v === 2; })",
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3].some(function(v) { return v === 2; })")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_some_returns_false() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "![1, 2, 3].some(function(v) { return v === 5; })",
-        ).unwrap();
+        let r = ctx
+            .eval("![1, 2, 3].some(function(v) { return v === 5; })")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_every_returns_true() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].every(function(v) { return v > 0; })",
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3].every(function(v) { return v > 0; })")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_every_returns_false() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "![1, 2, 3].every(function(v) { return v > 1; })",
-        ).unwrap();
+        let r = ctx
+            .eval("![1, 2, 3].every(function(v) { return v > 1; })")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_includes_finds_element() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].includes(2)",
-        ).unwrap();
+        let r = ctx.eval("[1, 2, 3].includes(2)").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_includes_not_found() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "![1, 2, 3].includes(5)",
-        ).unwrap();
+        let r = ctx.eval("![1, 2, 3].includes(5)").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_indexOf_finds_index() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].indexOf(2) === 1",
-        ).unwrap();
+        let r = ctx.eval("[1, 2, 3].indexOf(2) === 1").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_indexOf_not_found() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].indexOf(5) === -1",
-        ).unwrap();
+        let r = ctx.eval("[1, 2, 3].indexOf(5) === -1").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_join_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].join('-') === '1-2-3'",
-        ).unwrap();
+        let r = ctx.eval("[1, 2, 3].join('-') === '1-2-3'").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_join_default_separator() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].join() === '1,2,3'",
-        ).unwrap();
+        let r = ctx.eval("[1, 2, 3].join() === '1,2,3'").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -507,85 +710,101 @@ mod tests {
     #[test]
     fn array_pop_removes_last() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var arr = [1, 2, 3]; \
+        let r = ctx
+            .eval(
+                "var arr = [1, 2, 3]; \
              var popped = arr.pop(); \
              popped === 3 && arr.length === 2 && arr[0] === 1 && arr[1] === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_slice_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var arr = [1, 2, 3, 4, 5]; \
+        let r = ctx
+            .eval(
+                "var arr = [1, 2, 3, 4, 5]; \
              var sliced = arr.slice(1, 3); \
              sliced.length === 2 && sliced[0] === 2 && sliced[1] === 3 && arr.length === 5",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_concat_combines() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = [1, 2]; \
+        let r = ctx
+            .eval(
+                "var a = [1, 2]; \
              var b = [3, 4]; \
              var c = a.concat(b); \
              c.length === 4 && c[0] === 1 && c[1] === 2 && c[2] === 3 && c[3] === 4",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_reverse_reverses() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var arr = [1, 2, 3]; \
+        let r = ctx
+            .eval(
+                "var arr = [1, 2, 3]; \
              arr.reverse(); \
              arr.length === 3 && arr[0] === 3 && arr[1] === 2 && arr[2] === 1",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_fill_fills_range() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var arr = [1, 2, 3, 4]; \
+        let r = ctx
+            .eval(
+                "var arr = [1, 2, 3, 4]; \
              arr.fill(0, 1, 3); \
              arr[0] === 1 && arr[1] === 0 && arr[2] === 0 && arr[3] === 4",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_reduceRight_reduces_reverse() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3].reduceRight(function(acc, v) { return acc + String(v); }, '') === '321'",
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "[1, 2, 3].reduceRight(function(acc, v) { return acc + String(v); }, '') === '321'",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_keys_returns_indices() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var k = ['a', 'b', 'c'].keys(); \
+        let r = ctx
+            .eval(
+                "var k = ['a', 'b', 'c'].keys(); \
              k.length === 3 && k[0] === 0 && k[1] === 1 && k[2] === 2",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_values_returns_values() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var v = ['a', 'b'].values(); \
+        let r = ctx
+            .eval(
+                "var v = ['a', 'b'].values(); \
              v.length === 2 && v[0] === 'a' && v[1] === 'b'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -644,7 +863,9 @@ mod tests {
     #[test]
     fn array_find_index_finds() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("[1, 2, 3].findIndex(function(v) { return v > 1; }) === 1").unwrap();
+        let r = ctx
+            .eval("[1, 2, 3].findIndex(function(v) { return v > 1; }) === 1")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -653,9 +874,9 @@ mod tests {
     #[ignore = "sort native override causes recursion — kept as native"]
     fn _disabled_array_sort() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var arr = [3, 1, 2]; arr.sort(); arr[0] === 1 && arr[1] === 2 && arr[2] === 3"
-        ).unwrap();
+        let r = ctx
+            .eval("var arr = [3, 1, 2]; arr.sort(); arr[0] === 1 && arr[1] === 2 && arr[2] === 3")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -707,10 +928,12 @@ mod tests {
     #[test]
     fn array_to_reversed_reverses_copy() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = [1, 2, 3]; var b = a.toReversed(); \
-             b[0] === 3 && b[1] === 2 && b[2] === 1 && a[0] === 1"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var a = [1, 2, 3]; var b = a.toReversed(); \
+             b[0] === 3 && b[1] === 2 && b[2] === 1 && a[0] === 1",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -719,48 +942,54 @@ mod tests {
     #[ignore = "sort native override causes recursion — kept as native"]
     fn _disabled_to_sorted() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = [3, 1, 2]; var b = a.toSorted(); \
-             b[0] === 1 && b[1] === 2 && b[2] === 3 && a[0] === 3"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var a = [3, 1, 2]; var b = a.toSorted(); \
+             b[0] === 1 && b[1] === 2 && b[2] === 3 && a[0] === 3",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_to_spliced_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = [1, 2, 3, 4]; var b = a.toSpliced(1, 2, 5, 6); \
-             b.length === 4 && b[0] === 1 && b[1] === 5 && b[2] === 6 && b[3] === 4"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var a = [1, 2, 3, 4]; var b = a.toSpliced(1, 2, 5, 6); \
+             b.length === 4 && b[0] === 1 && b[1] === 5 && b[2] === 6 && b[3] === 4",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_with_replaces_element() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var a = [1, 2, 3]; var b = a.with(1, 99); \
-             b[1] === 99 && a[1] === 2"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var a = [1, 2, 3]; var b = a.with(1, 99); \
+             b[1] === 99 && a[1] === 2",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_find_last_finds_reverse() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3, 2].findLast(function(v) { return v === 2; }) === 2"
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3, 2].findLast(function(v) { return v === 2; }) === 2")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn array_find_last_index_finds_reverse() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "[1, 2, 3, 2].findLastIndex(function(v) { return v === 2; }) === 3"
-        ).unwrap();
+        let r = ctx
+            .eval("[1, 2, 3, 2].findLastIndex(function(v) { return v === 2; }) === 3")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -777,76 +1006,88 @@ mod tests {
     #[test]
     fn array_group_to_map_groups() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var result = [1, 2, 3].groupToMap(function(v) { return v > 1; }); \
-             result.get(true).length === 2 && result.get(false)[0] === 1"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var result = [1, 2, 3].groupToMap(function(v) { return v > 1; }); \
+             result.get(true).length === 2 && result.get(false)[0] === 1",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_get_prototype_of_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("Object.getPrototypeOf({}) === Object.prototype").unwrap();
+        let r = ctx
+            .eval("Object.getPrototypeOf({}) === Object.prototype")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_set_prototype_of_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var proto = { a: 1 }; var obj = {}; \
+        let r = ctx
+            .eval(
+                "var proto = { a: 1 }; var obj = {}; \
              Object.setPrototypeOf(obj, proto); \
-             Object.getPrototypeOf(obj) === proto && obj.a === 1"
-        ).unwrap();
+             Object.getPrototypeOf(obj) === proto && obj.a === 1",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_prevent_extensions_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = {}; Object.preventExtensions(obj); \
-             !Object.isExtensible(obj)"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var obj = {}; Object.preventExtensions(obj); \
+             !Object.isExtensible(obj)",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_seal_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = { a: 1 }; Object.seal(obj); \
-             !Object.isExtensible(obj) && Object.isSealed(obj) && !Object.isFrozen(obj)"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var obj = { a: 1 }; Object.seal(obj); \
+             !Object.isExtensible(obj) && Object.isSealed(obj) && !Object.isFrozen(obj)",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_freeze_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = { a: 1 }; Object.freeze(obj); \
-             !Object.isExtensible(obj) && Object.isSealed(obj) && Object.isFrozen(obj)"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var obj = { a: 1 }; Object.freeze(obj); \
+             !Object.isExtensible(obj) && Object.isSealed(obj) && Object.isFrozen(obj)",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_is_sealed_true_for_sealed() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = { a: 1 }; Object.seal(obj); Object.isSealed(obj)"
-        ).unwrap();
+        let r = ctx
+            .eval("var obj = { a: 1 }; Object.seal(obj); Object.isSealed(obj)")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_is_frozen_true_for_frozen() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var obj = { a: 1 }; Object.freeze(obj); Object.isFrozen(obj)"
-        ).unwrap();
+        let r = ctx
+            .eval("var obj = { a: 1 }; Object.freeze(obj); Object.isFrozen(obj)")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -862,51 +1103,61 @@ mod tests {
     #[test]
     fn object_define_property_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = {}; Object.defineProperty(o, 'a', { value: 42, writable: true }); \
-             o.a === 42"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var o = {}; Object.defineProperty(o, 'a', { value: 42, writable: true }); \
+             o.a === 42",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_get_own_property_descriptor_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 42 }; var desc = Object.getOwnPropertyDescriptor(o, 'a'); \
-             desc.value === 42 && desc.writable && desc.enumerable && desc.configurable"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var o = { a: 42 }; var desc = Object.getOwnPropertyDescriptor(o, 'a'); \
+             desc.value === 42 && desc.writable && desc.enumerable && desc.configurable",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_define_property_non_writable() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = {}; Object.defineProperty(o, 'a', { value: 1, writable: false }); \
+        let r = ctx
+            .eval(
+                "var o = {}; Object.defineProperty(o, 'a', { value: 1, writable: false }); \
              var desc = Object.getOwnPropertyDescriptor(o, 'a'); \
-             desc.value === 1 && !desc.writable"
-        ).unwrap();
+             desc.value === 1 && !desc.writable",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_define_properties_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = {}; Object.defineProperties(o, { a: { value: 1 }, b: { value: 2 } }); \
-             o.a === 1 && o.b === 2"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var o = {}; Object.defineProperties(o, { a: { value: 1 }, b: { value: 2 } }); \
+             o.a === 1 && o.b === 2",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn object_get_own_property_names_works() {
         let mut ctx = new_ctx();
-        let r = ctx.eval(
-            "var o = { a: 1, b: 2 }; var names = Object.getOwnPropertyNames(o); \
-             names.length === 2 && names.includes('a') && names.includes('b')"
-        ).unwrap();
+        let r = ctx
+            .eval(
+                "var o = { a: 1, b: 2 }; var names = Object.getOwnPropertyNames(o); \
+             names.length === 2 && names.includes('a') && names.includes('b')",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -914,6 +1165,130 @@ mod tests {
     fn math_max_works() {
         let mut ctx = new_ctx();
         let r = ctx.eval("Math.max(1, 3, 2) === 3").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_function_to_string_tag() {
+        let mut ctx = new_ctx();
+        // Verify AsyncFunction exists as a global constructor
+        let is_func = ctx.eval("typeof AsyncFunction === 'function'").unwrap();
+        assert_eq!(is_func, Value::Boolean(true));
+        // Verify AsyncFunction can create async functions
+        let is_async = ctx
+            .eval(
+                "var af = AsyncFunction('return 42'); \
+             typeof af === 'function'",
+            )
+            .unwrap();
+        assert_eq!(is_async, Value::Boolean(true));
+        // Verify @@toStringTag is set on %AsyncFunctionPrototype%
+        let r = ctx
+            .eval("AsyncFunction.prototype[Symbol.toStringTag] === 'AsyncFunction'")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_generator_function_type_and_prototype() {
+        let mut ctx = new_ctx();
+        // Verify AsyncGeneratorFunction exists as a global constructor
+        let exists = ctx
+            .eval("typeof AsyncGeneratorFunction !== 'undefined'")
+            .unwrap();
+        assert_eq!(exists, Value::Boolean(true));
+        // Verify it's a function
+        let is_func = ctx
+            .eval("typeof AsyncGeneratorFunction === 'function'")
+            .unwrap();
+        assert_eq!(is_func, Value::Boolean(true));
+        // Verify its prototype is an object
+        let has_proto = ctx
+            .eval("typeof AsyncGeneratorFunction.prototype === 'object'")
+            .unwrap();
+        assert_eq!(has_proto, Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_function_constructor_creates_async_func() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var af = AsyncFunction('return 42'); \
+             typeof af === 'function'",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    #[ignore = "AsyncFromSyncIterator needs Rust implementation of %AsyncIteratorPrototype% and Symbol.asyncIterator"]
+    fn async_from_sync_iterator_basic() {
+        let mut ctx = new_ctx();
+        // Create a sync iterator and wrap it via AsyncFromSyncIterator
+        // Per ES2025 §27.1.3: CreateAsyncFromSyncIterator returns an async
+        // iterator whose .next() awaits the result of the sync iterator's .next()
+        let r = ctx
+            .eval(
+                "var syncIter = [1, 2, 3][Symbol.iterator](); \
+             var asyncIter = new AsyncFromSyncIterator(syncIter); \
+             var p = asyncIter.next(); \
+             p instanceof Promise",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    #[ignore = "AsyncIteratorPrototype needs native Rust realm implementation"]
+    fn async_iterator_prototype_placeholder_loads() {
+        let mut ctx = new_ctx();
+        // The AsyncIterator.js file evaluates without error during bootstrap.
+        // It destructures __ops__.ThrowTypeError at parse time, confirming the
+        // __ops__ bridge is available when the file loads. When a native realm
+        // implementation of %AsyncIteratorPrototype% exists, this test should
+        // be updated to verify the prototype's [Symbol.asyncIterator] method.
+        bootstrap_js_builtins(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn async_generator_prototype_next_returns_promise() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "async function* ag() { yield 1; } \
+             let gen = ag(); \
+             let p = gen.next(); \
+             typeof p.then === 'function' && p.then === Promise.prototype.then",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn generator_prototype_methods_work() {
+        let mut ctx = new_ctx();
+        // Verify GeneratorPrototype has next/return/throw methods
+        let r = ctx
+            .eval(
+                "var Gp = GeneratorFunction.prototype.prototype; \
+             typeof Gp.next === 'function' && \
+             typeof Gp.return === 'function' && \
+             typeof Gp.throw === 'function'",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+
+        // Verify methods work on a generator instance
+        let r = ctx
+            .eval(
+                "function* g() { yield 1; yield 2; } \
+             var gen = g(); \
+             var r1 = gen.next(); \
+             r1.value === 1 && r1.done === false && \
+             gen.next().value === 2",
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 }

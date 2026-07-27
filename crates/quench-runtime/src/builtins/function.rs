@@ -273,6 +273,145 @@ pub fn register_function(ctx: &mut Context) {
     if let Some(obj_proto) = crate::builtins::get_object_prototype() {
         generator_proto_rc.borrow_mut().prototype = Some(obj_proto);
     }
+    // Set %GeneratorPrototype%.next — native, delegates to GeneratorObject::next
+    generator_proto_rc.borrow_mut().set(
+        "next",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError("Generator.prototype.next called on incompatible receiver".to_string())
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    let result = gen.borrow_mut().next(arg)?;
+                    Ok(result.to_object())
+                }
+                _ => Err(JsError(
+                    "TypeError: Generator.prototype.next called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %GeneratorPrototype%.return — native, delegates to GeneratorObject::return logic
+    generator_proto_rc.borrow_mut().set(
+        "return",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError("Generator.prototype.return called on incompatible receiver".to_string())
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    use crate::value::generator::GeneratorState;
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    let mut g = gen.borrow_mut();
+                    if g.state == GeneratorState::Completed {
+                        return Ok(crate::value::generator::IteratorResult {
+                            value: Value::Undefined,
+                            done: true,
+                        }
+                        .to_object());
+                    }
+                    let suspended_start = g.state == GeneratorState::Suspended
+                        && g.yield_index == 0
+                        && g.pending_stmt.is_none();
+                    if suspended_start {
+                        g.state = GeneratorState::Completed;
+                        g.call_env = None;
+                        return Ok(crate::value::generator::IteratorResult {
+                            value: arg,
+                            done: true,
+                        }
+                        .to_object());
+                    }
+                    // Close inner iterator if mid for-of
+                    if let Some(ref suspend) = g.for_of_suspend {
+                        if let Some(close_err) =
+                            crate::eval::object::call_iterator_return(&suspend.iterator)
+                        {
+                            return Err(close_err);
+                        }
+                    }
+                    crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
+                        arg.clone(),
+                    ));
+                    drop(g);
+                    let result = gen.borrow_mut().next(Value::Undefined)?;
+                    Ok(result.to_object())
+                }
+                _ => Err(JsError(
+                    "TypeError: Generator.prototype.return called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %GeneratorPrototype%.throw — native, delegates to GeneratorObject::throw logic
+    generator_proto_rc.borrow_mut().set(
+        "throw",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError("Generator.prototype.throw called on incompatible receiver".to_string())
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    use crate::value::generator::GeneratorState;
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    let mut g = gen.borrow_mut();
+                    if g.state == GeneratorState::Completed {
+                        return Ok(crate::value::generator::IteratorResult {
+                            value: Value::Undefined,
+                            done: true,
+                        }
+                        .to_object());
+                    }
+                    let suspended_start = g.state == GeneratorState::Suspended
+                        && g.yield_index == 0
+                        && g.pending_stmt.is_none();
+                    if suspended_start {
+                        g.state = GeneratorState::Completed;
+                        g.call_env = None;
+                        return Ok(crate::value::generator::IteratorResult {
+                            value: arg,
+                            done: true,
+                        }
+                        .to_object());
+                    }
+                    crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Throw(
+                        arg.clone(),
+                    ));
+                    drop(g);
+                    let result = gen.borrow_mut().next(Value::Undefined);
+                    match result {
+                        Ok(ir) => Ok(ir.to_object()),
+                        Err(e) => Err(e),
+                    }
+                }
+                _ => Err(JsError(
+                    "TypeError: Generator.prototype.throw called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %GeneratorPrototype%[@@iterator] = function() { return this; }
+    // Generator instances are iterable via the iterator protocol.
+    generator_proto_rc.borrow_mut().set(
+        "Symbol.iterator",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args: Vec<Value>| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError(
+                    "Generator.prototype[Symbol.iterator] called on incompatible receiver"
+                        .to_string(),
+                )
+            })?;
+            Ok(this_val)
+        }))),
+    );
+    // Set %GeneratorPrototype%[@@toStringTag] = "Generator"
+    generator_proto_rc
+        .borrow_mut()
+        .set("Symbol.toStringTag", Value::String("Generator".to_string()));
     GENERATOR_PROTOTYPE.with(|gp| {
         *gp.borrow_mut() = Some(Rc::clone(&generator_proto_rc));
     });
@@ -293,6 +432,103 @@ pub fn register_function(ctx: &mut Context) {
     async_generator_function_proto_rc.borrow_mut().set(
         "prototype",
         Value::Object(Rc::clone(&async_generator_proto_rc)),
+    );
+
+    // Set %AsyncGeneratorPrototype%.next — returns a Promise resolved with the step result
+    async_generator_proto_rc.borrow_mut().set(
+        "next",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError("AsyncGenerator.prototype.next called on incompatible receiver".to_string())
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    let proto = crate::builtins::promise::get_promise_proto();
+                    let result = gen.borrow_mut().next(arg);
+                    match result {
+                        Ok(ir) => crate::builtins::promise::promise_resolve_impl_static(
+                            vec![ir.to_object()],
+                            proto,
+                        ),
+                        Err(e) => crate::builtins::promise::promise_reject_impl_static(
+                            vec![Value::String(e.to_string())],
+                            proto,
+                        ),
+                    }
+                }
+                _ => Err(JsError(
+                    "TypeError: AsyncGenerator.prototype.next called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %AsyncGeneratorPrototype%.return — completes the generator and returns a resolved Promise
+    async_generator_proto_rc.borrow_mut().set(
+        "return",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError(
+                    "AsyncGenerator.prototype.return called on incompatible receiver".to_string(),
+                )
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    use crate::value::generator::GeneratorState;
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    {
+                        let mut g = gen.borrow_mut();
+                        g.state = GeneratorState::Completed;
+                    }
+                    let proto = crate::builtins::promise::get_promise_proto();
+                    crate::builtins::promise::promise_resolve_impl_static(
+                        vec![crate::value::generator::IteratorResult {
+                            value: arg,
+                            done: true,
+                        }
+                        .to_object()],
+                        proto,
+                    )
+                }
+                _ => Err(JsError(
+                    "TypeError: AsyncGenerator.prototype.return called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %AsyncGeneratorPrototype%.throw — completes the generator and returns a rejected Promise
+    async_generator_proto_rc.borrow_mut().set(
+        "throw",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                JsError(
+                    "AsyncGenerator.prototype.throw called on incompatible receiver".to_string(),
+                )
+            })?;
+            match this_val {
+                Value::Generator(gen) => {
+                    use crate::value::generator::GeneratorState;
+                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    {
+                        let mut g = gen.borrow_mut();
+                        g.state = GeneratorState::Completed;
+                    }
+                    let proto = crate::builtins::promise::get_promise_proto();
+                    crate::builtins::promise::promise_reject_impl_static(vec![arg], proto)
+                }
+                _ => Err(JsError(
+                    "TypeError: AsyncGenerator.prototype.throw called on incompatible receiver"
+                        .to_string(),
+                )),
+            }
+        }))),
+    );
+    // Set %AsyncGeneratorPrototype%[@@toStringTag] = "AsyncGenerator"
+    async_generator_proto_rc.borrow_mut().set(
+        "Symbol.toStringTag",
+        Value::String("AsyncGenerator".to_string()),
     );
 
     let function_constructor = make_function_constructor(
