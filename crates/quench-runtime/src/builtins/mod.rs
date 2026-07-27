@@ -4,6 +4,7 @@
 pub mod array;
 pub mod array_buffer;
 pub mod bigint;
+pub mod bootstrap;
 pub mod console;
 pub mod data_view;
 pub mod date;

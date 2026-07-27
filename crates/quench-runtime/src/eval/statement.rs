@@ -735,7 +735,13 @@ fn eval_pattern_decl(
         Value::Undefined
     };
     let target = crate::eval::object::binding_pattern_expression(pattern.clone());
-    crate::eval::object::assign_to(&target, &value, env)?;
+    // For const/let, use init_to (which initializes the binding from TDZ).
+    // For var, use assign_to (var has no TDZ).
+    if *kind == VarKind::Var {
+        crate::eval::object::assign_to(&target, &value, env)?;
+    } else {
+        crate::eval::object::init_to(&target, &value, env)?;
+    }
     if *kind == VarKind::Var {
         for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
             if let Some(bound) = env.borrow().get(&name) {

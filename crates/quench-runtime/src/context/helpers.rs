@@ -205,10 +205,10 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     sync_globals_to_global_this(ctx);
     register_eval_function(ctx)?;
     // Register __ops__ — the Rust↔JS bridge for spec abstract operations.
-    // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__;
-    // The double-underscore naming follows internal-property conventions and
-    // is a valid JS identifier, unlike the spec-internal __ops__ notation.
+    // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__.
     ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
+    // Evaluate self-hosted JS builtins that destructure __ops__.
+    crate::builtins::bootstrap::bootstrap_js_builtins(ctx)?;
     Ok(())
 }
 
