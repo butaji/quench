@@ -28,6 +28,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("Number", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Number.js"))),
     // Phase 6: Error
     ("Error", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Error.js"))),
+    // Phase 7: RegExp
+    ("RegExp", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/RegExp.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
