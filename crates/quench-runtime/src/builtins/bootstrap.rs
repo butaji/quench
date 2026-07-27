@@ -351,4 +351,113 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_find_finds_element() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3, 4, 5].find(function(v) { return v > 3; }); \
+             result === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_find_returns_undefined() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].find(function(v) { return v > 10; }) === undefined",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_some_returns_true() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].some(function(v) { return v === 2; })",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_some_returns_false() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "![1, 2, 3].some(function(v) { return v === 5; })",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_every_returns_true() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].every(function(v) { return v > 0; })",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_every_returns_false() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "![1, 2, 3].every(function(v) { return v > 1; })",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_includes_finds_element() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].includes(2)",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_includes_not_found() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "![1, 2, 3].includes(5)",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_indexOf_finds_index() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].indexOf(2) === 1",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_indexOf_not_found() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].indexOf(5) === -1",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_join_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].join('-') === '1-2-3'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_join_default_separator() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "[1, 2, 3].join() === '1,2,3'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
