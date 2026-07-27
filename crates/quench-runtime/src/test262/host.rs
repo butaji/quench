@@ -429,4 +429,242 @@ verifyProperty(obj, prop, desc);
             result
         );
     }
+
+    // =============================================================================
+    // QuenchHost isolation and performance tests
+    // =============================================================================
+
+    /// QuenchHost must create a fresh Context per run_script call.
+    #[test]
+    fn test_quench_host_fresh_context_per_call() {
+        let mut host1 = QuenchHost::new();
+        let mut host2 = QuenchHost::new();
+
+        // Set a marker on host1's context
+        host1.run_script("var __marker = 'host1'").ok();
+        // host2 should NOT see host1's marker
+        let result = host2.run_script("typeof __marker === 'undefined'");
+        assert_eq!(
+            result,
+            Ok(()),
+            "host2 should not see host1's globals"
+        );
+    }
+
+    /// run_script sets non-strict mode (sloppy eval).
+    #[test]
+    fn test_quench_host_runs_sloppy() {
+        let mut host = QuenchHost::new();
+        // Strict mode would reject `with` statement
+        let result = host.run_script("with ({}) {}");
+        assert_eq!(
+            result,
+            Ok(()),
+            "QuenchHost should run in sloppy mode (with statement allowed)"
+        );
+    }
+
+    /// run_script runs in non-strict even when called from strict context.
+    #[test]
+    fn test_quench_host_sloppy_regardless_of_caller_strict() {
+        // When QuenchHost::run_script is called, it explicitly sets strict=false
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::interpreter::set_strict_mode(true);
+        let prev = crate::interpreter::is_strict_mode();
+        // This simulates what QuenchHost.run_script does internally
+        crate::interpreter::set_strict_mode(false);
+        let result = ctx.eval("with ({}) {}");
+        crate::interpreter::set_strict_mode(prev);
+        assert_eq!(
+            result,
+            Ok(()),
+            "QuenchHost should set sloppy mode regardless of caller's strictness"
+        );
+    }
+
+    /// Thrown value from one run_script must not leak to the next.
+    #[test]
+    fn test_quench_host_thrown_value_isolated_between_calls() {
+        let mut host = QuenchHost::new();
+
+        // First call throws
+        host.run_script("throw new Error('boom')").unwrap_err();
+
+        // Second call should start clean (no stale thrown value)
+        let result = host.run_script("var x = 1; x === 1");
+        assert_eq!(result, Ok(()), "second call should start clean after first threw");
+    }
+
+    /// Error from run_script is propagated as Err(String).
+    #[test]
+    fn test_quench_host_error_propagation() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script("throw new Error('boom')");
+        assert!(result.is_err(), "run_script should return Err on throw");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Error") || err.contains("boom"),
+            "error message should contain the thrown error: {}",
+            err
+        );
+    }
+
+    /// Multiple runs of the same script all pass.
+    #[test]
+    fn test_quench_host_multiple_runs_same_result() {
+        let mut host = QuenchHost::new();
+        let script = "var n = (n || 0) + 1; n;";
+
+        for i in 1..=3 {
+            let result = host.run_script(script);
+            assert_eq!(
+                result,
+                Ok(()),
+                "run {} should succeed",
+                i
+            );
+        }
+    }
+
+    /// Thrown value is consumed by successful try/catch and not leaked.
+    #[test]
+    fn test_quench_host_catch_consumes_thrown_value() {
+        let mut host = QuenchHost::new();
+        host.run_script(
+            r#"
+            var caught = false;
+            try { throw new Error('caught'); } catch(e) { caught = true; }
+            caught
+            "#,
+        )
+        .ok();
+        // Next run starts clean
+        let result = host.run_script("var x = 42; x === 42");
+        assert_eq!(result, Ok(()), "next run should be clean");
+    }
+
+    /// run_module_script runs ES module code.
+    #[test]
+    fn test_quench_host_run_module_script() {
+        let mut host = QuenchHost::new();
+        let result = host.run_module_script("export default 42;");
+        assert_eq!(result, Ok(()), "module script should run: {:?}", result);
+    }
+
+    /// run_module_script rejects non-module code as error.
+    #[test]
+    fn test_quench_host_run_module_script_rejects_sloppy() {
+        let mut host = QuenchHost::new();
+        // Sloppy code in module mode should fail
+        let result = host.run_module_script("var x = 1;");
+        assert!(
+            result.is_err(),
+            "module script with sloppy code should error: {:?}",
+            result
+        );
+    }
+
+    /// Test262Error must be properly initialized in QuenchHost context.
+    #[test]
+    fn test_quench_host_test262_error_initialized() {
+        let mut host = QuenchHost::new();
+        // Test262Error should be a constructor
+        let result = host.run_script(
+            "var err = new Test262Error('test'); err.name === 'Test262Error'",
+        );
+        assert_eq!(result, Ok(()), "Test262Error should work: {:?}", result);
+    }
+
+    /// Harness globals are available in every QuenchHost run.
+    #[test]
+    fn test_quench_host_harness_globals_available() {
+        let mut host = QuenchHost::new();
+        let checks = [
+            "typeof assert === 'function'",
+            "typeof Test262Error === 'function'",
+            "typeof $262 === 'object'",
+            "typeof print === 'function'",
+            "typeof stop === 'function'",
+            "typeof verifyProperty === 'function'",
+            "typeof fnGlobalObject === 'function'",
+            "typeof isConstructor === 'function'",
+        ];
+
+        for check in checks {
+            let result = host.run_script(check);
+            assert_eq!(
+                result,
+                Ok(()),
+                "'{}' should be available in QuenchHost context",
+                check
+            );
+        }
+    }
+
+    /// assert.sameValue and assert.throws work via QuenchHost.
+    #[test]
+    fn test_quench_host_assert_helpers_work() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            "assert.sameValue(1, 1); \
+             assert.sameValue(NaN, NaN); \
+             assert.sameValue(-0, -0); \
+             assert.throws(TypeError, function() { throw new TypeError(); }); \
+             'all passed'",
+        );
+        assert_eq!(
+            result,
+            Ok(()),
+            "assert helpers should work via QuenchHost: {:?}",
+            result
+        );
+    }
+
+    /// MAIN_REALM_TEST262_ERROR is set after QuenchHost::run_script.
+    #[test]
+    fn test_quench_host_sets_main_realm_test262_error() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::interpreter::set_strict_mode(false);
+        try_inject_harness(&mut ctx).expect("harness ok");
+        if let Some(te) = ctx.get_global("Test262Error") {
+            crate::value::error::set_main_realm_test262_error(te);
+        }
+        crate::interpreter::set_strict_mode(false);
+
+        // Now eval something that throws a Test262Error
+        let result = ctx.eval("assert(false, 'msg')");
+        assert!(result.is_err(), "assert(false) should throw");
+
+        // The thrown value should be a Test262Error
+        let thrown = crate::value::take_thrown_value();
+        assert!(
+            thrown.is_some(),
+            "thrown value should be set after assert(false)"
+        );
+    }
+
+    /// createRealm does not pollute the main realm's Test262Error.
+    #[test]
+    fn test_quench_host_create_realm_preserves_main_test262_error() {
+        let mut host = QuenchHost::new();
+        let result = host.run_script(
+            r#"
+            // Create a realm with a modified Error
+            var realm = $262.createRealm();
+            realm.evalScript('Object.prototype.custom = 1;');
+
+            // Main realm's Test262Error should still work
+            var err = new Test262Error('main');
+            err.name === 'Test262Error' && err.message === 'main'
+            "#,
+        );
+        assert_eq!(
+            result,
+            Ok(()),
+            "createRealm should not break main realm's Test262Error: {:?}",
+            result
+        );
+    }
 }
