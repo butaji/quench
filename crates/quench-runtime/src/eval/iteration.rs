@@ -16,6 +16,7 @@ use crate::interpreter::{
 };
 use crate::value::object::enumerate_for_in_keys;
 use crate::value::object::helpers::ObjData;
+use crate::value::generator::{ForOfResume, ForOfSuspend};
 use crate::value::{JsError, Object, Value};
 
 /// Get an iterator for for-of/for-in loops (materialized; spread/destructuring).
@@ -104,14 +105,6 @@ enum ForOfIterResult {
     Break(Value),
     Step(Value),
     Yield(Value, bool),
-}
-
-#[derive(Clone, Default)]
-struct ForOfResume {
-    body_only: bool,
-    body_tail: Option<Vec<Statement>>,
-    mid_delegate: bool,
-    init: bool,
 }
 
 type ForOfPending = Option<(Value, ForOfResume)>;
@@ -267,12 +260,18 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
             Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Break(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Yield(val, suspend_init)) => {
+                // If we yielded during init/assign, run.pending is None (not yet set).
+                // Capture the current item so on resume we use the same item, not a new iter.next().
+                // Also set init=true so that on resume, need_init=true and we RE-RUN init/assign.
+                if run.pending.is_none() && !matches!(item, Value::Undefined) {
+                    run.pending = Some((item.clone(), ForOfResume { init: suspend_init, ..Default::default() }));
+                }
                 let body_tail = if suspend_init {
                     None
                 } else {
                     crate::value::generator_replay::body_tail_after_yield(run.body, true)
                 };
-                save_for_of_suspend(crate::value::generator::ForOfSuspend {
+                save_for_of_suspend(ForOfSuspend {
                     iterator: Rc::clone(&run.iterator),
                     index: run.index,
                     item: item.clone(),
@@ -285,6 +284,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     loop_binding: run.loop_binding,
                     per_iteration,
                     in_arrow_function: run.in_arrow_function,
+                    pending: run.pending.clone(),
                 });
                 return Ok(val);
             }
@@ -388,7 +388,20 @@ fn run_for_of_iteration(
                 None => Ok(ForOfIterResult::Step(body_val)),
             }
         }
-        Err(e) => Err(e),
+        Err(e) => {
+            // When array_destructuring_impl detects ControlFlow::Return pending from
+            // generator.return(), it returns Err("Return completion") to signal:
+            // "close the iterator, exit the for-of without running the body".
+            // The return value is stored in the thrown value. Extract it and
+            // propagate as ForOfIterResult::Done — NOT as an error (which would
+            // re-close the iterator in eval_for_of_iterator's abrupt_close).
+            if e.to_string() == "Return completion" {
+                let val = crate::value::take_thrown_value().unwrap_or(Value::Undefined);
+                set_control_flow(ControlFlow::Return(val.clone()));
+                return Ok(ForOfIterResult::Done(val));
+            }
+            Err(e)
+        }
     }
 }
 
@@ -436,15 +449,7 @@ pub fn eval_for_of(
             env,
             in_arrow_function: suspend.in_arrow_function,
             index: suspend.index,
-            pending: Some((
-                suspend.item,
-                ForOfResume {
-                    body_only: true,
-                    body_tail: suspend.body_tail,
-                    mid_delegate: suspend.resume_mid_delegate,
-                    init: suspend.resume_init,
-                },
-            )),
+            pending: suspend.pending,
         });
     }
 
@@ -1333,5 +1338,55 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result, Value::Number(2.0));
+    }
+
+    /// Reproduces test262: for-of/dstr/array-elem-iter-rtrn-close.js
+    /// When generator.return() is called on a generator with a destructuring
+    /// for-of body, IteratorClose must be called BEFORE the body executes.
+    #[test]
+    fn for_of_destructuring_generator_return_closes_iterator_before_body() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "var nextCount = 0; \
+             var returnCount = 0; \
+             var unreachable = 0; \
+             var iterator = { \
+               next: function() { nextCount += 1; return {done: false, value: undefined}; }, \
+               return: function() { returnCount += 1; return {}; } \
+             }; \
+             var iterable = {}; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             function* g() { \
+               for ([ {} = yield ] of [iterable]) { unreachable += 1; } \
+             } \
+             var iter = g(); \
+             iter.next(); \
+             iter.return(777); \
+             JSON.stringify([returnCount, unreachable])",
+        );
+        match result {
+            Ok(Value::String(s)) => {
+                assert_eq!(s.as_str(), "[1,0]", "expected IteratorClose before body, got {s}");
+            }
+            Ok(v) => panic!("expected string [1,0], got {v:?}"),
+            Err(e) => panic!("expected [1,0], got error: {e}"),
+        }
+    }
+
+    /// Reproduces generator-close-via-return.js
+    #[test]
+    fn for_of_generator_return_closes_via_return() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "var finallyCount = 0; \
+             function* values() { \
+               try { yield; } finally { finallyCount += 1; } \
+             } \
+             var iterable = values(); \
+             iterable.next(); \
+             iterable.return(0); \
+             finallyCount",
+        );
+        assert_eq!(result.unwrap(), Value::Number(1.0));
     }
 }

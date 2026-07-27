@@ -124,7 +124,8 @@ pub fn eval_delete(
                     }
                 }
                 Value::NativeFunction(nf) => {
-                    let configurable = prop_key == "name" || prop_key == "length";
+                    let flags = nf.get_property_flags(&prop_key);
+                    let configurable = flags.map_or(true, |f| f.configurable);
                     if configurable {
                         nf.as_ref().remove_property(&prop_key);
                     }

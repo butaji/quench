@@ -26,6 +26,18 @@ pub struct ForOfSuspend {
     pub loop_binding: Option<crate::ast::VarKind>,
     pub per_iteration: bool,
     pub in_arrow_function: bool,
+    /// The pending (item, resume) from the current iteration — must be restored
+    /// on resume so `take_iterator_step` is NOT called again.
+    pub pending: Option<(Value, ForOfResume)>,
+}
+
+/// Minimal snapshot of the per-iteration resume state.
+#[derive(Debug, Clone, Default)]
+pub struct ForOfResume {
+    pub body_only: bool,
+    pub body_tail: Option<Vec<Statement>>,
+    pub mid_delegate: bool,
+    pub init: bool,
 }
 
 /// Generator state
@@ -162,6 +174,11 @@ impl GeneratorObject {
 
         // Store the resume value so yield expressions can find it
         crate::interpreter::set_generator_resume_value(self.next_value.clone());
+        // Save any pending ControlFlow (e.g. from generator.return() / generator.throw())
+        // so the yield expression handler (eval/expression.rs) can detect it.
+        // Only Yield/YieldDelegate variants are stale carry-over from a prior yield;
+        // Return/Throw are fresh completions that must be passed through.
+        let pending_cf = crate::interpreter::take_control_flow();
 
         if let Some(s) = self.for_of_suspend.take() {
             crate::eval::iteration::stage_stored_for_of_suspend(s);
@@ -174,6 +191,19 @@ impl GeneratorObject {
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
+
+        // Re-set Return/Throw control flow so eval_yield can detect it.
+        // Yield/YieldDelegate variants are stale and NOT re-set (they were
+        // either handled by the loop body or are left over from a prior suspend).
+        if let Some(cf) = &pending_cf {
+            match cf {
+                crate::interpreter::ControlFlow::Return(_)
+                | crate::interpreter::ControlFlow::Throw(_) => {
+                    crate::interpreter::set_control_flow(cf.clone());
+                }
+                _ => {}
+            }
+        }
 
         let start = self.pending_stmt.unwrap_or(0);
         let mut completion = Value::Undefined;
@@ -317,6 +347,21 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                     done: true,
                 }
                 .to_object());
+            }
+            // If generator is suspended mid for-of, close the inner iterator
+            // before resuming. Per ES §25.4.3.7 GeneratorResumeAbrupt:
+            // "If generatorKind is async, return ? AsyncGeneratorResolve(generator,
+            // value, true)." — but for sync generators, IteratorClose must run
+            // so that for-of closes its inner iterator before the return
+            // completion propagates through the generator body.
+            if let Some(ref suspend) = g.for_of_suspend {
+                if let Some(close_err) =
+                    crate::eval::object::call_iterator_return(
+                        &suspend.iterator,
+                    )
+                {
+                    return Err(close_err);
+                }
             }
             crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
                 arg.clone(),

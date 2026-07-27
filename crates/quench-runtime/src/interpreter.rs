@@ -102,6 +102,10 @@ pub(crate) fn take_generator_resume_value() -> Value {
     GENERATOR_RESUME_VALUE.with(|cell| cell.replace(Value::Undefined))
 }
 
+pub(crate) fn peek_generator_resume_value() -> Value {
+    GENERATOR_RESUME_VALUE.with(|cell| cell.borrow().clone())
+}
+
 pub(crate) fn set_generator_yield(val: Value) {
     GENERATOR_YIELD_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
 }
@@ -122,6 +126,25 @@ thread_local! {
 #[allow(dead_code)]
 pub(crate) fn set_generator_return(val: Value) {
     GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = Some(val));
+}
+
+thread_local! {
+    /// Property key used for assignment after a yield in a computed property name
+    /// (e.g. `x[yield]` in destructuring). The value is the argument passed to
+    /// generator.next(val).
+    static DESTRUCTURING_YIELD_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_destructuring_yield_key(val: Value) {
+    DESTRUCTURING_YIELD_KEY.with(|cell| *cell.borrow_mut() = Some(val));
+}
+
+pub(crate) fn take_destructuring_yield_key() -> Option<Value> {
+    DESTRUCTURING_YIELD_KEY.with(|cell| cell.borrow_mut().take())
+}
+
+pub(crate) fn peek_destructuring_yield_key() -> bool {
+    DESTRUCTURING_YIELD_KEY.with(|cell| cell.borrow().is_some())
 }
 
 pub(crate) fn take_generator_return() -> Option<Value> {

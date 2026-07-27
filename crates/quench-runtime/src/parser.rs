@@ -26,6 +26,17 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     check_strict_fn_params(&ret.program)?;
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
+    early_errors::check_break_continue_errors(&ret.program)?;
+    // oxc_semantic-based early error detection
+    {
+        let semantic_ret = oxc_semantic::SemanticBuilder::new()
+            .with_build_nodes(false)
+            .build(&ret.program);
+        if !semantic_ret.diagnostics.is_empty() {
+            let msg = format!("{:?}", semantic_ret.diagnostics);
+            return Err(JsError(format!("SyntaxError: {}", msg)));
+        }
+    }
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
 
@@ -71,7 +82,7 @@ fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsErro
         }
         let mut names = Vec::new();
         for param in &params.items {
-            if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind
+            if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) = &param.pattern
             {
                 let name = ident.name.as_str();
                 if name == "arguments" || name == "eval" {
@@ -215,8 +226,8 @@ fn walk_body_expr(expr: &oxc::ast::ast::Expression, strict: bool) -> Result<(), 
             if body_is_strict {
                 // Check for eval/arguments as parameter names
                 for param in &arrow.params.items {
-                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) =
-                        &param.pattern.kind
+                    if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) =
+                        &param.pattern
                     {
                         let name = ident.name.as_str();
                         if name == "eval" || name == "arguments" {
@@ -253,7 +264,7 @@ fn check_fn_strict_body(
     }
     // Check for eval/arguments as parameter names
     for param in &params.items {
-        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+        if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) = &param.pattern {
             let name = ident.name.as_str();
             if name == "eval" || name == "arguments" {
                 return Err(JsError(format!(

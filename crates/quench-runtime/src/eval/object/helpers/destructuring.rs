@@ -98,56 +98,84 @@ fn array_destructuring_impl(
     env: &Rc<RefCell<Environment>>,
     init: bool,
 ) -> Result<(), JsError> {
+    // If GENERATOR_RESUME_VALUE is defined, we're resuming after a yield in a
+    // computed property name (e.g. `x[yield]`). Save it as the property key so
+    // that object_destructuring_impl uses the correct key instead of re-yielding.
+    // Use peek (not take) to leave the value for try_replay_yield to consume.
+    let resume_val = crate::interpreter::peek_generator_resume_value();
+    if !matches!(resume_val, Value::Undefined) {
+        crate::interpreter::set_destructuring_yield_key(resume_val.clone());
+    }
+
     // When a generator is resumed with an abrupt completion (generator.return()
     // / generator.throw()), the destructuring restarts from the top with the
     // Return/Throw control flow pending. Close the iterator and propagate the
-    // completion BEFORE re-running anything — obtaining the iterator calls
-    // user code (@@iterator) which would clobber the pending completion.
-    if !crate::interpreter::peek_generator_yield() {
-        match crate::interpreter::take_control_flow() {
-            Some(crate::interpreter::ControlFlow::Return(val)) => {
-                if let Ok(iter) = iterator_from_value(value) {
-                    if let Some(err) = call_iterator_return(&iter) {
-                        return Err(err);
-                    }
+    // completion BEFORE the destructuring runs — otherwise the destructuring
+    // may throw on the return value (e.g. `{} = 777`) before we even get to
+    // the Return check.
+    match crate::interpreter::take_control_flow() {
+        Some(crate::interpreter::ControlFlow::Return(val)) => {
+            if let Ok(iter) = iterator_from_value(value) {
+                if let Some(err) = call_iterator_return(&iter) {
+                    return Err(err);
                 }
-                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(val));
-                return Ok(());
             }
-            Some(crate::interpreter::ControlFlow::Throw(val)) => {
-                if let Ok(iter) = iterator_from_value(value) {
-                    // IteratorClose on throw: original throw takes precedence.
-                    let _close_err = call_iterator_return(&iter);
-                }
-                crate::value::set_thrown_value(val);
-                return Err(JsError("Generator threw".to_string()));
-            }
-            Some(other) => crate::interpreter::set_control_flow(other),
-            None => {}
+            // Throw to signal: exit the for-of loop without running the body.
+            // V8 does NOT re-evaluate the destructuring on generator.return();
+            // the for-of is effectively "done" since it consumed the iterator
+            // value in the initial iteration and is just waiting for the next.
+            crate::value::set_thrown_value(val);
+            return Err(JsError("Return completion".to_string()));
         }
+        Some(crate::interpreter::ControlFlow::Throw(val)) => {
+            if let Ok(iter) = iterator_from_value(value) {
+                // IteratorClose on throw: original throw takes precedence.
+                let _close_err = call_iterator_return(&iter);
+            }
+            crate::value::set_thrown_value(val);
+            return Err(JsError("Generator threw".to_string()));
+        }
+        Some(cf) => {
+            // Yield/YieldDelegate: consume the ControlFlow and GENERATOR_YIELD_VALUE so
+            // that check_generator_flow (called inside array_with_iterator_impl) cannot
+            // re-trigger on the same yield. The DESTRUCTURING_YIELD_KEY was already
+            // saved at the top of this function.
+            if matches!(cf, crate::interpreter::ControlFlow::Yield(_) | crate::interpreter::ControlFlow::YieldDelegate(_)) {
+                let _ = crate::interpreter::take_generator_yield();
+            } else {
+                crate::interpreter::set_control_flow(cf);
+            }
+        }
+        None => {}
     }
-    if let Value::String(s) = value {
+
+    let iter: Rc<RefCell<Object>> = if let Value::String(s) = value {
         let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
         let len = chars.len();
         let mut arr = Object::new(ObjectKind::Array);
         arr.elements = chars;
-        arr.properties
-            .insert("length".to_string(), Value::Number(len as f64));
-        return array_with_iterator_impl(bindings, &Rc::new(RefCell::new(arr)), env, init);
-    }
-    let Value::Object(arr_rc) = value else {
-        if let Value::Generator(gen) = value {
-            let iter = crate::value::generator::generator_as_iterator_object(Rc::clone(gen));
-            return array_with_iterator_impl(bindings, &iter, env, init);
+        arr.properties.insert("length".to_string(), Value::Number(len as f64));
+        Rc::new(RefCell::new(arr))
+    } else if let Value::Object(arr_rc) = value {
+        if arr_rc.borrow().kind == ObjectKind::Array {
+            obtain_iterator(arr_rc)?
+        } else {
+            obtain_iterator(arr_rc)?
         }
+    } else if let Value::Generator(gen) = value {
+        crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
+    } else {
         return Err(JsError("Cannot destructure non-iterable value".to_string()));
     };
-    if arr_rc.borrow().kind == ObjectKind::Array {
-        let iter = obtain_iterator(arr_rc)?;
-        return array_with_iterator_impl(bindings, &iter, env, init);
-    }
-    let iter = obtain_iterator(arr_rc)?;
-    array_with_iterator_impl(bindings, &iter, env, init)
+
+    // After array_with_iterator_impl completes, check if a generator yield was
+    // triggered during destructuring (e.g. `x = yield` as a default value).
+    // The outer for-of handler uses this flag to suspend the generator correctly.
+    // On generator resume, init_to/assign_to is called again, re-entering this
+    // function — the loop is not needed as the replay mechanism in eval_yield
+    // handles re-evaluation of the yield expression on the second entry.
+    array_with_iterator_impl(bindings, &iter, env, init)?;
+    Ok(())
 }
 
 /// Obtain an iterator object from an iterable per ES GetIterator.
@@ -211,17 +239,16 @@ pub fn assign_array_with_iterator(
 }
 
 /// Check for generator yield or pending control flow after an expression evaluation
-/// step. If the generator yielded, return `Ok` to let the suspension propagate.
+/// step. If the generator yielded, re-set GENERATOR_YIELD_VALUE so the outer
+/// caller (for-of init/assign) can detect it and suspend correctly.
 /// If there's a Return or Throw control flow, close the iterator and propagate.
 #[must_use]
 fn check_generator_flow(
     iterator: &Rc<RefCell<Object>>,
     iterator_done: &mut bool,
 ) -> Option<Result<(), JsError>> {
-    if crate::interpreter::peek_generator_yield() {
-        return Some(Ok(()));
-    }
     let cf = crate::interpreter::take_control_flow()?;
+    eprintln!("[DEBUG check_generator_flow] cf={:?}", cf);
     match cf {
         crate::interpreter::ControlFlow::Return(val) => {
             if !*iterator_done {
@@ -240,6 +267,19 @@ fn check_generator_flow(
             crate::value::set_thrown_value(val);
             Some(Err(JsError("Generator threw".to_string())))
         }
+        crate::interpreter::ControlFlow::Yield(yielded_val) => {
+            // Consume GENERATOR_YIELD_VALUE so subsequent check_generator_flow calls
+            // (for later bindings in the same destructuring) don't re-trigger. The
+            // first call handles the yield; later calls should return None.
+            let _ = crate::interpreter::take_generator_yield();
+            crate::interpreter::set_generator_yield(yielded_val);
+            Some(Ok(()))
+        }
+        crate::interpreter::ControlFlow::YieldDelegate(yielded_val) => {
+            let _ = crate::interpreter::take_generator_yield();
+            crate::interpreter::set_generator_yield(yielded_val);
+            Some(Ok(()))
+        }
         other => {
             crate::interpreter::set_control_flow(other);
             None
@@ -255,6 +295,7 @@ fn array_with_iterator_impl(
 ) -> Result<(), JsError> {
     let mut index = 0;
     let mut iterator_done = false;
+    eprintln!("[DEBUG array_with_iterator_impl] START peek_yield={:?} dest_key={:?}", crate::interpreter::peek_generator_yield(), crate::interpreter::peek_destructuring_yield_key());
     let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
         if init {
             init_binding_elem(binding, val, env)
@@ -266,7 +307,9 @@ fn array_with_iterator_impl(
         // When the generator is resumed with a pending Return/Throw (from
         // generator.return()/throw()), close the iterator and propagate
         // BEFORE re-running iterator steps for this binding.
+        eprintln!("[DEBUG array_with_iterator_impl] loop top peek_yield={:?}", crate::interpreter::peek_generator_yield());
         if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
+            eprintln!("[DEBUG array_with_iterator_impl] check_generator_flow returned Some");
             return result;
         }
         if let BindingElement::Rest(inner) = binding {
@@ -287,9 +330,7 @@ fn array_with_iterator_impl(
                 }
                 return Err(error);
             }
-            if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
-                return result;
-            }
+            // Yield from apply must propagate to array_destruct_impl.
             return Ok(());
         }
         if let BindingElement::AssignmentTarget(target) = binding {
@@ -304,8 +345,11 @@ fn array_with_iterator_impl(
             }
         }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
+        eprintln!("[DEBUG array_with_iterator_impl] took step: elem_value={:?} done={}", elem_value, done);
         iterator_done = done;
+        eprintln!("[DEBUG array_with_iterator_impl] applying binding peek_yield={:?}", crate::interpreter::peek_generator_yield());
         if let Err(error) = apply(binding, &elem_value) {
+            eprintln!("[DEBUG array_with_iterator_impl] apply returned Err");
             let original = crate::value::take_thrown_value();
             if !iterator_done {
                 let _close_err = call_iterator_return(iterator);
@@ -315,9 +359,11 @@ fn array_with_iterator_impl(
             }
             return Err(error);
         }
-        if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
-            return result;
-        }
+        // NOTE: No check_generator_flow here. If yield was triggered during
+        // apply (e.g. from a nested destructuring computed property key),
+        // it must propagate to array_destruct_impl's loop so the outer
+        // for-of handler can see it. The check at the top of this function
+        // (line ~302) handles Return/Throw from generator.return/throw.
     }
     if !iterator_done {
         if let Some(err) = call_iterator_return(iterator) {
@@ -584,6 +630,9 @@ fn object_destructuring_impl(
     env: &Rc<RefCell<Environment>>,
     init: bool,
 ) -> Result<(), JsError> {
+    static CALL_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let call_num = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    eprintln!("[DEBUG object_destructure_impl] call #{} peek_yield={} peek_dest_key={}", call_num, crate::interpreter::peek_generator_yield(), crate::interpreter::peek_destructuring_yield_key());
     let obj = match value {
         Value::Null | Value::Undefined => {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -617,13 +666,37 @@ fn object_destructuring_impl(
         }
         if let BindingElement::AssignmentTarget(target) = binding {
             let key_str = compute_property_key(key, env)?;
-            excluded.insert(key_str.clone());
-            crate::eval::object::touch_assignment_target(target, env)?;
-            let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
-            if init {
-                crate::eval::object::init_to(target, &prop_value, env)?;
+            // If yield was triggered during computed property key evaluation
+            // (e.g. `x[yield]`), re-extract the property name with the resumed
+            // value — that is the value passed to generator.next(val).  Then retry
+            // the assignment with the correct property name.
+            if crate::interpreter::peek_destructuring_yield_key() {
+                // Yield was triggered during computed property key evaluation.
+                // Use the key saved from generator.next(val) as the property name.
+                let resumed_key = crate::interpreter::take_destructuring_yield_key().unwrap();
+                let key_str = match &resumed_key {
+                    Value::Symbol(s) => s.property_key(),
+                    _ => crate::value::to_js_string(&resumed_key),
+                };
+                excluded.insert(key_str.clone());
+                crate::eval::object::touch_assignment_target(target, env)?;
+                let prop_value =
+                    crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
+                if init {
+                    crate::eval::object::init_to(target, &prop_value, env)?;
+                } else {
+                    crate::eval::object::assign_to(target, &prop_value, env)?;
+                }
             } else {
-                crate::eval::object::assign_to(target, &prop_value, env)?;
+                excluded.insert(key_str.clone());
+                crate::eval::object::touch_assignment_target(target, env)?;
+                let prop_value =
+                    crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
+                if init {
+                    crate::eval::object::init_to(target, &prop_value, env)?;
+                } else {
+                    crate::eval::object::assign_to(target, &prop_value, env)?;
+                }
             }
         } else {
             let key_str = extract_destructure_key(key, env)?;

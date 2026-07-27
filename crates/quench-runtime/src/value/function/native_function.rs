@@ -224,7 +224,13 @@ impl NativeFunction {
 
     /// Remove a property from this native function.
     /// Returns true if the property was present.
+    /// Follows the spec: non-configurable properties cannot be deleted.
     pub fn remove_property(&self, key: &str) -> bool {
+        if let Some(flags) = self.property_flags.borrow().get(key) {
+            if !flags.configurable {
+                return false;
+            }
+        }
         let removed = self.properties.borrow_mut().remove(key).is_some();
         self.property_flags.borrow_mut().remove(key);
         removed

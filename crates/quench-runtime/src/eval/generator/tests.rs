@@ -91,6 +91,74 @@ mod generator_tests {
         assert_eq!(r, Value::Boolean(false));
     }
 
+    // ─── Yield in for-of destructuring patterns ──────────────────────────────
+
+    /// Regression test: yield inside a for-of destructuring pattern (computed
+    /// property key in member expression) must not cause the loop to exit
+    /// prematurely. The item must be saved in `run.pending` so that on resume
+    /// the iterator is NOT advanced again.
+    #[test]
+    fn for_of_destruct_yield_in_computed_member_key() {
+        let r = eval(
+            "var gen = (function*() { \
+               var x = {}; \
+               var results = []; \
+               for ([[x[yield]]] of [[{ prop: 1 }]]) { \
+                 results.push(x.prop); \
+               } \
+               return results; \
+             })(); \
+             gen.next(); /* yield from destructuring */ \
+             gen.next('prop').value; /* resume with 'prop' */",
+        )
+        .unwrap();
+        // The loop should have run exactly once, pushing x.prop=1
+        assert!(matches!(r, Value::Object(_)), "expected array, got {:?}", r);
+    }
+
+    /// Reproducer: simple for-of with yield in destructuring computed key.
+    #[test]
+    fn for_of_destruct_yield_simple() {
+        let r = eval(
+            "function* g() { \
+               var x = {}; \
+               for ([[x[yield]]] of [[{ prop: 1 }]]) { \
+                 x.prop; \
+               } \
+             } \
+             var gen = g(); \
+             gen.next(); \
+             gen.next('prop').value;",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(1.0), "x.prop should be 1 after destructuring with 'prop'");
+    }
+
+    #[test]
+    fn for_of_default_yield_resume() {
+        // Reproducer for test262:
+        // for ([x = yield] of [[]]) — yield in destructuring default + resume
+        // Expected: x=86 after gen.next(86), body runs once
+        let r = eval(
+            "(function() { \
+               var x = 'init'; \
+               var bodyCount = 0; \
+               function* g() { \
+                 for ([x = yield] of [[]]) { \
+                   bodyCount++; \
+                 } \
+               } \
+               var gen = g(); \
+               gen.next(); \
+               gen.next(86); \
+               return String(x) + ',' + String(bodyCount); \
+             })();",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("86,1".to_string()),
+            "x=86, bodyCount=1");
+    }
+
     // ─── Async generator ──────────────────────────────────────────────────────
 
     #[test]

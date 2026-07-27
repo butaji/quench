@@ -309,7 +309,7 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
 
 /// Register the eval function as a global
 pub fn register_eval_function(ctx: &mut Context) -> Result<(), JsError> {
-    let eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
+    let mut eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
         let source = args
             .first()
             .map(crate::value::to_js_string)
@@ -418,6 +418,29 @@ pub fn register_eval_function(ctx: &mut Context) -> Result<(), JsError> {
         let ctx = unsafe { &mut *ctx_ptr };
         eval_impl(args, ctx)
     });
+
+    // Per spec: eval.length is 1, non-writable, non-configurable, non-enumerable
+    eval_fn.define_property(
+        "length",
+        Value::Number(1.0),
+        crate::value::object::helpers::PropertyFlags {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+            value: Some(Value::Number(1.0)),
+        },
+    );
+    // eval.name is "eval", non-writable, non-configurable, non-enumerable
+    eval_fn.define_property(
+        "name",
+        Value::String("eval".to_string()),
+        crate::value::object::helpers::PropertyFlags {
+            writable: false,
+            enumerable: false,
+            configurable: false,
+            value: Some(Value::String("eval".to_string())),
+        },
+    );
 
     ctx.set_global("eval".to_string(), Value::NativeFunction(Rc::new(eval_fn)));
     Ok(())

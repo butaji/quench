@@ -345,6 +345,12 @@ pub fn count_yields_in_expr(expr: &Expression) -> usize {
         }
         Expression::Sequence(exprs) => exprs.iter().map(count_yields_in_expr).sum(),
         Expression::BlockExpr(stmts) => stmts.iter().map(count_yields_in_stmt).sum(),
+        Expression::ForOf { iterable, body, .. } => {
+            count_yields_in_expr(iterable) + count_yields_in_stmt(body)
+        }
+        Expression::ForIn { object, body, .. } => {
+            count_yields_in_expr(object) + count_yields_in_stmt(body)
+        }
         _ => 0,
     }
 }
