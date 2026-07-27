@@ -460,4 +460,60 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_push_appends() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2]; \
+             var len = arr.push(3, 4); \
+             len === 4 && arr.length === 4 && arr[0] === 1 && arr[1] === 2 && arr[2] === 3 && arr[3] === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_pop_removes_last() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3]; \
+             var popped = arr.pop(); \
+             popped === 3 && arr.length === 2 && arr[0] === 1 && arr[1] === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_slice_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3, 4, 5]; \
+             var sliced = arr.slice(1, 3); \
+             sliced.length === 2 && sliced[0] === 2 && sliced[1] === 3 && arr.length === 5",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_concat_combines() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var a = [1, 2]; \
+             var b = [3, 4]; \
+             var c = a.concat(b); \
+             c.length === 4 && c[0] === 1 && c[1] === 2 && c[2] === 3 && c[3] === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_reverse_reverses() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var arr = [1, 2, 3]; \
+             arr.reverse(); \
+             arr.length === 3 && arr[0] === 3 && arr[1] === 2 && arr[2] === 1",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

@@ -174,3 +174,106 @@ Array.prototype.join = function ArrayJoin(separator) {
   }
   return R;
 };
+
+// Array.prototype.push (ES2025 §23.1.3.24)
+Array.prototype.push = function ArrayPush() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var argCount = arguments.length;
+  for (var n = 0; n < argCount; n++) {
+    O[len + n] = arguments[n];
+  }
+  var newLen = len + argCount;
+  O.length = newLen;
+  return newLen;
+};
+
+// Array.prototype.pop (ES2025 §23.1.3.23)
+Array.prototype.pop = function ArrayPop() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.pop called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  if (len === 0) {
+    O.length = 0;
+    return undefined;
+  }
+  len--;
+  var element = O[len];
+  delete O[len];
+  O.length = len;
+  return element;
+};
+
+// Array.prototype.slice (ES2025 §23.1.3.29)
+Array.prototype.slice = function ArraySlice(start, end) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.slice called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var relativeStart = start === undefined ? 0 : start;
+  var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
+  var relativeEnd = end === undefined ? len : end;
+  var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
+  var count = Math.max(final - k, 0);
+  var A = new Array(count);
+  var n = 0;
+  while (k < final) {
+    if (k in O) A[n] = O[k];
+    k++;
+    n++;
+  }
+  return A;
+};
+
+// Array.prototype.concat (ES2025 §23.1.3.4)
+Array.prototype.concat = function ArrayConcat() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.concat called on null or undefined");
+  var O = ToObject(this);
+  var A = new Array(0);
+  var n = 0;
+  var items = [O];
+  for (var i = 0; i < arguments.length; i++) items.push(arguments[i]);
+  for (var i = 0; i < items.length; i++) {
+    var E = items[i];
+    var spreadable = IsArray(E);
+    if (spreadable) {
+      var k = 0;
+      var len = E.length >>> 0;
+      while (k < len) {
+        if (k in E) A[n++] = E[k];
+        k++;
+      }
+    } else {
+      A[n++] = E;
+    }
+  }
+  return A;
+};
+
+// Array.prototype.reverse (ES2025 §23.1.3.27)
+Array.prototype.reverse = function ArrayReverse() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reverse called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var middle = Math.floor(len / 2);
+  var lower = 0;
+  while (lower !== middle) {
+    var upper = len - lower - 1;
+    var lowerExists = lower in O;
+    var upperExists = upper in O;
+    var lowerValue = lowerExists ? O[lower] : undefined;
+    var upperValue = upperExists ? O[upper] : undefined;
+    if (lowerExists && upperExists) {
+      O[lower] = upperValue;
+      O[upper] = lowerValue;
+    } else if (lowerExists && !upperExists) {
+      O[upper] = lowerValue;
+      delete O[lower];
+    } else if (!lowerExists && upperExists) {
+      O[lower] = upperValue;
+      delete O[upper];
+    }
+    lower++;
+  }
+  return O;
+};
