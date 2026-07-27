@@ -42,6 +42,10 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("Map", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Map.js"))),
     // Phase 13: Set
     ("Set", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Set.js"))),
+    // Phase 14: WeakMap
+    ("WeakMap", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakMap.js"))),
+    // Phase 15: WeakSet
+    ("WeakSet", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/WeakSet.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
