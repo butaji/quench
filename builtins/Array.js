@@ -572,3 +572,40 @@ Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisA
   }
   return -1;
 };
+
+// Array.prototype.group (ES2025 §23.1.3.18)
+Array.prototype.group = function ArrayGroup(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.group called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  var groups = {};
+  for (var k = 0; k < len; k++) {
+    if (k in O) {
+      var key = callbackfn.call(thisArg, O[k], k, O);
+      if (groups[key] === undefined) groups[key] = [];
+      groups[key].push(O[k]);
+    }
+  }
+  return groups;
+};
+
+// Array.prototype.groupToMap (ES2025 §23.1.3.19)
+Array.prototype.groupToMap = function ArrayGroupToMap(callbackfn /*, thisArg */) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.groupToMap called on null or undefined");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var thisArg = arguments.length > 1 ? arguments[1] : undefined;
+  var map = new Map();
+  for (var k = 0; k < len; k++) {
+    if (k in O) {
+      var key = callbackfn.call(thisArg, O[k], k, O);
+      var items = map.get(key);
+      if (items === undefined) { items = []; map.set(key, items); }
+      items.push(O[k]);
+    }
+  }
+  return map;
+};

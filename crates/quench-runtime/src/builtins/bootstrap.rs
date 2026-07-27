@@ -727,4 +727,24 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn array_group_groups_by_key() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3, 4, 5].group(function(v) { return v % 2 === 0 ? 'even' : 'odd'; }); \
+             result.odd.length === 3 && result.even[0] === 2 && result.even[1] === 4"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_group_to_map_groups() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var result = [1, 2, 3].groupToMap(function(v) { return v > 1; }); \
+             result.get(true).length === 2 && result.get(false)[0] === 1"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
