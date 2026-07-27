@@ -333,15 +333,57 @@ pub fn make_ops_object() -> Value {
         match (&o, &desc) {
             (Value::Object(obj_rc), Value::Object(desc_rc)) => {
                 let desc_ref = desc_rc.borrow();
-                let flags = crate::value::object::helpers::PropertyFlags {
-                    value: desc_ref.get("value"),
-                    writable: desc_ref.get("writable").map_or(false, |v| crate::value::to_bool(&v)),
-                    enumerable: desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v)),
-                    configurable: desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v)),
-                };
-                let val = flags.value.clone().unwrap_or(Value::Undefined);
-                obj_rc.borrow_mut().define(&key, val, flags);
-                Ok(Value::Boolean(true))
+                let has_get = desc_ref.get("get");
+                let has_set = desc_ref.get("set");
+                let has_value = desc_ref.get("value");
+                let has_writable = desc_ref.get("writable");
+                
+                // Accessor descriptor
+                if has_get.is_some() || has_set.is_some() {
+                    if has_value.is_some() || has_writable.is_some() {
+                        let (_, err) = crate::value::error::create_js_error_with_type(
+                            "Invalid property descriptor: accessor and value/writable are mutually exclusive",
+                            "TypeError",
+                        );
+                        return Err(err);
+                    }
+                    if let Some(get) = &has_get {
+                        if !matches!(get, Value::Undefined) && !get.is_callable() {
+                            let (_, err) = crate::value::error::create_js_error_with_type(
+                                "Getter must be a function or undefined",
+                                "TypeError",
+                            );
+                            return Err(err);
+                        }
+                    }
+                    if let Some(set) = &has_set {
+                        if !matches!(set, Value::Undefined) && !set.is_callable() {
+                            let (_, err) = crate::value::error::create_js_error_with_type(
+                                "Setter must be a function or undefined",
+                                "TypeError",
+                            );
+                            return Err(err);
+                        }
+                    }
+                    let enumerable = desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v));
+                    let configurable = desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v));
+                    let acc_flags = crate::value::object::helpers::PropertyFlags {
+                        value: None, writable: false, enumerable, configurable,
+                    };
+                    obj_rc.borrow_mut().define_accessor(&key, has_get, has_set, acc_flags);
+                    Ok(Value::Boolean(true))
+                } else {
+                    // Data descriptor
+                    let val = has_value.clone().unwrap_or(Value::Undefined);
+                    let flags = crate::value::object::helpers::PropertyFlags {
+                        value: has_value,
+                        writable: has_writable.map_or(false, |v| crate::value::to_bool(&v)),
+                        enumerable: desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v)),
+                        configurable: desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v)),
+                    };
+                    obj_rc.borrow_mut().define(&key, val, flags);
+                    Ok(Value::Boolean(true))
+                }
             }
             _ => Ok(Value::Boolean(false)),
         }
