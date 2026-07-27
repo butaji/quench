@@ -378,6 +378,15 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "CreateObject", |args| {
+        let proto = args.first().cloned().unwrap_or(Value::Null);
+        let mut new_obj = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+        if let Value::Object(p) = &proto {
+            new_obj.prototype = Some(std::rc::Rc::clone(p));
+        }
+        Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(new_obj))))
+    });
+
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 

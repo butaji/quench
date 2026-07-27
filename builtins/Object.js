@@ -17,6 +17,7 @@ var IsFrozenObject = ops.IsFrozenObject;
 var DefineProp = ops.DefineProp;
 var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
+var CreateObject = ops.CreateObject;
 
 // Object.defineProperty (ES2025 §20.1.2.4)
 Object.defineProperty = function ObjectDefineProperty(O, P, Attributes) {
@@ -176,4 +177,12 @@ Object.getOwnPropertyDescriptors = function ObjectGetOwnPropertyDescriptors(O) {
 Object.getOwnPropertyNames = function ObjectGetOwnPropertyNames(O) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   return OwnKeys(ToObject(O));
+};
+
+// Object.create (ES2025 §20.1.2.2)
+Object.create = function ObjectCreate(proto, properties) {
+  if (proto !== null && typeof proto !== 'object') throw ThrowTypeError("Object prototype may only be an Object or null");
+  var obj = CreateObject(proto);
+  if (properties !== undefined) Object.defineProperties(obj, properties);
+  return obj;
 };
