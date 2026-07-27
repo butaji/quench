@@ -877,4 +877,11 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn math_max_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Math.max(1, 3, 2) === 3").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
