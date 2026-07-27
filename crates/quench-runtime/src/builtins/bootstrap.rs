@@ -160,4 +160,60 @@ mod tests {
         let r = ctx.eval("Object.entries({}).length === 0").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_assign_merges_objects() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var target = { a: 1 }; \
+             var source = { b: 2, c: 3 }; \
+             var result = Object.assign(target, source); \
+             result === target && target.a === 1 && target.b === 2 && target.c === 3",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_assign_overwrites_properties() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var target = { a: 1, b: 2 }; \
+             var source = { b: 3, c: 4 }; \
+             Object.assign(target, source); \
+             target.a === 1 && target.b === 3 && target.c === 4",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_assign_skips_null_source() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var target = { a: 1 }; \
+             Object.assign(target, null, { b: 2 }); \
+             target.a === 1 && target.b === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_assign_multiple_sources() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var target = {}; \
+             Object.assign(target, { a: 1 }, { b: 2 }, { c: 3 }); \
+             target.a === 1 && target.b === 2 && target.c === 3",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_assign_returns_target() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var target = {}; \
+             Object.assign(target, { a: 1 }) === target",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

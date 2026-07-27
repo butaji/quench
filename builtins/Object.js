@@ -4,6 +4,8 @@ var SameValue = ops.SameValue;
 var ThrowTypeError = ops.ThrowTypeError;
 var EnumerableOwnKeys = ops.EnumerableOwnKeys;
 var ToObject = ops.ToObject;
+var GetProperty = ops.GetProperty;
+var SetProperty = ops.SetProperty;
 
 // Object.is (ES2025 §20.1.2.12)
 Object.is = function ObjectIs(value1, value2) {
@@ -37,4 +39,22 @@ Object.entries = function ObjectEntries(O) {
     entries[i] = [keys[i], obj[keys[i]]];
   }
   return entries;
+};
+
+// Object.assign (ES2025 §20.1.2.1)
+Object.assign = function ObjectAssign(target, ...sources) {
+  var to = ToObject(target);
+  var len = sources.length;
+  for (var i = 0; i < len; i++) {
+    var nextSource = sources[i];
+    if (nextSource === null || nextSource === undefined) continue;
+    var from = ToObject(nextSource);
+    var keys = EnumerableOwnKeys(from);
+    var keysLen = keys.length;
+    for (var j = 0; j < keysLen; j++) {
+      var key = keys[j];
+      to[key] = from[key];
+    }
+  }
+  return to;
 };

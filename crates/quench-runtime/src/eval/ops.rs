@@ -210,6 +210,30 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "GetProperty", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        match &o {
+            Value::Object(obj_rc) => {
+                Ok(obj_rc.borrow().get(&key).unwrap_or(Value::Undefined))
+            }
+            _ => Ok(Value::Undefined),
+        }
+    });
+
+    set_op(&mut obj, "SetProperty", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let val = args.get(2).cloned().unwrap_or(Value::Undefined);
+        match &o {
+            Value::Object(obj_rc) => {
+                obj_rc.borrow_mut().set(&key, val);
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 
