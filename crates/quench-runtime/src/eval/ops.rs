@@ -151,6 +151,65 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "EnumerableOwnKeys", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        match &o {
+            Value::Object(obj_rc) => {
+                let obj_ref = obj_rc.borrow();
+                let keys: Vec<String> = obj_ref.properties.keys()
+                    .filter(|k| obj_ref.is_enumerable(k) && !k.contains('\0'))
+                    .cloned()
+                    .collect();
+                let arr = crate::value::object::Object::new_array_from(
+                    keys.into_iter().map(Value::String).collect()
+                );
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+            }
+            _ => {
+                let empty = crate::value::object::Object::new_array_from(vec![]);
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(empty))))
+            }
+        }
+    });
+
+    set_op(&mut obj, "OwnKeys", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        match &o {
+            Value::Object(obj_rc) => {
+                let keys: Vec<String> = obj_rc.borrow().properties.keys().cloned().collect();
+                let arr = crate::value::object::Object::new_array_from(
+                    keys.into_iter().map(Value::String).collect()
+                );
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+            }
+            _ => {
+                let empty = crate::value::object::Object::new_array_from(vec![]);
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(empty))))
+            }
+        }
+    });
+
+    set_op(&mut obj, "GetPrototypeOf", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        match &o {
+            Value::Object(obj_rc) => {
+                let proto = obj_rc.borrow().prototype.clone();
+                Ok(proto.map_or(Value::Null, |p| Value::Object(p)))
+            }
+            _ => Ok(Value::Null),
+        }
+    });
+
+    set_op(&mut obj, "IsExtensible", |args| {
+        let v = args.first().cloned().unwrap_or(Value::Undefined);
+        match &v {
+            Value::Object(o) => Ok(Value::Boolean(o.borrow().extensible)),
+            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(Value::Boolean(true)),
+            Value::Class(class) => Ok(Value::Boolean(class.is_extensible())),
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 

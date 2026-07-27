@@ -79,4 +79,48 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         bootstrap_js_builtins(&mut ctx).unwrap();
     }
+
+    #[test]
+    fn object_keys_returns_own_enumerable_keys() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 1, b: 2 }; \
+             var keys = Object.keys(o); \
+             keys.length === 2 && keys[0] === 'a' && keys[1] === 'b'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_keys_does_not_include_inherited() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var proto = { p: 1 }; \
+             var o = Object.create(proto); \
+             o.own = 2; \
+             Object.keys(o).length === 1 && Object.keys(o)[0] === 'own'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_keys_non_enumerable_not_included() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = {}; \
+             Object.defineProperty(o, 'hidden', { value: 1, enumerable: false }); \
+             o.visible = 2; \
+             Object.keys(o).length === 1 && Object.keys(o)[0] === 'visible'",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_keys_primitives_return_empty() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "Object.keys(42).length === 0",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
