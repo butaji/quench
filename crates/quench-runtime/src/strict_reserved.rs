@@ -8,7 +8,6 @@
 //! first offending name so the caller can raise a SyntaxError.
 
 use oxc::ast::ast::Program;
-use oxc::ast_visit::walk_assignment_expression;
 use oxc::ast_visit::Visit;
 
 /// Future reserved words that may not be used as a binding identifier in
@@ -71,7 +70,8 @@ impl<'a> Visit<'a> for ReservedBindingVisitor {
             }
         }
         // Default traversal (walks left and right children)
-        walk_assignment_expression(self, it);
+        self.visit_assignment_target(&it.left);
+        self.visit_expression(&it.right);
     }
 }
 

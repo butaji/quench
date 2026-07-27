@@ -1,0 +1,29 @@
+{
+  "failed": 5,
+  "groups": [
+    {
+      "count": 5,
+      "reason": "$DONOTEVALUATE called: code was reached",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-call-expression-bad-reference.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-call-expression-this.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-member-expression-bad-reference.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-member-expression-this.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/labeled-continue.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-call-expression-bad-reference.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-call-expression-this.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-member-expression-bad-reference.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/early-errors/invalid-names-member-expression-this.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/block/labeled-continue.js"
+      ]
+    }
+  ],
+  "passed": 16,
+  "path": "test/language/statements/block",
+  "skipped": 0,
+  "skips": [],
+  "stage": 14,
+  "total": 21
+}

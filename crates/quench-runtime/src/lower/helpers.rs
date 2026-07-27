@@ -62,7 +62,7 @@ pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
     }
     // Check parameter names for "eval" and "arguments"
     for param in &func.params.items {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+        if let ast::BindingPattern::BindingIdentifier(ident) = &param.pattern {
             if ident.name == "arguments" || ident.name == "eval" {
                 return Err(LowerError::new(format!(
                     "SyntaxError: Unexpected strict mode reserved word: {}",
@@ -74,7 +74,7 @@ pub fn validate_strict_params(func: &ast::Function) -> Result<(), LowerError> {
     // Check rest parameter (oxc 0.141: FormalParameters.rest is FormalParameterRest
     // wrapping a BindingRestElement in `.rest`).
     if let Some(rest) = &func.params.rest {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.rest.argument.kind {
+        if let ast::BindingPattern::BindingIdentifier(ident) = &rest.rest.argument {
             if ident.name == "arguments" || ident.name == "eval" {
                 return Err(LowerError::new(format!(
                     "SyntaxError: Unexpected strict mode reserved word: {}",

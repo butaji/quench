@@ -1,0 +1,193 @@
+{
+  "failed": 59,
+  "groups": [
+    {
+      "count": 1,
+      "reason": "#1: arguments doesn't exists",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A2.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A2.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "#1: arguments object doesn't exists",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A3_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A5_T1.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A3_T1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A5_T1.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "#1: arguments object don't exists",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A3_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A5_T2.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A3_T2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/S10.6_A5_T2.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-a-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-a-3.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-a-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-a-3.js"
+      ]
+    },
+    {
+      "count": 10,
+      "reason": "0 descriptor value should be 1; 0 value should be 1",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-define-property-consecutive.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-arguments.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-param.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-basic.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-define-property-consecutive.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-basic.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-arguments.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonconfigurable-descriptors-set-by-param.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-basic.js"
+      ]
+    },
+    {
+      "count": 3,
+      "reason": "0 descriptor value should be 2; 0 value should be 2",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-with-param-assign.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-param.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-param.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-with-param-assign.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonenumerable-nonwritable-descriptors-set-by-param.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-nonwritable-descriptors-set-by-param.js"
+      ]
+    },
+    {
+      "count": 7,
+      "reason": "Expected TypeError to be thrown but no exception was thrown.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-14-c-4-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-2gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-define-failure.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-14-c-4-s.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-2gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-strict-delete-4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/nonconfigurable-descriptors-define-failure.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "N !== N",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/unmapped/via-strict.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/unmapped/via-strict.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "Symbol(Symbol.iterator) descriptor value should be [...]; Symbol(Symbol.iterator) value should be [...]",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/Symbol.iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/unmapped/Symbol.iterator.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/Symbol.iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/unmapped/Symbol.iterator.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "foo(10, \\\"sss\\\", N !== N",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-10-c-ii-1-s.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-10-c-ii-1-s.js"
+      ]
+    },
+    {
+      "count": 26,
+      "reason": "sameValue failed: N !== N -",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-5-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/enumerable-configurable-accessor-descriptor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-delete-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-delete-2.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-5-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/enumerable-configurable-accessor-descriptor.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-2.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-3.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-4.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-delete-1.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-delete-2.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - desc.configurable",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-c-3-s.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-13-c-3-s.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - desc.enumerable",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-12-2.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/arguments-object/10.6-12-2.js"
+      ]
+    }
+  ],
+  "passed": 204,
+  "path": "test/language/arguments-object",
+  "skipped": 0,
+  "skips": [],
+  "stage": 49,
+  "total": 263
+}

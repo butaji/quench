@@ -151,7 +151,7 @@ fn lower_object_prop(
                 .items
                 .first()
                 .and_then(|p| {
-                    if let ast::BindingPatternKind::BindingIdentifier(ident) = &p.pattern.kind {
+                    if let ast::BindingPattern::BindingIdentifier(ident) = &p.pattern {
                         Some(ident.name.as_str().to_string())
                     } else {
                         None

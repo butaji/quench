@@ -91,7 +91,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
             let has_pattern = decl
                 .declarations
                 .iter()
-                .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
+                .any(|d| !matches!(d.id, ast::BindingPattern::BindingIdentifier(_)));
             if matches!(kind, VarKind::Var) {
                 let vd = if has_pattern {
                     crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
@@ -140,7 +140,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
             let has_pattern = decl
                 .declarations
                 .iter()
-                .any(|d| !matches!(d.id.kind, ast::BindingPatternKind::BindingIdentifier(_)));
+                .any(|d| !matches!(d.id, ast::BindingPattern::BindingIdentifier(_)));
             if matches!(kind, VarKind::Var) {
                 let vd = if has_pattern {
                     crate::lower::stmt::lower_for_in_var_pattern_hoist(decl)
@@ -182,8 +182,8 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
         catch
             .param
             .as_ref()
-            .and_then(|pat| match &pat.pattern.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
+            .and_then(|pat| match &pat.pattern {
+                ast::BindingPattern::BindingIdentifier(ident) => {
                     Some(ident.name.as_str().to_string())
                 }
                 _ => None,
@@ -319,8 +319,8 @@ pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
 
 fn lower_for_init_decl(decl: &ast::VariableDeclarator, _kind: VarKind) -> Option<ForInitDecl> {
     let init = decl.init.as_ref().and_then(|e| lower_expr(e).ok());
-    match &decl.id.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => Some(ForInitDecl {
+    match &decl.id {
+        ast::BindingPattern::BindingIdentifier(ident) => Some(ForInitDecl {
             name: Some(ident.name.as_str().to_string()),
             pattern: None,
             init,
@@ -342,13 +342,13 @@ pub fn lower_for_lhs(left: &ast::ForStatementLeft) -> Option<Expression> {
     match left {
         ast::ForStatementLeft::VariableDeclaration(decl) => {
             let first = decl.declarations.first()?;
-            match &first.id.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => {
+            match &first.id {
+                ast::BindingPattern::BindingIdentifier(ident) => {
                     Some(Expression::Identifier(ident.name.as_str().to_string()))
                 }
-                ast::BindingPatternKind::ArrayPattern(arr) => lower_array_lhs(arr),
-                ast::BindingPatternKind::ObjectPattern(obj) => lower_object_lhs(obj),
-                ast::BindingPatternKind::AssignmentPattern(_) => None,
+                ast::BindingPattern::ArrayPattern(arr) => lower_array_lhs(arr),
+                ast::BindingPattern::ObjectPattern(obj) => lower_object_lhs(obj),
+                ast::BindingPattern::AssignmentPattern(_) => None,
             }
         }
         // ForStatementLeft inherits AssignmentTarget variants via macro

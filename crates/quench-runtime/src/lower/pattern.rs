@@ -20,13 +20,13 @@ pub fn binding_to_expr(binding: BindingElement) -> Expression {
 
 /// Lower a binding pattern (for destructuring) to BindingElement
 pub fn lower_binding_elem(pat: &ast::BindingPattern) -> Result<BindingElement, LowerError> {
-    match &pat.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => {
+    match pat {
+        ast::BindingPattern::BindingIdentifier(ident) => {
             Ok(BindingElement::Identifier(ident.name.as_str().to_string()))
         }
-        ast::BindingPatternKind::ArrayPattern(arr) => lower_array_pattern(arr),
-        ast::BindingPatternKind::ObjectPattern(obj) => lower_object_pattern(obj),
-        ast::BindingPatternKind::AssignmentPattern(assign) => Ok(BindingElement::Default(
+        ast::BindingPattern::ArrayPattern(arr) => lower_array_pattern(arr),
+        ast::BindingPattern::ObjectPattern(obj) => lower_object_pattern(obj),
+        ast::BindingPattern::AssignmentPattern(assign) => Ok(BindingElement::Default(
             Box::new(lower_binding_elem(&assign.left)?),
             Box::new(lower_expr(&assign.right)?),
         )),
@@ -303,21 +303,21 @@ pub fn expand_nested_pattern(
     source_var: &str,
 ) -> Vec<Statement> {
     let source = Expression::Identifier(source_var.to_string());
-    match &pat.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => {
+    match pat {
+        ast::BindingPattern::BindingIdentifier(ident) => {
             vec![Statement::VarDeclaration {
                 kind,
                 name: ident.name.as_str().to_string(),
                 init: Some(source),
             }]
         }
-        ast::BindingPatternKind::ArrayPattern(arr) => {
+        ast::BindingPattern::ArrayPattern(arr) => {
             expand_nested_array_pattern(kind, arr, source_var)
         }
-        ast::BindingPatternKind::ObjectPattern(obj) => {
+        ast::BindingPattern::ObjectPattern(obj) => {
             expand_nested_object_pattern(kind, obj, source_var)
         }
-        ast::BindingPatternKind::AssignmentPattern(assign) => {
+        ast::BindingPattern::AssignmentPattern(assign) => {
             // `[a = default]` from source_var → apply default via nullish coalescing
             let default_expr = match crate::lower::expr::lower_expr(&assign.right) {
                 Ok(expr) => expr,
@@ -328,8 +328,8 @@ pub fn expand_nested_pattern(
                 op: crate::ast::BinaryOp::NullishCoalescing,
                 right: Box::new(default_expr),
             };
-            match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(id) => {
+            match &assign.left {
+                ast::BindingPattern::BindingIdentifier(id) => {
                     vec![Statement::VarDeclaration {
                         kind,
                         name: id.name.as_str().to_string(),
@@ -362,8 +362,8 @@ pub fn expand_nested_array_pattern(
     for (i, elem) in arr.elements.iter().enumerate() {
         if let Some(elem) = elem {
             let member = array_member_expr(source_var, i);
-            match &elem.kind {
-                ast::BindingPatternKind::BindingIdentifier(id) => {
+            match elem {
+                ast::BindingPattern::BindingIdentifier(id) => {
                     stmts.push(Statement::VarDeclaration {
                         kind,
                         name: id.name.as_str().to_string(),
@@ -446,8 +446,8 @@ pub fn expand_nested_object_pattern(
             continue;
         }
 
-        let var_name = match &prop.value.kind {
-            ast::BindingPatternKind::BindingIdentifier(id) => id.name.as_str().to_string(),
+        let var_name = match &prop.value {
+            ast::BindingPattern::BindingIdentifier(id) => id.name.as_str().to_string(),
             _ => format!("{}_prop_{}", source_var, key_str),
         };
         let member = object_member_expr(source_var, &key_str);
@@ -502,17 +502,17 @@ fn add_object_kv_stmts(
     key_str: String,
     stmts: &mut Vec<Statement>,
 ) {
-    match &kv_value_ref.kind {
-        ast::BindingPatternKind::BindingIdentifier(_) => {
+    match kv_value_ref {
+        ast::BindingPattern::BindingIdentifier(_) => {
             push_simple_decl(kind, var_name, member, stmts)
         }
-        ast::BindingPatternKind::ObjectPattern(nested_obj) => {
+        ast::BindingPattern::ObjectPattern(nested_obj) => {
             handle_nested_object(kind, member, source_var, key_str, nested_obj, stmts);
         }
-        ast::BindingPatternKind::ArrayPattern(nested_arr) => {
+        ast::BindingPattern::ArrayPattern(nested_arr) => {
             handle_nested_array(kind, member, source_var, key_str, nested_arr, stmts);
         }
-        ast::BindingPatternKind::AssignmentPattern(_) => {
+        ast::BindingPattern::AssignmentPattern(_) => {
             push_simple_decl(kind, var_name, member, stmts)
         }
     }

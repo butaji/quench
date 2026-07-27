@@ -1,0 +1,107 @@
+{
+  "failed": 16,
+  "groups": [
+    {
+      "count": 3,
+      "reason": "Actual [...] and expected [...] should have same contents.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/generator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/string.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/static/method-number-order.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/generator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/string.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/static/method-number-order.js"
+      ]
+    },
+    {
+      "count": 4,
+      "reason": "Actual [...] and expected [...] should have the same contents.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/basics/symbol.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/symbol.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/static/method-symbol-order.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/method/symbol.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/basics/symbol.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/symbol.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/static/method-symbol-order.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/method/symbol.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "The result of N !== N is `true`",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/constructor.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/constructor.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "compareArray is not defined",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/class.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/class.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "sameValue failed: N !== N - No enum keys from C.prototype",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/number.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/numbers-class.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/class/method/number.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/numbers-class.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - The value of `counter` is `2`",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/numbers-object.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/to-name-side-effects/numbers-object.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - The value of `object[...]` is `'B'`. Defined as `[...]: 'B'`",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/property/number-duplicates.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/property/number-duplicates.js"
+      ]
+    },
+    {
+      "count": 3,
+      "reason": "super is only valid in class methods",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/accessor/getter-super.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/accessor/setter-super.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/method/super.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/accessor/getter-super.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/accessor/setter-super.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/computed-property-names/object/method/super.js"
+      ]
+    }
+  ],
+  "passed": 32,
+  "path": "test/language/computed-property-names",
+  "skipped": 0,
+  "skips": [],
+  "stage": 45,
+  "total": 48
+}

@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 55,
+  "path": "test/language/future-reserved-words",
+  "skipped": 0,
+  "skips": [],
+  "stage": 3,
+  "total": 55
+}

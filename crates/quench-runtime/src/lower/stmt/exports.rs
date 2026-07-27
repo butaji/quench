@@ -127,13 +127,13 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .items
                 .iter()
                 .map(|p| {
-                    let (name, default) = match &p.pattern.kind {
-                        ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    let (name, default) = match &p.pattern {
+                        ast::BindingPattern::BindingIdentifier(ident) => {
                             (ident.name.as_str().to_string(), None)
                         }
-                        ast::BindingPatternKind::AssignmentPattern(ap) => {
-                            let name = match &ap.left.kind {
-                                ast::BindingPatternKind::BindingIdentifier(ident) => {
+                        ast::BindingPattern::AssignmentPattern(ap) => {
+                            let name = match &ap.left {
+                                ast::BindingPattern::BindingIdentifier(ident) => {
                                     ident.name.as_str().to_string()
                                 }
                                 _ => "arg".to_string(),

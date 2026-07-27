@@ -1,0 +1,35 @@
+{
+  "failed": 191,
+  "groups": [
+    {
+      "count": 191,
+      "reason": "$DONOTEVALUATE called: code was reached",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/7.8.3-1gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/7.8.3-2gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integer-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-000-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-005-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-01-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-010-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-06-strict.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/7.8.3-1gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/7.8.3-2gs.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integer-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-000-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-005-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-01-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-010-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/literals/numeric/legacy-octal-integery-06-strict.js"
+      ]
+    }
+  ],
+  "passed": 343,
+  "path": "test/language/literals",
+  "skipped": 0,
+  "skips": [],
+  "stage": 1,
+  "total": 534
+}

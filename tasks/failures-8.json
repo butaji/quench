@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 41,
+  "path": "test/language/line-terminators",
+  "skipped": 0,
+  "skips": [],
+  "stage": 8,
+  "total": 41
+}

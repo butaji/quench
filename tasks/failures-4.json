@@ -1,0 +1,10 @@
+{
+  "failed": 0,
+  "groups": [],
+  "passed": 27,
+  "path": "test/language/reserved-words",
+  "skipped": 0,
+  "skips": [],
+  "stage": 4,
+  "total": 27
+}

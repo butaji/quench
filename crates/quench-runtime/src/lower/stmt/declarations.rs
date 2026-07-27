@@ -70,8 +70,8 @@ pub fn lower_var_decl_impl(
     };
     let mut decls = Vec::new();
     for binding in &var_decl.declarations {
-        let ident_name = match &binding.id.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
+        let ident_name = match &binding.id {
+            ast::BindingPattern::BindingIdentifier(ident) => {
                 Some(ident.name.as_str().to_string())
             }
             _ => None,
@@ -94,18 +94,18 @@ pub fn lower_var_decl_impl(
                 Some(lowered)
             })
         });
-        match &binding.id.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
+        match &binding.id {
+            ast::BindingPattern::BindingIdentifier(ident) => {
                 decls.push(Statement::VarDeclaration {
                     kind,
                     name: ident.name.as_str().to_string(),
                     init: init_expr,
                 });
             }
-            ast::BindingPatternKind::ArrayPattern(arr) => {
+            ast::BindingPattern::ArrayPattern(arr) => {
                 decls.extend(lower_array_destructuring(kind, arr, init_expr, decls.len()));
             }
-            ast::BindingPatternKind::ObjectPattern(obj) => {
+            ast::BindingPattern::ObjectPattern(obj) => {
                 decls.extend(lower_object_destructuring(
                     kind,
                     obj,
@@ -113,10 +113,10 @@ pub fn lower_var_decl_impl(
                     decls.len(),
                 ));
             }
-            ast::BindingPatternKind::AssignmentPattern(assign) => {
+            ast::BindingPattern::AssignmentPattern(assign) => {
                 // `[a = default] = init` → `let a = init["0"] ?? default`
-                let ident_name = match &assign.left.kind {
-                    ast::BindingPatternKind::BindingIdentifier(id) => id.name.as_str().to_string(),
+                let ident_name = match &assign.left {
+                    ast::BindingPattern::BindingIdentifier(id) => id.name.as_str().to_string(),
                     _ => continue, // Nested patterns not yet supported here
                 };
                 if let Some(init) = init_expr {
@@ -197,12 +197,12 @@ pub fn lower_param_decl(param: &ast::FormalParameter) -> Param {
 
 /// Lower a BindingPattern to Param (used for both params and destructuring)
 pub fn lower_binding_pattern(binding: &ast::BindingPattern) -> Param {
-    match &binding.kind {
-        ast::BindingPatternKind::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
-        ast::BindingPatternKind::AssignmentPattern(assign) => {
+    match binding {
+        ast::BindingPattern::BindingIdentifier(ident) => Param::new(ident.name.as_str()),
+        ast::BindingPattern::AssignmentPattern(assign) => {
             let default = lower_expr(&assign.right).ok().map(Box::new);
-            match &assign.left.kind {
-                ast::BindingPatternKind::BindingIdentifier(ident) => Param {
+            match &assign.left {
+                ast::BindingPattern::BindingIdentifier(ident) => Param {
                     name: ident.name.as_str().to_string(),
                     default,
                     pattern: None,
@@ -299,8 +299,8 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
         .params
         .items
         .iter()
-        .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
+        .filter_map(|p| match &p.pattern {
+            ast::BindingPattern::BindingIdentifier(ident) => {
                 Some(ident.name.as_str().to_string())
             }
             _ => None,
@@ -309,7 +309,7 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
     let mut ps = ps;
     let mut has_rest = false;
     if let Some(rest) = &method.value.params.rest {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.rest.argument.kind {
+        if let ast::BindingPattern::BindingIdentifier(ident) = &rest.rest.argument {
             ps.push(ident.name.as_str().to_string());
             has_rest = true;
         }

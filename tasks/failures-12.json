@@ -1,0 +1,41 @@
+{
+  "failed": 7,
+  "groups": [
+    {
+      "count": 6,
+      "reason": "$DONOTEVALUATE called: code was reached",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-inside-func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-no-semi-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-inside-func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-no-semi-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-parse.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-inside-func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-no-semi-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-inside-func-decl-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-no-semi-parse.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-expr-parse.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Expected ReferenceError to be thrown but no exception was thrown.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-inside-func-decl-runtime.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/directive-prologue/func-decl-inside-func-decl-runtime.js"
+      ]
+    }
+  ],
+  "passed": 55,
+  "path": "test/language/directive-prologue",
+  "skipped": 0,
+  "skips": [],
+  "stage": 12,
+  "total": 62
+}

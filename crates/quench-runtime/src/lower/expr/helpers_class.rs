@@ -36,8 +36,8 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
         .params
         .items
         .iter()
-        .filter_map(|p| match &p.pattern.kind {
-            ast::BindingPatternKind::BindingIdentifier(ident) => {
+        .filter_map(|p| match &p.pattern {
+            ast::BindingPattern::BindingIdentifier(ident) => {
                 Some(ident.name.as_str().to_string())
             }
             _ => None,
@@ -51,7 +51,7 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
     let mut ps = ps;
     let mut has_rest = false;
     if let Some(rest) = &constructor.value.params.rest {
-        if let ast::BindingPatternKind::BindingIdentifier(ident) = &rest.rest.argument.kind {
+        if let ast::BindingPattern::BindingIdentifier(ident) = &rest.rest.argument {
             ps.push(ident.name.as_str().to_string());
             has_rest = true;
         }
