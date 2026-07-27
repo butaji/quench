@@ -822,4 +822,35 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_define_property_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = {}; Object.defineProperty(o, 'a', { value: 42, writable: true }); \
+             o.a === 42"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 42 }; var desc = Object.getOwnPropertyDescriptor(o, 'a'); \
+             desc.value === 42 && desc.writable && desc.enumerable && desc.configurable"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_define_property_non_writable() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = {}; Object.defineProperty(o, 'a', { value: 1, writable: false }); \
+             var desc = Object.getOwnPropertyDescriptor(o, 'a'); \
+             desc.value === 1 && !desc.writable"
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }

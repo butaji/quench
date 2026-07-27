@@ -325,6 +325,59 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    // Descriptor operations for Object.defineProperty / getOwnPropertyDescriptor
+    set_op(&mut obj, "DefineProp", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
+        match (&o, &desc) {
+            (Value::Object(obj_rc), Value::Object(desc_rc)) => {
+                let desc_ref = desc_rc.borrow();
+                let flags = crate::value::object::helpers::PropertyFlags {
+                    value: desc_ref.get("value"),
+                    writable: desc_ref.get("writable").map_or(false, |v| crate::value::to_bool(&v)),
+                    enumerable: desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v)),
+                    configurable: desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v)),
+                };
+                let val = flags.value.clone().unwrap_or(Value::Undefined);
+                obj_rc.borrow_mut().define(&key, val, flags);
+                Ok(Value::Boolean(true))
+            }
+            _ => Ok(Value::Boolean(false)),
+        }
+    });
+
+    set_op(&mut obj, "GetOwnPropDesc", |args| {
+        let o = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        match &o {
+            Value::Object(obj_rc) => {
+                let obj_ref = obj_rc.borrow();
+                if let Some(val) = obj_ref.properties.get(&key) {
+                    let flags = obj_ref.descriptors.get(&key).cloned()
+                        .unwrap_or(crate::value::object::helpers::PropertyFlags {
+                            value: Some(val.clone()),
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                        });
+                    let desc_obj = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                    let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
+                    if let Some(v) = &flags.value {
+                        desc_rc.borrow_mut().set("value", v.clone());
+                    }
+                    desc_rc.borrow_mut().set("writable", Value::Boolean(flags.writable));
+                    desc_rc.borrow_mut().set("enumerable", Value::Boolean(flags.enumerable));
+                    desc_rc.borrow_mut().set("configurable", Value::Boolean(flags.configurable));
+                    Ok(Value::Object(desc_rc))
+                } else {
+                    Ok(Value::Undefined)
+                }
+            }
+            _ => Ok(Value::Undefined),
+        }
+    });
+
     Value::Object(Rc::new(RefCell::new(obj)))
 }
 

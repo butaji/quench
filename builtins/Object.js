@@ -4,8 +4,6 @@ var SameValue = ops.SameValue;
 var ThrowTypeError = ops.ThrowTypeError;
 var EnumerableOwnKeys = ops.EnumerableOwnKeys;
 var ToObject = ops.ToObject;
-var GetProperty = ops.GetProperty;
-var SetProperty = ops.SetProperty;
 var IsExtensible = ops.IsExtensible;
 var IsCallable = ops.IsCallable;
 var HasProperty = ops.HasProperty;
@@ -16,6 +14,22 @@ var SealObject = ops.SealObject;
 var FreezeObject = ops.FreezeObject;
 var IsSealedObject = ops.IsSealedObject;
 var IsFrozenObject = ops.IsFrozenObject;
+var DefineProp = ops.DefineProp;
+var GetOwnPropDesc = ops.GetOwnPropDesc;
+
+// Object.defineProperty (ES2025 §20.1.2.4)
+Object.defineProperty = function ObjectDefineProperty(O, P, Attributes) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  if (Attributes === null || Attributes === undefined) throw ThrowTypeError("Property description must be an object");
+  DefineProp(O, P, Attributes);
+  return O;
+};
+
+// Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
+Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  return GetOwnPropDesc(O, P);
+};
 
 // Object.is (ES2025 §20.1.2.12)
 Object.is = function ObjectIs(value1, value2) {
@@ -55,9 +69,7 @@ Object.assign = function ObjectAssign(target, ...sources) {
     if (nextSource === null || nextSource === undefined) continue;
     var from = ToObject(nextSource);
     var keys = EnumerableOwnKeys(from);
-    for (var j = 0; j < keys.length; j++) {
-      to[keys[j]] = from[keys[j]];
-    }
+    for (var j = 0; j < keys.length; j++) to[keys[j]] = from[keys[j]];
   }
   return to;
 };
@@ -77,12 +89,11 @@ Object.isExtensible = function ObjectIsExtensible(O) {
 Object.fromEntries = function ObjectFromEntries(iterable) {
   if (iterable === null || iterable === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   var obj = {};
-  var iterator = iterable[Symbol.iterator]();
-  if (!iterator) throw ThrowTypeError("iterable is not iterable");
-  var result;
-  while (!(result = iterator.next()).done) {
+  var it = iterable[Symbol.iterator]();
+  while (true) {
+    var result = it.next();
+    if (result.done) break;
     var entry = result.value;
-    if (entry === null || entry === undefined) throw ThrowTypeError("Iterator value is not an object");
     obj[entry[0]] = entry[1];
   }
   return obj;
