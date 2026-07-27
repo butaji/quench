@@ -216,4 +216,74 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_has_own_own_property() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 1 }; \
+             Object.hasOwn(o, 'a') && !Object.hasOwn(o, 'b')",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_has_own_inherited_not_found() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var proto = { p: 1 }; \
+             var o = Object.create(proto); \
+             Object.hasOwn(o, 'p')",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn object_has_own_primitive() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "Object.hasOwn(42, 'toString')",
+        ).unwrap();
+        // 42 is coerced to Object via ToObject, which has toString as an own method
+        assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn object_is_extensible_returns_true() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Object.isExtensible({})").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_is_extensible_returns_false_after_prevent() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = {}; \
+             Object.preventExtensions(o); \
+             !Object.isExtensible(o)",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_from_entries_creates_object() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var entries = [['a', 1], ['b', 2]]; \
+             var obj = Object.fromEntries(entries); \
+             obj.a === 1 && obj.b === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_from_entries_empty() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var obj = Object.fromEntries([]); \
+             Object.keys(obj).length === 0",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
