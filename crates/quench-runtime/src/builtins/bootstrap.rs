@@ -194,6 +194,15 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/TypedArray.js"
         )),
     ),
+    // Phase 19.5: DataView — placeholder; needs native prototype methods first.
+    // Constructor is registered in Rust at builtins/data_view.rs.
+    (
+        "DataView",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/DataView.js"
+        )),
+    ),
     // Phase 20: AsyncFunction — sets @@toStringTag on %AsyncFunctionPrototype%
     (
         "AsyncFunction",
@@ -218,6 +227,56 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../builtins/GeneratorPrototype.js"
+        )),
+    ),
+    // Phase 23: ArrayBuffer — wraps prototype.slice with null/undefined check
+    (
+        "ArrayBuffer",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/ArrayBuffer.js"
+        )),
+    ),
+    // Phase 24: WeakRef — wraps native WeakRef.prototype.deref with null/undefined check
+    (
+        "WeakRef",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/WeakRef.js"
+        )),
+    ),
+    // Phase 23: DisposableStack — placeholder; needs Rust-side
+    // DisposableStack constructor + %DisposableStackPrototype% first.
+    (
+        "DisposableStack",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/DisposableStack.js"
+        )),
+    ),
+    // Phase 24: FinalizationRegistry — placeholder stub until native backing lands
+    (
+        "FinalizationRegistry",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/FinalizationRegistry.js"
+        )),
+    ),
+    // Phase 25: AsyncDisposableStack — placeholder; needs native Rust implementation
+    // of the async disposable resource stack and Symbol.asyncDispose well-known symbol.
+    (
+        "AsyncDisposableStack",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/AsyncDisposableStack.js"
+        )),
+    ),
+    // Phase 26: SharedArrayBuffer — prototype slice and @@toStringTag
+    (
+        "SharedArrayBuffer",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/SharedArrayBuffer.js"
         )),
     ),
 ];
@@ -1266,6 +1325,20 @@ mod tests {
     }
 
     #[test]
+    fn data_view_constructor_works_via_bootstrap() {
+        let mut ctx = new_ctx();
+        // DataView constructor exists and can create instances from an ArrayBuffer
+        let r = ctx
+            .eval(
+                "var buffer = new ArrayBuffer(16); \
+             var dv = new DataView(buffer); \
+             dv instanceof DataView && dv.buffer === buffer && dv.byteLength === 16 && dv.byteOffset === 0",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn generator_prototype_methods_work() {
         let mut ctx = new_ctx();
         // Verify GeneratorPrototype has next/return/throw methods
@@ -1287,6 +1360,156 @@ mod tests {
              var r1 = gen.next(); \
              r1.value === 1 && r1.done === false && \
              gen.next().value === 2",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn weak_ref_deref_returns_target() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var target = {}; var wr = new WeakRef(target); wr.deref() === target",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn weak_ref_deref_null_this_throws() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var ok = false; \
+             try { WeakRef.prototype.deref.call(null); } \
+             catch(e) { ok = e instanceof TypeError; } \
+             ok",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn weak_ref_deref_undefined_this_throws() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var ok = false; \
+             try { WeakRef.prototype.deref.call(undefined); } \
+             catch(e) { ok = e instanceof TypeError; } \
+             ok",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn weak_ref_deref_returns_undefined_after_target_collected() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var wr = (function() { var o = {}; return new WeakRef(o); })(); \
+             wr.deref() === undefined",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    #[ignore = "DisposableStack needs native constructor + %DisposableStackPrototype% first"]
+    fn disposable_stack_placeholder_loads() {
+        let mut ctx = new_ctx();
+        // The DisposableStack.js file evaluates without error during
+        // bootstrap. It contains only comments (no executable JS),
+        // confirming the include_str! path and bootstrap eval work.
+        // Once a native DisposableStack implementation exists, this test
+        // should be updated to verify the DisposableStack methods.
+        bootstrap_js_builtins(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn finalization_registry_global_exists() {
+        let mut ctx = new_ctx();
+        // FinalizationRegistry exists as a constructor
+        let typeof_fr = ctx.eval("typeof FinalizationRegistry === 'function'").unwrap();
+        assert_eq!(typeof_fr, Value::Boolean(true));
+        let has_proto = ctx
+            .eval("typeof FinalizationRegistry.prototype === 'object'")
+            .unwrap();
+        assert_eq!(has_proto, Value::Boolean(true));
+    }
+
+    #[test]
+    fn finalization_registry_methods_exist() {
+        let mut ctx = new_ctx();
+        // All three prototype methods exist and are functions
+        let r = ctx
+            .eval(
+                "typeof FinalizationRegistry.prototype.register === 'function' && \
+             typeof FinalizationRegistry.prototype.unregister === 'function' && \
+             typeof FinalizationRegistry.prototype.cleanupSome === 'function'",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_disposable_stack_constructor_exists() {
+        let mut ctx = new_ctx();
+        // AsyncDisposableStack should exist as a global constructor (placeholder)
+        let r = ctx
+            .eval("typeof AsyncDisposableStack === 'function'")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_prototype_slice_null_this_throws() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var ok = false; \
+             try { ArrayBuffer.prototype.slice.call(null); } \
+             catch(e) { ok = e instanceof TypeError; } \
+             ok",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_prototype_slice_works_via_wrapper() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var ab = new ArrayBuffer(8); \
+             var sliced = ab.slice(2, 5); \
+             sliced.byteLength === 3 && sliced instanceof ArrayBuffer",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_prototype_slice_and_tag() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var sab = new SharedArrayBuffer(8); \
+             var sliced = sab.slice(2, 5); \
+             sliced.byteLength === 3 && sliced instanceof SharedArrayBuffer",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn shared_array_buffer_to_string_tag() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "SharedArrayBuffer.prototype[Symbol.toStringTag] === 'SharedArrayBuffer'",
             )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));

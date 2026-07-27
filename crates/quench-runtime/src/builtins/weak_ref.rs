@@ -1,4 +1,4 @@
-//! Minimal WeakRef builtin for subclassing and basic construction.
+//! Minimal WeakRef and FinalizationRegistry builtins for subclassing and basic construction.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -50,6 +50,43 @@ pub fn register_weak_ref(ctx: &mut Context) {
     let wr_fn_rc = Rc::new(wr_native);
     let _ = wr_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     ctx.set_global("WeakRef".to_string(), Value::NativeFunction(wr_fn_rc));
+}
+
+/// Register a minimal `FinalizationRegistry` global constructor.
+/// The prototype methods (cleanupSome, register, unregister) are
+/// patched by `builtins/FinalizationRegistry.js` during bootstrap.
+pub fn register_finalization_registry(ctx: &mut Context) {
+    let proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    if let Some(object_proto) = crate::builtins::get_object_prototype() {
+        proto_rc.borrow_mut().prototype = Some(object_proto);
+    }
+
+    let proto_clone = Rc::clone(&proto_rc);
+    let mut fr_native = NativeFunction::new_with_prototype(
+        move |args| {
+            // FinalizationRegistry constructor: must receive a cleanup callback
+            let _cleanup_callback = args.first().cloned().unwrap_or(Value::Undefined);
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            if let Value::Object(this_obj) = this_val {
+                if this_obj.borrow().prototype.is_none() {
+                    this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
+                }
+                Ok(Value::Object(this_obj))
+            } else {
+                Err(crate::JsError::new(
+                    "TypeError: FinalizationRegistry constructor requires 'new'",
+                ))
+            }
+        },
+        Rc::clone(&proto_rc),
+    );
+    fr_native.name = "FinalizationRegistry".to_string();
+    let fr_fn_rc = Rc::new(fr_native);
+    let _ = fr_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
+    ctx.set_global(
+        "FinalizationRegistry".to_string(),
+        Value::NativeFunction(fr_fn_rc),
+    );
 }
 
 #[cfg(test)]

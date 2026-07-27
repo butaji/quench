@@ -164,6 +164,7 @@ pub fn register_builtins(ctx: &mut Context) {
     data_view::register_data_view(ctx);
     typed_array::register_typed_arrays(ctx);
     weak_ref::register_weak_ref(ctx);
+    weak_ref::register_finalization_registry(ctx);
     // Global URI / parseInt / parseFloat / isNaN / isFinite functions
     uri::register_uri(ctx);
     // Array.prototype[Symbol.iterator] requires Symbol to be registered first.
