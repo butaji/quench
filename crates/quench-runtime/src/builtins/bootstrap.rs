@@ -566,4 +566,46 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn string_char_at_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'hello'.charAt(1) === 'e'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_to_upper_case_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'hello'.toUpperCase() === 'HELLO'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_trim_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'  hello  '.trim() === 'hello'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_slice_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'hello'.slice(1, 3) === 'el'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_repeat_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'ab'.repeat(3) === 'ababab'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_index_of_works() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("'hello'.indexOf('l') === 2").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
