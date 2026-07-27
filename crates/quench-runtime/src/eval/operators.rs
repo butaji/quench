@@ -109,6 +109,12 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
                 );
                 return Err(js_err);
             }
+            if l_is_bigint && r_is_bigint {
+                // BigInt addition
+                let lb = crate::builtins::bigint::to_bigint_value(&lp)?;
+                let rb = crate::builtins::bigint::to_bigint_value(&rp)?;
+                return Ok(crate::builtins::bigint::bigint_to_value(lb + rb));
+            }
             let l = to_number(&lp);
             let r = to_number(&rp);
             Ok(Value::Number(l + r))

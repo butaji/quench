@@ -213,8 +213,17 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             // Return this for any object-like value (Object, Function, Class, etc.)
             match &this_val {
-                Value::Object(_)
-                | Value::Function(_)
+                Value::Object(o) => {
+                    // Boxed primitives (new Boolean, new Number, new String, Object(BigInt))
+                    // store the wrapped value as _value; valueOf must unwrap it.
+                    let has_boxed = o.borrow().get("_value");
+                    if let Some(boxed) = has_boxed {
+                        Ok(boxed)
+                    } else {
+                        Ok(this_val)
+                    }
+                }
+                Value::Function(_)
                 | Value::NativeFunction(_)
                 | Value::NativeConstructor(_)
                 | Value::Generator(_)
