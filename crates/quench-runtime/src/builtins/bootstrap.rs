@@ -123,4 +123,41 @@ mod tests {
         ).unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_values_returns_values() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 1, b: 2 }; \
+             var vals = Object.values(o); \
+             vals.length === 2 && vals[0] === 1 && vals[1] === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_values_empty_object() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Object.values({}).length === 0").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_entries_returns_entries() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval(
+            "var o = { a: 1, b: 2 }; \
+             var ents = Object.entries(o); \
+             ents.length === 2 && ents[0][0] === 'a' && ents[0][1] === 1 && \
+             ents[1][0] === 'b' && ents[1][1] === 2",
+        ).unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn object_entries_empty_object() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Object.entries({}).length === 0").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
