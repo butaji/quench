@@ -50,6 +50,8 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
     ("Promise", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Promise.js"))),
     // Phase 17: Reflect
     ("Reflect", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Reflect.js"))),
+    // Phase 18: Function
+    ("Function", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../builtins/Function.js"))),
 ];
 
 /// Evaluate all self-hosted JS builtin files in dependency order.
