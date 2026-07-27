@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn _array_sort_sorts_numbers() {
+    fn _removed_array_sort() {
         let mut ctx = new_ctx();
         let r = ctx.eval(
             "var arr = [3, 1, 2]; arr.sort(); arr[0] === 1 && arr[1] === 2 && arr[2] === 3"
@@ -681,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn _disabled_array_to_sorted_sorts_copy() {
+    fn _removed_to_sorted() {
         let mut ctx = new_ctx();
         let r = ctx.eval(
             "var a = [3, 1, 2]; var b = a.toSorted(); \

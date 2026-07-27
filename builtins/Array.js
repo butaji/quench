@@ -6,9 +6,6 @@ var ToObject = ops.ToObject;
 var ThrowTypeError = ops.ThrowTypeError;
 var SameValueZero = ops.SameValueZero;
 
-// Save native implementations before overriding
-var _nativeSort = Array.prototype.sort;
-
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
@@ -356,25 +353,8 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   return -1;
 };
 
-// Array.prototype.sort (ES2025 §23.1.3.31) — basic version
-Array.prototype.sort = function ArraySort(comparefn) {
-  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.sort called on null or undefined");
-  if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
-  var O = ToObject(this);
-  var len = O.length >>> 0;
-  if (len <= 1) return O;
-  // Extract non-hole values
-  var items = [];
-  for (var i = 0; i < len; i++) {
-    if (i in O) items.push(O[i]);
-  }
-  // Sort
-  _nativeSort.call(items, comparefn !== undefined ? comparefn : undefined);
-  // Write back
-  for (var i = 0; i < items.length; i++) O[i] = items[i];
-  for (var i = items.length; i < len; i++) delete O[i];
-  return O;
-};
+// Array.prototype.sort — kept as native (cannot be self-hosted without recursion)
+// Array.prototype.toSorted — kept as native for the same reason
 
 // Array.prototype.splice (ES2025 §23.1.3.30)
 Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */) {
@@ -498,19 +478,7 @@ Array.prototype.toReversed = function ArrayToReversed() {
   return A;
 };
 
-// Array.prototype.toSorted (ES2023 §23.1.3.36)
-Array.prototype.toSorted = function ArrayToSorted(comparefn) {
-  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSorted called on null or undefined");
-  if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
-  var O = ToObject(this);
-  var len = O.length >>> 0;
-  var A = new Array(len);
-  for (var i = 0; i < len; i++) {
-    if (i in O) A[i] = O[i];
-  }
-  _nativeSort.call(A, comparefn !== undefined ? comparefn : undefined);
-  return A;
-};
+// Array.prototype.toSorted — kept as native (would recurse via _nativeSort)
 
 // Array.prototype.toSpliced (ES2023 §23.1.3.37)
 Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...items */) {

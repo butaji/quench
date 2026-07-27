@@ -266,8 +266,8 @@ pub fn make_ops_object() -> Value {
                 let mut obj = o.borrow_mut();
                 obj.extensible = false;
                 // Make all properties non-configurable
-                for key in obj.properties.keys().cloned().collect::<Vec<_>>() {
-                    if let Some(flags) = obj.descriptors.get_mut(&key) {
+                for _key in obj.properties.keys().cloned().collect::<Vec<_>>() {
+                    if let Some(flags) = obj.descriptors.get_mut(&_key) {
                         flags.configurable = false;
                     }
                 }
@@ -301,7 +301,7 @@ pub fn make_ops_object() -> Value {
             Value::Object(o) => {
                 let obj = o.borrow();
                 if obj.extensible { return Ok(Value::Boolean(false)); }
-                for (key, flags) in &obj.descriptors {
+                for (_key, flags) in &obj.descriptors {
                     if flags.configurable { return Ok(Value::Boolean(false)); }
                 }
                 Ok(Value::Boolean(true))
@@ -316,7 +316,7 @@ pub fn make_ops_object() -> Value {
             Value::Object(o) => {
                 let obj = o.borrow();
                 if obj.extensible { return Ok(Value::Boolean(false)); }
-                for (key, flags) in &obj.descriptors {
+                for (_key, flags) in &obj.descriptors {
                     if flags.configurable || flags.writable { return Ok(Value::Boolean(false)); }
                 }
                 Ok(Value::Boolean(true))

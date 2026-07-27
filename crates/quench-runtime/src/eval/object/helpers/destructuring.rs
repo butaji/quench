@@ -248,7 +248,6 @@ fn check_generator_flow(
     iterator_done: &mut bool,
 ) -> Option<Result<(), JsError>> {
     let cf = crate::interpreter::take_control_flow()?;
-    eprintln!("[DEBUG check_generator_flow] cf={:?}", cf);
     match cf {
         crate::interpreter::ControlFlow::Return(val) => {
             if !*iterator_done {
@@ -295,7 +294,6 @@ fn array_with_iterator_impl(
 ) -> Result<(), JsError> {
     let mut index = 0;
     let mut iterator_done = false;
-    eprintln!("[DEBUG array_with_iterator_impl] START peek_yield={:?} dest_key={:?}", crate::interpreter::peek_generator_yield(), crate::interpreter::peek_destructuring_yield_key());
     let apply = |binding: &BindingElement, val: &Value| -> Result<(), JsError> {
         if init {
             init_binding_elem(binding, val, env)
@@ -307,9 +305,7 @@ fn array_with_iterator_impl(
         // When the generator is resumed with a pending Return/Throw (from
         // generator.return()/throw()), close the iterator and propagate
         // BEFORE re-running iterator steps for this binding.
-        eprintln!("[DEBUG array_with_iterator_impl] loop top peek_yield={:?}", crate::interpreter::peek_generator_yield());
         if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
-            eprintln!("[DEBUG array_with_iterator_impl] check_generator_flow returned Some");
             return result;
         }
         if let BindingElement::Rest(inner) = binding {
@@ -345,11 +341,8 @@ fn array_with_iterator_impl(
             }
         }
         let (elem_value, done) = take_iterator_step(iterator, &mut index, env)?;
-        eprintln!("[DEBUG array_with_iterator_impl] took step: elem_value={:?} done={}", elem_value, done);
         iterator_done = done;
-        eprintln!("[DEBUG array_with_iterator_impl] applying binding peek_yield={:?}", crate::interpreter::peek_generator_yield());
         if let Err(error) = apply(binding, &elem_value) {
-            eprintln!("[DEBUG array_with_iterator_impl] apply returned Err");
             let original = crate::value::take_thrown_value();
             if !iterator_done {
                 let _close_err = call_iterator_return(iterator);
@@ -630,9 +623,6 @@ fn object_destructuring_impl(
     env: &Rc<RefCell<Environment>>,
     init: bool,
 ) -> Result<(), JsError> {
-    static CALL_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let call_num = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    eprintln!("[DEBUG object_destructure_impl] call #{} peek_yield={} peek_dest_key={}", call_num, crate::interpreter::peek_generator_yield(), crate::interpreter::peek_destructuring_yield_key());
     let obj = match value {
         Value::Null | Value::Undefined => {
             let (_, js_err) = crate::value::error::create_js_error_with_type(

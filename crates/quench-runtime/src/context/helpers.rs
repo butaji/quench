@@ -314,7 +314,7 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
 
 /// Register the eval function as a global
 pub fn register_eval_function(ctx: &mut Context) -> Result<(), JsError> {
-    let mut eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
+    let eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
         let source = args
             .first()
             .map(crate::value::to_js_string)
