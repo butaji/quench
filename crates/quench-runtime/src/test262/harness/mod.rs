@@ -261,7 +261,8 @@ fn inject_test262_error(ctx: &mut Context) {
             .first()
             .map(crate::value::to_js_string)
             .unwrap_or_else(|| "Test262Error.thrower called".to_string());
-        let (err_val, js_err) = crate::value::error::create_js_error(&msg);
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
         crate::value::set_thrown_value(err_val);
         Err(js_err)
     });
@@ -1619,7 +1620,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         try_inject_harness(&mut ctx2).expect("ctx2 ok");
 
         // Setting a global in ctx1 should NOT affect ctx2
-        ctx1.set_global("__quench_test_marker", Value::Number(1.0));
+        ctx1.set_global("__quench_test_marker".to_string(), Value::Number(1.0));
         let marker = ctx2.get_global("__quench_test_marker");
         assert!(
             marker.is_none(),
@@ -1696,17 +1697,20 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         );
     }
 
-    /// fnGlobalObject must be a NativeFunction.
+    /// fnGlobalObject must be callable as a function.
     #[test]
-    fn test_harness_fn_global_object_is_native() {
+    fn test_harness_fn_global_object_is_callable() {
         let mut ctx = Context::new().unwrap();
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let val = ctx.get_global("fnGlobalObject").unwrap();
         assert!(
-            matches!(val, Value::NativeFunction(_)),
-            "fnGlobalObject should be NativeFunction"
+            matches!(val, Value::Function(_) | Value::NativeFunction(_)),
+            "fnGlobalObject should be callable (JS or native function)"
         );
+        // Must return the global object
+        let result = ctx.eval("typeof fnGlobalObject() === 'object'");
+        assert_eq!(result.unwrap(), Value::Boolean(true), "fnGlobalObject() should return an object");
     }
 
     /// print must be a NativeFunction that outputs to stderr.
@@ -1790,13 +1794,15 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         assert_eq!(num, Value::Boolean(true));
     }
 
-    /// inject_harness (infallible) should panic on failure.
+    /// inject_harness should succeed with the correct harness path.
     #[test]
-    #[should_panic(expected = "test262 harness load failure")]
-    fn test_harness_inject_panics_on_load_failure() {
-        // This test can't easily force a harness load failure without mocking,
-        // but we document the contract: inject_harness panics on error.
-        // The test validates the panic message.
-        inject_harness(&mut Context::new().unwrap());
+    fn test_harness_inject_succeeds() {
+        let mut ctx = Context::new().unwrap();
+        // With the correct harness path, inject_harness must succeed.
+        inject_harness(&mut ctx);
+        // Verify key globals are present
+        assert!(ctx.get_global("Test262Error").is_some());
+        assert!(ctx.get_global("$262").is_some());
+        assert!(ctx.get_global("fnGlobalObject").is_some());
     }
 }
