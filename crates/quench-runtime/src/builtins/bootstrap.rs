@@ -154,6 +154,14 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/Reflect.js"
         )),
     ),
+	// Phase 17.5: Iterator helpers
+	(
+		"Iterator",
+		include_str!(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/../../builtins/Iterator.js"
+		)),
+	),
     // Phase 18: Function
     (
         "Function",
