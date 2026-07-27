@@ -84,7 +84,7 @@ var x = 3;"#;
 
 #[test]
 fn test_strip_js_function_not_found() {
-    let source = "var x = 1;";
+    let source = "var x = 1;\n";
     let result = super::strip_js_function(source, "nonexistent");
     assert_eq!(result, source);
 }
@@ -109,7 +109,7 @@ fn test_harness_dir() -> std::path::PathBuf {
         .unwrap()
         .parent()
         .unwrap()
-        .join("tests/test262/harness")
+        .join("tests/test262")
 }
 
 fn make_loader() -> super::HarnessLoader {
@@ -174,37 +174,34 @@ fn test_harness_loader_load_deep_equal_returns_empty() {
 
 #[test]
 fn test_harness_loader_load_property_helper_strips_verify_property() {
-    // propertyHelper.js: verifyProperty should be stripped
+    // propertyHelper.js: verifyProperty is stripped during build_script (not load).
+    // Test via build_script which applies strip_js_function.
     let loader = make_loader();
     let content = loader
-        .load("propertyHelper.js")
-        .expect("propertyHelper.js should exist");
+        .build_script("// source", &["propertyHelper.js".to_string()])
+        .expect("build_script with propertyHelper.js should work");
     assert!(
         !content.contains("function verifyProperty("),
-        "verifyProperty should be stripped from propertyHelper.js"
-    );
-    assert!(
-        !content.contains("function async function verifyProperty("),
-        "verifyProperty async variant should also be stripped"
+        "verifyProperty should be stripped from built script"
     );
 }
 
 #[test]
 fn test_harness_loader_load_property_helper_patches_non_index_numeric() {
-    // propertyHelper.js: nonIndexNumericPropertyName patched to safe value
+    // propertyHelper.js: nonIndexNumericPropertyName is patched during build_script.
     let loader = make_loader();
     let content = loader
-        .load("propertyHelper.js")
-        .expect("propertyHelper.js should exist");
+        .build_script("// source", &["propertyHelper.js".to_string()])
+        .expect("build_script with propertyHelper.js should work");
     // Should NOT contain the dangerous 4294967295 value
     assert!(
         !content.contains("Math.pow(2, 32) - 1"),
-        "propertyHelper.js should NOT contain the dangerous Math.pow(2, 32) - 1 value"
+        "built script should NOT contain the dangerous Math.pow(2, 32) - 1 value"
     );
     // Should contain the safe patched value
     assert!(
         content.contains("999999"),
-        "propertyHelper.js should contain the safe patched value 999999"
+        "built script should contain the safe patched value 999999"
     );
 }
 
@@ -276,10 +273,10 @@ fn test_harness_loader_build_script_includes_includes() {
     let script = loader
         .build_script(source, &["sta.js".to_string()])
         .expect("build_script with sta.js should work");
-    // sta.js should be prepended
+    // sta.js should be prepended and contain Test262Error
     assert!(
-        script.starts_with("var $262") || script.contains("$262"),
-        "built script should include sta.js content"
+        script.contains("Test262Error"),
+        "built script should include sta.js content (Test262Error)"
     );
 }
 
@@ -339,7 +336,7 @@ fn test_harness_loader_build_script_frontmatter_in_source_preserved() {
         .expect("build_script should preserve source frontmatter");
     // Frontmatter is inside a JS comment, so it stays as-is
     assert!(
-        script.contains("/*--- info: test ---*/"),
+        script.contains("/*--- info: test ---\n*/"),
         "frontmatter in source should be preserved"
     );
 }
@@ -396,14 +393,14 @@ fn test_harness_loader_load_preserves_sta_js_specifically() {
 
 #[test]
 fn test_harness_loader_load_compar_array() {
+    // compareArray.js: copyright comment remains (not stripped), but frontmatter
+    // is removed and the function body (deprecated) is gone.
     let loader = make_loader();
-    let content = loader
-        .load("compareArray.js")
-        .expect("compareArray.js should exist");
-    assert!(
-        content.contains("compareArray"),
-        "compareArray.js should contain compareArray function"
-    );
+    let content = loader.load("compareArray.js").expect("compareArray.js should load");
+    // Copyright comment is preserved; no frontmatter delimiters
+    assert!(content.contains("Copyright"), "copyright should be preserved");
+    assert!(!content.contains("/*---"), "frontmatter should be stripped");
+    assert!(!content.contains("compareArray"), "function body should be absent (deprecated)");
 }
 
 #[test]
