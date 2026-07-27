@@ -341,26 +341,54 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
 
 /// Map a finished `run-test` subprocess to an outcome. run-test verifies
 /// negative-test polarity itself, so exit 0 is the ONLY pass.
+/// Parses the subprocess output for structured diagnostic fields.
 fn classify_isolated(out: &std::process::Output, test_path: &Path) -> TestOutcome {
-    let msg = |s: String| -> TestFailure {
-        let mut f = TestFailure::from_message(s);
-        f.source_path = Some(test_path.to_string_lossy().to_string());
-        f
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+
+    // Parse diagnostic fields from run-test's output.
+    let parse_field = |prefix: &str| -> Option<String> {
+        combined
+            .lines()
+            .find(|l| l.trim().starts_with(prefix))
+            .and_then(|l| l.split_once(prefix))
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())
     };
+    let reason = isolated_message(&out.stderr, &out.stdout);
+    let error_type = parse_field("Type:");
+    let error_message = parse_field("JS message:");
+    let js_stack = combined
+        .lines()
+        .skip_while(|l| !l.trim().starts_with("Stack:"))
+        .skip(1)
+        .take_while(|l| l.trim().starts_with("at ") || l.trim().starts_with("  "))
+        .map(|l| l.trim().to_string())
+        .reduce(|a, b| format!("{}\n{}", a, b));
+
+    let failure = TestFailure {
+        message: format!("isolated exit {}: {}", out.status.code().unwrap_or(-1), reason),
+        error_type,
+        error_message,
+        js_stack,
+        source_path: Some(test_path.to_string_lossy().to_string()),
+        source_line: None,
+        source_context: String::new(),
+    }
+    .with_source(test_path, None);
+
     match out.status.code() {
         Some(0) => TestOutcome::Pass,
-        Some(code) => TestOutcome::Fail {
-            failure: msg(format!(
-                "isolated exit {}: {}",
-                code,
-                isolated_message(&out.stderr, &out.stdout)
-            )),
-        },
+        Some(_) => TestOutcome::Fail { failure },
         None => TestOutcome::Fail {
-            failure: msg(format!(
-                "isolated terminated by signal: {}",
-                isolated_message(&out.stderr, &out.stdout)
-            )),
+            failure: TestFailure {
+                message: format!(
+                    "isolated terminated by signal: {}",
+                    isolated_message(&out.stderr, &out.stdout)
+                ),
+                ..failure
+            },
         },
     }
 }
