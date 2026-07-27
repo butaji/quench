@@ -395,7 +395,24 @@ pub fn make_ops_object() -> Value {
         match &o {
             Value::Object(obj_rc) => {
                 let obj_ref = obj_rc.borrow();
-                if let Some(val) = obj_ref.properties.get(&key) {
+                // Check for accessor descriptor first
+                if obj_ref.has_getter(&key) || obj_ref.has_setter(&key) {
+                    let getter = obj_ref.get_getter(&key);
+                    let setter = obj_ref.get_setter(&key);
+                    let flags = obj_ref.descriptors.get(&key).cloned()
+                        .unwrap_or(crate::value::object::helpers::PropertyFlags::default_data());
+                    let desc_obj = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                    let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
+                    if let Some(g) = getter {
+                        desc_rc.borrow_mut().set("get", g.func.clone().unwrap_or(Value::Undefined));
+                    }
+                    if let Some(s) = setter {
+                        desc_rc.borrow_mut().set("set", s.func.clone().unwrap_or(Value::Undefined));
+                    }
+                    desc_rc.borrow_mut().set("enumerable", Value::Boolean(flags.enumerable));
+                    desc_rc.borrow_mut().set("configurable", Value::Boolean(flags.configurable));
+                    Ok(Value::Object(desc_rc))
+                } else if let Some(val) = obj_ref.properties.get(&key) {
                     let flags = obj_ref.descriptors.get(&key).cloned()
                         .unwrap_or(crate::value::object::helpers::PropertyFlags {
                             value: Some(val.clone()),
