@@ -16,5 +16,8 @@ pub mod runner;
 pub mod skip;
 
 pub use harness::HarnessLoader;
-pub use host::{QuenchHost, Test262Host, TestOutcome};
+pub use host::{
+    capture_thrown_diagnostics, read_source_context, QuenchHost, Test262Host, TestFailure,
+    TestOutcome,
+};
 pub use runner::{Test262Runner, STAGES};

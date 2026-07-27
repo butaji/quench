@@ -1,4 +1,5 @@
 use super::*;
+use crate::test262::host::QuenchHost;
 use std::path::PathBuf;
 
 #[test]
@@ -33,7 +34,7 @@ fn isolated_run_finds_property_helper_from_any_cwd() {
         .join("tests/test262/test/language/statements/class/subclass/builtin-objects/String/length.js");
     let outcome = run_isolated(&path);
     assert!(
-        !matches!(outcome, TestOutcome::Fail { ref reason } if reason.contains("propertyHelper.js")),
+        !matches!(outcome, TestOutcome::Fail { ref failure } if failure.message.contains("propertyHelper.js")),
         "isolated run should resolve harness includes: {:?}",
         outcome
     );
@@ -51,9 +52,9 @@ fn isolated_message_extracts_reason_line() {
 #[test]
 fn check_outcome_pass_and_fail() {
     let meta = Test262Metadata::default();
-    assert_eq!(check_outcome(&meta, Ok(())), TestOutcome::Pass);
+    assert_eq!(check_outcome(&meta, Ok(()), None), TestOutcome::Pass);
     assert!(matches!(
-        check_outcome(&meta, Err("x".into())),
+        check_outcome(&meta, Err("x".into()), None),
         TestOutcome::Fail { .. }
     ));
 }
@@ -73,21 +74,19 @@ fn check_outcome_parse_negative_requires_matching_type() {
     let meta = neg_meta("parse", "SyntaxError");
     assert!(
         matches!(
-            check_outcome(&meta, Err("ReferenceError: x is not defined".into())),
+            check_outcome(&meta, Err("ReferenceError: x is not defined".into()), None),
             TestOutcome::Fail { .. }
         ),
         "parse negative must fail when the error type does not match"
     );
     assert_eq!(
-        check_outcome(&meta, Err("SyntaxError: unexpected token".into())),
+        check_outcome(&meta, Err("SyntaxError: unexpected token".into()), None),
         TestOutcome::Pass
     );
 }
 
 #[test]
 fn check_outcome_infra_messages_never_pass_negative() {
-    // Even when the message happens to contain the expected type name,
-    // an infrastructure failure is never a test result.
     for msg in [
         "harness load failure: SyntaxError file missing",
         "timed out after 10s",
@@ -98,7 +97,7 @@ fn check_outcome_infra_messages_never_pass_negative() {
             let meta = neg_meta(phase, "SyntaxError");
             assert!(
                 matches!(
-                    check_outcome(&meta, Err(msg.into())),
+                    check_outcome(&meta, Err(msg.into()), None),
                     TestOutcome::Fail { .. }
                 ),
                 "'{}' must fail for phase {}",
@@ -111,17 +110,14 @@ fn check_outcome_infra_messages_never_pass_negative() {
 
 #[test]
 fn check_outcome_parse_negative_maps_oxc_parse_error_to_syntax_error() {
-    // OXC reports parse failures as "Parse error: …" — per spec that IS
-    // a SyntaxError, so a parse-negative expecting SyntaxError must pass.
     let meta = neg_meta("parse", "SyntaxError");
     assert_eq!(
-        check_outcome(&meta, Err("Parse error: [OxcDiagnostic …]".into())),
+        check_outcome(&meta, Err("Parse error: [OxcDiagnostic …]".into()), None),
         TestOutcome::Pass
     );
-    // …but a runtime-phase negative must not get the same free pass.
     let rt = neg_meta("runtime", "SyntaxError");
     assert!(matches!(
-        check_outcome(&rt, Err("Parse error: [OxcDiagnostic …]".into())),
+        check_outcome(&rt, Err("Parse error: [OxcDiagnostic …]".into()), None),
         TestOutcome::Fail { .. }
     ));
 }

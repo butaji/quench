@@ -5,7 +5,6 @@ pub struct RunnerFlags {
     pub all_stages: bool,
     pub digest: bool,
     pub quick: bool,
-    pub json_out: bool,
     pub isolated: bool,
     pub parallel: bool,
     pub stage: usize,
@@ -20,7 +19,6 @@ impl RunnerFlags {
             all_stages: env_bool("ALL_STAGES"),
             digest: env_bool("TEST262_DIGEST"),
             quick: env_bool("TEST262_QUICK"),
-            json_out: env_bool("TEST262_JSON"),
             isolated: env_bool("TEST262_ISOLATED"),
             parallel: !env_bool("TEST262_SERIAL") && env_bool_default("TEST262_PARALLEL", true),
             stage: std::env::var("TEST262_STAGE")
@@ -86,7 +84,6 @@ mod tests {
             all_stages: false,
             digest: true,
             quick: false,
-            json_out: false,
             isolated: false,
             parallel: env_bool_default("TEST262_PARALLEL_UNSET_ABC", true),
             stage: 0,

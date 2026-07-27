@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{QuenchHost, Test262Host, TestOutcome};
+use crate::test262::host::{capture_thrown_diagnostics, Test262Host, TestFailure, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
@@ -38,22 +38,55 @@ fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
     phase == "parse" && typ == "SyntaxError" && msg.contains("Parse error")
 }
 
-pub fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> TestOutcome {
+/// Build a TestFailure with captured JS error diagnostics from the thread-local.
+/// Called after a failed eval while the thrown value is still available.
+fn build_failure(msg: impl Into<String>, test_path: Option<&Path>) -> TestFailure {
+    let msg = msg.into();
+    let (error_type, error_message, js_stack) = capture_thrown_diagnostics();
+    let mut f = TestFailure {
+        message: msg,
+        error_type,
+        error_message,
+        js_stack,
+        source_path: test_path.map(|p| p.to_string_lossy().to_string()),
+        source_line: None,
+        source_context: String::new(),
+    };
+    // Attach source context if we have a test path.
+    if let Some(path) = test_path {
+        f = f.with_source(path, None);
+    }
+    f
+}
+
+pub fn check_outcome(
+    meta: &Test262Metadata,
+    result: Result<(), String>,
+    test_path: Option<&Path>,
+) -> TestOutcome {
     match (&meta.negative, result) {
         (None, Ok(())) => TestOutcome::Pass,
-        (None, Err(msg)) => TestOutcome::Fail { reason: msg },
+        (None, Err(msg)) => TestOutcome::Fail {
+            failure: build_failure(msg, test_path),
+        },
         (Some(_), Ok(())) => TestOutcome::Fail {
-            reason: "expected error but passed".into(),
+            failure: TestFailure::from_message("expected error but passed"),
         },
         (Some(neg), Err(msg)) => {
             if INFRA_MARKERS.iter().any(|m| msg.contains(m)) {
                 return TestOutcome::Fail {
-                    reason: format!("infrastructure failure, not a test result: {}", msg),
+                    failure: TestFailure::from_message(format!(
+                        "infrastructure failure, not a test result: {}",
+                        msg
+                    )),
                 };
             }
             if !error_type_matches(&neg.phase, &neg.typ, &msg) {
                 TestOutcome::Fail {
-                    reason: format!("expected {} but got: {}", neg.typ, msg),
+                    failure: TestFailure::from_message(format!(
+                        "expected {} but got: {}",
+                        neg.typ, msg
+                    )),
                 }
             } else {
                 TestOutcome::Pass
@@ -63,7 +96,7 @@ pub fn check_outcome(meta: &Test262Metadata, result: Result<(), String>) -> Test
 }
 
 pub fn run_single_test(
-    _host: &mut dyn Test262Host,
+    _host: &mut dyn crate::test262::host::Test262Host,
     harness: &HarnessLoader,
     test_path: &Path,
 ) -> TestOutcome {
@@ -71,7 +104,7 @@ pub fn run_single_test(
         Ok(s) => s,
         Err(e) => {
             return TestOutcome::Fail {
-                reason: format!("read: {}", e),
+                failure: TestFailure::from_message(format!("read: {}", e)),
             }
         }
     };
@@ -79,7 +112,7 @@ pub fn run_single_test(
         Some(m) => m,
         None => {
             return TestOutcome::Fail {
-                reason: "bad frontmatter".into(),
+                failure: TestFailure::from_message("bad frontmatter"),
             }
         }
     };
@@ -101,8 +134,6 @@ fn run_prepared(
     meta: &Test262Metadata,
 ) -> TestOutcome {
     if meta.flags.contains(&"CanBlockIsTrue".to_string()) {
-        // test262-harness semantics: the main agent cannot block; a test that
-        // requires blocking cannot produce a verdict here.
         return TestOutcome::Skip {
             reason: "CanBlockIsTrue: host agent cannot block".into(),
         };
@@ -111,13 +142,16 @@ fn run_prepared(
     let is_raw = meta.flags.contains(&"raw".to_string());
     let script = match build_script(harness, source, meta, is_raw) {
         Ok(s) => s,
-        Err(e) => return TestOutcome::Fail { reason: e },
+        Err(e) => {
+            return TestOutcome::Fail {
+                failure: TestFailure::from_message(e),
+            }
+        }
     };
     let no_strict = is_raw || meta.flags.contains(&"noStrict".to_string());
     let only_strict = meta.flags.contains(&"onlyStrict".to_string());
-    let path_s = test_path.to_string_lossy().to_string();
     if !only_strict {
-        let outcome = run_with_timeout(&script, is_module, meta, &path_s, false);
+        let outcome = run_with_timeout(&script, is_module, meta, test_path, false);
         if !matches!(outcome, TestOutcome::Pass) {
             return outcome;
         }
@@ -126,15 +160,17 @@ fn run_prepared(
         }
     }
     if no_strict {
-        // only_strict && no_strict (or raw): contradictory frontmatter.
         return TestOutcome::Fail {
-            reason: "conflicting flags: onlyStrict with noStrict/raw".into(),
+            failure: TestFailure::from_message("conflicting flags: onlyStrict with noStrict/raw"),
         };
     }
     let strict_script = format!("\"use strict\";\n{}", script);
-    match run_with_timeout(&strict_script, is_module, meta, &path_s, true) {
-        TestOutcome::Fail { reason } => TestOutcome::Fail {
-            reason: format!("strict: {}", reason),
+    match run_with_timeout(&strict_script, is_module, meta, test_path, true) {
+        TestOutcome::Fail { failure } => TestOutcome::Fail {
+            failure: TestFailure {
+                message: format!("strict: {}", failure.message),
+                ..failure
+            },
         },
         other => other,
     }
@@ -164,7 +200,7 @@ fn run_with_timeout(
     script: &str,
     is_module: bool,
     meta: &Test262Metadata,
-    test_path: &str,
+    test_path: &Path,
     _strict: bool,
 ) -> TestOutcome {
     let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
@@ -175,24 +211,27 @@ fn run_with_timeout(
     let spawn = std::thread::Builder::new()
         .stack_size(TEST_THREAD_STACK)
         .spawn(move || {
-            let _ = tp;
             let is_async = meta.flags.iter().any(|f| f == "async");
             let result = execute_script(&script, is_module, is_async);
-            let _ = tx.send(check_outcome(&meta, result));
+            // Pass test_path for source context capture in check_outcome.
+            let _ = tx.send(check_outcome(&meta, result, Some(&tp)));
         });
     if spawn.is_err() {
         return TestOutcome::Fail {
-            reason: "failed to spawn test thread".into(),
+            failure: TestFailure::from_message("failed to spawn test thread"),
         };
     }
     let _handle = spawn.unwrap();
     match rx.recv_timeout(timeout) {
         Ok(outcome) => outcome,
         Err(mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
-            reason: format!("timed out after {}s", TEST_TIMEOUT_SECS),
+            failure: TestFailure::from_message(format!(
+                "timed out after {}s",
+                TEST_TIMEOUT_SECS
+            )),
         },
         Err(mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
-            reason: "panicked".into(),
+            failure: TestFailure::from_message("panicked"),
         },
     }
 }
@@ -202,7 +241,7 @@ fn execute_script(script: &str, is_module: bool, is_async: bool) -> Result<(), S
     if is_async {
         return run_async_script(script, is_module);
     }
-    let mut inner = QuenchHost::new();
+    let mut inner = crate::test262::host::QuenchHost::new();
     if is_module {
         inner.run_module_script(script)
     } else {
@@ -211,8 +250,7 @@ fn execute_script(script: &str, is_module: bool, is_async: bool) -> Result<(), S
 }
 
 /// Run an async-flag test: eval (which drains microtasks), then verify $DONE
-/// was invoked exactly once. Mirrors `QuenchHost::run_script` setup so the
-/// post-eval probe runs in the same realm.
+/// was invoked exactly once.
 fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
     crate::builtins::register_builtins(&mut ctx);
@@ -259,7 +297,11 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
         Ok(c) => c,
         Err(e) => {
             return TestOutcome::Fail {
-                reason: format!("isolated spawn ({}): {}", bin.display(), e),
+                failure: TestFailure::from_message(format!(
+                    "isolated spawn ({}): {}",
+                    bin.display(),
+                    e
+                )),
             }
         }
     };
@@ -268,9 +310,9 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
         match child.try_wait() {
             Ok(Some(_)) => {
                 return match child.wait_with_output() {
-                    Ok(out) => classify_isolated(&out),
+                    Ok(out) => classify_isolated(&out, test_path),
                     Err(e) => TestOutcome::Fail {
-                        reason: format!("isolated output: {}", e),
+                        failure: TestFailure::from_message(format!("isolated output: {}", e)),
                     },
                 };
             }
@@ -281,13 +323,16 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
                 let _ = child.kill();
                 let _ = child.wait();
                 return TestOutcome::Fail {
-                    reason: format!("timed out after {}s", TEST_TIMEOUT_SECS),
+                    failure: TestFailure::from_message(format!(
+                        "timed out after {}s",
+                        TEST_TIMEOUT_SECS
+                    )),
                 };
             }
             Err(e) => {
                 let _ = child.kill();
                 return TestOutcome::Fail {
-                    reason: format!("isolated wait: {}", e),
+                    failure: TestFailure::from_message(format!("isolated wait: {}", e)),
                 };
             }
         }
@@ -295,23 +340,27 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
 }
 
 /// Map a finished `run-test` subprocess to an outcome. run-test verifies
-/// negative-test polarity itself, so exit 0 is the ONLY pass. Signal exits
-/// (`status.code()` is None) and unexpected codes are always Fail.
-fn classify_isolated(out: &std::process::Output) -> TestOutcome {
+/// negative-test polarity itself, so exit 0 is the ONLY pass.
+fn classify_isolated(out: &std::process::Output, test_path: &Path) -> TestOutcome {
+    let msg = |s: String| -> TestFailure {
+        let mut f = TestFailure::from_message(s);
+        f.source_path = Some(test_path.to_string_lossy().to_string());
+        f
+    };
     match out.status.code() {
         Some(0) => TestOutcome::Pass,
         Some(code) => TestOutcome::Fail {
-            reason: format!(
+            failure: msg(format!(
                 "isolated exit {}: {}",
                 code,
                 isolated_message(&out.stderr, &out.stdout)
-            ),
+            )),
         },
         None => TestOutcome::Fail {
-            reason: format!(
+            failure: msg(format!(
                 "isolated terminated by signal: {}",
                 isolated_message(&out.stderr, &out.stdout)
-            ),
+            )),
         },
     }
 }
@@ -359,8 +408,6 @@ fn run_test_binary() -> std::path::PathBuf {
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or(&manifest);
-    // Prefer the release binary when built (digest runs are ~4x faster in
-    // release); fall back to debug. RUN_TEST_BIN overrides both.
     first_existing(&[
         ws.join("target/release/run-test"),
         ws.join("target/debug/run-test"),

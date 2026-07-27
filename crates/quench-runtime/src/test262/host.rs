@@ -1,7 +1,10 @@
 //! Trait boundary between the test262 runner and the engine under test.
 
+use std::path::Path;
+
 use crate::test262::harness::try_inject_harness;
-use crate::Context;
+use crate::value::error::take_thrown_value;
+use crate::{Context, Value};
 
 /// Implement this for your engine to plug it into the test262 runner.
 pub trait Test262Host: Send {
@@ -15,12 +18,168 @@ pub trait Test262Host: Send {
     fn run_module_script(&mut self, source: &str) -> Result<(), String>;
 }
 
+/// Structured diagnostic information about a test failure.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct TestFailure {
+    /// Human-readable error message (used for digest grouping).
+    pub message: String,
+    /// Error type extracted from the JS error object, e.g. "TypeError", "Test262Error".
+    pub error_type: Option<String>,
+    /// The `.message` property of the JS error object (the spec-level error detail).
+    pub error_message: Option<String>,
+    /// JS stack trace, e.g. from `.stack` on the error object.
+    pub js_stack: Option<String>,
+    /// Path to the test source file.
+    pub source_path: Option<String>,
+    /// Approximate line number where the failure occurred (1-based).
+    pub source_line: Option<usize>,
+    /// Source code context surrounding the failure (up to ~N lines).
+    pub source_context: String,
+}
+
+impl TestFailure {
+    /// Build a minimal TestFailure from just a message string (backward compat).
+    pub fn from_message(msg: impl Into<String>) -> Self {
+        TestFailure {
+            message: msg.into(),
+            error_type: None,
+            error_message: None,
+            js_stack: None,
+            source_path: None,
+            source_line: None,
+            source_context: String::new(),
+        }
+    }
+
+    /// Build a TestFailure from a message and a thrown JS Value.
+    /// Extracts `.name`, `.message`, and `.stack` from the error object.
+    pub fn from_thrown(msg: impl Into<String>, thrown: Value) -> Self {
+        let msg = msg.into();
+        let (error_type, error_message, js_stack) = extract_error_properties(&thrown);
+        TestFailure {
+            message: msg,
+            error_type,
+            error_message,
+            js_stack,
+            source_path: None,
+            source_line: None,
+            source_context: String::new(),
+        }
+    }
+
+    /// Attach source context from a test file path and optional line hint.
+    pub fn with_source(mut self, path: &Path, hint_line: Option<usize>) -> Self {
+        let path_s = path.to_string_lossy().to_string();
+        self.source_path = Some(path_s.clone());
+        if let Ok(source) = std::fs::read_to_string(path) {
+            let lines: Vec<&str> = source.lines().collect();
+            let total = lines.len();
+            // If we have a hint line, show context around it; otherwise show first 30 lines.
+            let (start, end) = if let Some(hl) = hint_line {
+                let hl = hl.max(1).min(total);
+                let s = hl.saturating_sub(10);
+                let e = (hl + 10).min(total);
+                (s, e)
+            } else {
+                (0, total.min(30))
+            };
+            let ctx_lines: Vec<String> = lines[start..end]
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let ln = start + i + 1;
+                    let marker = if hint_line == Some(ln) {
+                        " → "
+                    } else {
+                        "   "
+                    };
+                    format!("{}{:4}: {}", marker, ln, l)
+                })
+                .collect();
+            self.source_context = ctx_lines.join("\n");
+            // If no hint line, try to find the failing line from the message.
+            if hint_line.is_none() {
+                self.source_line = None;
+            } else {
+                self.source_line = hint_line;
+            }
+        }
+        self
+    }
+}
+
+/// Extract structured properties from a thrown JS error Value.
+fn extract_error_properties(val: &Value) -> (Option<String>, Option<String>, Option<String>) {
+    match val {
+        Value::Object(obj) => {
+            let obj = obj.borrow();
+            let name = obj.get("name").and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            });
+            let message = obj.get("message").and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            });
+            let stack = obj.get("stack").and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            });
+            (name, message, stack)
+        }
+        _ => (None, None, None),
+    }
+}
+
+/// After an eval failure, capture the thrown JS error's properties.
+/// Must be called immediately after the failed eval, before the thrown value is consumed.
+/// Returns (error_type, error_message, js_stack).
+pub fn capture_thrown_diagnostics() -> (Option<String>, Option<String>, Option<String>) {
+    if let Some(thrown) = take_thrown_value() {
+        extract_error_properties(&thrown)
+    } else {
+        (None, None, None)
+    }
+}
+
+/// Get source context around a given line in a test file.
+pub fn read_source_context(path: &Path, hint_line: Option<usize>, context_lines: usize) -> String {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = source.lines().collect();
+    let total = lines.len();
+    let (start, end) = if let Some(hl) = hint_line {
+        let hl = hl.max(1).min(total);
+        let s = hl.saturating_sub(context_lines);
+        let e = (hl + context_lines).min(total);
+        (s, e)
+    } else {
+        (0, total.min(context_lines * 2))
+    };
+    lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let ln = start + i + 1;
+            let marker = if hint_line == Some(ln) {
+                " → "
+            } else {
+                "   "
+            };
+            format!("{}{:4}: {}", marker, ln, l)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What happened when we tried to run a test.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum TestOutcome {
     Pass,
     Fail {
-        reason: String,
+        #[serde(flatten)]
+        failure: TestFailure,
     },
     /// Documented skip — never counted as a pass.
     Skip {
@@ -28,11 +187,27 @@ pub enum TestOutcome {
     },
 }
 
+impl TestOutcome {
+    /// Convenience: get the failure message if this is a Fail, else empty string.
+    pub fn failure_message(&self) -> &str {
+        match self {
+            TestOutcome::Fail { failure } => &failure.message,
+            _ => "",
+        }
+    }
+}
+
 impl std::fmt::Display for TestOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TestOutcome::Pass => write!(f, "PASS"),
-            TestOutcome::Fail { reason } => write!(f, "FAIL: {}", reason),
+            TestOutcome::Fail { failure } => {
+                write!(f, "FAIL: {}", failure.message)?;
+                if let Some(ref et) = failure.error_type {
+                    write!(f, " [{}]", et)?;
+                }
+                Ok(())
+            }
             TestOutcome::Skip { reason } => write!(f, "SKIP: {}", reason),
         }
     }
@@ -478,7 +653,7 @@ verifyProperty(obj, prop, desc);
         crate::interpreter::set_strict_mode(prev);
         assert_eq!(
             result,
-            Ok(()),
+            Ok(crate::value::Value::Undefined),
             "QuenchHost should set sloppy mode regardless of caller's strictness"
         );
     }

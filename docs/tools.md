@@ -3,14 +3,17 @@
 ## Quick Reference
 
 ```bash
-# Run a single test with full diagnostics
+# Run a single test with full diagnostics (auto-shows error type, source context)
 cargo run --bin run-test -- [--strict] [--stack] [--show-script] tests/test262/.../test.js
 
 # Inspect test metadata without running
 cargo run --bin inspect-test -- [--source] tests/test262/.../test.js
 
-# Run stage and show ALL failures grouped by root cause
+# Run stage and show ALL failures grouped by root cause (digest mode)
 TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+
+# Digest + per-test detail (error type, source context, JS stack per failure)
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test -p quench-runtime --test test262
 
 # Run a single stage (stops at first failure)
 TEST262_STAGE=N cargo test -p quench-runtime --test test262
@@ -32,9 +35,6 @@ bash tools/stage-status.sh
 
 # Check if current stage is 100% and advance
 TEST262_STAGE=N bash tools/advance-stage.sh
-
-# Machine-readable JSON output
-TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 ```
 
 ## Tool Reference
@@ -54,19 +54,32 @@ Runs a single test262 test with full diagnostics. Handles async, module, and str
 | `--strict` | Also run in strict mode (auto-detected from flags by default) |
 | `--module` | Run as ES module (auto-detected from flags by default) |
 | `--show-script` | Dump the full generated script (harness includes + test source) |
-| `--stack` | Show full error debug output on failure |
+| `--stack` | Show full Rust-level error debug output on failure |
+| `--inspect EXPR` | Evaluate a JS expression in the failed context and print its value |
+
+**On failure, `run-test` auto-shows:**
+
+- Error type (TypeError, Test262Error, ReferenceError, etc.)
+- Error message (the `.message` property of the JS error object)
+- Reason (the full error diagnostic)
+- JS stack trace (extracted from the error object's `.stack` property if available)
+- Source context (lines surrounding the point of failure in the test file)
+- Inspection results (for `--inspect EXPR`)
 
 **Examples:**
 
 ```bash
-# Basic run with metadata + source display
+# Basic run — shows metadata, source, and rich diagnostics on failure
 cargo run --bin run-test -- tests/test262/test/language/statements/class/name.js
 
 # Debug a cryptic failure — see the harnessed JS
 cargo run --bin run-test -- --show-script path/to/failing-test.js
 
-# Run with strict mode + stack trace
-cargo run --bin run-test -- --strict --stack path/to/failing-test.js
+# Run with Rust-level debug output on failure
+cargo run --bin run-test -- --stack path/to/failing-test.js
+
+# Inspect a variable after failure
+cargo run --bin run-test -- --inspect 'typeof x' path/to/failing-test.js
 
 # Force module mode
 cargo run --bin run-test -- --module path/to/module-test.js
@@ -76,6 +89,8 @@ cargo run --bin run-test -- --module path/to/module-test.js
 - `0` — all variants passed
 - `1` — one or more variants failed
 - `2` — harness/build error, bad flags, file not found
+- `3` — negative test wrongly passed (expected error, none occurred)
+- `4` — infrastructure failure (read, build, context creation)
 
 ### 2. `inspect-test` — Metadata Inspector
 
@@ -95,11 +110,11 @@ cargo run --bin inspect-test -- tests/test262/test/language/statements/class/sup
 cargo run --bin inspect-test -- --source path/to/test.js
 ```
 
-Output includes: description, spec section, features, flags, included harness files, negative expectations (error type + phase), line/char count, and test structure hints (uses assert.*, throw, $DONE, export).
+Output includes: description, spec section, features, flags, included harness files, negative expectations (error type + phase), line/char count, and test structure hints (uses assert.\*, throw, $DONE, export).
 
 ### 3. `TEST262_DIGEST=1` — Failure Digest Mode
 
-Runs ALL tests in a stage (or all stages), collects every failure, and groups them by error message. This is the most powerful tool for finding root causes.
+Runs ALL tests in a stage (or all stages), collects every failure, and groups them by normalized error message. This is the most powerful tool for finding root causes.
 
 ```bash
 # Digest a single stage
@@ -110,29 +125,50 @@ ALL_STAGES=1 TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 ```
 
 Output shows groups like:
-```
-────────────────────────────────────────────
-  JsError("ReferenceError: $DONE is not defined")  (288 tests)
-────────────────────────────────────────────
-────────────────────────────────────────────
-  JsError("Test262Error: Expected ReferenceError to be thrown...")  (42 tests)
-────────────────────────────────────────────
+
+```json
+{
+  "stage": 0,
+  "path": "test/harness",
+  "passed": 102,
+  "failed": 14,
+  "skipped": 0,
+  "total": 116,
+  "groups": [
+    {
+      "reason": "Expected a ReferenceError to be thrown but got a TypeError",
+      "count": 42,
+      "sample_paths": ["tests/.../test.js"]
+    }
+  ]
+}
 ```
 
-Fix the most numerous group first for maximum impact.
+Rich per-test diagnostics can be included with `TEST262_DETAIL=1`:
+
+```bash
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test
+```
+
+In detail mode, the JSON includes per-test diagnostic snapshots with `error_type`, `error_message`, `js_stack`, and `source_context`. A human-readable summary is also printed after the JSON.
 
 **Diagnostic env-vars that work with digest:**
 
 | Env Var | Effect |
 |---------|--------|
+| `TEST262_DETAIL=1` | Include per-test diagnostic snapshots in digest output |
 | `TEST262_SHOW_SCRIPT=1` | Dump full generated JS script for each failing test |
 | `TEST262_DUMP_FAILURES=<path>` | Save list of all failing tests to a file after digest |
 | `TEST262_RERUN_FAILURES=<path>` | Only run tests listed in a previous failure file |
 | `TEST262_FIRST_N=<N>` | Only run first N tests (ultra-fast smoke test) |
+| `TEST262_FAILED_JSON=<path>` | Re-run only paths from a prior `tasks/failures-N.json` digest |
 
 **Examples:**
 
 ```bash
+# Digest with per-test detail (shows source context, error type, stack per failure)
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test
+
 # Show generated script for failing tests
 TEST262_STAGE=N TEST262_DIGEST=1 TEST262_SHOW_SCRIPT=1 cargo test
 
@@ -160,6 +196,24 @@ Produces JSON with failure groups for external processing (diffing, baselines, a
 
 ```bash
 TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > stage16.json
+```
+
+The JSON output now includes structured diagnostics per test when `TEST262_DETAIL=1`:
+
+```json
+{
+  "groups": [{
+    "reason": "sameValue failed N !== N",
+    "count": 10,
+    "samples": [{
+      "path": "tests/test262/test/.../test.js",
+      "error_type": "Test262Error",
+      "error_message": "sameValue failed: actual 5 !== expected 3",
+      "js_stack": null,
+      "source_context": " →  42: assert.sameValue(f(), 3);"
+    }]
+  }]
+}
 ```
 
 ### 6. `tools/run-each.sh` — Process-Isolated Runner
@@ -199,7 +253,7 @@ bash tools/advance-stage.sh
 
 ### 10. Per-Test Timeout
 
-Every test has a 10-second timeout. Tests that hang are reported as "Must be optimized (timed out after 10s)".
+Every test has a 15-second timeout. Tests that hang are reported as "Must be optimized (timed out after 15s)".
 
 ## Workflow
 
@@ -211,13 +265,15 @@ Every test has a 10-second timeout. Tests that hang are reported as "Must be opt
    ```
 2. Identify the largest failure group (e.g., "42 tests: Expected ReferenceError")
 3. Fix the root cause (one fix may unlock 10-100+ tests)
-4. Save failure list and re-run only those:
+4. Re-run digest to verify progress:
    ```bash
-   TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DUMP_FAILURES=/tmp/fails.txt cargo test
-   # ... apply fix ...
-   TEST262_STAGE=N TEST262_DIGEST=1 TEST262_RERUN_FAILURES=/tmp/fails.txt cargo test
+   TEST262_STAGE=N TEST262_DIGEST=1 cargo test
    ```
-5. When stage reaches 100%, auto-advance:
+5. When the largest group is fixed, re-run with per-test detail:
+   ```bash
+   TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test
+   ```
+6. When stage reaches 100%, auto-advance:
    ```bash
    bash tools/advance-stage.sh
    ```
@@ -228,7 +284,7 @@ Every test has a 10-second timeout. Tests that hang are reported as "Must be opt
 # Quick: inspect metadata
 cargo run --bin inspect-test -- path/to/failing-test.js
 
-# Run with source display
+# Run with rich diagnostics (auto-shows error type, source context)
 cargo run --bin run-test -- path/to/failing-test.js
 
 # If it crashes: use process isolation
@@ -237,8 +293,11 @@ TEST262_STAGE=N bash tools/run-each.sh
 # See the harness-generated script
 cargo run --bin run-test -- --show-script path/to/failing-test.js
 
-# See stack trace on failure
+# See Rust-level debug output
 cargo run --bin run-test -- --stack path/to/failing-test.js
+
+# Inspect variables after failure
+cargo run --bin run-test -- --inspect 'x' --inspect 'typeof y' path/to/failing-test.js
 ```
 
 ### Track Progress
@@ -251,10 +310,10 @@ bash tools/stage-status.sh
 
 ```bash
 # Before fix
-TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > before.json
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test > before.json
 
 # After fix
-TEST262_STAGE=N TEST262_JSON=1 TEST262_DIGEST=1 cargo test > after.json
+TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test > after.json
 
 # Diff (requires jq)
 diff <(jq --sort-keys . before.json) <(jq --sort-keys . after.json)
@@ -271,23 +330,53 @@ diff /tmp/before.txt /tmp/after.txt
 - `TEST262_STAGE=N` — run only stage N
 - `ALL_STAGES=1` — run all stages sequentially
 - `TEST262_DIGEST=1` — collect all failures, don't stop at first
+- `TEST262_DETAIL=1` — per-test diagnostic snapshots (error type, source context, stack)
 - `TEST262_QUICK=1` — minimal output, just counts
 - `TEST262_JSON=1` — machine-readable JSON output
 - `TEST262_SHOW_SCRIPT=1` — dump generated JS script on failure
 - `TEST262_DUMP_FAILURES=<path>` — save failure list to file
 - `TEST262_RERUN_FAILURES=<path>` — re-run only listed tests
 - `TEST262_FIRST_N=<N>` — only run first N tests
-- `RUST_BACKTRACE=1` — stack traces on panics
+- `TEST262_FAILED_JSON=<path>` — re-run only paths from a prior digest JSON
+- `TEST262_SERIAL=1` — disable parallel execution
+- `TEST262_INPROCESS=1` — run digest in-process (risk of crash on stack overflow)
+- `RUST_BACKTRACE=1` — Rust stack traces on panics
 
-See also `tasks/harness-roadmap.md` for the full harness speed roadmap.
+## Architecture
+
+### Structured Failure Diagnostics
+
+Every test failure is captured as a `TestFailure` struct with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | `String` | Main error message (used for digest grouping) |
+| `error_type` | `Option<String>` | JS error type, e.g. `TypeError`, `Test262Error` |
+| `error_message` | `Option<String>` | JS error object's `.message` property |
+| `js_stack` | `Option<String>` | JS stack trace from error object's `.stack` |
+| `source_path` | `Option<String>` | Path to the test source file |
+| `source_line` | `Option<usize>` | Approximate line of failure (1-based) |
+| `source_context` | `String` | Surrounding source lines with line numbers |
+
+The `error_type`, `error_message`, and `js_stack` fields are extracted from the thrown JS Value (error object) immediately after the failed eval, before any subsequent eval can overwrite the thread-local. This means even when the runtime doesn't set `.stack` on error objects, the fields are `None` — but when it does, they are captured and displayed automatically.
+
+### Failure Flow
+
+1. JS test throws → `ControlFlow::Throw(Value)` → `set_thrown_value(Value)`
+2. `ctx.eval()` returns `Err(JsError("TypeError: ..."))`
+3. `capture_thrown_diagnostics()` reads the thrown JS Value from thread-local,
+   extracts `.name`, `.message`, `.stack` properties
+4. `TestFailure` is constructed with the diagnostics + source context
+5. `TestOutcome::Fail { failure }` carries it to the runner/display layer
+6. `run-test` or digest mode renders it with type, message, source, stack
 
 ## Improving the Tools
 
 These tools should evolve as you use them. Every time you run a digest, ask:
 
-1. **Was the output useful?** If failure groups are too broad, improve the normalization.
-2. **Did it crash?** Some tests cause stack overflows that kill the process. Add those to the skip list or improve the digest runner to use process isolation.
+1. **Was the output useful?** If failure groups are too broad, improve the normalization (see `digest.rs::normalize_reason`).
+2. **Did it crash?** Some tests cause stack overflows that kill the process. Add those to the skip list or use `TEST262_SERIAL=1` / `TEST262_INPROCESS=1` to debug.
 3. **Was it fast enough?** If it's too slow, use `TEST262_FIRST_N=10` for quick iteration, or `TEST262_RERUN_FAILURES` to only run tests that previously failed.
-4. **Are the groups actionable?** If a group mixes different root causes, split by a deeper error analysis.
-5. **Can you inspect the failing JS?** Use `TEST262_SHOW_SCRIPT=1` to see the exact harnessed script the runtime evaluates.
+4. **Are the groups actionable?** If a group mixes different root causes, split by a deeper error analysis. Use `TEST262_DETAIL=1` to see per-test source context and error types.
+5. **Can you inspect the failing JS?** Use `TEST262_SHOW_SCRIPT=1` to see the exact harnessed script the runtime evaluates, or `cargo run --bin run-test -- path/to/test.js` for rich diagnostics.
 6. **Can you understand the test quickly?** Use `cargo run --bin inspect-test -- path/to/test.js` to see parsed metadata without running.

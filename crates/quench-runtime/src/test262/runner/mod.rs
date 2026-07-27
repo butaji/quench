@@ -8,7 +8,7 @@ mod flags;
 use std::path::PathBuf;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{Test262Host, TestOutcome};
+use crate::test262::host::{Test262Host, TestFailure, TestOutcome};
 
 pub use execute::run_single_test;
 pub use flags::default_stage;
@@ -264,10 +264,13 @@ impl Test262Runner {
                         println!("  SKIP {} ({})", path.display(), reason);
                     }
                 }
-                TestOutcome::Fail { reason } => {
+                TestOutcome::Fail { failure } => {
                     summary.failed += 1;
-                    summary.first_failure = Some((path.display().to_string(), reason.clone()));
-                    print_first_failure(stage, i, path, &reason);
+                    summary.first_failure = Some((
+                        path.display().to_string(),
+                        failure.message.clone(),
+                    ));
+                    print_rich_failure(stage, i, path, &failure);
                     break;
                 }
             }
@@ -277,29 +280,48 @@ impl Test262Runner {
     }
 }
 
-fn print_first_failure(stage: usize, i: usize, path: &std::path::Path, reason: &str) {
-    let src_diag = std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .take(20)
-        .collect::<Vec<_>>()
-        .join("\n");
+fn print_rich_failure(stage: usize, i: usize, path: &std::path::Path, failure: &TestFailure) {
     println!(
         "\n============================================================\n\
          FIRST FAILURE\n\
          Stage {} | #{}\n\
-         {}\n\
-         ------------------------------------------------------------\n\
-         Reason: {}\n\
-         ------------------------------------------------------------\n\
-         Test source (first 20 lines):\n{}\n\
-         ============================================================",
-        stage,
-        i,
-        path.display(),
-        reason,
-        src_diag
+         {}",
+        stage, i, path.display()
     );
+    // Error type and message
+    if let Some(ref et) = failure.error_type {
+        println!("  Type: {}", et);
+    }
+    println!("  Reason: {}", failure.message);
+    if let Some(ref em) = failure.error_message {
+        if Some(em) != failure.error_type.as_ref() {
+            println!("  JS message: {}", em);
+        }
+    }
+    // JS stack trace
+    if let Some(ref stack) = failure.js_stack {
+        println!("  Stack:");
+        for line in stack.lines() {
+            println!("    {}", line);
+        }
+    }
+    // Source context (prefer detailed source_context, fall back to first 20 lines)
+    if !failure.source_context.is_empty() {
+        println!("  ── Source ──────────────────────────────────");
+        println!("{}", failure.source_context);
+    } else {
+        let src_diag = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .take(20)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !src_diag.is_empty() {
+            println!("  ── Source (first 20 lines) ────────────────");
+            println!("{}", src_diag);
+        }
+    }
+    println!("============================================================");
 }
 
 fn print_stage_footer(stage: usize, count: usize, summary: &RunSummary) {

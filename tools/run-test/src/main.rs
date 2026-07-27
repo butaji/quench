@@ -6,6 +6,7 @@
 //!   cargo run --bin run-test -- --stack <path-to-test.js>
 //!   cargo run --bin run-test -- --module <path-to-test.js>
 //!   cargo run --bin run-test -- --show-script <path-to-test.js>
+//!   cargo run --bin run-test -- --inspect EXPR <path-to-test.js>
 //!
 //! Env: TEST262_DIR=<path-to-test262>
 //!
@@ -20,6 +21,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use quench_runtime::test262::harness::try_inject_harness;
+use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
 use quench_runtime::test262::metadata::Test262Metadata;
 use quench_runtime::test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
@@ -39,6 +41,7 @@ fn main() -> ExitCode {
     let mut module = false;
     let mut show_script = false;
     let mut show_stack = false;
+    let mut inspect_exprs: Vec<String> = Vec::new();
     let mut test_path: Option<String> = None;
 
     let mut i = 1;
@@ -48,9 +51,17 @@ fn main() -> ExitCode {
             "--module" => module = true,
             "--show-script" => show_script = true,
             "--stack" => show_stack = true,
+            "--inspect" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--inspect requires an expression argument");
+                    std::process::exit(2);
+                }
+                inspect_exprs.push(args[i].clone());
+            }
             _ if args[i].starts_with('-') => {
                 eprintln!("Unknown flag: {}", args[i]);
-                eprintln!("Usage: run-test [--strict] [--module] [--show-script] [--stack] <path>");
+                eprintln!("Usage: run-test [--strict] [--module] [--show-script] [--stack] [--inspect EXPR] <path>");
                 std::process::exit(2);
             }
             _ => test_path = Some(args[i].clone()),
@@ -60,7 +71,7 @@ fn main() -> ExitCode {
 
     let path_str = test_path.unwrap_or_else(|| {
         eprintln!(
-            "Usage: run-test [--strict] [--module] [--show-script] [--stack] <path-to-test.js>"
+            "Usage: run-test [--strict] [--module] [--show-script] [--stack] [--inspect EXPR] <path-to-test.js>"
         );
         std::process::exit(2);
     });
@@ -173,8 +184,6 @@ fn main() -> ExitCode {
                 eprintln!("{}: harness load failed: {}", label, e);
                 return 4;
             }
-            // Set MAIN_REALM_TEST262_ERROR for this realm so create_js_error_with_type
-            // uses the correct constructor (see value/error.rs for details).
             if let Some(te) = ctx.get_global("Test262Error") {
                 quench_runtime::value::error::set_main_realm_test262_error(te);
             }
@@ -185,7 +194,15 @@ fn main() -> ExitCode {
         } else {
             ctx.eval(code)
         };
-        judge(&mut ctx, &meta, is_async, show_stack, label, run_result)
+        let jc = JudgeCtx {
+            meta: &meta,
+            is_async,
+            show_stack,
+            inspect_exprs: &inspect_exprs,
+            label,
+            test_path: &path,
+        };
+        judge(&mut ctx, &jc, run_result)
     };
 
     let mut exit_code = 0;
@@ -224,35 +241,90 @@ fn main() -> ExitCode {
     std::process::exit(exit_code);
 }
 
-/// Judge one run's result against the metadata. Returns the exit code.
-/// Negative tests pass ONLY when the thrown error matches the expected type.
-fn judge(
-    ctx: &mut Context,
-    meta: &Test262Metadata,
+/// Build a TestFailure from a JsError + thrown value.
+fn build_failure_from_err(e: &JsError) -> TestFailure {
+    let msg = format!("{:?}", e);
+    let (error_type, error_message, js_stack) = capture_thrown_diagnostics();
+    TestFailure {
+        message: msg,
+        error_type,
+        error_message,
+        js_stack,
+        source_path: None,
+        source_line: None,
+        source_context: String::new(),
+    }
+}
+
+/// Render a TestFailure with rich diagnostics.
+fn print_failure(failure: &TestFailure, label: &str) {
+    println!("  {}: FAILED", label);
+    if let Some(ref et) = failure.error_type {
+        println!("    Type: {}", et);
+    }
+    println!("    Reason: {}", failure.message);
+    if let Some(ref em) = failure.error_message {
+        if Some(em) != failure.error_type.as_ref() {
+            println!("    JS message: {}", em);
+        }
+    }
+    if let Some(ref stack) = failure.js_stack {
+        println!("    Stack:");
+        for line in stack.lines() {
+            println!("      {}", line);
+        }
+    }
+    if !failure.source_context.is_empty() {
+        println!("    ── Source context ──");
+        for line in failure.source_context.lines() {
+            println!("    {}", line);
+        }
+    }
+}
+
+/// Configuration for judging a test execution result.
+struct JudgeCtx<'a> {
+    meta: &'a Test262Metadata,
     is_async: bool,
     show_stack: bool,
-    label: &str,
+    inspect_exprs: &'a [String],
+    label: &'a str,
+    test_path: &'a std::path::Path,
+}
+
+/// Judge one run's result against the metadata. Returns the exit code.
+fn judge(
+    ctx: &mut Context,
+    jc: &JudgeCtx,
     result: Result<Value, JsError>,
 ) -> i32 {
-    if let Some(neg) = &meta.negative {
-        return judge_negative(neg, label, result);
+    if let Some(neg) = &jc.meta.negative {
+        return judge_negative(neg, jc.label, result, jc.test_path);
     }
     match result {
         Err(e) => {
-            println!("  {}: FAILED: {:?}", label, e);
-            if show_stack {
-                println!("  Error (full): {:?}", e);
+            let mut failure = build_failure_from_err(&e);
+            if jc.show_stack {
+                println!("  {}: FAILED", jc.label);
+                println!("    Debug: {:?}", e);
             }
+            // Attach source context
+            if failure.source_context.is_empty() {
+                failure = failure.with_source(jc.test_path, None);
+            }
+            print_failure(&failure, jc.label);
+            inspect_failed(ctx, jc.inspect_exprs);
             1
         }
         Ok(v) => {
-            if is_async {
-                if let Some(code) = async_done_verdict(ctx, label) {
+            if jc.is_async {
+                if let Some(code) = async_done_verdict(ctx, jc.label) {
+                    inspect_failed(ctx, jc.inspect_exprs);
                     return code;
                 }
             }
-            if !label.is_empty() {
-                println!("  {}: PASSED ({:?})", label, v);
+            if !jc.label.is_empty() {
+                println!("  {}: PASSED ({:?})", jc.label, v);
             }
             0
         }
@@ -262,7 +334,6 @@ fn judge(
 /// Does an error message satisfy a negative expectation? OXC reports parse
 /// failures as "Parse error: …"; per spec any parse-phase rejection IS a
 /// SyntaxError, so map that onto the expected type.
-/// Mirrors runner/execute.rs::error_type_matches (private module).
 fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
     if typ.is_empty() || msg.contains(typ) {
         return true;
@@ -276,6 +347,7 @@ fn judge_negative(
     neg: &quench_runtime::test262::metadata::Negative,
     label: &str,
     result: Result<Value, JsError>,
+    test_path: &std::path::Path,
 ) -> i32 {
     match result {
         Ok(v) => {
@@ -286,12 +358,18 @@ fn judge_negative(
             3
         }
         Err(e) => {
+            let mut failure = build_failure_from_err(&e);
+            // Attach source context
+            if failure.source_context.is_empty() {
+                failure = failure.with_source(test_path, None);
+            }
             let msg = format!("{:?}", e);
             if !error_type_matches(&neg.phase, &neg.typ, &msg) {
                 println!(
-                    "  {}: FAILED (expected error type {} ({}), got: {})",
-                    label, neg.typ, neg.phase, msg
+                    "  {}: FAILED (expected error type {} ({}), got:)",
+                    label, neg.typ, neg.phase
                 );
+                print_failure(&failure, label);
                 return 1;
             }
             if !label.is_empty() {
@@ -312,6 +390,20 @@ fn async_done_verdict(ctx: &mut Context, label: &str) -> Option<i32> {
                 label, other
             );
             Some(1)
+        }
+    }
+}
+
+/// After a failed test, evaluate inspection expressions and print their results.
+fn inspect_failed(ctx: &mut Context, exprs: &[String]) {
+    if exprs.is_empty() {
+        return;
+    }
+    println!("  ─── Inspect ───");
+    for expr in exprs {
+        match ctx.eval(expr) {
+            Ok(v) => println!("  {expr} => {v:?}"),
+            Err(e) => println!("  {expr} => ERR: {e}"),
         }
     }
 }
