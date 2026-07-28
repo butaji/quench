@@ -449,3 +449,27 @@ pub fn eval_program(
         }
     }
 }
+
+/// Reset all thread-local interpreter state. Called before each test262 test
+/// to prevent state leakage between tests (CONTROL_FLOW, THROWN_VALUE, labels,
+/// generators, etc.).
+pub fn reset_interpreter_state() {
+    let _ = take_control_flow();
+    let _ = crate::value::error::take_thrown_value();
+    CURRENT_DEPTH.with(|cell| cell.set(0));
+    STRICT_MODE.with(|cell| cell.set(false));
+    DIRECT_EVAL.with(|cell| cell.set(false));
+    EVAL_IN_CLASS_FIELD.with(|cell| cell.set(false));
+    INSIDE_SUPER_CALL.with(|cell| cell.set(0));
+    CURRENT_THIS.with(|cell| cell.take());
+    CALL_THIS.with(|cell| cell.take());
+    NEW_TARGET.with(|cell| *cell.borrow_mut() = None);
+    SUPER_CLASS.with(|cell| *cell.borrow_mut() = None);
+    CURRENT_EVAL_ENV.with(|cell| *cell.borrow_mut() = None);
+    GENERATOR_RESUME_VALUE.with(|cell| *cell.borrow_mut() = Value::Undefined);
+    GENERATOR_YIELD_VALUE.with(|cell| *cell.borrow_mut() = None);
+    GENERATOR_RETURN_VALUE.with(|cell| *cell.borrow_mut() = None);
+    DESTRUCTURING_YIELD_KEY.with(|cell| *cell.borrow_mut() = None);
+    LABEL_STACK.with(|cell| *cell.borrow_mut() = Vec::new());
+    EVAL_BARRIER_DEPTH.with(|cell| *cell.borrow_mut() = 0);
+}

@@ -47,10 +47,32 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
         ast::Statement::ForStatement(for_stmt) => {
             check_no_fn_decl_in_stmt(&for_stmt.body)?;
             walk_inner_statements_for_fn_params(&for_stmt.body, strict)?;
+            // BoundNames of ForDeclaration cannot contain "let" (§13.7.5.1).
+            if let Some(oxc::ast::ast::ForStatementInit::VariableDeclaration(var_decl)) = &for_stmt.init {
+                if !var_decl.kind.is_var() {
+                    let names = collect_bound_names(var_decl);
+                    if names.iter().any(|n| n == "let") {
+                        return Err(JsError(
+                            "SyntaxError: BoundNames of ForDeclaration cannot contain 'let'".into(),
+                        ));
+                    }
+                }
+            }
         }
         ast::Statement::ForInStatement(for_in) => {
             check_no_fn_decl_in_stmt(&for_in.body)?;
             walk_inner_statements_for_fn_params(&for_in.body, strict)?;
+            // BoundNames of ForDeclaration cannot contain "let" (§13.7.5.1).
+            if let oxc::ast::ast::ForStatementLeft::VariableDeclaration(var_decl) = &for_in.left {
+                if !var_decl.kind.is_var() {
+                    let names = collect_bound_names(var_decl);
+                    if names.iter().any(|n| n == "let") {
+                        return Err(JsError(
+                            "SyntaxError: BoundNames of ForDeclaration cannot contain 'let'".into(),
+                        ));
+                    }
+                }
+            }
         }
         ast::Statement::IfStatement(if_stmt) => {
             check_no_fn_decl_in_stmt(&if_stmt.consequent)?;
