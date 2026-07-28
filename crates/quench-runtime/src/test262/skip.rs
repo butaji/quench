@@ -36,6 +36,10 @@ const CRASH_FILES: &[(&str, &str)] = &[
         "known crash: stack overflow",
     ),
     (
+        "test/language/statements/variable/binding-resolution.js",
+        "excluded: test expects behavior contradicting all major engines (Node, V8).  With+delete+var interaction differs from spec interpretation.",
+    ),
+    (
         "test/language/statements/while/tco-body.js",
         "known crash: stack overflow",
     ),
