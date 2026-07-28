@@ -1,25 +1,35 @@
 {
-  "failed": 3,
+  "failed": 4,
   "groups": [
     {
-      "count": 3,
-      "reason": "sameValue failed: N !== N -",
+      "count": 2,
+      "reason": "$DONOTEVALUATE called: code was reached",
       "sample_paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-condition.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-split-across-two-lines.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-with-initializer-split-across-two-lines.js"
       ],
       "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-condition.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-split-across-two-lines.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-with-initializer-split-across-two-lines.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "sameValue failed: N !== N -",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-initialization.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-next-expression.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-initialization.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-next-expression.js"
       ]
     }
   ],
-  "passed": 0,
+  "passed": 141,
   "path": "test/language/statements/let",
   "skipped": 0,
   "skips": [],
   "stage": 30,
-  "total": 3
+  "total": 145
 }
