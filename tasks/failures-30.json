@@ -1,32 +1,7 @@
 {
-  "failed": 4,
-  "groups": [
-    {
-      "count": 2,
-      "reason": "$DONOTEVALUATE called: code was reached",
-      "sample_paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-split-across-two-lines.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-with-initializer-split-across-two-lines.js"
-      ],
-      "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-split-across-two-lines.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-let-declaration-with-initializer-split-across-two-lines.js"
-      ]
-    },
-    {
-      "count": 2,
-      "reason": "sameValue failed: N !== N -",
-      "sample_paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-initialization.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-next-expression.js"
-      ],
-      "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-initialization.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-next-expression.js"
-      ]
-    }
-  ],
-  "passed": 141,
+  "failed": 0,
+  "groups": [],
+  "passed": 145,
   "path": "test/language/statements/let",
   "skipped": 0,
   "skips": [],
