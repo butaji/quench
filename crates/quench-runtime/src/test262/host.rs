@@ -285,6 +285,9 @@ impl Default for QuenchHost {
 
 impl Test262Host for QuenchHost {
     fn run_script(&mut self, source: &str) -> Result<(), String> {
+        // Reset thread-local state before each test to prevent stale
+        // CONTROL_FLOW / THROWN_VALUE / labels leaking between tests.
+        crate::interpreter::reset_interpreter_state();
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
         let prev_strict = crate::interpreter::is_strict_mode();
@@ -300,6 +303,8 @@ impl Test262Host for QuenchHost {
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
+        // Reset thread-local state before each test.
+        crate::interpreter::reset_interpreter_state();
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
         let prev_strict = crate::interpreter::is_strict_mode();

@@ -21,7 +21,7 @@ pub use helpers::*;
 /// Control flow for break/continue/return statements
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant, dead_code)]
-pub(crate) enum ControlFlow {
+pub enum ControlFlow {
     Break(Option<String>),
     Continue(Option<String>),
     Return(Value),
@@ -50,11 +50,11 @@ thread_local! {
     static CONTROL_FLOW: Cell<Option<ControlFlow>> = const { Cell::new(None) };
 }
 
-pub(crate) fn set_control_flow(cf: ControlFlow) {
+pub fn set_control_flow(cf: ControlFlow) {
     CONTROL_FLOW.with(|cell| cell.set(Some(cf)));
 }
 
-pub(crate) fn take_control_flow() -> Option<ControlFlow> {
+pub fn take_control_flow() -> Option<ControlFlow> {
     CONTROL_FLOW.with(|cell| cell.take())
 }
 
@@ -302,7 +302,7 @@ pub(crate) fn get_new_target() -> Option<Value> {
     NEW_TARGET.with(|cell| cell.borrow().clone())
 }
 
-pub(crate) fn is_strict_mode() -> bool {
+pub fn is_strict_mode() -> bool {
     STRICT_MODE.with(|cell| cell.get())
 }
 

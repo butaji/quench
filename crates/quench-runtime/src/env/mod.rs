@@ -43,10 +43,12 @@ pub struct Environment {
     declared_private_names: std::collections::HashSet<String>,
     /// Lexical origin: function/eval inside a class field initializer.
     in_class_field_initializer: bool,
-    /// When set, `set` operations skip the topmost scope. Used by for-loop
-    /// per-iteration scopes so that `++i` in the update expression targets
-    /// the head binding, not the PI binding.
-    set_except_top: bool,
+    /// Counter for nested per-iteration scopes. When > 0, `set` operations
+    /// skip the topmost scope. Used by for-loop per-iteration scopes so that
+    /// `++i` in the body targets the head binding, not the PI binding.
+    /// A counter (not a bool) because inner block scopes (from `eval_block`)
+    /// call `pop_scope` which must not reset the flag for outer PIs.
+    set_except_top: usize,
 }
 
 impl std::fmt::Debug for Environment {
@@ -78,7 +80,7 @@ impl Environment {
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
             in_class_field_initializer: false,
-            set_except_top: false,
+            set_except_top: 0,
         }
     }
 
@@ -92,7 +94,7 @@ impl Environment {
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
             in_class_field_initializer: false,
-            set_except_top: false,
+            set_except_top: 0,
         }
     }
 
@@ -302,13 +304,15 @@ impl Environment {
     }
 
     pub fn set(&mut self, name: &str, value: Value) -> bool {
-        self.set_with_options(name, value, self.set_except_top)
+        self.set_with_options(name, value, self.set_except_top > 0)
     }
 
     /// Set a binding by name. If `except_top` is true, the topmost scope is
     /// skipped when searching for an existing binding — useful for for-loop
     /// per-iteration scopes where assignments (e.g. `++i` in the update
     /// expression) must target the head binding, not the PI binding.
+    /// Additionally, scopes marked `per_iteration_scope = true` are always
+    /// skipped (this handles inner block scopes pushed by `eval_block`).
     pub fn set_with_options(&mut self, name: &str, value: Value, except_top: bool) -> bool {
         let scopes_iter: Box<dyn Iterator<Item = &_>> = if except_top {
             Box::new(self.scopes.iter().rev().skip(1))
@@ -316,6 +320,12 @@ impl Environment {
             Box::new(self.scopes.iter().rev())
         };
         for scope_rc in scopes_iter {
+            // Skip per-iteration scopes so body assignments (e.g. `y++`)
+            // update HEAD, not the per-iteration binding. This works even
+            // when inner block scopes are pushed on top of PI.
+            if scope_rc.borrow().is_per_iteration() {
+                continue;
+            }
             let mut scope = scope_rc.borrow_mut();
             // TDZ check: if the binding exists but is uninitialized (e.g. `let x;`),
             // assignment to it must throw ReferenceError (ES §8.1.1.1.4, step 3).
@@ -470,13 +480,13 @@ impl Environment {
     /// the head binding instead.
     pub fn push_scope_with_except_top(&mut self) {
         self.scopes.push(Rc::new(RefCell::new(Scope::new())));
-        self.set_except_top = true;
+        self.set_except_top += 1;
     }
 
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
-            self.set_except_top = false;
+            self.set_except_top = self.set_except_top.saturating_sub(1);
         }
     }
 
@@ -528,7 +538,7 @@ impl Clone for Environment {
             private_class_id: self.private_class_id,
             declared_private_names: self.declared_private_names.clone(),
             in_class_field_initializer: self.in_class_field_initializer,
-            set_except_top: false,
+            set_except_top: 0,
         }
     }
 }

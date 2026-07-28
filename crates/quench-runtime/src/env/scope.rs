@@ -32,15 +32,14 @@ pub struct Scope {
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
     this_value: Option<Value>,
-    /// Whether `this` has been initialized for this scope. Per ES §8.1.1.3.1
-    /// BindThisValue and §12.3.5.1 SuperCall: once initialized, a second
-    /// super()/this binding should throw ReferenceError. We track it on
-    /// the scope that holds the constructor's `this`.
+    /// Whether `this` has been initialized for this scope.
     this_initialized: bool,
     object_binding: Option<Rc<RefCell<crate::value::Object>>>,
-    /// Marker for static class body scope: when set, `super` in this scope
-    /// refers to the superclass constructor (not its prototype).
+    /// Marker for static class body scope.
     is_static_class_body: bool,
+    /// When set, `set` operations skip this scope. Used for for-loop per-iteration
+    /// scopes so that `++i` in the body targets the head binding, not the PI binding.
+    per_iteration_scope: bool,
 }
 
 impl std::fmt::Debug for Scope {
@@ -70,6 +69,7 @@ impl Clone for Scope {
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
             is_static_class_body: self.is_static_class_body,
+            per_iteration_scope: self.per_iteration_scope,
         }
     }
 }
@@ -84,7 +84,19 @@ impl Scope {
             this_initialized: false,
             object_binding: None,
             is_static_class_body: false,
+            per_iteration_scope: false,
         }
+    }
+
+    /// Mark this scope as a per-iteration scope for for-loop let bindings.
+    /// Assignment (`set`) will skip scopes marked this way.
+    pub fn mark_per_iteration(&mut self) {
+        self.per_iteration_scope = true;
+    }
+
+    /// Check if this scope is a per-iteration scope.
+    pub fn is_per_iteration(&self) -> bool {
+        self.per_iteration_scope
     }
 
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {

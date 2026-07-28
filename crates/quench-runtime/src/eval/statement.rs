@@ -958,7 +958,15 @@ fn eval_for_init_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<(), JsError> {
-    eval_var_decl(kind, name, init, env, in_arrow_function)?;
+    // For `const` in for-loop heads, declare as `let` in HEAD so the
+    // update expression can write to it. The per-iteration scope will
+    // enforce `const` for the body (via push_for_body_iteration_scope).
+    let effective_kind = if *kind == VarKind::Const {
+        VarKind::Let
+    } else {
+        *kind
+    };
+    eval_var_decl(&effective_kind, name, init, env, in_arrow_function)?;
     Ok(())
 }
 
@@ -1078,12 +1086,12 @@ fn eval_for(
             }
             None => {}
         }
-        // Pop PI before update expression so `++i` writes to HEAD directly.
-        if head_lexical {
-            env.borrow_mut().pop_scope();
-        }
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
+        }
+        // Pop PI after update expression
+        if head_lexical {
+            env.borrow_mut().pop_scope();
         }
     }
     // Pop the for-head scope (HEAD). PI was already popped inside the loop.

@@ -419,8 +419,11 @@ pub fn snapshot_lexical_bindings(
 /// HEAD is the topmost scope. This function:
 ///
 /// 1. Captures the CURRENT VALUE from HEAD for each binding name.
-/// 2. Pushes a new PI scope (regular `push_scope` — `set_except_top` is not
-///    needed because the caller pops PI before the update expression runs).
+/// 2. Pushes a new PI scope using `push_scope_with_except_top` so that
+///    assignments (e.g. `x++`) in the body update HEAD, not PI. Without this,
+///    body assignments would modify PI's independent storage, making the
+///    next iteration see the stale pre-update value from HEAD — causing an
+///    infinite loop in cases like `for (let x = 0; x < N; ) { x++; }`.
 /// 3. Gives PI its own independent `Rc<RefCell<Value>>` (not shared with HEAD)
 ///    so that mutations to HEAD's binding in later iterations or update
 ///    expressions don't leak into this PI scope's captured values.
@@ -437,14 +440,18 @@ pub fn push_for_body_iteration_scope(env: &mut Environment, names: &[String]) {
         })
         .collect();
 
-    // Step 2: Push the new PI scope.
-    env.push_scope();
+    // Step 2: Push the new PI scope with set_except_top so body
+    // assignments (x++, x = ...) update HEAD, not PI's independent storage.
+    env.push_scope_with_except_top();
 
     // Step 3: Fill PI scope with INDEPENDENT RefCells — each PI gets its own
     // storage so mutations to HEAD (from update expressions or later iterations)
     // don't contaminate this iteration's captured bindings.
+    // Also mark PI as per-iteration so `set` operations skip it (body
+    // assignments like `y++` go to HEAD instead).
     if let Some(pi_rc) = env.get_scope_from_bottom(0) {
         let mut pi = pi_rc.borrow_mut();
+        pi.mark_per_iteration();
         for (name, value) in &head_values {
             pi.bindings_mut()
                 .insert(name.clone(), Rc::new(RefCell::new(value.clone())));
