@@ -248,6 +248,15 @@ pub(crate) fn touch_assignment_target(
             crate::eval::class::helpers::check_this_access_allowed(env)?;
             Ok(())
         }
+        Expression::Identifier(name) => {
+            // Per ES §14.3.3.3 KeyedBindingInitialization step 2: ResolveBinding
+            // must be evaluated BEFORE GetV (step 3). Call eval_identifier to
+            // trigger HasBinding on each environment scope (including Proxy
+            // has traps for `with` scopes). The result is discarded; the real
+            // assignment happens in assign_to_identifier/init_to_identifier.
+            let _ = eval_expression(&Expression::Identifier(name.clone()), env, false)?;
+            Ok(())
+        }
         Expression::Member {
             object,
             property,

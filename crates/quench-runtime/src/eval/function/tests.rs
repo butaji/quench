@@ -5,6 +5,7 @@
 //!   `call_js_function_with_this`, `call_js_function_impl`,
 //!   `call_js_function_impl_with_strict`, `call_native_function`.
 
+use crate::value::object::{PromiseObjectData, PromiseState};
 use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 use std::cell::RefCell;
@@ -260,6 +261,104 @@ fn async_throw_rejected_promise() {
         )
         .unwrap();
     assert_eq!(v, Value::Boolean(true));
+}
+
+#[test]
+fn sync_throwing_default_param_throws() {
+    let mut ctx = Context::new().unwrap();
+    // Test 1: arrow IIFE as default
+    let r1 = ctx.eval(
+        "function f1(_ = (() => { throw new RangeError('x'); })()) { return 'body ran'; }
+         try { f1(); 'r1:resolved' } catch(e) { 'r1:rejected:' + e.constructor.name }"
+    ).unwrap();
+    eprintln!("r1: {:?}", r1);
+    
+    // Test 2: named function call in default
+    let r2 = ctx.eval(
+        "function thrower() { throw new RangeError('x'); }
+         function f2(_ = thrower()) { return 'body ran'; }
+         try { f2(); 'r2:resolved' } catch(e) { 'r2:rejected:' + e.constructor.name }"
+    ).unwrap();
+    eprintln!("r2: {:?}", r2);
+    
+    // Test 3: standalone IIFE
+    let r3 = ctx.eval(
+        "try { (function() { throw new RangeError('x'); })(); 'r3:no throw' } catch(e) { 'r3:' + e.name }"
+    ).unwrap();
+    eprintln!("r3: {:?}", r3);
+    
+    // Test 4: just throw in default
+    let r4 = ctx.eval(
+        "function f4(_ = (1+2)) { return _; }
+         try { f4(); 'r4:resolved:' + _ } catch(e) { 'r4:rejected' }"
+    ).unwrap();
+    eprintln!("r4: {:?}", r4);
+    
+    // Test 5: evaluate default directly
+    let r5 = ctx.eval(
+        "function f5(_ = 42) { return _; } f5()"
+    ).unwrap();
+    eprintln!("r5: {:?}", r5);
+    
+    // Test 6: call f with explicit undefined
+    let r6 = ctx.eval(
+        "function f6(_ = 99) { return _; } f6(undefined)"
+    ).unwrap();
+    eprintln!("r6: {:?}", r6);
+    
+    assert!(false, "diagnostic complete");
+}
+
+#[test]
+fn async_throwing_default_param_rejects_promise() {
+    let mut ctx = Context::new().unwrap();
+    let p = ctx
+        .eval(
+            "async function f(_ = (function() { throw new RangeError('x'); }())) {
+               return 'body ran';
+             }
+             f()",
+        )
+        .unwrap();
+    // Result should be a Promise object
+    match &p {
+        Value::Object(obj) => {
+            let obj_ref = obj.borrow();
+            if let Some(ref data) = obj_ref.promise_data {
+                assert_eq!(
+                    data.state,
+                    PromiseState::Rejected,
+                    "Promise should be rejected when default param throws, got state {:?}",
+                    data.state
+                );
+                // Rejection reason should be the actual error object, not a string
+                match &data.result {
+                    Value::Object(err_obj) => {
+                        let err_ref = err_obj.borrow();
+                        match err_ref.get("name") {
+                            Some(Value::String(name)) => {
+                                assert_eq!(
+                                    name, "RangeError",
+                                    "Rejection reason should be a RangeError object"
+                                );
+                            }
+                            other => panic!(
+                                "Rejection reason should have .name property, got: {:?}",
+                                other
+                            ),
+                        }
+                    }
+                    other => panic!(
+                        "Rejection reason should be an Error object, got: {:?}",
+                        other
+                    ),
+                }
+            } else {
+                panic!("Not a promise object (no promise_data)");
+            }
+        }
+        other => panic!("Expected Promise object, got: {:?}", other),
+    }
 }
 
 // ─── NativeFunction calls (via JS) ───────────────────────────────────────
