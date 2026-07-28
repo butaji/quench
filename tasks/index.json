@@ -454,7 +454,7 @@
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 1,
+      "failed": 0,
       "pass_rate": "97.4%"
     },
     {

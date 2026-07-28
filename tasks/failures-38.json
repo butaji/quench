@@ -1,41 +1,403 @@
 {
-  "failed": 3,
+  "failed": 162,
   "groups": [
     {
       "count": 1,
-      "paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-from-sync-iterator-inaccessible.js"
+      "reason": "$DONOTEVALUATE called: code was reached",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/rest-param-strict-body.js"
       ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/rest-param-strict-body.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Actual [...] and expected [...] should have same contents. Ticks for implicit and explicit return undefined",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/return-undefined-implicit-and-explicit.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/return-undefined-implicit-and-explicit.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "Actual [...] and expected [...] should have the same contents. Ticks for return with thenable getter",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-return-then-getter-ticks.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-return-then-getter-ticks.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-return-then-getter-ticks.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-return-then-getter-ticks.js"
+      ]
+    },
+    {
+      "count": 41,
+      "reason": "Cannot destructure non-iterable value",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-no-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-name-iter-val.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elem-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elem-iter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elision-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elision-iter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-empty-init.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-no-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-name-iter-val.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elem-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elem-iter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elision-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-elision-iter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-ary-empty-init.js"
+      ]
+    },
+    {
+      "count": 20,
+      "reason": "Cannot destructure non-object value",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-arrow.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-class.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-cover.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-fn.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-skipped.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-trailing-comma.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-arrow.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-class.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-cover.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-fn.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-fn-name-gen.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-skipped.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-trailing-comma.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Cannot read property 'name' of undefined",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-return.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-return.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "Expected ReferenceError but got TypeError.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-unresolvable.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-init-unresolvable.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-unresolvable.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-init-unresolvable.js"
+      ]
+    },
+    {
+      "count": 2,
+      "reason": "Expected ReferenceError to be thrown but no exception was thrown.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-later.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-self.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-later.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-self.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Expected SameValue(\u00ab[...]\u00bb, \u00ab[...]\u00bb) to be false.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/generator-created-after-decl-inst.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/generator-created-after-decl-inst.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Expected SyntaxError to be thrown but no exception was thrown.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+      ]
+    },
+    {
+      "count": 8,
+      "reason": "Expected Test262Error but got Error.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-get-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-init-throws.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-iter-val-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elision-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-elision-next-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-iter-val-err.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-init-iter-get-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-init-throws.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elem-id-iter-val-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-elision-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-elision-next-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-ary-ptrn-rest-id-iter-val-err.js"
+      ]
+    },
+    {
+      "count": 6,
+      "reason": "Expected Test262Error but got TypeError.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-get-value-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-throws.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-list-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-eval-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-get-value-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-init-throws.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-get-value-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-id-init-throws.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-list-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-eval-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-get-value-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/dflt-obj-ptrn-prop-id-init-throws.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "Expected Test262Error to be thrown but no exception was thrown.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-abrupt.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-abrupt.js"
+      ]
+    },
+    {
+      "count": 1,
       "reason": "Object.getPrototypeOf called on non-object",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-from-sync-iterator-inaccessible.js"
+      ],
       "samples": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-from-sync-iterator-inaccessible.js"
       ]
     },
     {
-      "count": 1,
-      "paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+      "count": 5,
+      "reason": "Promise incorrectly resolved.",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-for-await-of-async-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-for-await-of-sync-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-yield-star-async-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-yield-star-sync-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next.js"
       ],
-      "reason": "Test262Error: Expected SyntaxError to be thrown but no exception was thrown. \")",
       "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/eval-var-scope-syntax-err.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-for-await-of-async-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-for-await-of-sync-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-yield-star-async-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-yield-star-sync-iterator.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next.js"
       ]
     },
     {
       "count": 1,
-      "paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/unscopables-with.js"
+      "reason": "Value is not iterable",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-spread-arr-multiple.js"
       ],
-      "reason": "Test262Error: sameValue failed: 4 !== 6",
       "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/unscopables-with.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-spread-arr-multiple.js"
+      ]
+    },
+    {
+      "count": 7,
+      "reason": "it should not get Symbol.iterator",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-boolean-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-null-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-number-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-object-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-string-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-symbol-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-undefined-fulfillpromise.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-boolean-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-null-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-number-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-object-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-string-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-symbol-fulfillpromise.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-non-callable-undefined-fulfillpromise.js"
+      ]
+    },
+    {
+      "count": 11,
+      "reason": "sameValue failed: N !== N -",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-arg-val-undefined.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-ptrn-elem-ary-elision-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-ptrn-elem-ary-empty-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/obj-ptrn-rest-getter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-identifier-non-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-identifier-spread-non-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-catch.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-arg-val-undefined.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-ptrn-elem-ary-elision-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/ary-ptrn-elem-ary-empty-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dstr/obj-ptrn-rest-getter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-identifier-non-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-identifier-spread-non-strict.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-promise-reject-next-catch.js"
+      ]
+    },
+    {
+      "count": 30,
+      "reason": "sameValue failed: N !== N - TypeError",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-boolean-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-number-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-object-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-string-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-symbol-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-boolean-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-null-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-number-throw.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-boolean-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-number-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-object-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-string-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-not-callable-symbol-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-boolean-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-null-throw.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-number-throw.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - length is properly set",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-trailing-comma.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-trailing-comma.js"
+      ]
+    },
+    {
+      "count": 5,
+      "reason": "sameValue failed: N !== N - reject reason",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-expr-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-null-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-undefined-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-sync-returns-abrupt.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-expr-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-null-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-undefined-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-sync-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-sync-returns-abrupt.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - second argument value",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-prior.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/dflt-params-ref-prior.js"
+      ]
+    },
+    {
+      "count": 8,
+      "reason": "sameValue failed: \\\"Test262Error: it should not get N !== N - reject reason",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-done-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-returns-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-value-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-returns-abrupt.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-getiter-async-returns-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-done-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-returns-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-call-value-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-get-abrupt.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-next-then-returns-abrupt.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: \\\"get N !== N [...]\\\" -",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-next.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-next.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "throw-arg-1",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-throw.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-sync-throw.js"
+      ]
+    },
+    {
+      "count": 3,
+      "reason": "undefined is not iterable",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-next.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-return.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-throw.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-next.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-return.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/async-generator/yield-star-async-throw.js"
       ]
     }
   ],
-  "passed": 298,
+  "passed": 139,
   "path": "test/language/statements/async-generator",
   "skipped": 0,
-  "skips": {},
+  "skips": [],
   "stage": 38,
   "total": 301
 }
