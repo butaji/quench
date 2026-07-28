@@ -3,7 +3,9 @@
 //! Run with:
 //!   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
-use quench_runtime::test262::{QuenchHost, Test262Host, Test262Runner};
+use quench_runtime::test262::runner::execute::run_single_test;
+use quench_runtime::test262::{QuenchHost, Test262Host, Test262Runner, HarnessLoader};
+use quench_runtime::test262::host::TestOutcome;
 use std::path::PathBuf;
 
 #[test]
@@ -43,7 +45,6 @@ fn test_assert_same_value_nan() {
 #[test]
 fn test_assert_same_value_negative_zero() {
     let mut host = QuenchHost::new();
-    // SameValue: +0 !== -0
     let result = host.run_script(
         "assert.sameValue(-0, -0, '-0 equals -0'); assert.sameValue(+0, +0, '+0 equals +0')",
     );
@@ -70,9 +71,6 @@ fn test_for_in_with_defined_property() {
 
 // ── Per-iteration let/const binding (spec §14.7.1.1) ─────────────────────────
 
-/// Each iteration of a `for (let x = ...)` loop creates a fresh binding.
-/// Closures created in iteration N must capture iteration N's value, not
-/// the value after N+1's update expression runs.
 #[test]
 fn test_for_loop_let_per_iteration_basic() {
     let mut host = QuenchHost::new();
@@ -82,7 +80,6 @@ fn test_for_loop_let_per_iteration_basic() {
         for (let i = 0; i < 3; i++) {
             result.push(function() { return i; });
         }
-        // Each closure must see its own iteration's i, not the final value 3.
         assert.sameValue(result[0](), 0, "first closure sees i=0");
         assert.sameValue(result[1](), 1, "second closure sees i=1");
         assert.sameValue(result[2](), 2, "third closure sees i=2");
@@ -91,8 +88,6 @@ fn test_for_loop_let_per_iteration_basic() {
     assert!(result.is_ok(), "per-iteration let binding failed: {:?}", result);
 }
 
-/// `++i` in the update expression must update the binding visible to the next
-/// iteration's body, not the binding seen by the previous body.
 #[test]
 fn test_for_loop_let_per_iteration_increment() {
     let mut host = QuenchHost::new();
@@ -111,7 +106,6 @@ fn test_for_loop_let_per_iteration_increment() {
     assert!(result.is_ok(), "per-iteration let with ++i failed: {:?}", result);
 }
 
-/// Multiple let bindings in the for head, each with per-iteration semantics.
 #[test]
 fn test_for_loop_let_per_iteration_multiple() {
     let mut host = QuenchHost::new();
@@ -129,7 +123,6 @@ fn test_for_loop_let_per_iteration_multiple() {
     assert!(result.is_ok(), "multiple let bindings failed: {:?}", result);
 }
 
-/// Closures inside the body that capture `var` see the shared var binding.
 #[test]
 fn test_for_loop_let_closure_sees_body_value() {
     let mut host = QuenchHost::new();
@@ -140,8 +133,6 @@ fn test_for_loop_let_closure_sees_body_value() {
             var captured = n;
             results.push(function() { return captured; });
         }
-        // `var captured` is function-scoped, shared across all iterations.
-        // Both closures see the final value (2).
         assert.sameValue(results[0](), 2);
         assert.sameValue(results[1](), 2);
         "#,
@@ -149,7 +140,6 @@ fn test_for_loop_let_closure_sees_body_value() {
     assert!(result.is_ok(), "var closure test failed: {:?}", result);
 }
 
-/// `const` in a for head also has per-iteration binding.
 #[test]
 fn test_for_loop_const_per_iteration() {
     let mut host = QuenchHost::new();
@@ -169,62 +159,99 @@ fn test_for_loop_const_per_iteration() {
 
 // ── Test isolation regression ────────────────────────────────────────────────
 
-/// Verify that reset_interpreter_state clears CONTROL_FLOW between runs.
-/// If a test leaks a stale control flow, the next test's eval would
-/// unexpectedly break/continue/return.
 #[test]
 fn test_reset_interpreter_state_clears_control_flow() {
     quench_runtime::interpreter::reset_interpreter_state();
-    // After reset, control flow must be None
     assert!(
         quench_runtime::interpreter::take_control_flow().is_none(),
         "control flow should be None after reset"
     );
-    // After reset, strict mode must be false
     assert!(
         !quench_runtime::interpreter::is_strict_mode(),
         "strict mode should be false after reset"
     );
 }
 
-/// Run multiple test262 tests back-to-back through QuenchHost to verify
-/// thread-local state doesn't leak between them.
 #[test]
 fn test_quench_host_state_isolation() {
-    // Run several tests that set various thread-local state
     let tests = vec![
-        // A test that completes normally
         "var x = 1;",
-        // A test with a for-loop (sets CONTROL_FLOW internally)
         "for (var i = 0; i < 3; i++) { }",
-        // A test that uses let per-iteration binding
         "var a = []; for (let i = 0; i < 3; i++) { a.push(i); }",
-        // A test that throws and catches
         "try { throw new Error('test'); } catch(e) { }",
-        // A test with generator-like behavior
         "(function() { return 42; })()",
     ];
     let mut host = QuenchHost::new();
     for (i, test) in tests.iter().enumerate() {
         let result = host.run_script(test);
-        assert!(
-            result.is_ok(),
-            "test {} should pass: {:?}",
-            i,
-            result
-        );
+        assert!(result.is_ok(), "test {} should pass: {:?}", i, result);
+    }
+}
+
+// ── Runner-path reproduction ─────────────────────────────────────────────────
+
+/// Replicate the EXACT runner path: run_single_test -> run_prepared ->
+/// build_script -> run_with_timeout -> execute_script -> run_script.
+/// This tests the exact code path the digest runner uses.
+#[test]
+fn test_runner_path_per_iteration_binding() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let test262_dir = repo_root.join("tests/test262");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let mut host = QuenchHost::new();
+
+    let test_path = test262_dir.join(
+        "test/language/statements/let/syntax/\
+         let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
+    );
+
+    let outcome = run_single_test(&mut host, &harness, &test_path);
+    match outcome {
+        TestOutcome::Pass => {} // good
+        TestOutcome::Fail { failure } => {
+            panic!("runner path failed: {} (type={:?})",
+                failure.message, failure.error_type);
+        }
+        TestOutcome::Skip { reason } => {
+            panic!("runner path skipped: {}", reason);
+        }
+    }
+}
+
+/// Run multiple per-iteration tests through the runner path back-to-back.
+#[test]
+fn test_runner_path_multi_let_per_iteration() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let test262_dir = repo_root.join("tests/test262");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let mut host = QuenchHost::new();
+
+    let tests = vec![
+        "let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js",
+        "let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
+        "let-closure-inside-condition.js",
+    ];
+
+    for name in &tests {
+        let test_path = test262_dir.join("test/language/statements/let/syntax").join(name);
+        let outcome = run_single_test(&mut host, &harness, &test_path);
+        match outcome {
+            TestOutcome::Pass => {}
+            TestOutcome::Fail { failure } => {
+                panic!("{} failed: {} (type={:?})",
+                    name, failure.message, failure.error_type);
+            }
+            TestOutcome::Skip { reason } => {
+                panic!("{} skipped: {}", name, reason);
+            }
+        }
     }
 }
 
 // ── Stage 30 staged runner ───────────────────────────────────────────────────
 
-/// Run only the current stage (defined in tasks/index.json `current_stage`)
-///
-///   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
-///
-/// To run a specific stage:
-///
-///   TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 #[test]
 #[ignore = "staged test262 runner"]
 fn test262_staged() {
@@ -258,9 +285,6 @@ fn test262_staged() {
     }
     if summary.failed > 0 {
         if digest {
-            // In digest mode, failures are already reported by the runner.
-            // Use exit() so TEST262_DUMP_FAILURES and other side-effects
-            // complete before termination.
             std::process::exit(1);
         } else {
             panic!(
@@ -274,7 +298,6 @@ fn test262_staged() {
     }
 }
 
-/// Stage label for gate messages: TEST262_STAGE or the tasks/index.json default.
 fn current_stage_label() -> String {
     std::env::var("TEST262_STAGE")
         .unwrap_or_else(|_| quench_runtime::test262::runner::default_stage().to_string())
@@ -331,16 +354,12 @@ fn for_loop_with_let_should_terminate() {
         }
     }
 
-    // Ensure thread didn't panic
     assert!(
         handle.join().is_ok(),
         "eval thread panicked"
     );
 }
 
-// Reproducer: for (let x = 0; x < N; ) { x++; } must terminate
-// This differs from the normal for-loop because the update is in the body,
-// which exercises the per-iteration binding's set_except_top mechanism.
 #[test]
 fn for_loop_let_body_update_should_terminate() {
     use std::sync::mpsc;
@@ -368,15 +387,10 @@ fn for_loop_let_body_update_should_terminate() {
     );
 }
 
-// Reproducer: closures in for-loop capture per-iteration binding, not shared value.
-// ES §14.7.4.2 / Runtime_SemaRegisterNames: each iteration creates a new per-iteration
-// binding; closures capture that binding's value at the time of capture.
 #[test]
 fn for_loop_let_per_iteration_binding_closure() {
     let mut ctx = quench_runtime::Context::new().unwrap();
     quench_runtime::builtins::register_builtins(&mut ctx);
-    // Each closure captures its own per-iteration `i`.
-    // If per-iteration binding is broken, all closures see the same value.
     let r = ctx.eval(
         r#"
         "use strict";
@@ -401,7 +415,6 @@ fn for_loop_let_per_iteration_binding_closure() {
     );
 }
 
-// Reproducer: multi-let per-iteration binding.
 #[test]
 fn for_loop_multi_let_per_iteration_binding() {
     let mut ctx = quench_runtime::Context::new().unwrap();
@@ -414,9 +427,9 @@ fn for_loop_multi_let_per_iteration_binding() {
             a.push(function() { return i * 100 + j; });
         }
         var pass = true;
-        if (a[0]() !== 10) pass = false;   // i=0, j=10
-        if (a[1]() !== 111) pass = false;  // i=1, j=11
-        if (a[2]() !== 212) pass = false;  // i=2, j=12
+        if (a[0]() !== 10) pass = false;
+        if (a[1]() !== 111) pass = false;
+        if (a[2]() !== 212) pass = false;
         pass
         "#,
     );

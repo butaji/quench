@@ -2,7 +2,7 @@
 
 mod collect;
 mod digest;
-mod execute;
+pub mod execute;
 mod flags;
 
 use std::path::PathBuf;
