@@ -1,43 +1,35 @@
 {
-  "failed": 3,
+  "failed": 8,
   "groups": [
     {
-      "count": 3,
+      "count": 8,
       "reason": "sameValue failed: N !== N -",
       "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-elem-ary-empty-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-rest-ary-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-rest-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/obj-ptrn-rest-getter.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-condition.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
       ],
       "samples": [
-        {
-          "error_message": "sameValue failed: 0 !== 1 -",
-          "error_type": "Test262Error",
-          "js_stack": null,
-          "path": "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-condition.js",
-          "source_context": "      2: // This code is governed by the BSD license found in the LICENSE file.\n      3: /*---\n      4: es6id: 13.1\n      5: description: >\n      6:     let: closure inside for loop condition\n      7: ---*/\n      8: let a = [];\n      9: for (let i = 0; a.push(function () { return i; }), i < 5; ++i) { }\n     10: for (let k = 0; k < 5; ++k) {\n →   11:   assert.sameValue(k, a[k]());\n     12: }"
-        },
-        {
-          "error_message": "sameValue failed: 0 !== 1 -",
-          "error_type": "Test262Error",
-          "js_stack": null,
-          "path": "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
-          "source_context": "      5: description: >\n      6:     In a normal for statement the iteration variable is freshly allocated for each iteration. Multi let binding\n      7: ---*/\n      8: let a = [], b = [];\n      9: for (let i = 0, j = 10; i < 5; ++i, ++j) {\n     10:   a.push(function () { return i; });\n     11:   b.push(function () { return j; });\n     12: }\n     13: for (let k = 0; k < 5; ++k) {\n →   14:   assert.sameValue(k, a[k]());\n     15:   assert.sameValue(k + 10, b[k]());\n     16: }"
-        },
-        {
-          "error_message": "sameValue failed: 0 !== 1 -",
-          "error_type": "Test262Error",
-          "js_stack": null,
-          "path": "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js",
-          "source_context": "      4: es6id: 13.1\n      5: description: >\n      6:     In a normal for statement the iteration variable is freshly allocated for each iteration. Single let binding\n      7: ---*/\n      8: let a = [];\n      9: for (let i = 0; i < 5; ++i) {\n     10:   a.push(function () { return i; });\n     11: }\n     12: for (let j = 0; j < 5; ++j) {\n →   13:   assert.sameValue(j, a[j]());\n     14: }"
-        }
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-init-iter-close.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-elem-ary-empty-init.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-rest-ary-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/ary-ptrn-rest-id-iter-step-err.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/dstr/obj-ptrn-rest-getter.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-closure-inside-condition.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/let/syntax/let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
       ]
     }
   ],
-  "passed": 0,
+  "passed": 137,
   "path": "test/language/statements/let",
   "skipped": 0,
   "skips": [],
   "stage": 30,
-  "total": 3
+  "total": 145
 }

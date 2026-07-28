@@ -207,43 +207,79 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
     })
 }
 
+/// Check if a list of lowered statements ends with an unconditional
+/// control-flow exit (break, return, throw) that prevents fall-through.
+fn ends_with_break_or_return(stmts: &[Statement]) -> bool {
+    stmts.last().is_some_and(|s| matches!(s, Statement::Break(_) | Statement::Return(_) | Statement::Throw(_)))
+}
+
 /// Lower a switch statement into nested if-else chains
 pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     let discriminant = lower_expr(&switch.discriminant).ok()?;
 
-    // Compute each case's effective body: a case with no statements falls
-    // through to the next case's body (JS fall-through semantics).
-    let mut effective_bodies: Vec<Vec<Statement>> = Vec::with_capacity(switch.cases.len());
-    let mut next_body: Vec<Statement> = Vec::new();
-    for case in switch.cases.iter().rev() {
-        let own: Vec<Statement> = case.consequent.iter().filter_map(lower_stmt).collect();
-        let effective = if own.is_empty() {
-            next_body.clone()
+    // Compute effective bodies with fall-through.
+    // Each case's effective body is its own body concatenated with all
+    // subsequent case bodies until one ends with break/return/throw.
+    // Process in FORWARD order, computing fall-through target indices.
+    let case_count = switch.cases.len();
+    let mut own_bodies: Vec<Vec<Statement>> = switch.cases.iter().map(|case| {
+        case.consequent.iter().filter_map(lower_stmt).collect()
+    }).collect();
+    
+    // Compute effective bodies: walk backwards, accumulating bodies
+    // of cases that don't end with break/return. Effective body for
+    // case[i] = own[i] + (own[i+1] + own[i+2] + ... until break).
+    // Prepend own[i] before accumulated suffix to maintain source order.
+    let mut effective_bodies: Vec<Vec<Statement>> = Vec::with_capacity(case_count);
+    let mut suffix: Vec<Statement> = Vec::new();  // accumulated suffix for fall-through
+    for i in (0..case_count).rev() {
+        let ends_with_break = ends_with_break_or_return(&own_bodies[i]);
+        let mut effective = own_bodies[i].clone();
+        // If the current case doesn't end with break/return, it falls
+        // through to the accumulated suffix (subsequent cases).
+        if !ends_with_break {
+            effective.extend(suffix.clone());
+        }
+        // Update suffix for the next iteration (going backwards):
+        // suffix becomes own[i] if it has break/return, or own[i] + old_suffix.
+        suffix = if ends_with_break {
+            own_bodies[i].clone()
         } else {
-            next_body = own.clone();
-            own
+            let mut s = own_bodies[i].clone();
+            s.append(&mut suffix);
+            s
         };
         effective_bodies.push(effective);
     }
     effective_bodies.reverse();
 
-    let mut current: Option<Statement> = None;
-    for (case, case_body) in switch.cases.iter().zip(effective_bodies).rev() {
-        let new_stmt = if let Some(test) = &case.test {
-            let test_expr = lower_expr(test).ok()?;
-            Statement::If {
-                condition: Box::new(Expression::Binary {
-                    op: BinaryOp::StrictEq,
-                    left: Box::new(discriminant.clone()),
-                    right: Box::new(test_expr),
-                }),
-                consequent: Box::new(Statement::Block(case_body)),
-                alternate: current.map(Box::new),
-            }
+    // Build the if-else chain. Default case must come LAST so that
+    // cases after default in source order are still reachable.
+    // First, collect all non-default cases and their effective bodies.
+    let mut non_default: Vec<(usize, Vec<Statement>)> = Vec::new();
+    let mut default_body: Option<Statement> = None;
+    for (i, case) in switch.cases.iter().enumerate() {
+        if case.test.is_some() {
+            non_default.push((i, effective_bodies[i].clone()));
         } else {
-            Statement::Block(case_body)
-        };
-        current = Some(new_stmt);
+            default_body = Some(Statement::Block(effective_bodies[i].clone()));
+        }
+    }
+
+    // Build the chain: non-default cases in reverse order, then default at the end.
+    let mut current: Option<Statement> = default_body;
+    for (i, case_body) in non_default.into_iter().rev() {
+        let test = switch.cases[i].test.as_ref().unwrap();
+        let test_expr = lower_expr(test).ok()?;
+        current = Some(Statement::If {
+            condition: Box::new(Expression::Binary {
+                op: BinaryOp::StrictEq,
+                left: Box::new(discriminant.clone()),
+                right: Box::new(test_expr),
+            }),
+            consequent: Box::new(Statement::Block(case_body)),
+            alternate: current.map(Box::new),
+        });
     }
     let chain = current.unwrap_or(Statement::Empty);
     // The if-else chain cannot contain a `break` meant for the switch: it
