@@ -29,7 +29,7 @@ crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 - `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
 - `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R17).
-- `tasks/10-ways-to-speed-up.md` — speed strategy (S1–S7); the plan above serves it.
+- `tasks/plan.md` — phases A→B→C, execution order; the plan above serves it.
 - `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
 
 ## Commands

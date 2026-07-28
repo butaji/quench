@@ -48,42 +48,42 @@ src/
 ├── value/           # Value, Object (one canonical property store), JsError
 ├── context/         # Context, Realm
 └── builtins/
-    ├── core/            # __ops__ wrapper infrastructure
-    ├── regex/           # regress-backed (crate)
-    ├── date/            # chrono-backed (crate)
+    ├── core/            # __ops__ wrapper (ops_wrapper.rs)
+    ├── regex.rs         # regress-backed (crate)
+    ├── date.rs          # chrono-backed (crate)
     ├── bigint.rs        # num-bigint-backed (crate)
     ├── json.rs          # serde_json-backed (crate)
     ├── uri.rs           # urlencoding-backed (crate)
     ├── array/, object/, string/, …  # per-type modules
     ├── error/, promise/, map/, …
-    └── mod.rs           # module registration (bootstrap.rs planned for R0)
+    └── bootstrap.rs     # loads JS builtins from builtins/*.js
 ```
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
-## JS builtins (target — R0 not started)
+## JS builtins (R0 in progress)
 
-All builtins are currently Rust (`src/builtins/`). The plan is to
-self-host them as JS once `__ops__` is fleshed out (R0 in
-`tasks/refactor-plan.md`):
+34 `.js` files in `builtins/` (root of repo), loaded by
+`builtins/bootstrap.rs`. `__ops__` is scaffolded in
+`builtins/core/ops_wrapper.rs`. Order:
 
 ```
 builtins/
-├── _intrinsics.js   # __ops__ destructure (resolved at parse time)
-├── Object.js, Function.js, Error.js, Symbol.js,
+├── Object.js, Array.js, Iterator.js, Symbol.js,
 ├── Number.js, Boolean.js, String.js, Math.js,
-├── Array.js, Iterator.js,
 ├── Map.js, Set.js, WeakMap.js, WeakSet.js,
 ├── Promise.js, JSON.js, Reflect.js, Proxy.js,
 ├── RegExp.js, Date.js, BigInt.js,
 ├── TypedArray.js, ArrayBuffer.js, DataView.js, Atomics.js,
+├── AsyncIterator.js, AsyncGenerator.js, AsyncFunction.js,
+├── DisposableStack.js, AsyncDisposableStack.js,
+├── FinalizationRegistry.js, WeakRef.js,
 └── decodeURI.js, encodeURI.js
 ```
 
-Once built, all `*.prototype.*`, intrinsic iterator prototypes,
-`Object.*`, `Reflect.*`, `Promise.prototype.*`, etc. are authored here.
-Pure spec algorithms on top of `__ops__`. Embedded via `include_str!`;
-parsed once per `Realm` by `builtins/bootstrap.rs` (R0 planned).
+Every `.prototype.*`, intrinsic iterator prototype, `Object.*`,
+`Reflect.*`, `Promise.prototype.*`, etc. authored here. Embedded via
+`include_str!`; parsed once per `Realm` by `bootstrap.rs`.
 
 ## `__ops__` — the only Rust↔JS bridge for spec ops
 
@@ -124,11 +124,11 @@ to non-writable/non-extensible targets throw in strict mode.
 
 | Spec area      | Crate         | Rust file                |
 |----------------|---------------|--------------------------|
-| RegExp exec    | `regress`     | `builtins/core/regex.rs` |
-| Date math      | `chrono`      | `builtins/core/date.rs`  |
-| BigInt         | `num-bigint`  | `builtins/core/bigint.rs`|
-| JSON parse/str | `serde_json`  | `builtins/core/json.rs`  |
-| URI            | `urlencoding` | `builtins/core/uri.rs`    |
+| RegExp exec    | `regress`     | `builtins/regex.rs`      |
+| Date math      | `chrono`      | `builtins/date.rs`        |
+| BigInt         | `num-bigint`  | `builtins/bigint.rs`      |
+| JSON parse/str | `serde_json`  | `builtins/json.rs`        |
+| URI            | `urlencoding` | `builtins/uri.rs`         |
 | Parsing        | `oxc`         | `parser.rs`              |
 
 Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.
@@ -146,17 +146,14 @@ All tracked in `tasks/refactor-plan.md` — not duplicated here to avoid drift:
 | String interning / atom table | R21 | Phase B |
 | Profiling (flamegraph/samply/xctrace) | R22, `docs/tools.md` | When loop is the bottleneck |
 
-## Bootstrap order (target — R0 planned)
-
-Currently all builtins are Rust modules registered in `builtins/mod.rs`.
-The target bootstrap path for self-hosted JS builtins is:
+## Bootstrap order
 
 `Context::new` builds the Rust realm (intrinsic prototypes +
 `%ThrowTypeError%`), then `bootstrap.rs` evaluates `builtins/*.js` in
-dependency order: `_intrinsics` → `Object` → `Function` → `Error` →
-`Symbol` → `Number`/`Boolean`/`String` → `Array`/`Iterator` →
-`Map`/`Set`/`Weak*` → `Promise`/`JSON`/`Reflect`/`Proxy`/`Math` →
-`RegExp`/`Date`/`BigInt`/`TypedArray`/… → URI.
+dependency order (see `bootstrap.rs` for current implementation):
+`Object` → `Function` → `Error` → `Symbol` → `Number`/`Boolean`/`String`
+→ `Array`/`Iterator` → `Map`/`Set`/`Weak*` → `Promise`/`JSON`/`Reflect`/
+`Proxy`/`Math` → `RegExp`/`Date`/`BigInt`/`TypedArray`/… → URI.
 
 ## Workflow
 
@@ -170,6 +167,7 @@ verify, leave the test in.
 `.clippy.toml` + `.cargo/config.toml` (`-D warnings`) gate every build.
 No file > 500 lines, no function > 40 lines, no function complexity >
 10, no `#[allow(...)]`, no deferrals. Split any offender before adding
-to it (current offenders are tracked in R15, `tasks/refactor-plan.md`).
+to it. Run `cargo clippy -p quench-runtime --all-targets` to see current offenders.
+Full list in R15, `tasks/refactor-plan.md`.
 JS files have no enforced limit but should stay under 500 too — split
 per builtin category.
