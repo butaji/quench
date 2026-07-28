@@ -1086,12 +1086,13 @@ fn eval_for(
             }
             None => {}
         }
-        if let Some(update) = update {
-            let _ = eval_expression(update, env, in_arrow_function)?;
-        }
-        // Pop PI after update expression
+        // Pop PI before update expression so the update writes to HEAD directly.
+        // For `const`, HEAD was downgraded to `let` at init time so writes succeed.
         if head_lexical {
             env.borrow_mut().pop_scope();
+        }
+        if let Some(update) = update {
+            let _ = eval_expression(update, env, in_arrow_function)?;
         }
     }
     // Pop the for-head scope (HEAD). PI was already popped inside the loop.
