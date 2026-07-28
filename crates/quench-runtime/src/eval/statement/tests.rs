@@ -349,6 +349,24 @@ mod for_statement {
     }
 
     #[test]
+    fn for_let_prefix_inc_terminates() {
+        // Regression: `for (let i = 0; i < 1; ++i)` must terminate
+        assert_eq!(
+            eval("let sum = 0; for (let i = 0; i < 1; ++i) { sum++; } sum").unwrap(),
+            Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn for_let_prefix_inc_three_iter() {
+        // Regression: `for (let i = 0; i < 3; ++i)` must terminate
+        assert_eq!(
+            eval("let sum = 0; for (let i = 0; i < 3; ++i) { sum++; } sum").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
     fn for_with_expression_init() {
         assert_eq!(
             eval("let i = 0; for (i++; i < 3; i++); i").unwrap(),

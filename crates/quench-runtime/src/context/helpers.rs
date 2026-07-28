@@ -298,7 +298,7 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
     }
     let global_scope = scopes[0].borrow();
     for (name, value_rc) in global_scope.bindings() {
-        let value = (**value_rc).clone();
+        let value = value_rc.borrow().clone();
         global_obj.borrow_mut().define(
             name.as_str(),
             value.clone(),

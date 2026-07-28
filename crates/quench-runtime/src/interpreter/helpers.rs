@@ -385,27 +385,71 @@ pub fn collect_for_head_lexical_names(init: Option<&ForInit>) -> Vec<String> {
     }
 }
 
-/// Snapshot lexical binding values from the current environment chain.
-pub fn snapshot_lexical_bindings(env: &Environment, names: &[String]) -> Vec<(String, Value)> {
+/// Snapshot lexical binding values from the environment chain.
+///
+/// The `per_iter_depth` parameter indexes from the top of the scope chain:
+/// - `per_iter_depth=0` → topmost scope (the most recently pushed)
+/// - `per_iter_depth=1` → second-from-top (one below the topmost)
+/// etc.
+///
+/// When PI is on the chain: `per_iter_depth=0` reads PI, `per_iter_depth=1` reads HEAD.
+/// When PI is NOT yet on the chain (initial push): use `per_iter_depth=1` to read HEAD.
+///
+/// The snapshot reads from the appropriate scope to capture the correct binding
+/// value even when `++i` in the update expression updated HEAD.
+pub fn snapshot_lexical_bindings(
+    env: &Environment,
+    names: &[String],
+    per_iter_depth: usize,
+) -> Vec<(String, Value)> {
     names
         .iter()
-        .filter_map(|name| env.get(name).map(|value| (name.clone(), value)))
+        .filter_map(|name| {
+            let scope_rc = env.get_scope_from_bottom(per_iter_depth)?;
+            let scope = scope_rc.borrow();
+            scope.get(name).map(|v| (name.clone(), v))
+        })
         .collect()
 }
 
-/// Push a scope initialized with copied lexical binding values.
-pub fn push_lexical_scope_with_values(env: &mut Environment, copies: &[(String, Value)]) {
-    env.push_scope();
-    for (name, value) in copies {
-        env.declare_var(name.clone(), VarKind::Let);
-        env.initialize_declared(name, value.clone());
-    }
-}
-
 /// Push a per-iteration body scope with copies of loop-head lexical bindings.
+///
+/// PI is NOT on the scope chain when called (the caller pops PI before the
+/// update expression and calls this before the next iteration's condition).
+/// HEAD is the topmost scope. This function:
+///
+/// 1. Captures the CURRENT VALUE from HEAD for each binding name.
+/// 2. Pushes a new PI scope (regular `push_scope` — `set_except_top` is not
+///    needed because the caller pops PI before the update expression runs).
+/// 3. Gives PI its own independent `Rc<RefCell<Value>>` (not shared with HEAD)
+///    so that mutations to HEAD's binding in later iterations or update
+///    expressions don't leak into this PI scope's captured values.
 pub fn push_for_body_iteration_scope(env: &mut Environment, names: &[String]) {
-    let copies = snapshot_lexical_bindings(env, names);
-    push_lexical_scope_with_values(env, &copies);
+    // Step 1: Capture the CURRENT VALUES from HEAD for each name.
+    // HEAD is the topmost scope (no PI on chain). get_scope_from_bottom(0)
+    // reads the topmost scope.
+    let head_values: Vec<(String, Value)> = names
+        .iter()
+        .filter_map(|name| {
+            let scope_rc = env.get_scope_from_bottom(0)?;
+            let v = scope_rc.borrow().get(name)?.clone();
+            Some((name.clone(), v))
+        })
+        .collect();
+
+    // Step 2: Push the new PI scope.
+    env.push_scope();
+
+    // Step 3: Fill PI scope with INDEPENDENT RefCells — each PI gets its own
+    // storage so mutations to HEAD (from update expressions or later iterations)
+    // don't contaminate this iteration's captured bindings.
+    if let Some(pi_rc) = env.get_scope_from_bottom(0) {
+        let mut pi = pi_rc.borrow_mut();
+        for (name, value) in &head_values {
+            pi.bindings_mut()
+                .insert(name.clone(), Rc::new(RefCell::new(value.clone())));
+        }
+    }
 }
 
 /// Returns true if `source` contains a legacy octal literal (e.g. `01`, `07`).

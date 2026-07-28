@@ -697,7 +697,7 @@ fn test_env_delete_binding_implicit_global() {
         .unwrap()
         .borrow_mut()
         .bindings_mut()
-        .insert("implicit".to_string(), Rc::new(Value::Number(99.0)));
+        .insert("implicit".to_string(), Rc::new(RefCell::new(Value::Number(99.0))));
     assert!(env.has("implicit"));
     assert_eq!(env.get_kind("implicit"), None);
     assert!(env.delete_binding("implicit"));

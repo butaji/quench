@@ -6,8 +6,8 @@ use crate::eval::expression::eval_expression;
 use crate::interpreter::{
     add_label, collect_for_head_lexical_names, collect_var_names_recursive, has_label,
     loop_handles_break, loop_handles_continue, pop_label_scope, predeclare_let_const,
-    predeclare_var, push_label_scope, push_lexical_scope_with_values, set_control_flow,
-    snapshot_lexical_bindings, take_control_flow, ControlFlow,
+    predeclare_var, push_for_body_iteration_scope, push_label_scope, set_control_flow,
+    take_control_flow, ControlFlow,
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
@@ -1000,18 +1000,10 @@ fn eval_for_loop_condition(
     in_arrow_function: bool,
 ) -> Result<bool, JsError> {
     if let Some(c) = condition.as_ref() {
-        Ok(to_bool(&eval_expression(c, env, in_arrow_function)?))
+        let val = eval_expression(c, env, in_arrow_function)?;
+        Ok(to_bool(&val))
     } else {
         Ok(true)
-    }
-}
-
-fn eval_for_pop_head_scopes(env: &Rc<RefCell<Environment>>, head_lexical: bool, per_iter: bool) {
-    if per_iter {
-        env.borrow_mut().pop_scope();
-    }
-    if head_lexical {
-        env.borrow_mut().pop_scope();
     }
 }
 
@@ -1032,20 +1024,17 @@ fn eval_for(
     if let Some(for_init) = init {
         eval_for_init(for_init, env, in_arrow_function)?;
     }
-    let mut iter_binding_values = if head_lexical {
-        snapshot_lexical_bindings(&env.borrow(), &per_iter_names)
-    } else {
-        Vec::new()
-    };
     let mut completion = Value::Undefined;
     loop {
-        let mut in_per_iter = false;
+        // Push PI for THIS iteration (snapshot HEAD values). PI is on the chain
+        // during condition check + body. The caller pops PI before the update
+        // expression, so updates go to HEAD directly.
         if head_lexical {
-            push_lexical_scope_with_values(&mut env.borrow_mut(), &iter_binding_values);
-            in_per_iter = true;
+            push_for_body_iteration_scope(&mut env.borrow_mut(), &per_iter_names);
         }
+        // Condition check (PI is on chain — closures see per-iteration values)
         if !eval_for_loop_condition(condition, env, in_arrow_function)? {
-            if in_per_iter {
+            if head_lexical {
                 env.borrow_mut().pop_scope();
             }
             break;
@@ -1053,48 +1042,51 @@ fn eval_for(
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
         completion = body_val.clone();
+        // Control flow handling — always pop PI before early exit
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
-                    eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                    if head_lexical { env.borrow_mut().pop_scope(); }
                     return Ok(body_val);
                 }
-                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                if head_lexical { env.borrow_mut().pop_scope(); }
                 set_control_flow(cf);
                 return Ok(Value::Undefined);
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
-                    eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                    if head_lexical { env.borrow_mut().pop_scope(); }
                     set_control_flow(cf);
                     return Ok(Value::Undefined);
                 }
+                // Loop handles continue: fall through to pop PI and run update.
             }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
-                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                if head_lexical { env.borrow_mut().pop_scope(); }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::YieldDelegate(val)) => {
-                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                if head_lexical { env.borrow_mut().pop_scope(); }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::Throw(val)) => {
-                eval_for_pop_head_scopes(env, head_lexical, in_per_iter);
+                if head_lexical { env.borrow_mut().pop_scope(); }
                 set_thrown_value(val);
                 return Err(JsError("Generator threw".to_string()));
             }
             None => {}
         }
+        // Pop PI before update expression so `++i` writes to HEAD directly.
+        if head_lexical {
+            env.borrow_mut().pop_scope();
+        }
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
         }
-        if head_lexical {
-            iter_binding_values = snapshot_lexical_bindings(&env.borrow(), &per_iter_names);
-            env.borrow_mut().pop_scope();
-        }
     }
+    // Pop the for-head scope (HEAD). PI was already popped inside the loop.
     if head_lexical {
         env.borrow_mut().pop_scope();
     }
@@ -1106,8 +1098,11 @@ fn eval_block(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    env.borrow_mut().push_scope();
-    predeclare_let_const(stmts, &mut env.borrow_mut());
+    {
+        let mut env_mut = env.borrow_mut();
+        env_mut.push_scope();
+        predeclare_let_const(stmts, &mut env_mut);
+    }
     let result = eval_statements(stmts, env, false, in_arrow_function);
     env.borrow_mut().pop_scope();
     result

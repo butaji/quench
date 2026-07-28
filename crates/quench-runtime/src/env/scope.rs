@@ -20,9 +20,13 @@ pub enum VarState {
     TDZ,
 }
 
-/// An environment frame that holds variable bindings
+/// An environment frame that holds variable bindings.
+/// `bindings` stores `Rc<RefCell<Value>>` so that multiple scopes (e.g. a for-loop
+/// head scope and its per-iteration scopes) can share the same binding storage —
+/// updates through one scope's binding are immediately visible through any other
+/// scope that holds the same `Rc<RefCell<Value>>`.
 pub struct Scope {
-    bindings: HashMap<String, Rc<Value>>,
+    bindings: HashMap<String, Rc<RefCell<Value>>>,
     /// Track variables that are declared but not initialized (var hoisting / TDZ)
     declarations: HashMap<String, VarState>,
     /// Track var kinds for const enforcement
@@ -121,7 +125,7 @@ impl Scope {
             }
         }
         object.borrow_mut().set(name, value.clone());
-        self.bindings.insert(name.to_string(), Rc::new(value));
+        *self.bindings.get(name).unwrap().borrow_mut() = value;
         Some(true)
     }
 
@@ -163,7 +167,7 @@ impl Scope {
     }
 
     /// Mutable access to bindings (for Environment::set_property).
-    pub fn bindings_mut(&mut self) -> &mut HashMap<String, Rc<Value>> {
+    pub fn bindings_mut(&mut self) -> &mut HashMap<String, Rc<RefCell<Value>>> {
         &mut self.bindings
     }
 
@@ -174,7 +178,7 @@ impl Scope {
 
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         self.declarations.remove(name);
-        self.bindings.insert(name.to_string(), Rc::new(value));
+        self.bindings.insert(name.to_string(), Rc::new(RefCell::new(value)));
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
@@ -184,10 +188,10 @@ impl Scope {
         if matches!(self.declarations.get(name), Some(VarState::TDZ)) {
             return None;
         }
-        self.bindings.get(name).map(|v| v.as_ref().clone())
+        self.bindings.get(name).map(|v| v.borrow().clone())
     }
 
-    pub fn get_rc(&self, name: &str) -> Option<Rc<Value>> {
+    pub fn get_rc(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
         self.bindings.get(name).map(Rc::clone)
     }
 
@@ -205,7 +209,9 @@ impl Scope {
             && matches!(self.declarations.get(&name), Some(VarState::DeclaredOnly))
         {
             self.declarations.remove(&name);
-            self.bindings.insert(name.clone(), Rc::new(value.clone()));
+            // Clone the RefCell Rc so all scopes sharing this binding see the update.
+            let rc = Rc::new(RefCell::new(value.clone()));
+            self.bindings.insert(name.clone(), Rc::clone(&rc));
             // Sync to the global object so the binding is visible there too.
             if let Some(ref obj) = self.object_binding {
                 obj.borrow_mut().set(&name, value);
@@ -213,7 +219,7 @@ impl Scope {
             return true;
         }
         match self.bindings.entry(name.clone()) {
-            std::collections::hash_map::Entry::Occupied(mut e) => {
+            std::collections::hash_map::Entry::Occupied(e) => {
                 if strict {
                     if let Some(ref obj) = self.object_binding {
                         if let Some(flags) = obj.borrow().get_descriptor(&name) {
@@ -223,7 +229,8 @@ impl Scope {
                         }
                     }
                 }
-                e.insert(Rc::new(value));
+                // Mutate the existing RefCell so all scopes sharing this binding see the update.
+                *e.get().borrow_mut() = value;
                 true
             }
             std::collections::hash_map::Entry::Vacant(e) => {
@@ -238,7 +245,7 @@ impl Scope {
                             .unwrap_or(true);
                         if writable || !strict {
                             obj.borrow_mut().set(&name, value.clone());
-                            e.insert(Rc::new(value));
+                            e.insert(Rc::new(RefCell::new(value)));
                             return true;
                         }
                         return false;
@@ -251,7 +258,7 @@ impl Scope {
 
     pub fn define(&mut self, name: String, value: Value) {
         self.declarations.remove(&name);
-        self.bindings.insert(name, Rc::new(value));
+        self.bindings.insert(name, Rc::new(RefCell::new(value)));
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -284,7 +291,7 @@ impl Scope {
         self.this_initialized
     }
 
-    pub fn bindings(&self) -> impl Iterator<Item = (&String, &Rc<Value>)> {
+    pub fn bindings(&self) -> impl Iterator<Item = (&String, &Rc<RefCell<Value>>)> {
         self.bindings.iter()
     }
 
@@ -293,7 +300,7 @@ impl Scope {
     pub fn dump(&self, label: &str) {
         eprintln!("[Scope {}] bindings:", label);
         for (k, v) in &self.bindings {
-            eprintln!("  {} = {:?}", k, v.as_ref());
+            eprintln!("  {} = {:?}", k, v.borrow());
         }
         eprintln!("[Scope {}] declarations:", label);
         for (k, v) in &self.declarations {

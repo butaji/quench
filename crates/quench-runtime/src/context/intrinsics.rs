@@ -23,6 +23,7 @@ pub(crate) struct IntrinsicSnapshot {
     regexp: Proto,
     typed_array: Proto,
     promise: Proto,
+    iterator: Proto,
     functions: builtins::function::FunctionPrototypes,
     errors: crate::value::error::ErrorIntrinsics,
     well_known_symbols: HashMap<&'static str, Value>,
@@ -40,6 +41,7 @@ impl IntrinsicSnapshot {
             regexp: builtins::regex::save_regexp_prototype(),
             typed_array: builtins::typed_array::save_typed_array_prototype(),
             promise: builtins::promise::save_promise_proto(),
+            iterator: builtins::iterator::save_iterator_prototype(),
             functions: builtins::function::save_function_prototypes(),
             errors: crate::value::error::save_error_intrinsics(),
             well_known_symbols: builtins::symbol::save_well_known_symbols(),
@@ -56,6 +58,7 @@ impl IntrinsicSnapshot {
         builtins::regex::restore_regexp_prototype(self.regexp);
         builtins::typed_array::restore_typed_array_prototype(self.typed_array);
         builtins::promise::restore_promise_proto(self.promise);
+        builtins::iterator::restore_iterator_prototype(self.iterator);
         builtins::function::restore_function_prototypes(self.functions);
         crate::value::error::restore_error_intrinsics(self.errors);
         builtins::symbol::restore_well_known_symbols(self.well_known_symbols);
@@ -73,6 +76,7 @@ pub(crate) fn clear_intrinsics() {
         regexp: None,
         typed_array: None,
         promise: None,
+        iterator: None,
         functions: Default::default(),
         errors: (None, None, None, None),
         well_known_symbols: HashMap::new(),

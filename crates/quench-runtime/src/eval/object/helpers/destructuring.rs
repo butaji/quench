@@ -1911,6 +1911,34 @@ mod tests {
         assert_eq!(v, Value::String("[1,1,777,true]".into()));
     }
 
+    // ─── TDZ + default value destructuring ─────────────────────────────────────
+    // Reproducer: let [x = 23] = [,]; — the initializer 23 must be evaluated
+    // BEFORE initializing the TDZ slot, so that x = 23 (not TDZ error).
+
+    #[test]
+    fn let_destruct_array_default_with_hole() {
+        let r = eval("let [x = 23] = [,]; x").unwrap();
+        assert_eq!(r, Value::Number(23.0));
+    }
+
+    #[test]
+    fn let_destruct_array_default_with_undefined() {
+        let r = eval("let [x = 99] = [undefined]; x").unwrap();
+        assert_eq!(r, Value::Number(99.0));
+    }
+
+    #[test]
+    fn let_destruct_array_default_with_iterator_hole() {
+        let r = eval("let [x = 42, y = 7] = [,]; x + ',' + y").unwrap();
+        assert_eq!(r, Value::String("42,7".into()));
+    }
+
+    #[test]
+    fn const_destruct_array_default_with_hole() {
+        let r = eval("const [x = 11] = [,]; x").unwrap();
+        assert_eq!(r, Value::Number(11.0));
+    }
+
     #[test]
     fn object_destructure_param_computed_key_evaluated_at_call() {
         let err = eval(

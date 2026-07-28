@@ -23,6 +23,7 @@ pub mod string;
 pub mod symbol;
 pub mod typed_array;
 pub mod uri;
+pub mod iterator;
 pub mod weak;
 pub mod weak_ref;
 
@@ -137,6 +138,7 @@ pub fn register_builtins(ctx: &mut Context) {
     // Symbol must be registered before Map/Set so their prototypes can carry
     // the Symbol.iterator method.
     symbol::register_symbol(ctx);
+    iterator::register_iterator(ctx);
     map::register_map_and_set(ctx);
     // WeakMap and WeakSet
     weak::register_weak_collections(ctx);

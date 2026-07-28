@@ -43,6 +43,10 @@ pub struct Environment {
     declared_private_names: std::collections::HashSet<String>,
     /// Lexical origin: function/eval inside a class field initializer.
     in_class_field_initializer: bool,
+    /// When set, `set` operations skip the topmost scope. Used by for-loop
+    /// per-iteration scopes so that `++i` in the update expression targets
+    /// the head binding, not the PI binding.
+    set_except_top: bool,
 }
 
 impl std::fmt::Debug for Environment {
@@ -74,6 +78,7 @@ impl Environment {
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
             in_class_field_initializer: false,
+            set_except_top: false,
         }
     }
 
@@ -87,6 +92,7 @@ impl Environment {
             private_class_id: None,
             declared_private_names: std::collections::HashSet::new(),
             in_class_field_initializer: false,
+            set_except_top: false,
         }
     }
 
@@ -116,6 +122,13 @@ impl Environment {
 
     pub fn live_scopes_snapshot(&self) -> Vec<Rc<RefCell<Scope>>> {
         self.scopes.to_vec()
+    }
+
+    /// Access a scope by index from the top (0 = topmost, 1 = second from top, etc.).
+    /// Used by for-loop snapshot to read the per-iteration scope directly.
+    pub fn get_scope_from_bottom(&self, n: usize) -> Option<Rc<RefCell<Scope>>> {
+        let idx = self.scopes.len().saturating_sub(1 + n);
+        self.scopes.get(idx).cloned()
     }
 
     pub fn capture_env(&self) -> Environment {
@@ -198,7 +211,25 @@ impl Environment {
         self.get_global_this_property(name)
     }
 
-    pub fn get_shared(&self, name: &str) -> Option<Rc<Value>> {
+    /// Get a binding by name, optionally skipping the topmost scope.
+    pub fn get_with_options(&self, name: &str, skip_top: bool) -> Option<Value> {
+        let scopes_iter: Box<dyn Iterator<Item = &_>> = if skip_top {
+            Box::new(self.scopes.iter().rev().skip(1))
+        } else {
+            Box::new(self.scopes.iter().rev())
+        };
+        for scope_rc in scopes_iter {
+            if let Some(value) = scope_rc.borrow().get(name) {
+                return Some(value);
+            }
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow().get_with_options(name, skip_top);
+        }
+        self.get_global_this_property(name)
+    }
+
+    pub fn get_shared(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
         for scope_rc in self.scopes.iter().rev() {
             if let Some(rc) = scope_rc.borrow().get_rc(name) {
                 return Some(rc);
@@ -225,7 +256,7 @@ impl Environment {
         None
     }
 
-    pub fn get_rc(&self, name: &str) -> Option<Rc<Value>> {
+    pub fn get_rc(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
         self.get_shared(name)
     }
 
@@ -236,7 +267,7 @@ impl Environment {
                 scope.bindings_mut().entry(name.to_string())
             {
                 let rc = entry.get();
-                match rc.as_ref() {
+                match &*rc.borrow() {
                     Value::Function(ref f) => {
                         if (f.is_arrow || f.strict) && (prop == "caller" || prop == "arguments") {
                             return false;
@@ -271,7 +302,20 @@ impl Environment {
     }
 
     pub fn set(&mut self, name: &str, value: Value) -> bool {
-        for scope_rc in self.scopes.iter().rev() {
+        self.set_with_options(name, value, self.set_except_top)
+    }
+
+    /// Set a binding by name. If `except_top` is true, the topmost scope is
+    /// skipped when searching for an existing binding — useful for for-loop
+    /// per-iteration scopes where assignments (e.g. `++i` in the update
+    /// expression) must target the head binding, not the PI binding.
+    pub fn set_with_options(&mut self, name: &str, value: Value, except_top: bool) -> bool {
+        let scopes_iter: Box<dyn Iterator<Item = &_>> = if except_top {
+            Box::new(self.scopes.iter().rev().skip(1))
+        } else {
+            Box::new(self.scopes.iter().rev())
+        };
+        for scope_rc in scopes_iter {
             let mut scope = scope_rc.borrow_mut();
             // TDZ check: if the binding exists but is uninitialized (e.g. `let x;`),
             // assignment to it must throw ReferenceError (ES §8.1.1.1.4, step 3).
@@ -306,7 +350,7 @@ impl Environment {
                 global_scope
                     .borrow_mut()
                     .bindings_mut()
-                    .insert(name.to_string(), Rc::new(value));
+                    .insert(name.to_string(), Rc::new(RefCell::new(value)));
                 return true;
             }
         }
@@ -356,6 +400,8 @@ impl Environment {
             parent.borrow_mut().initialize_declared(name, value);
         }
     }
+
+
 
     pub fn is_tdz(&self, name: &str) -> bool {
         for scope_rc in self.scopes.iter().rev() {
@@ -419,9 +465,18 @@ impl Environment {
         self.scopes.push(Rc::new(RefCell::new(Scope::new())));
     }
 
+    /// Push a scope that skips itself on `set` calls. Used for for-loop
+    /// per-iteration scopes so that `++i` in the update expression updates
+    /// the head binding instead.
+    pub fn push_scope_with_except_top(&mut self) {
+        self.scopes.push(Rc::new(RefCell::new(Scope::new())));
+        self.set_except_top = true;
+    }
+
     pub fn pop_scope(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
+            self.set_except_top = false;
         }
     }
 
@@ -473,6 +528,7 @@ impl Clone for Environment {
             private_class_id: self.private_class_id,
             declared_private_names: self.declared_private_names.clone(),
             in_class_field_initializer: self.in_class_field_initializer,
+            set_except_top: false,
         }
     }
 }

@@ -214,7 +214,7 @@ pub fn eval_member(
     // For identifiers, use get_shared to preserve function identity for property access
     if let Expression::Identifier(name) = object {
         if let Some(rc) = env.borrow().get_shared(name) {
-            let obj_val = (*rc).clone();
+            let obj_val = rc.borrow().clone();
             return eval_member_access(&obj_val, &prop_name, env);
         }
     }

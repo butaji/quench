@@ -104,6 +104,103 @@ fn test_for_in_with_defined_property() {
     assert!(result.is_ok());
 }
 
+// ── Per-iteration let/const binding (spec §14.7.1.1) ─────────────────────────
+
+/// Each iteration of a `for (let x = ...)` loop creates a fresh binding.
+/// Closures created in iteration N must capture iteration N's value, not
+/// the value after N+1's update expression runs.
+#[test]
+fn test_for_loop_let_per_iteration_basic() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var result = [];
+        for (let i = 0; i < 3; i++) {
+            result.push(function() { return i; });
+        }
+        // Each closure must see its own iteration's i, not the final value 3.
+        assert.sameValue(result[0](), 0, "first closure sees i=0");
+        assert.sameValue(result[1](), 1, "second closure sees i=1");
+        assert.sameValue(result[2](), 2, "third closure sees i=2");
+        "#,
+    );
+    assert!(result.is_ok(), "per-iteration let binding failed: {:?}", result);
+}
+
+/// `++i` in the update expression must update the binding visible to the next
+/// iteration's body, not the binding seen by the previous body.
+#[test]
+fn test_for_loop_let_per_iteration_increment() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var result = [];
+        for (let i = 0; i < 3; ) {
+            result.push(function() { return i; });
+            i++;
+        }
+        assert.sameValue(result[0](), 0, "first closure sees i=0");
+        assert.sameValue(result[1](), 1, "second closure sees i=1");
+        assert.sameValue(result[2](), 2, "third closure sees i=2");
+        "#,
+    );
+    assert!(result.is_ok(), "per-iteration let with ++i failed: {:?}", result);
+}
+
+/// Multiple let bindings in the for head, each with per-iteration semantics.
+#[test]
+fn test_for_loop_let_per_iteration_multiple() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var result = [];
+        for (let i = 0, j = 10; i < 3; i++, j++) {
+            result.push(function() { return i + j; });
+        }
+        assert.sameValue(result[0](), 10, "i=0, j=10 → 10");
+        assert.sameValue(result[1](), 13, "i=1, j=11 → 12");
+        assert.sameValue(result[2](), 16, "i=2, j=12 → 14");
+        "#,
+    );
+    assert!(result.is_ok(), "multiple let bindings failed: {:?}", result);
+}
+
+/// Closures inside the body must see the same value as the body itself.
+#[test]
+fn test_for_loop_let_closure_sees_body_value() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var results = [];
+        for (let n = 1; n <= 2; n++) {
+            var captured = n;
+            results.push(function() { return captured; });
+        }
+        assert.sameValue(results[0](), 1);
+        assert.sameValue(results[1](), 2);
+        "#,
+    );
+    assert!(result.is_ok(), "closure sees body value failed: {:?}", result);
+}
+
+/// `const` in a for head also has per-iteration binding.
+#[test]
+fn test_for_loop_const_per_iteration() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var result = [];
+        for (const i = 0; i < 3; i++) {
+            result.push(function() { return i; });
+        }
+        assert.sameValue(result[0](), 0);
+        assert.sameValue(result[1](), 1);
+        assert.sameValue(result[2](), 2);
+        "#,
+    );
+    assert!(result.is_ok(), "per-iteration const binding failed: {:?}", result);
+}
+
 #[test]
 fn test_own_keys_with_defined_property() {
     let mut host = QuenchHost::new();
@@ -775,4 +872,94 @@ fn test262_one() {
         Ok(()) => println!("PASS"),
         Err(e) => panic!("FAIL: {}", e),
     }
+}
+
+// Reproducer: for (let i = 0; i < 2; ++i) {} must terminate (no infinite loop)
+#[test]
+fn for_loop_with_let_should_terminate() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (tx, rx) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let mut host = QuenchHost::new();
+        let result = host.run_script("for (let i = 0; i < 2; ++i) {}");
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(result) => {
+            assert!(result.is_ok(), "for loop must terminate, got: {:?}", result);
+        }
+        Err(_) => {
+            panic!("TIMEOUT: for loop did not terminate in 3s");
+        }
+    }
+
+    // Ensure thread didn't panic
+    assert!(
+        handle.join().is_ok(),
+        "eval thread panicked"
+    );
+}
+
+// Reproducer: closures in for-loop capture per-iteration binding, not shared value.
+// ES §14.7.4.2 / Runtime_SemaRegisterNames: each iteration creates a new per-iteration
+// binding; closures capture that binding's value at the time of capture.
+#[test]
+fn for_loop_let_per_iteration_binding_closure() {
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    // Each closure captures its own per-iteration `i`.
+    // If per-iteration binding is broken, all closures see the same value.
+    let r = ctx.eval(
+        r#"
+        "use strict";
+        var a = [];
+        for (let i = 0; i < 5; ++i) {
+            a.push(function() { return i; });
+        }
+        var results = a.map(function(f) { return f(); });
+        var pass = true;
+        for (var k = 0; k < 5; ++k) {
+            if (results[k] !== k) pass = false;
+        }
+        pass
+        "#,
+    );
+    assert!(r.is_ok(), "eval failed: {:?}", r);
+    let v = r.as_ref().unwrap();
+    assert!(
+        quench_runtime::value::coerce::to_bool(v),
+        "closures should capture per-iteration i values, got: {:?}",
+        v
+    );
+}
+
+// Reproducer: multi-let per-iteration binding.
+#[test]
+fn for_loop_multi_let_per_iteration_binding() {
+    let mut ctx = quench_runtime::Context::new().unwrap();
+    quench_runtime::builtins::register_builtins(&mut ctx);
+    let r = ctx.eval(
+        r#"
+        "use strict";
+        var a = [];
+        for (let i = 0, j = 10; i < 3; ++i, ++j) {
+            a.push(function() { return i * 100 + j; });
+        }
+        var pass = true;
+        if (a[0]() !== 10) pass = false;   // i=0, j=10
+        if (a[1]() !== 111) pass = false;  // i=1, j=11
+        if (a[2]() !== 212) pass = false;  // i=2, j=12
+        pass
+        "#,
+    );
+    assert!(r.is_ok(), "eval failed: {:?}", r);
+    let v = r.as_ref().unwrap();
+    assert!(
+        quench_runtime::value::coerce::to_bool(v),
+        "closures should capture per-iteration i,j values, got: {:?}",
+        v
+    );
 }
