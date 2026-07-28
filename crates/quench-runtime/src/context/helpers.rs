@@ -43,7 +43,13 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         return Ok(Value::Undefined);
     }
 
-    let strict_inherited = crate::interpreter::is_strict_mode();
+    // Indirect eval does NOT inherit strict mode from the caller (ES §19.2.1).
+    // Only direct eval inherits the calling context's strict mode.
+    let strict_inherited = if crate::interpreter::is_direct_eval() {
+        crate::interpreter::is_strict_mode()
+    } else {
+        false
+    };
     let has_octal = crate::interpreter::has_legacy_octal(&source);
     if strict_inherited && has_octal {
         let (err_val, js_err) = crate::value::error::create_js_error_with_type(
@@ -63,9 +69,20 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     });
     // Save label stack depth before parse so we can restore on any exit path.
     let label_depth = crate::interpreter::label_stack_depth();
+    // Indirect eval should not inherit strict mode for parsing. Temporarily
+    // set strict mode to false so the parser doesn't reject strict-reserved
+    // words like `arguments` or `eval`.
+    let saved_strict = crate::interpreter::is_strict_mode();
+    if !crate::interpreter::is_direct_eval() {
+        crate::interpreter::set_strict_mode(false);
+    }
     let mut program = match ctx.parse(&source) {
-        Ok(program) => program,
+        Ok(program) => {
+            crate::interpreter::set_strict_mode(saved_strict);
+            program
+        }
         Err(e) => {
+            crate::interpreter::set_strict_mode(saved_strict);
             CURRENT_CONTEXT.with(|cell| {
                 *cell.borrow_mut() = prev_ctx;
             });
