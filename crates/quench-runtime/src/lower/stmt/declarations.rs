@@ -191,8 +191,16 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
 }
 
 /// Lower a single FormalParameter to Param
+/// Lower a FormalParameter to Param.
+/// OXC 0.142+ stores the default value in `initializer`, not in the BindingPattern.
 pub fn lower_param_decl(param: &ast::FormalParameter) -> Param {
-    lower_binding_pattern(&param.pattern)
+    let mut p = lower_binding_pattern(&param.pattern);
+    if let Some(init) = &param.initializer {
+        if let Ok(expr) = lower_expr(init) {
+            p.default = Some(Box::new(expr));
+        }
+    }
+    p
 }
 
 /// Lower a BindingPattern to Param (used for both params and destructuring)

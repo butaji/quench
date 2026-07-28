@@ -247,28 +247,11 @@ fn lower_export_default_decl_local(export: &ast::ExportDefaultDeclaration) -> Op
                 .items
                 .iter()
                 .map(|p| {
-                    let (name, default) = match &p.pattern {
-                        ast::BindingPattern::BindingIdentifier(ident) => {
-                            (ident.name.as_str().to_string(), None)
-                        }
-                        ast::BindingPattern::AssignmentPattern(ap) => {
-                            let name = match &ap.left {
-                                ast::BindingPattern::BindingIdentifier(ident) => {
-                                    ident.name.as_str().to_string()
-                                }
-                                _ => "arg".to_string(),
-                            };
-                            let default = lower_expr(&ap.right).ok().map(Box::new);
-                            (name, default)
-                        }
-                        _ => ("arg".to_string(), None),
-                    };
-                    Param {
-                        name,
-                        default,
-                        pattern: None,
-                        rest: false,
-                    }
+                    // OXC 0.142+ stores defaults in p.initializer
+                    let mut param = crate::lower::stmt::lower_param_decl(p);
+                    param.pattern = None;
+                    param.rest = false;
+                    param
                 })
                 .collect();
             let body = func
