@@ -260,17 +260,31 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
             Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Break(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Yield(val, suspend_init)) => {
-                // If we yielded during init/assign, run.pending is None (not yet set).
-                // Capture the current item so on resume we use the same item, not a new iter.next().
-                // Also set init=true so that on resume, need_init=true and we RE-RUN init/assign.
-                if run.pending.is_none() && !matches!(item, Value::Undefined) {
-                    run.pending = Some((item.clone(), ForOfResume { init: suspend_init, ..Default::default() }));
-                }
+                // Compute body_tail before setting pending so it can be used in both.
                 let body_tail = if suspend_init {
                     None
                 } else {
                     crate::value::generator_replay::body_tail_after_yield(run.body, true)
                 };
+                // If we yielded during init/assign, run.pending is None (not yet set).
+                // Capture the current item so on resume we use the same item, not a new iter.next().
+                // For a body yield (suspend_init=false): body_only=true skips init on resume,
+                // and the saved body_tail runs the post-yield tail. After the tail completes
+                // normally, the loop calls take_iterator_step again for the next item.
+                // For an init yield (suspend_init=true): pending keeps init=true so init re-runs.
+                if run.pending.is_none() && !matches!(item, Value::Undefined) {
+                    let resume = if suspend_init {
+                        ForOfResume { init: true, ..Default::default() }
+                    } else {
+                        ForOfResume {
+                            body_only: true,
+                            body_tail: body_tail.clone(),
+                            mid_delegate: true,
+                            init: false,
+                        }
+                    };
+                    run.pending = Some((item.clone(), resume));
+                }
                 save_for_of_suspend(ForOfSuspend {
                     iterator: Rc::clone(&run.iterator),
                     index: run.index,

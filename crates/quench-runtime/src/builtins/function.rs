@@ -396,18 +396,27 @@ pub fn register_function(ctx: &mut Context) {
     );
     // Set %GeneratorPrototype%[@@iterator] = function() { return this; }
     // Generator instances are iterable via the iterator protocol.
-    generator_proto_rc.borrow_mut().set(
-        "Symbol.iterator",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|_args: Vec<Value>| {
-            let this_val = crate::builtins::get_native_this().ok_or_else(|| {
-                JsError(
-                    "Generator.prototype[Symbol.iterator] called on incompatible receiver"
-                        .to_string(),
-                )
-            })?;
-            Ok(this_val)
-        }))),
-    );
+    // Must use set_symbol() with the well-known Symbol.iterator key so that
+    // resolve_iterator_method (which looks up by symbol property_key) finds it.
+    if let Some(Value::Symbol(ref sym)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let key = sym.property_key();
+        generator_proto_rc.borrow_mut().set_symbol(
+            &key,
+            Value::NativeFunction(Rc::new(NativeFunction::new(
+                |_args: Vec<Value>| {
+                    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                        JsError(
+                            "Generator.prototype[Symbol.iterator] called on incompatible receiver"
+                                .to_string(),
+                        )
+                    })?;
+                    Ok(this_val)
+                },
+            ))),
+        );
+    }
     // Set %GeneratorPrototype%[@@toStringTag] = "Generator"
     generator_proto_rc
         .borrow_mut()

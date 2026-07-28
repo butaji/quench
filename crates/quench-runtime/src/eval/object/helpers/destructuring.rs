@@ -359,8 +359,17 @@ fn array_with_iterator_impl(
         // (line ~302) handles Return/Throw from generator.return/throw.
     }
     if !iterator_done {
-        if let Some(err) = call_iterator_return(iterator) {
-            return Err(err);
+        // If a generator yield is pending, the destructuring was suspended
+        // mid-evaluation by a yield expression (e.g. `[{} = yield]`). Do NOT
+        // close the iterator here — it will be closed on generator resume
+        // (via the control flow check in array_destructuring_impl for
+        // .return()/.throw(), or via this same code in a fresh call for
+        // normal .next() resume). Closing it now would double-close on
+        // .return() resume, producing two iterator.return() calls.
+        if !crate::interpreter::peek_generator_yield() {
+            if let Some(err) = call_iterator_return(iterator) {
+                return Err(err);
+            }
         }
     }
     Ok(())

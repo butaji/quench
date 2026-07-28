@@ -59,13 +59,8 @@ fn resolve_from_index(arg: Option<&Value>, len: usize) -> usize {
     }
 }
 
-/// SameValueZero comparison (like strict equality, but NaN matches NaN
-/// and +0/-0 are treated as equal).
 fn same_value_zero(a: &Value, b: &Value) -> bool {
-    if let (Value::Number(x), Value::Number(y)) = (a, b) {
-        return x == y || (x.is_nan() && y.is_nan());
-    }
-    crate::value::strict_eq(a, b)
+    crate::value::compare::same_value_zero(a, b)
 }
 
 /// Array.prototype.indexOf(searchElement, fromIndex?)

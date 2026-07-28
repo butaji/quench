@@ -328,11 +328,8 @@ pub fn eval_expression(
                 return Ok(right_val);
             }
             // No binding scope: identifier not found in env chain.
-            // Extract name so we can drop borrow before calling assign_to.
             if let Expression::Identifier(name) = left.as_ref() {
                 let name = name.clone();
-                drop(env.borrow());
-                let right_val = eval_expression(right, env, in_arrow_function)?;
                 if crate::interpreter::is_strict_mode() {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         &format!("{} is not defined", name),

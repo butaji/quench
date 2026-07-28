@@ -6,10 +6,7 @@ use std::rc::Rc;
 
 /// SameValueZero comparison: NaN equals NaN, +0 and -0 are the same
 pub fn same_value_zero(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x == y || (x.is_nan() && y.is_nan()),
-        _ => crate::value::strict_eq(a, b),
-    }
+    crate::value::compare::same_value_zero(a, b)
 }
 
 /// Generate a unique key for WeakSet entries storage.

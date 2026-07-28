@@ -465,8 +465,26 @@ pub fn expand_nested_object_pattern(
     // Handle rest element
     if let Some(rest) = &obj.rest {
         let rest_temp_name = format!("{}_rest", source_var);
-        // Before initializing the rest var, delete each already-destructured
-        // key from the source object so the rest only captures remaining props.
+        // Create a fresh empty object for the rest, then copy all own
+        // enumerable string-keyed properties from source into it, and
+        // finally delete the already-destructured keys from the copy so
+        // the original source object is not mutated.
+        stmts.push(Statement::VarDeclaration {
+            kind: VarKind::Const,
+            name: rest_temp_name.clone(),
+            init: Some(Expression::Object(vec![])),
+        });
+        stmts.push(Statement::Expression(Box::new(Expression::Call {
+            callee: Box::new(Expression::Member {
+                object: Box::new(Expression::Identifier("Object".to_string())),
+                property: PropertyKey::Ident("assign".to_string()),
+                computed: false,
+            }),
+            arguments: vec![
+                Expression::Identifier(rest_temp_name.clone()),
+                Expression::Identifier(source_var.to_string()),
+            ],
+        })));
         for prop in &obj.properties {
             let key_str = match &prop.key {
                 ast::PropertyKey::StaticIdentifier(i) => i.name.as_str().to_string(),
@@ -479,14 +497,9 @@ pub fn expand_nested_object_pattern(
             }
             stmts.push(Statement::Expression(Box::new(Expression::Unary {
                 op: UnaryOp::Delete,
-                argument: Box::new(object_member_expr(source_var, &key_str)),
+                argument: Box::new(object_member_expr(&rest_temp_name, &key_str)),
             })));
         }
-        stmts.push(Statement::VarDeclaration {
-            kind: VarKind::Const,
-            name: rest_temp_name.clone(),
-            init: Some(Expression::Identifier(source_var.to_string())),
-        });
         stmts.extend(expand_nested_pattern(kind, &rest.argument, &rest_temp_name));
     }
 

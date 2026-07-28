@@ -71,7 +71,7 @@ pub fn same_value_zero(a: &Value, b: &Value) -> bool {
         return false;
     }
     match (a, b) {
-        (Value::Number(ai), Value::Number(bi)) => *ai == *bi,
+        (Value::Number(ai), Value::Number(bi)) => *ai == *bi || (ai.is_nan() && bi.is_nan()),
         (Value::Function(_), Value::Function(_))
         | (Value::NativeFunction(_), Value::NativeFunction(_))
         | (Value::NativeConstructor(_), Value::NativeConstructor(_))
