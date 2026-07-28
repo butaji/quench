@@ -194,7 +194,7 @@ fn build_script(
 }
 
 /// Default stack for per-test worker threads (avoids overflow on deep class tests).
-const TEST_THREAD_STACK: usize = 16 * 1024 * 1024;
+const TEST_THREAD_STACK: usize = 64 * 1024 * 1024;
 
 fn run_with_timeout(
     script: &str,

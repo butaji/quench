@@ -1,5 +1,5 @@
 {
-  "failed": 89,
+  "failed": 65,
   "groups": [
     {
       "count": 3,
@@ -26,27 +26,27 @@
       ]
     },
     {
-      "count": 63,
+      "count": 32,
       "reason": "$DONOTEVALUATE called: code was reached",
       "sample_paths": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-function.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-generator.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-class.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-const.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-function.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-generator.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-let.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-generator.js"
       ],
       "samples": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-function.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-generator.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-class.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-const.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-function.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-generator.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-let.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-function.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-generator.js"
       ]
     },
     {
@@ -64,19 +64,27 @@
       ]
     },
     {
-      "count": 4,
+      "count": 3,
       "reason": "Value is not a function, got undefined",
       "sample_paths": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-close-case.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-close-dflt.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-open-dflt.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-dflt.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-open-dflt.js"
       ],
       "samples": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-close-case.js",
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-close-dflt.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-open-dflt.js",
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-dflt.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-lex-open-dflt.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N -",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-dftl-body.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-dftl-body.js"
       ]
     },
     {
@@ -135,7 +143,37 @@
     },
     {
       "count": 1,
-      "reason": "thread 'main' (18725693) has overflowed its stack",
+      "reason": "sameValue failed: N !== N - reference preceding statement",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-case.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-case.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "sameValue failed: N !== N - reference preceding statment",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-dflt.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/scope-var-none-dflt.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "thread 'main' (27811156) has overflowed its stack",
+      "sample_paths": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-case-body-dflt.js"
+      ],
+      "samples": [
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-case-body-dflt.js"
+      ]
+    },
+    {
+      "count": 1,
+      "reason": "thread 'main' (27811158) has overflowed its stack",
       "sample_paths": [
         "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-case-body.js"
       ],
@@ -144,17 +182,25 @@
       ]
     },
     {
-      "count": 1,
-      "reason": "thread 'main' (18725694) has overflowed its stack",
+      "count": 5,
+      "reason": "timed out after 15s",
       "sample_paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-case-body-dflt.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-a-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-b-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-dflt-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-dflt-b-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-no-dflt-match-abrupt-empty.js"
       ],
       "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/tco-case-body-dflt.js"
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-a-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-b-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-dflt-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-dflt-b-abrupt-empty.js",
+        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/switch/cptn-no-dflt-match-abrupt-empty.js"
       ]
     }
   ],
-  "passed": 22,
+  "passed": 46,
   "path": "test/language/statements/switch",
   "skipped": 0,
   "skips": [],

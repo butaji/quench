@@ -255,6 +255,24 @@ fn test_runner_path_multi_let_per_iteration() {
 #[test]
 #[ignore = "staged test262 runner"]
 fn test262_staged() {
+    // Spawn on a thread with a larger stack to avoid stack overflows
+    // during deep parsing (default Rust test threads have ~2MB stack).
+    let builder = std::thread::Builder::new().stack_size(64 * 1024 * 1024);
+    let result = builder
+        .spawn(|| {
+            test262_staged_impl()
+        })
+        .expect("failed to spawn runner thread")
+        .join();
+    match result {
+        Ok(()) => {}
+        Err(e) => {
+            panic!("runner thread panicked: {:?}", e);
+        }
+    }
+}
+
+fn test262_staged_impl() {
     let test262_dir = {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
