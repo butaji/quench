@@ -154,7 +154,16 @@ impl Scope {
         self.var_kinds.insert(name.clone(), kind);
         match kind {
             VarKind::Var => {
-                self.declarations.insert(name, VarState::DeclaredOnly);
+                self.declarations.insert(name.clone(), VarState::DeclaredOnly);
+                // Create enumerable property on the global object (for var at
+                // global scope). This ensures the variable shows up in for...in
+                // enumeration per spec §15.1.8 (DontEnum not set).
+                if let Some(ref obj) = self.object_binding {
+                    if !obj.borrow().has(&name) {
+                        let mut obj_mut = obj.borrow_mut();
+                        obj_mut.set(&name, Value::Undefined);
+                    }
+                }
             }
             VarKind::Let | VarKind::Const => {
                 self.declarations.insert(name, VarState::TDZ);

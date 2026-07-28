@@ -1,16 +1,6 @@
 {
-  "failed": 7,
+  "failed": 6,
   "groups": [
-    {
-      "count": 1,
-      "reason": "#1: When using property attributes, {DontEnum} not used",
-      "sample_paths": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A9.js"
-      ],
-      "samples": [
-        "/Users/admin/Code/GitHub/quench-mmx/tests/test262/test/language/statements/variable/S12.2_A9.js"
-      ]
-    },
     {
       "count": 1,
       "reason": "#3: (delete(__variable) | delete(this[...]))===false",
@@ -56,7 +46,7 @@
       ]
     }
   ],
-  "passed": 171,
+  "passed": 172,
   "path": "test/language/statements/variable",
   "skipped": 0,
   "skips": [],
