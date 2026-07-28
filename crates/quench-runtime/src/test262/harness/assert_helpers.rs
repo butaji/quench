@@ -341,9 +341,16 @@ pub fn debug_string(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::test262::harness::assert_helpers::debug_string;
     use crate::test262::harness::try_inject_harness;
     use crate::test262::host::Test262Host;
     use crate::Value;
+
+    /// Regression: NaN displays as "NaN" not any other representation
+    #[test]
+    fn debug_string_nan() {
+        assert_eq!(debug_string(&Value::Number(f64::NAN)), "NaN");
+    }
 
     fn harness_ctx() -> crate::Context {
         let mut ctx = crate::Context::new().unwrap();

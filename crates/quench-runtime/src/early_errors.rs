@@ -112,7 +112,35 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
                 check_expr_for_fn_params(arg)?;
             }
         }
+        ast::Statement::SwitchStatement(switch_stmt) => {
+            check_for_switch_errors(switch_stmt)?;
+        }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Check: duplicate LexicallyDeclaredNames in switch case blocks.
+/// ES2025 §14.1.3 (CaseBlock): It is a Syntax Error if the
+/// LexicallyDeclaredNames of a CaseBlock contains any duplicate entries.
+fn check_for_switch_errors(switch: &ast::SwitchStatement) -> Result<(), JsError> {
+    let mut seen = std::collections::HashSet::new();
+    for case in &switch.cases {
+        for stmt in &case.consequent {
+            if let ast::Statement::VariableDeclaration(var_decl) = stmt {
+                if !var_decl.kind.is_var() {
+                    let names = collect_bound_names(var_decl);
+                    for name in &names {
+                        if !seen.insert(name.clone()) {
+                            return Err(JsError(format!(
+                                "SyntaxError: Duplicate lexical declaration '{}' in switch case",
+                                name
+                            )));
+                        }
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1295,5 +1323,54 @@ mod tests {
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
         println!("OXC arrow strict body + array destr: {} errors", ret.diagnostics.len());
+    }
+
+    // ===== Switch statement early errors =====
+
+    #[test]
+    fn switch_duplicate_let_across_cases_is_error() {
+        let s = "switch(0){case 0: let x; case 1: let x}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err(), "duplicate let x in switch cases should be SyntaxError");
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn switch_duplicate_const_across_cases_is_error() {
+        let s = "switch(0){case 0: const x = 1; case 1: const x = 2}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err(), "duplicate const x in switch cases should be SyntaxError");
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn switch_var_in_cases_is_ok() {
+        // var is hoisted to function scope, not lexical — no SyntaxError
+        let s = "switch(0){case 0: var x; case 1: var x}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty(), "OXC should accept: {:?}", ret.diagnostics);
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_ok(), "var redeclaration in switch should be ok: {:?}", result);
+    }
+
+    #[test]
+    fn switch_distinct_let_in_cases_is_ok() {
+        let s = "switch(0){case 0: let x; case 1: let y}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_ok(), "distinct let names in switch should be ok: {:?}", result);
     }
 }

@@ -1522,4 +1522,11 @@ mod tests {
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn object_prototype_to_locale_string_delegates_to_to_string() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("typeof ({}.toLocaleString()) === 'string'").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
