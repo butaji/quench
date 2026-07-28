@@ -134,6 +134,12 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     // has_label will only search up to this depth.
     crate::interpreter::set_eval_barrier_depth(label_depth);
     crate::interpreter::push_label_scope();
+    // For indirect eval, set strict mode to false during execution (matching
+    // strict_inherited) so assignment to undeclared identifiers creates implicit
+    // globals instead of throwing ReferenceError.
+    if !crate::interpreter::is_direct_eval() {
+        crate::interpreter::set_strict_mode(false);
+    }
     let result = if crate::interpreter::is_direct_eval() {
         if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
@@ -158,6 +164,8 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         crate::interpreter::set_this_binding(&ctx.env, this_value);
         crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };
+    // Restore strict mode after eval (indirect eval may have changed it).
+    crate::interpreter::set_strict_mode(saved_strict);
     // Exit eval: restore label stack and clear barrier.
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();

@@ -1,5 +1,5 @@
 {
-  "failed": 2,
+  "failed": 1,
   "groups": [
     {
       "count": 1,
@@ -12,7 +12,7 @@
       ]
     }
   ],
-  "passed": 176,
+  "passed": 177,
   "path": "test/language/statements/variable",
   "skipped": 0,
   "skips": [],
