@@ -155,13 +155,23 @@ impl Scope {
         match kind {
             VarKind::Var => {
                 self.declarations.insert(name.clone(), VarState::DeclaredOnly);
-                // Create enumerable property on the global object (for var at
-                // global scope). This ensures the variable shows up in for...in
-                // enumeration per spec §15.1.8 (DontEnum not set).
+                // Create property on the global object for var declarations.
+                // Per spec §15.1.8: writable=true, enumerable=true, configurable=false.
+                // Enumerable ensures for...in can see it. Configurable=false ensures
+                // delete returns false for var-declared bindings.
                 if let Some(ref obj) = self.object_binding {
                     if !obj.borrow().has(&name) {
                         let mut obj_mut = obj.borrow_mut();
-                        obj_mut.set(&name, Value::Undefined);
+                        obj_mut.define(
+                            &name,
+                            Value::Undefined,
+                            crate::value::object::PropertyFlags {
+                                value: Some(Value::Undefined),
+                                writable: true,
+                                enumerable: true,
+                                configurable: false,
+                            },
+                        );
                     }
                 }
             }
