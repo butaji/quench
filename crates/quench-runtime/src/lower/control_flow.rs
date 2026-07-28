@@ -222,7 +222,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     // subsequent case bodies until one ends with break/return/throw.
     // Process in FORWARD order, computing fall-through target indices.
     let case_count = switch.cases.len();
-    let mut own_bodies: Vec<Vec<Statement>> = switch.cases.iter().map(|case| {
+    let own_bodies: Vec<Vec<Statement>> = switch.cases.iter().map(|case| {
         case.consequent.iter().filter_map(lower_stmt).collect()
     }).collect();
     
