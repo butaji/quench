@@ -9,8 +9,7 @@ pub struct RunnerFlags {
     pub parallel: bool,
     pub stage: usize,
     pub quick_limit: usize,
-    /// Re-run only paths listed in a prior `tasks/failures-N.json` digest.
-    pub failed_json: Option<String>,
+
 }
 
 impl RunnerFlags {
@@ -29,7 +28,6 @@ impl RunnerFlags {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(20),
-            failed_json: std::env::var("TEST262_FAILED_JSON").ok(),
         }
     }
 }
@@ -88,7 +86,6 @@ mod tests {
             parallel: env_bool_default("TEST262_PARALLEL_UNSET_ABC", true),
             stage: 0,
             quick_limit: 20,
-            failed_json: None,
         };
         assert!(f.parallel);
     }

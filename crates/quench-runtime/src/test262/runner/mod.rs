@@ -217,19 +217,7 @@ impl Test262Runner {
         if !full_path.exists() {
             return missing_stage_summary(stage_dir, &full_path);
         }
-        let mut tests = collect::collect_tests(&full_path);
-        if let Some(ref json) = flags.failed_json {
-            let before = tests.len();
-            tests = collect::filter_by_failed_json(tests, json);
-            if !flags.quick {
-                println!(
-                    "  RERUN failed-only: {} of {} from {}",
-                    tests.len(),
-                    before,
-                    json
-                );
-            }
-        }
+        let tests = collect::collect_tests(&full_path);
         digest::run_stage_digest(&self.harness, stage, stage_dir, &tests, flags).summary
     }
 

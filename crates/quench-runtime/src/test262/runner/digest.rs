@@ -313,11 +313,6 @@ fn print_digest(out: &DigestOutput<'_>) {
     let text = serde_json::to_string_pretty(&json).unwrap_or_default();
     println!("{}", text);
 
-    let fpath = workspace_tasks_path(out.stage);
-    if let Err(e) = std::fs::write(&fpath, &text) {
-        eprintln!("warn: could not write {}: {}", fpath.display(), e);
-    }
-
     // If detail mode is on, also print a human-readable summary.
     if show_detail() && failed_total > 0 {
         println!("\n── Per-failure detail ──");
@@ -349,14 +344,6 @@ fn print_digest(out: &DigestOutput<'_>) {
             }
         }
     }
-}
-
-fn workspace_tasks_path(stage: usize) -> std::path::PathBuf {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest
-        .join("../../tasks")
-        .join(format!("failures-{stage}.json"));
-    path.canonicalize().unwrap_or(path)
 }
 
 /// Normalize a failure reason so identical root causes are grouped together.
