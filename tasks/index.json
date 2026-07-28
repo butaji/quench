@@ -442,8 +442,8 @@
       "impl": "rust",
       "rust_loc": "150\u2013300",
       "js_loc": "0\u20130",
-      "failed": 7,
-      "pass_rate": "96.1%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 36,
@@ -455,7 +455,7 @@
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
       "failed": 0,
-      "pass_rate": "97.4%"
+      "pass_rate": "100.0%"
     },
     {
       "id": 37,
@@ -641,7 +641,7 @@
       "id": 52,
       "path": "test/language/identifier-resolution",
       "tests": 14,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "100\u2013200",
