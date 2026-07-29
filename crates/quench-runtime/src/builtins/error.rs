@@ -31,14 +31,23 @@ pub fn register_error(ctx: &mut Context) {
 
     // Register TypeError globally for create_js_error_with_type
     if let Some(type_error_val) = ctx.get_global("TypeError") {
-        if let Value::Object(type_error_obj) = &type_error_val {
-            let type_error_proto = type_error_obj.borrow().get("prototype");
-            if let Some(Value::Object(type_error_proto_rc)) = type_error_proto {
-                crate::value::register_error_constructor(
-                    type_error_val,
-                    Rc::clone(&type_error_proto_rc),
-                );
+        let type_error_proto_rc = match &type_error_val {
+            Value::Object(obj) => {
+                obj.borrow()
+                    .get("prototype")
+                    .and_then(|v| match v {
+                        Value::Object(rc) => Some(rc.clone()),
+                        _ => None,
+                    })
             }
+            Value::NativeConstructor(nc) => Some(Rc::clone(&nc.prototype)),
+            _ => None,
+        };
+        if let Some(proto_rc) = type_error_proto_rc {
+            crate::value::register_error_constructor(
+                type_error_val,
+                proto_rc,
+            );
         }
     }
     register_reference_error(ctx, &error_proto_rc);
