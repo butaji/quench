@@ -429,7 +429,15 @@ pub(crate) fn bind_params(
                 let target = binding_pattern_expression(pattern.clone());
                 crate::eval::object::assign_to(&target, &value, call_env_rc)?;
             } else {
-                call_env_rc.borrow_mut().define(param.name.clone(), value);
+                // Declare simple parameters with VarKind::Let so that
+                // `delete` on a parameter name returns false (parameters
+                // are non-configurable in sloppy mode per ES spec).
+                call_env_rc
+                    .borrow_mut()
+                    .declare_var(param.name.clone(), crate::ast::VarKind::Let);
+                call_env_rc
+                    .borrow_mut()
+                    .initialize_declared(&param.name, value);
             }
         }
     }

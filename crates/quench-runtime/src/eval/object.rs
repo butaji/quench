@@ -413,7 +413,20 @@ pub fn assign_to_member(
         }
         Value::Object(o) => assign_to_object(&o, &prop_name, value, env),
         Value::Function(f) => assign_to_function(&f, &prop_name, value.clone()),
-        Value::NativeFunction(nf) => assign_to_native_function(&nf, &prop_name, value.clone()),
+        Value::NativeFunction(ref nf) => {
+            // Bound functions throw TypeError on caller/arguments assignment.
+            if prop_name == "caller" || prop_name == "arguments" {
+                if nf.get_property("name").is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound "))) {
+                    let (err, js_err) = crate::value::create_js_error_with_type(
+                        "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(err);
+                    return Err(js_err);
+                }
+            }
+            assign_to_native_function(nf, &prop_name, value.clone())
+        }
         Value::NativeConstructor(nc) => {
             assign_to_native_constructor(&nc, &prop_name, value.clone())
         }
@@ -698,22 +711,6 @@ fn assign_to_native_function(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
-    // Bound functions throw TypeError on caller/arguments assignment.
-    if prop_name == "caller" || prop_name == "arguments" {
-        eprintln!("DEBUG assign_to_native_function: prop_name={}, nf.name={}", prop_name, nf.name);
-        let name_val = nf.get_property("name");
-        eprintln!("DEBUG name_val={:?}", name_val);
-        let is_bound = name_val.is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
-        eprintln!("DEBUG is_bound={}", is_bound);
-        if is_bound {
-            let (err, js_err) = crate::value::create_js_error_with_type(
-                "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
-                "TypeError",
-            );
-            crate::value::set_thrown_value(err);
-            return Err(js_err);
-        }
-    }
     if crate::interpreter::is_strict_mode() && (prop_name == "length" || prop_name == "name") {
         let (_, error) = crate::value::error::create_js_error_with_type(
             "Cannot assign to read only property",

@@ -290,6 +290,11 @@ impl Environment {
                         return true;
                     }
                     Value::NativeFunction(ref nf) => {
+                        if (prop == "caller" || prop == "arguments")
+                            && nf.get_property("name").is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")))
+                        {
+                            return false;
+                        }
                         let _ = nf.set_property(prop, value.clone());
                         return true;
                     }
