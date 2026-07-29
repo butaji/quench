@@ -1227,9 +1227,7 @@ fn function_return_is_undefined_expression_last_stmt() {
 fn function_return_is_undefined_sloppy_assign() {
     let mut ctx = Context::new().unwrap();
     // ES spec: without explicit return, function returns undefined
-    let v = ctx
-        .eval("function f() { var x = 1; x = 2; } f()")
-        .unwrap();
+    let v = ctx.eval("function f() { var x = 1; x = 2; } f()").unwrap();
     assert_eq!(v, Value::Undefined);
 }
 
@@ -1250,16 +1248,16 @@ fn function_explicit_return_empty() {
 #[test]
 fn function_explicit_return_undefined() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f() { return undefined; } f()")
-        .unwrap();
+    let v = ctx.eval("function f() { return undefined; } f()").unwrap();
     assert_eq!(v, Value::Undefined);
 }
 
 #[test]
 fn arguments_is_defined_in_function() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx.eval("function f() { return typeof arguments; } f()").unwrap();
+    let v = ctx
+        .eval("function f() { return typeof arguments; } f()")
+        .unwrap();
     assert_eq!(v, Value::String("object".to_string()));
 }
 
@@ -1284,18 +1282,14 @@ fn arguments_not_removed_by_delete() {
 #[test]
 fn delete_function_decl_returns_false() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f(){} var r = delete f; r")
-        .unwrap();
+    let v = ctx.eval("function f(){} var r = delete f; r").unwrap();
     assert_eq!(v, Value::Boolean(false));
 }
 
 #[test]
 fn delete_function_decl_can_still_call_after_delete() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f(){ return 1; } delete f; f()")
-        .unwrap();
+    let v = ctx.eval("function f(){ return 1; } delete f; f()").unwrap();
     assert_eq!(v, Value::Number(1.0));
 }
 
@@ -1311,9 +1305,7 @@ fn function_decl_hoisted_over_var() {
 #[test]
 fn function_decl_before_var_in_global() {
     let mut ctx = Context::new().unwrap();
-    let v = ctx
-        .eval("function f(){} typeof f === 'function'")
-        .unwrap();
+    let v = ctx.eval("function f(){} typeof f === 'function'").unwrap();
     assert_eq!(v, Value::Boolean(true));
 }
 

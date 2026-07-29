@@ -36,9 +36,9 @@ pub fn eval_native_function_member(
         "caller" | "arguments" => {
             // Per ES2015 §19.2.4.1, bound functions must throw TypeError on
             // caller/arguments access. Check via the "name" property.
-            let is_bound = nf.get_property("name").is_some_and(|v| {
-                matches!(&v, Value::String(n) if n.starts_with("bound "))
-            });
+            let is_bound = nf
+                .get_property("name")
+                .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
             if is_bound {
                 let (err, js_err) = crate::value::create_js_error_with_type(
                     "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
@@ -50,9 +50,7 @@ pub fn eval_native_function_member(
             // Fall through to Function.prototype chain
             eval_native_function_member_fallback(nf, prop_name)
         }
-        _ => {
-            eval_native_function_member_fallback(nf, prop_name)
-        }
+        _ => eval_native_function_member_fallback(nf, prop_name),
     }
 }
 

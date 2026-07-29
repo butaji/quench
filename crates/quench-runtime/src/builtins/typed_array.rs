@@ -211,9 +211,12 @@ fn construct_typed_array(
                 length = *n as u64;
                 byte_length = length * bytes_per_element as u64;
                 let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-                new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
-                new_buf.borrow_mut().elements =
-                    (0..byte_length as usize).map(|_| Value::Number(0.0)).collect();
+                new_buf
+                    .borrow_mut()
+                    .set("byteLength", Value::Number(byte_length as f64));
+                new_buf.borrow_mut().elements = (0..byte_length as usize)
+                    .map(|_| Value::Number(0.0))
+                    .collect();
                 buffer = new_buf;
             }
             // new TypedArray(typedArray) or new TypedArray(array-like)
@@ -234,7 +237,9 @@ fn construct_typed_array(
                         let cloned = src.elements.clone();
                         drop(src);
                         let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-                        new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
+                        new_buf
+                            .borrow_mut()
+                            .set("byteLength", Value::Number(byte_length as f64));
                         new_buf.borrow_mut().elements = cloned;
                         buffer = new_buf;
                     }
@@ -246,9 +251,12 @@ fn construct_typed_array(
                     }
                     drop(src);
                     let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-                    new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
-                    new_buf.borrow_mut().elements =
-                        (0..byte_length as usize).map(|_| Value::Number(0.0)).collect();
+                    new_buf
+                        .borrow_mut()
+                        .set("byteLength", Value::Number(byte_length as f64));
+                    new_buf.borrow_mut().elements = (0..byte_length as usize)
+                        .map(|_| Value::Number(0.0))
+                        .collect();
                     buffer = new_buf;
                 } else {
                     drop(src);
@@ -273,7 +281,9 @@ fn construct_typed_array(
                 byte_length = length * bytes_per_element as u64;
             } else {
                 // ArrayBuffer with byteOffset but no explicit length: length-track
-                let buf_byte_len = buffer.borrow().get("byteLength")
+                let buf_byte_len = buffer
+                    .borrow()
+                    .get("byteLength")
                     .map(|v| to_number(&v) as u64)
                     .unwrap_or(0);
                 if byte_offset < buf_byte_len {
@@ -283,7 +293,9 @@ fn construct_typed_array(
             }
         } else if args.len() == 1 && buffer.borrow().get("byteLength").is_some() {
             // Single ArrayBuffer argument: derive length from buffer byteLength
-            let buf_byte_len = buffer.borrow().get("byteLength")
+            let buf_byte_len = buffer
+                .borrow()
+                .get("byteLength")
                 .map(|v| to_number(&v) as u64)
                 .unwrap_or(0);
             length = buf_byte_len / bytes_per_element as u64;

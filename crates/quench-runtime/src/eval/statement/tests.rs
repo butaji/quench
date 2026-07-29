@@ -715,10 +715,7 @@ mod function_body {
     /// function's return value when no explicit return is present.
     #[test]
     fn expression_completion_not_return() {
-        assert_eq!(
-            eval("function f() { 42; } f()").unwrap(),
-            Value::Undefined
-        );
+        assert_eq!(eval("function f() { 42; } f()").unwrap(), Value::Undefined);
     }
 
     /// Postfix increment: x++ evaluates to the original value (1), then increments.

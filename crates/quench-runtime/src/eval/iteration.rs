@@ -1472,6 +1472,43 @@ mod tests {
     }
 
     /// Reproduces test262:
+    /// test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err
+    /// When destructuring evaluation of a computed property key throws
+    /// (e.g. `{}[thrower()]`), IteratorClose must happen BEFORE any next()
+    /// step, the for-of body must NOT execute, and the original error
+    /// takes precedence over the return() error.
+    #[test]
+    fn for_of_destructure_computed_key_throw_closes_iterator_before_next() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "var nextCount = 0; \
+             var returnCount = 0; \
+             function ReturnError() {} \
+             var iterator = { \
+               next: function() { nextCount += 1; return {done: true}; }, \
+               return: function() { returnCount += 1; throw new ReturnError(); } \
+             }; \
+             var iterable = {}; \
+             var thrower = function() { throw new Test262Error(); }; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             var counter = 0; \
+             try { \
+               for ([{}[thrower()]] of [iterable]) { counter += 1; } \
+             } catch (e) {} \
+             JSON.stringify([nextCount, returnCount, counter])",
+        );
+        match result {
+            Ok(Value::String(s)) => {
+                // Per ES spec: computed key evaluation happens BEFORE IteratorStep,
+                // so next() = 0, return() = 1 (from IteratorClose), counter = 0.
+                assert_eq!(s.as_str(), "[0,1,0]", "expected [0,1,0], got {s}");
+            }
+            Ok(v) => panic!("expected string result, got {v:?}"),
+            Err(e) => panic!("expected success, got error: {e}"),
+        }
+    }
+
+    /// Reproduces test262:
     /// test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close
     /// Iteration is limited to 1 next() call — yield in rest computed key
     /// suspends generator BEFORE remaining elements are collected.

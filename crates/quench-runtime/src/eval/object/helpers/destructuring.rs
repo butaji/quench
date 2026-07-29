@@ -336,12 +336,9 @@ fn array_with_iterator_impl(
                     ..
                 } = target
                 {
-                    if let Err(e) = crate::eval::object::extract_property_name(
-                        property,
-                        true,
-                        env,
-                        false,
-                    ) {
+                    if let Err(e) =
+                        crate::eval::object::extract_property_name(property, true, env, false)
+                    {
                         if !iterator_done {
                             let _close_err = call_iterator_return(iterator);
                         }

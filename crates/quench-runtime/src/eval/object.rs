@@ -267,6 +267,20 @@ pub(crate) fn touch_assignment_target(
             result?;
             Ok(())
         }
+        Expression::Member {
+            object,
+            property,
+            computed: true,
+        } => {
+            touch_assignment_target(object, env)?;
+            // Per ES §13.15.5.3 IteratorDestructuringAssignmentEvaluation step 1,
+            // the DestructuringAssignmentTarget evaluation includes evaluating
+            // computed property keys. This happens BEFORE IteratorStep (step 2),
+            // so throws/yields in the property key must fire before the iterator
+            // is consumed.
+            let _key = extract_property_name(property, true, env, false)?;
+            Ok(())
+        }
         Expression::Member { object, .. } => {
             touch_assignment_target(object, env)?;
             Ok(())

@@ -5,7 +5,9 @@ use crate::builtins::symbol::new_symbol as create_symbol;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::statement::{eval_function_body, take_tail_call_signal};
-use crate::interpreter::{check_depth, hoist_functions, predeclare_let_const, predeclare_var, release_depth};
+use crate::interpreter::{
+    check_depth, hoist_functions, predeclare_let_const, predeclare_var, release_depth,
+};
 use crate::value::{
     create_js_error_with_type, JsError, NativeConstructor, NativeFunction, Object, ObjectKind,
     Value, ValueFunction,
