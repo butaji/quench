@@ -267,45 +267,49 @@ fn async_throw_rejected_promise() {
 fn sync_throwing_default_param_throws() {
     let mut ctx = Context::new().unwrap();
     // Test 1: arrow IIFE as default
-    let r1 = ctx.eval(
-        "function f1(_ = (() => { throw new RangeError('x'); })()) { return 'body ran'; }
-         try { f1(); 'r1:resolved' } catch(e) { 'r1:rejected:' + e.constructor.name }"
-    ).unwrap();
+    let r1 = ctx
+        .eval(
+            "function f1(_ = (() => { throw new RangeError('x'); })()) { return 'body ran'; }
+         try { f1(); 'r1:resolved' } catch(e) { 'r1:rejected:' + e.constructor.name }",
+        )
+        .unwrap();
     eprintln!("r1: {:?}", r1);
-    
+
     // Test 2: named function call in default
-    let r2 = ctx.eval(
-        "function thrower() { throw new RangeError('x'); }
+    let r2 = ctx
+        .eval(
+            "function thrower() { throw new RangeError('x'); }
          function f2(_ = thrower()) { return 'body ran'; }
-         try { f2(); 'r2:resolved' } catch(e) { 'r2:rejected:' + e.constructor.name }"
-    ).unwrap();
+         try { f2(); 'r2:resolved' } catch(e) { 'r2:rejected:' + e.constructor.name }",
+        )
+        .unwrap();
     eprintln!("r2: {:?}", r2);
-    
+
     // Test 3: standalone IIFE
     let r3 = ctx.eval(
         "try { (function() { throw new RangeError('x'); })(); 'r3:no throw' } catch(e) { 'r3:' + e.name }"
     ).unwrap();
     eprintln!("r3: {:?}", r3);
-    
+
     // Test 4: just throw in default
-    let r4 = ctx.eval(
-        "function f4(_ = (1+2)) { return _; }
-         try { f4(); 'r4:resolved:' + _ } catch(e) { 'r4:rejected' }"
-    ).unwrap();
+    let r4 = ctx
+        .eval(
+            "function f4(_ = (1+2)) { return _; }
+         try { f4(); 'r4:resolved:' + _ } catch(e) { 'r4:rejected' }",
+        )
+        .unwrap();
     eprintln!("r4: {:?}", r4);
-    
+
     // Test 5: evaluate default directly
-    let r5 = ctx.eval(
-        "function f5(_ = 42) { return _; } f5()"
-    ).unwrap();
+    let r5 = ctx.eval("function f5(_ = 42) { return _; } f5()").unwrap();
     eprintln!("r5: {:?}", r5);
-    
+
     // Test 6: call f with explicit undefined
-    let r6 = ctx.eval(
-        "function f6(_ = 99) { return _; } f6(undefined)"
-    ).unwrap();
+    let r6 = ctx
+        .eval("function f6(_ = 99) { return _; } f6(undefined)")
+        .unwrap();
     eprintln!("r6: {:?}", r6);
-    
+
     assert!(false, "diagnostic complete");
 }
 
@@ -1201,4 +1205,263 @@ fn new_object_without_constructor_throws_typeerror() {
         "new Math() should throw TypeError, got: {}",
         s
     );
+}
+
+// ─── Stage 26 fixes: prototype chain, return values, hoisting, etc. ──────
+
+#[test]
+fn function_return_is_undefined_without_explicit_return() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval("function f() { var x = 1; } f()").unwrap();
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn function_return_is_undefined_expression_last_stmt() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval("function f() { x = true; } f()").unwrap();
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn function_return_is_undefined_sloppy_assign() {
+    let mut ctx = Context::new().unwrap();
+    // ES spec: without explicit return, function returns undefined
+    let v = ctx
+        .eval("function f() { var x = 1; x = 2; } f()")
+        .unwrap();
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn function_explicit_return_still_works() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval("function f() { return 42; } f()").unwrap();
+    assert_eq!(v, Value::Number(42.0));
+}
+
+#[test]
+fn function_explicit_return_empty() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval("function f() { return; } f()").unwrap();
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn function_explicit_return_undefined() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() { return undefined; } f()")
+        .unwrap();
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn arguments_is_defined_in_function() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx.eval("function f() { return typeof arguments; } f()").unwrap();
+    assert_eq!(v, Value::String("object".to_string()));
+}
+
+#[test]
+fn arguments_delete_returns_false() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() { return delete arguments; } f()")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(false));
+}
+
+#[test]
+fn arguments_not_removed_by_delete() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() { delete arguments; return typeof arguments; } f()")
+        .unwrap();
+    assert_eq!(v, Value::String("object".to_string()));
+}
+
+#[test]
+fn delete_function_decl_returns_false() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(){} var r = delete f; r")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(false));
+}
+
+#[test]
+fn delete_function_decl_can_still_call_after_delete() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(){ return 1; } delete f; f()")
+        .unwrap();
+    assert_eq!(v, Value::Number(1.0));
+}
+
+#[test]
+fn function_decl_hoisted_over_var() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(){ return 1; } var f = 2; typeof f === 'number'")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
+}
+
+#[test]
+fn function_decl_before_var_in_global() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(){} typeof f === 'function'")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
+}
+
+#[test]
+fn strict_function_caller_set_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() { 'use strict'; }
+             try { f.caller = 1; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn strict_function_arguments_set_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() { 'use strict'; }
+             try { f.arguments = 1; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn strict_function_caller_get_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() { 'use strict'; }
+             try { var x = f.caller; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn strict_function_arguments_get_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() { 'use strict'; }
+             try { var x = f.arguments; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn bound_function_caller_get_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function target() {}
+             var bound = target.bind({});
+             try { var x = bound.caller; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn bound_function_arguments_get_throws_typeerror() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function target() {}
+             var bound = target.bind({});
+             try { var x = bound.arguments; 'no throw'; } catch(e) { e.name; }",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("TypeError".to_string()));
+}
+
+#[test]
+fn var_arguments_does_not_shadow_builtin() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() { var arguments = 42; return typeof arguments; } f()")
+        .unwrap();
+    assert_eq!(v, Value::String("number".to_string()));
+}
+
+#[test]
+fn typeof_arguments_in_function_with_var() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() { return typeof arguments; var arguments = 1; } f()")
+        .unwrap();
+    assert_eq!(v, Value::String("object".to_string()));
+}
+
+#[test]
+fn inner_function_decl_hoisted_in_function_body() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() {
+               function g() { return 'inner'; }
+               return g();
+             }
+             f()",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("inner".to_string()));
+}
+
+#[test]
+fn inner_function_decl_hoisted_called_before_declaration() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() {
+               return g();
+               function g() { return 'hoisted'; }
+             }
+             f()",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("hoisted".to_string()));
+}
+
+#[test]
+fn function_prototype_isprototype_of_own_function() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(){} Function.prototype.isPrototypeOf(f)")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
+}
+
+#[test]
+fn function_expr_prototype_isprototype_of() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("var f = function(){}; Function.prototype.isPrototypeOf(f)")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
+}
+
+#[test]
+fn constructor_prototype_isprototype_of_instance() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function F(){}; var p = {}; F.prototype = p; var o = new F(); p.isPrototypeOf(o)")
+        .unwrap();
+    assert_eq!(v, Value::Boolean(true));
 }

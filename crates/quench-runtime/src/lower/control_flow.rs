@@ -179,15 +179,10 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
         .filter_map(lower_stmt)
         .collect::<Vec<_>>();
     let catch_param = try_stmt.handler.as_ref().and_then(|catch| {
-        catch
-            .param
-            .as_ref()
-            .and_then(|pat| match &pat.pattern {
-                ast::BindingPattern::BindingIdentifier(ident) => {
-                    Some(ident.name.as_str().to_string())
-                }
-                _ => None,
-            })
+        catch.param.as_ref().and_then(|pat| match &pat.pattern {
+            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
+            _ => None,
+        })
     });
     let handler = try_stmt.handler.as_ref().map(|catch| {
         Box::new(Statement::Block(
@@ -210,7 +205,12 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
 /// Check if a list of lowered statements ends with an unconditional
 /// control-flow exit (break, return, throw) that prevents fall-through.
 fn ends_with_break_or_return(stmts: &[Statement]) -> bool {
-    stmts.last().is_some_and(|s| matches!(s, Statement::Break(_) | Statement::Return(_) | Statement::Throw(_)))
+    stmts.last().is_some_and(|s| {
+        matches!(
+            s,
+            Statement::Break(_) | Statement::Return(_) | Statement::Throw(_)
+        )
+    })
 }
 
 /// Lower a switch statement into nested if-else chains
@@ -222,16 +222,18 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     // subsequent case bodies until one ends with break/return/throw.
     // Process in FORWARD order, computing fall-through target indices.
     let case_count = switch.cases.len();
-    let own_bodies: Vec<Vec<Statement>> = switch.cases.iter().map(|case| {
-        case.consequent.iter().filter_map(lower_stmt).collect()
-    }).collect();
-    
+    let own_bodies: Vec<Vec<Statement>> = switch
+        .cases
+        .iter()
+        .map(|case| case.consequent.iter().filter_map(lower_stmt).collect())
+        .collect();
+
     // Compute effective bodies: walk backwards, accumulating bodies
     // of cases that don't end with break/return. Effective body for
     // case[i] = own[i] + (own[i+1] + own[i+2] + ... until break).
     // Prepend own[i] before accumulated suffix to maintain source order.
     let mut effective_bodies: Vec<Vec<Statement>> = Vec::with_capacity(case_count);
-    let mut suffix: Vec<Statement> = Vec::new();  // accumulated suffix for fall-through
+    let mut suffix: Vec<Statement> = Vec::new(); // accumulated suffix for fall-through
     for i in (0..case_count).rev() {
         let ends_with_break = ends_with_break_or_return(&own_bodies[i]);
         let mut effective = own_bodies[i].clone();

@@ -149,7 +149,12 @@ impl ValueFunction {
         if let Some(ref n) = name {
             props.insert("name".to_string(), Value::String(n.clone()));
         }
-        let strict = crate::interpreter::helpers::check_use_strict_directive(&body);
+        // Per ES spec, function strictness comes from:
+        // 1. "use strict" directive in the function body, OR
+        // 2. The enclosing context is strict (module code, strict mode code, etc.)
+        let has_use_strict = crate::interpreter::helpers::check_use_strict_directive(&body);
+        let in_strict_context = crate::interpreter::is_strict_mode();
+        let strict = has_use_strict || in_strict_context;
         ValueFunction {
             name,
             params,

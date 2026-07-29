@@ -12,8 +12,8 @@ pub mod iteration;
 pub mod literal;
 pub mod member;
 pub mod object;
-pub mod ops;
 pub mod operators;
+pub mod ops;
 pub mod statement;
 pub mod string_methods;
 

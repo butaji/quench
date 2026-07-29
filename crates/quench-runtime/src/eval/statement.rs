@@ -234,7 +234,7 @@ fn eval_function_body_impl(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let last_idx = stmts.len().saturating_sub(1);
-    let mut last_val = Value::Undefined;
+    let mut _last_val = Value::Undefined;
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
 
@@ -309,7 +309,7 @@ fn eval_function_body_impl(
                 | Statement::Empty
         ) || matches!(stmt, Statement::Block(s) if s.is_empty());
         if !is_empty {
-            last_val = stmt_val;
+            _last_val = stmt_val;
         }
         // For the last statement, DON'T check ControlFlow::Return here.
         // Let the final return statement be reached and evaluated properly.
@@ -349,7 +349,8 @@ fn eval_function_body_impl(
         set_explicit_return_for_current_body();
         return Ok(val);
     }
-    Ok(last_val)
+    // No explicit return — return undefined per ES spec
+    Ok(Value::Undefined)
 }
 
 /// Handle a tail-call return expression when eligible. Returns true if a tail-call
@@ -802,11 +803,10 @@ fn eval_func_decl(
         is_async,
         is_generator,
     );
-    // strict is set by ValueFunction::new based on body's "use strict" directive.
-    // For arrow functions and class bodies, strict may also be inherited from the
-    // calling context — but for declarations the body's own directive is sufficient.
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
+    // Set VarKind::Var so delete on function declarations returns false
+    env.borrow_mut().declare_var(name.to_owned(), VarKind::Var);
     env.borrow_mut().define(name.to_owned(), value.clone());
     // Top-level function declarations are globals (same as var).
     if env.borrow().get_parent().is_none() {
@@ -1054,33 +1054,45 @@ fn eval_for(
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
                 if loop_handles_break(&cf, &loop_labels) {
-                    if head_lexical { env.borrow_mut().pop_scope(); }
+                    if head_lexical {
+                        env.borrow_mut().pop_scope();
+                    }
                     return Ok(body_val);
                 }
-                if head_lexical { env.borrow_mut().pop_scope(); }
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
                 set_control_flow(cf);
                 return Ok(Value::Undefined);
             }
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
-                    if head_lexical { env.borrow_mut().pop_scope(); }
+                    if head_lexical {
+                        env.borrow_mut().pop_scope();
+                    }
                     set_control_flow(cf);
                     return Ok(Value::Undefined);
                 }
                 // Loop handles continue: fall through to pop PI and run update.
             }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
-                if head_lexical { env.borrow_mut().pop_scope(); }
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::YieldDelegate(val)) => {
-                if head_lexical { env.borrow_mut().pop_scope(); }
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::Throw(val)) => {
-                if head_lexical { env.borrow_mut().pop_scope(); }
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
                 set_thrown_value(val);
                 return Err(JsError("Generator threw".to_string()));
             }

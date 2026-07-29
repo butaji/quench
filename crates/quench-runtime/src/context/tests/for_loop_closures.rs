@@ -81,7 +81,11 @@ fn let_for_init_closure() {
         "#,
     );
     let v = result.unwrap();
-    assert_eq!(v, Value::Number(0.0), "init closure must see initial value (0)");
+    assert_eq!(
+        v,
+        Value::Number(0.0),
+        "init closure must see initial value (0)"
+    );
 }
 
 /// ES §14.7.4.8 — condition closure sees per-iteration binding (ES test262
@@ -148,7 +152,11 @@ fn let_for_body_closure() {
     );
     let v = result.unwrap();
     eprintln!("DIAGNOSTIC: body closures captured: {:?}", v);
-    assert_eq!(v, Value::String("[0,1,2]".into()), "body closures must see per-iteration values");
+    assert_eq!(
+        v,
+        Value::String("[0,1,2]".into()),
+        "body closures must see per-iteration values"
+    );
 }
 
 /// ES §14.7.4.8 — update closure sees the value AFTER `++i` (ES test262
@@ -187,5 +195,9 @@ fn let_for_loop_terminates() {
         "#,
     );
     let v = result.unwrap();
-    assert_eq!(v, Value::Number(3.0), "for loop must run exactly 3 iterations");
+    assert_eq!(
+        v,
+        Value::Number(3.0),
+        "for loop must run exactly 3 iterations"
+    );
 }

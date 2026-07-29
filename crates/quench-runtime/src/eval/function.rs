@@ -1,11 +1,11 @@
 //! Function calls
 
-use crate::ast::{ArrowBody, BindingElement, Expression, Statement};
+use crate::ast::{ArrowBody, BindingElement, Expression, Statement, VarKind};
 use crate::builtins::symbol::new_symbol as create_symbol;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::eval::statement::{eval_function_body, take_tail_call_signal};
-use crate::interpreter::{check_depth, predeclare_let_const, predeclare_var, release_depth};
+use crate::interpreter::{check_depth, hoist_functions, predeclare_let_const, predeclare_var, release_depth};
 use crate::value::{
     create_js_error_with_type, JsError, NativeConstructor, NativeFunction, Object, ObjectKind,
     Value, ValueFunction,
@@ -252,6 +252,10 @@ pub(crate) fn call_js_function_impl_with_strict(
 
         if !f.is_arrow {
             let args_obj = create_arguments_object(&f, args.clone(), in_strict, &call_env_rc);
+            // Set VarKind::Var for arguments so delete returns false
+            call_env_rc
+                .borrow_mut()
+                .declare_var("arguments".to_string(), VarKind::Var);
             call_env_rc
                 .borrow_mut()
                 .define("arguments".to_string(), args_obj);
@@ -263,6 +267,7 @@ pub(crate) fn call_js_function_impl_with_strict(
         body_env_rc.borrow_mut().push_scope();
         predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
         predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
+        hoist_functions(&f.body, &body_env_rc);
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(in_strict);

@@ -10,6 +10,7 @@ pub mod data_view;
 pub mod date;
 pub mod error;
 pub mod function;
+pub mod iterator;
 pub mod json;
 pub mod map;
 pub mod math;
@@ -23,7 +24,6 @@ pub mod string;
 pub mod symbol;
 pub mod typed_array;
 pub mod uri;
-pub mod iterator;
 pub mod weak;
 pub mod weak_ref;
 

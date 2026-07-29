@@ -118,7 +118,8 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "IsArray", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let is_array = matches!(&v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Array);
+        let is_array =
+            matches!(&v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Array);
         Ok(Value::Boolean(is_array))
     });
 
@@ -131,7 +132,10 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "CreateDataProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         let val = args.get(2).cloned().unwrap_or(Value::Undefined);
         if let Value::Object(obj_rc) = &o {
             obj_rc.borrow_mut().set(&key, val);
@@ -143,7 +147,10 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "HasProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         if let Value::Object(obj_rc) = &o {
             Ok(Value::Boolean(obj_rc.borrow().has_own(&key)))
         } else {
@@ -156,18 +163,24 @@ pub fn make_ops_object() -> Value {
         match &o {
             Value::Object(obj_rc) => {
                 let obj_ref = obj_rc.borrow();
-                let keys: Vec<String> = obj_ref.properties.keys()
+                let keys: Vec<String> = obj_ref
+                    .properties
+                    .keys()
                     .filter(|k| obj_ref.is_enumerable(k) && !k.contains('\0'))
                     .cloned()
                     .collect();
                 let arr = crate::value::object::Object::new_array_from(
-                    keys.into_iter().map(Value::String).collect()
+                    keys.into_iter().map(Value::String).collect(),
                 );
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    arr,
+                ))))
             }
             _ => {
                 let empty = crate::value::object::Object::new_array_from(vec![]);
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(empty))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    empty,
+                ))))
             }
         }
     });
@@ -178,13 +191,17 @@ pub fn make_ops_object() -> Value {
             Value::Object(obj_rc) => {
                 let keys: Vec<String> = obj_rc.borrow().properties.keys().cloned().collect();
                 let arr = crate::value::object::Object::new_array_from(
-                    keys.into_iter().map(Value::String).collect()
+                    keys.into_iter().map(Value::String).collect(),
                 );
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(arr))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    arr,
+                ))))
             }
             _ => {
                 let empty = crate::value::object::Object::new_array_from(vec![]);
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(empty))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    empty,
+                ))))
             }
         }
     });
@@ -204,7 +221,9 @@ pub fn make_ops_object() -> Value {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         match &v {
             Value::Object(o) => Ok(Value::Boolean(o.borrow().extensible)),
-            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => Ok(Value::Boolean(true)),
+            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+                Ok(Value::Boolean(true))
+            }
             Value::Class(class) => Ok(Value::Boolean(class.is_extensible())),
             _ => Ok(Value::Boolean(false)),
         }
@@ -212,18 +231,22 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "GetProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         match &o {
-            Value::Object(obj_rc) => {
-                Ok(obj_rc.borrow().get(&key).unwrap_or(Value::Undefined))
-            }
+            Value::Object(obj_rc) => Ok(obj_rc.borrow().get(&key).unwrap_or(Value::Undefined)),
             _ => Ok(Value::Undefined),
         }
     });
 
     set_op(&mut obj, "SetProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         let val = args.get(2).cloned().unwrap_or(Value::Undefined);
         match &o {
             Value::Object(obj_rc) => {
@@ -254,7 +277,10 @@ pub fn make_ops_object() -> Value {
     set_op(&mut obj, "PreventExtensions", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         match &v {
-            Value::Object(o) => { o.borrow_mut().extensible = false; Ok(Value::Boolean(true)) }
+            Value::Object(o) => {
+                o.borrow_mut().extensible = false;
+                Ok(Value::Boolean(true))
+            }
             _ => Ok(Value::Boolean(false)),
         }
     });
@@ -300,9 +326,13 @@ pub fn make_ops_object() -> Value {
         match &v {
             Value::Object(o) => {
                 let obj = o.borrow();
-                if obj.extensible { return Ok(Value::Boolean(false)); }
+                if obj.extensible {
+                    return Ok(Value::Boolean(false));
+                }
                 for (_key, flags) in &obj.descriptors {
-                    if flags.configurable { return Ok(Value::Boolean(false)); }
+                    if flags.configurable {
+                        return Ok(Value::Boolean(false));
+                    }
                 }
                 Ok(Value::Boolean(true))
             }
@@ -315,9 +345,13 @@ pub fn make_ops_object() -> Value {
         match &v {
             Value::Object(o) => {
                 let obj = o.borrow();
-                if obj.extensible { return Ok(Value::Boolean(false)); }
+                if obj.extensible {
+                    return Ok(Value::Boolean(false));
+                }
                 for (_key, flags) in &obj.descriptors {
-                    if flags.configurable || flags.writable { return Ok(Value::Boolean(false)); }
+                    if flags.configurable || flags.writable {
+                        return Ok(Value::Boolean(false));
+                    }
                 }
                 Ok(Value::Boolean(true))
             }
@@ -328,7 +362,10 @@ pub fn make_ops_object() -> Value {
     // Descriptor operations for Object.defineProperty / getOwnPropertyDescriptor
     set_op(&mut obj, "DefineProp", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
         match (&o, &desc) {
             (Value::Object(obj_rc), Value::Object(desc_rc)) => {
@@ -337,7 +374,7 @@ pub fn make_ops_object() -> Value {
                 let has_set = desc_ref.get("set");
                 let has_value = desc_ref.get("value");
                 let has_writable = desc_ref.get("writable");
-                
+
                 // Accessor descriptor
                 if has_get.is_some() || has_set.is_some() {
                     if has_value.is_some() || has_writable.is_some() {
@@ -365,12 +402,21 @@ pub fn make_ops_object() -> Value {
                             return Err(err);
                         }
                     }
-                    let enumerable = desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v));
-                    let configurable = desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v));
+                    let enumerable = desc_ref
+                        .get("enumerable")
+                        .map_or(false, |v| crate::value::to_bool(&v));
+                    let configurable = desc_ref
+                        .get("configurable")
+                        .map_or(false, |v| crate::value::to_bool(&v));
                     let acc_flags = crate::value::object::helpers::PropertyFlags {
-                        value: None, writable: false, enumerable, configurable,
+                        value: None,
+                        writable: false,
+                        enumerable,
+                        configurable,
                     };
-                    obj_rc.borrow_mut().define_accessor(&key, has_get, has_set, acc_flags);
+                    obj_rc
+                        .borrow_mut()
+                        .define_accessor(&key, has_get, has_set, acc_flags);
                     Ok(Value::Boolean(true))
                 } else {
                     // Data descriptor
@@ -378,8 +424,12 @@ pub fn make_ops_object() -> Value {
                     let flags = crate::value::object::helpers::PropertyFlags {
                         value: has_value,
                         writable: has_writable.map_or(false, |v| crate::value::to_bool(&v)),
-                        enumerable: desc_ref.get("enumerable").map_or(false, |v| crate::value::to_bool(&v)),
-                        configurable: desc_ref.get("configurable").map_or(false, |v| crate::value::to_bool(&v)),
+                        enumerable: desc_ref
+                            .get("enumerable")
+                            .map_or(false, |v| crate::value::to_bool(&v)),
+                        configurable: desc_ref
+                            .get("configurable")
+                            .map_or(false, |v| crate::value::to_bool(&v)),
                     };
                     obj_rc.borrow_mut().define(&key, val, flags);
                     Ok(Value::Boolean(true))
@@ -391,7 +441,10 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "GetOwnPropDesc", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args.get(1).map(crate::value::to_js_string).unwrap_or_default();
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
         match &o {
             Value::Object(obj_rc) => {
                 let obj_ref = obj_rc.borrow();
@@ -399,35 +452,55 @@ pub fn make_ops_object() -> Value {
                 if obj_ref.has_getter(&key) || obj_ref.has_setter(&key) {
                     let getter = obj_ref.get_getter(&key);
                     let setter = obj_ref.get_setter(&key);
-                    let flags = obj_ref.descriptors.get(&key).cloned()
+                    let flags = obj_ref
+                        .descriptors
+                        .get(&key)
+                        .cloned()
                         .unwrap_or(crate::value::object::helpers::PropertyFlags::default_data());
-                    let desc_obj = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                    let desc_obj =
+                        crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
                     let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
                     if let Some(g) = getter {
-                        desc_rc.borrow_mut().set("get", g.func.clone().unwrap_or(Value::Undefined));
+                        desc_rc
+                            .borrow_mut()
+                            .set("get", g.func.clone().unwrap_or(Value::Undefined));
                     }
                     if let Some(s) = setter {
-                        desc_rc.borrow_mut().set("set", s.func.clone().unwrap_or(Value::Undefined));
+                        desc_rc
+                            .borrow_mut()
+                            .set("set", s.func.clone().unwrap_or(Value::Undefined));
                     }
-                    desc_rc.borrow_mut().set("enumerable", Value::Boolean(flags.enumerable));
-                    desc_rc.borrow_mut().set("configurable", Value::Boolean(flags.configurable));
+                    desc_rc
+                        .borrow_mut()
+                        .set("enumerable", Value::Boolean(flags.enumerable));
+                    desc_rc
+                        .borrow_mut()
+                        .set("configurable", Value::Boolean(flags.configurable));
                     Ok(Value::Object(desc_rc))
                 } else if let Some(val) = obj_ref.properties.get(&key) {
-                    let flags = obj_ref.descriptors.get(&key).cloned()
-                        .unwrap_or(crate::value::object::helpers::PropertyFlags {
+                    let flags = obj_ref.descriptors.get(&key).cloned().unwrap_or(
+                        crate::value::object::helpers::PropertyFlags {
                             value: Some(val.clone()),
                             writable: true,
                             enumerable: true,
                             configurable: true,
-                        });
-                    let desc_obj = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                        },
+                    );
+                    let desc_obj =
+                        crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
                     let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
                     if let Some(v) = &flags.value {
                         desc_rc.borrow_mut().set("value", v.clone());
                     }
-                    desc_rc.borrow_mut().set("writable", Value::Boolean(flags.writable));
-                    desc_rc.borrow_mut().set("enumerable", Value::Boolean(flags.enumerable));
-                    desc_rc.borrow_mut().set("configurable", Value::Boolean(flags.configurable));
+                    desc_rc
+                        .borrow_mut()
+                        .set("writable", Value::Boolean(flags.writable));
+                    desc_rc
+                        .borrow_mut()
+                        .set("enumerable", Value::Boolean(flags.enumerable));
+                    desc_rc
+                        .borrow_mut()
+                        .set("configurable", Value::Boolean(flags.configurable));
                     Ok(Value::Object(desc_rc))
                 } else {
                     Ok(Value::Undefined)
@@ -443,7 +516,9 @@ pub fn make_ops_object() -> Value {
         if let Value::Object(p) = &proto {
             new_obj.prototype = Some(std::rc::Rc::clone(p));
         }
-        Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(new_obj))))
+        Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+            new_obj,
+        ))))
     });
 
     Value::Object(Rc::new(RefCell::new(obj)))
@@ -631,103 +706,123 @@ mod tests {
     #[test]
     fn test_ops_bridge_is_callable() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var IsCallable = __ops__.IsCallable; \
+        let r = ctx
+            .eval(
+                "var IsCallable = __ops__.IsCallable; \
              IsCallable(function(){}) && !IsCallable(42) && !IsCallable(null)",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_to_object() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var ToObject = __ops__.ToObject; \
+        let r = ctx
+            .eval(
+                "var ToObject = __ops__.ToObject; \
              typeof ToObject('hello') === 'object'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_typeof() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var TypeOf = __ops__.TypeOf; \
+        let r = ctx
+            .eval(
+                "var TypeOf = __ops__.TypeOf; \
              TypeOf(42) === 'number' && TypeOf('x') === 'string' && TypeOf(null) === 'object'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_throw_type_error() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var ThrowTypeError = __ops__.ThrowTypeError; \
+        let r = ctx
+            .eval(
+                "var ThrowTypeError = __ops__.ThrowTypeError; \
              try { ThrowTypeError('my error'); false } catch(e) { e instanceof TypeError }",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_is_array() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var IsArray = __ops__.IsArray; \
+        let r = ctx
+            .eval(
+                "var IsArray = __ops__.IsArray; \
              IsArray([]) && !IsArray({})",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_same_value() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var SameValue = __ops__.SameValue; \
+        let r = ctx
+            .eval(
+                "var SameValue = __ops__.SameValue; \
              SameValue(42, 42)",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_create_data_property() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var CreateDataProperty = __ops__.CreateDataProperty; \
+        let r = ctx
+            .eval(
+                "var CreateDataProperty = __ops__.CreateDataProperty; \
              var o = {}; \
              CreateDataProperty(o, 'x', 99); \
              o.x === 99",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_has_property() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var HasProperty = __ops__.HasProperty; \
+        let r = ctx
+            .eval(
+                "var HasProperty = __ops__.HasProperty; \
              var o = { a: 1 }; \
              HasProperty(o, 'a') && !HasProperty(o, 'b')",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_is_constructor() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var IsConstructor = __ops__.IsConstructor; \
+        let r = ctx
+            .eval(
+                "var IsConstructor = __ops__.IsConstructor; \
              IsConstructor(Array) && !IsConstructor(() => {})",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn test_ops_bridge_typeof_function() {
         let mut ctx = crate::Context::new().unwrap();
-        let r = ctx.eval(
-            "var TypeOf = __ops__.TypeOf; \
+        let r = ctx
+            .eval(
+                "var TypeOf = __ops__.TypeOf; \
              TypeOf(function(){}) === 'function'",
-        ).unwrap();
+            )
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 }

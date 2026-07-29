@@ -411,8 +411,6 @@ impl Environment {
         }
     }
 
-
-
     pub fn is_tdz(&self, name: &str) -> bool {
         for scope_rc in self.scopes.iter().rev() {
             let scope = scope_rc.borrow();

@@ -131,7 +131,11 @@ mod generator_tests {
              gen.next('prop').value;",
         )
         .unwrap();
-        assert_eq!(r, Value::Number(1.0), "x.prop should be 1 after destructuring with 'prop'");
+        assert_eq!(
+            r,
+            Value::Number(1.0),
+            "x.prop should be 1 after destructuring with 'prop'"
+        );
     }
 
     #[test]
@@ -155,8 +159,7 @@ mod generator_tests {
              })();",
         )
         .unwrap();
-        assert_eq!(r, Value::String("86,1".to_string()),
-            "x=86, bodyCount=1");
+        assert_eq!(r, Value::String("86,1".to_string()), "x=86, bodyCount=1");
     }
 
     // ─── Async generator ──────────────────────────────────────────────────────

@@ -154,17 +154,16 @@ fn test_harness_loader_load_returns_none_for_empty() {
     let loader = super::HarnessLoader::new(&std::env::temp_dir().to_string_lossy());
     let result = loader.load("quench-empty-harness.js");
     fs::remove_file(&tmp).ok();
-    assert!(
-        result.is_none(),
-        "whitespace-only file should return None"
-    );
+    assert!(result.is_none(), "whitespace-only file should return None");
 }
 
 #[test]
 fn test_harness_loader_load_deep_equal_returns_empty() {
     // deepEqual.js override: should return empty (no-op)
     let loader = make_loader();
-    let content = loader.load("deepEqual.js").expect("deepEqual.js should exist");
+    let content = loader
+        .load("deepEqual.js")
+        .expect("deepEqual.js should exist");
     assert!(
         content.is_empty(),
         "deepEqual.js override should return empty string, got: {:?}",
@@ -210,10 +209,15 @@ fn test_harness_loader_load_is_constructor_returns_none() {
     // isConstructor.js: the native is_constructor covers it, loader skips
     // Note: isConstructor.js exists on disk but build_script skips it
     let loader = make_loader();
-    let content = loader.load("isConstructor.js").expect("isConstructor.js should exist");
+    let content = loader
+        .load("isConstructor.js")
+        .expect("isConstructor.js should exist");
     // The raw file still has content (it loads from disk), but build_script skips it
     // This tests that the file is loadable
-    assert!(!content.is_empty(), "isConstructor.js should load from disk");
+    assert!(
+        !content.is_empty(),
+        "isConstructor.js should load from disk"
+    );
 }
 
 #[test]
@@ -233,8 +237,14 @@ fn test_harness_loader_load_nested_frontmatter_comments_preserved() {
     let loader = make_loader();
     let content = loader.load("sta.js").expect("sta.js should exist");
     // No frontmatter delimiters should remain
-    assert!(!content.contains("/*---"), "/*--- delimiter should be stripped");
-    assert!(!content.contains("---*/"), "---*/ delimiter should be stripped");
+    assert!(
+        !content.contains("/*---"),
+        "/*--- delimiter should be stripped"
+    );
+    assert!(
+        !content.contains("---*/"),
+        "---*/ delimiter should be stripped"
+    );
 }
 
 #[test]
@@ -313,17 +323,17 @@ fn test_harness_loader_build_script_multiple_includes_concatenated() {
     let loader = make_loader();
     let source = "// test source";
     let script = loader
-        .build_script(source, &["nativeErrors.js".to_string(), "nans.js".to_string()])
+        .build_script(
+            source,
+            &["nativeErrors.js".to_string(), "nans.js".to_string()],
+        )
         .expect("build_script with multiple includes should work");
     // Both includes should be present
     assert!(
         script.contains("NativeError"),
         "nativeErrors.js should be included"
     );
-    assert!(
-        script.contains("NaN"),
-        "nans.js should be included"
-    );
+    assert!(script.contains("NaN"), "nans.js should be included");
 }
 
 #[test]
@@ -396,11 +406,19 @@ fn test_harness_loader_load_compar_array() {
     // compareArray.js: copyright comment remains (not stripped), but frontmatter
     // is removed and the function body (deprecated) is gone.
     let loader = make_loader();
-    let content = loader.load("compareArray.js").expect("compareArray.js should load");
+    let content = loader
+        .load("compareArray.js")
+        .expect("compareArray.js should load");
     // Copyright comment is preserved; no frontmatter delimiters
-    assert!(content.contains("Copyright"), "copyright should be preserved");
+    assert!(
+        content.contains("Copyright"),
+        "copyright should be preserved"
+    );
     assert!(!content.contains("/*---"), "frontmatter should be stripped");
-    assert!(!content.contains("compareArray"), "function body should be absent (deprecated)");
+    assert!(
+        !content.contains("compareArray"),
+        "function body should be absent (deprecated)"
+    );
 }
 
 #[test]

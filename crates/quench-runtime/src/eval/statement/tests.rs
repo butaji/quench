@@ -714,28 +714,30 @@ mod function_body {
     /// Per ES spec, the completion value of the last statement becomes the
     /// function's return value when no explicit return is present.
     #[test]
-    fn expression_completion_is_return_value() {
+    fn expression_completion_not_return() {
         assert_eq!(
             eval("function f() { 42; } f()").unwrap(),
-            Value::Number(42.0)
+            Value::Undefined
         );
     }
 
     /// Postfix increment: x++ evaluates to the original value (1), then increments.
+    /// But function with no explicit return returns undefined.
     #[test]
-    fn postfix_increment_completion() {
+    fn postfix_increment_completion_not_return() {
         assert_eq!(
             eval("function f() { var x = 1; x++; } f()").unwrap(),
-            Value::Number(1.0)
+            Value::Undefined
         );
     }
 
-    /// Multiple statements: last statement's completion is the return value.
+    /// Multiple statements: last statement's completion is not the return value
+    /// when there's no explicit return.
     #[test]
-    fn last_statement_completion_is_return() {
+    fn last_statement_completion_not_return() {
         assert_eq!(
             eval("function f() { var x = 1; var y = 2; x + y; } f()").unwrap(),
-            Value::Number(3.0)
+            Value::Undefined
         );
     }
 }

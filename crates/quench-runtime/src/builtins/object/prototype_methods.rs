@@ -2,7 +2,7 @@
 //!
 //! Implementation of hasOwnProperty, isPrototypeOf, propertyIsEnumerable.
 
-use crate::value::{JsError, Value, ValueFunction};
+use crate::value::{JsError, Object, Value, ValueFunction};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -92,21 +92,51 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
 /// Object.prototype.isPrototypeOf - checks if this object is in prototype chain
 pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let Some(Value::Object(v)) = args.first() else {
+    let Some(arg) = args.first() else {
         return Ok(Value::Boolean(false));
     };
-    let mut current = v.borrow().prototype.clone();
-    while let Some(proto) = current {
-        if Rc::ptr_eq(
-            &proto,
-            match &this_val {
-                Value::Object(o) => o,
-                _ => return Ok(Value::Boolean(false)),
-            },
-        ) {
-            return Ok(Value::Boolean(true));
+    let this_obj = match &this_val {
+        Value::Object(o) => o,
+        _ => return Ok(Value::Boolean(false)),
+    };
+
+    /// Walk the [[Prototype]] chain starting from `obj`, checking if `target` is found.
+    fn chain_contains(target: &Rc<RefCell<Object>>, obj: &Rc<RefCell<Object>>) -> bool {
+        let mut current = obj.borrow().prototype.clone();
+        while let Some(proto) = current {
+            if Rc::ptr_eq(&proto, target) {
+                return true;
+            }
+            current = proto.borrow().prototype.clone();
         }
-        current = proto.borrow().prototype.clone();
+        false
+    }
+
+    match arg {
+        Value::Object(v) => {
+            if chain_contains(this_obj, v) {
+                return Ok(Value::Boolean(true));
+            }
+        }
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+            // Functions and constructors have Function.prototype as [[Prototype]].
+            if let Some(fp) = crate::builtins::get_function_prototype() {
+                if Rc::ptr_eq(&fp, this_obj) || chain_contains(this_obj, &fp) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+        }
+        Value::Class(c) => {
+            // Class values have an internal [[Prototype]]. Check if this_obj
+            // is in the class's own [[Prototype]] chain.
+            let own_proto = c.super_class_own_proto_cell.borrow().clone();
+            if let Some(Value::Object(op)) = own_proto {
+                if Rc::ptr_eq(&op, this_obj) || chain_contains(this_obj, &op) {
+                    return Ok(Value::Boolean(true));
+                }
+            }
+        }
+        _ => {}
     }
     Ok(Value::Boolean(false))
 }

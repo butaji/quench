@@ -71,9 +71,7 @@ pub fn lower_var_decl_impl(
     let mut decls = Vec::new();
     for binding in &var_decl.declarations {
         let ident_name = match &binding.id {
-            ast::BindingPattern::BindingIdentifier(ident) => {
-                Some(ident.name.as_str().to_string())
-            }
+            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
             _ => None,
         };
         let init_expr = iterable_override.clone().or_else(|| {
@@ -308,9 +306,7 @@ fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember>
         .items
         .iter()
         .filter_map(|p| match &p.pattern {
-            ast::BindingPattern::BindingIdentifier(ident) => {
-                Some(ident.name.as_str().to_string())
-            }
+            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
             _ => None,
         })
         .collect();

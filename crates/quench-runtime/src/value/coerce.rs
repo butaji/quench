@@ -237,7 +237,10 @@ fn to_number_complex(v: &Value) -> Result<f64, JsError> {
         | Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Generator(_)
-        | Value::Class(_) => Ok(to_number(&crate::value::to_primitive(v, Some("number"))?)),
+        | Value::Class(_) => {
+            let prim = crate::value::to_primitive(v, Some("number"))?;
+            try_to_number(&prim)
+        }
         Value::Symbol(_) => {
             let (err_val, err) = crate::value::error::create_js_error_with_type(
                 "Cannot convert a Symbol to a number",

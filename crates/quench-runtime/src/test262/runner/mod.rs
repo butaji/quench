@@ -254,10 +254,8 @@ impl Test262Runner {
                 }
                 TestOutcome::Fail { failure } => {
                     summary.failed += 1;
-                    summary.first_failure = Some((
-                        path.display().to_string(),
-                        failure.message.clone(),
-                    ));
+                    summary.first_failure =
+                        Some((path.display().to_string(), failure.message.clone()));
                     print_rich_failure(stage, i, path, &failure);
                     break;
                 }
@@ -274,7 +272,9 @@ fn print_rich_failure(stage: usize, i: usize, path: &std::path::Path, failure: &
          FIRST FAILURE\n\
          Stage {} | #{}\n\
          {}",
-        stage, i, path.display()
+        stage,
+        i,
+        path.display()
     );
     // Error type and message
     if let Some(ref et) = failure.error_type {

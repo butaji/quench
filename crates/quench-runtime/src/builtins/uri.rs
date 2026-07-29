@@ -182,6 +182,14 @@ fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
     if let Some(s) = crate::value::convert::simple_string_value(arg) {
         return Ok(s);
     }
+    if matches!(arg, Value::Symbol(_)) {
+        let (err, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot convert a Symbol to a string",
+            "TypeError",
+        );
+        crate::value::set_thrown_value(err);
+        return Err(js_err);
+    }
     if let Value::Object(o) = arg {
         // Try toString first, then valueOf. A throw from either propagates;
         // a non-primitive result triggers the fall-through to the next method.
@@ -219,11 +227,16 @@ pub fn register_uri(ctx: &mut Context) {
     ctx.register_native("parseInt", |args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         let s = to_string_for_spec(&arg)?;
-        let radix_raw = args.get(1).map(|v| to_number(v) as i32).unwrap_or(0);
+        let radix_raw = args.get(1).map(|v| to_number(v)).unwrap_or(0.0);
+        // ToInt32 per spec: NaN/Infinity → 0, wrapping at 2^32.
+        let radix = if radix_raw.is_nan() || radix_raw.is_infinite() {
+            0i32
+        } else {
+            radix_raw as i32
+        };
         // Clamp radix per spec: 0 means default (10, with 0x prefix → 16);
         // values 2..=36 are accepted, anything else yields NaN.
-        let radix = if radix_raw == 0 { 0 } else { radix_raw };
-        if !(0..=36).contains(&radix) || radix == 1 {
+        if radix != 0 && !(2..=36).contains(&radix) {
             return Ok(Value::Number(f64::NAN));
         }
         let r = if radix == 0 { 10 } else { radix as u32 };
@@ -240,7 +253,7 @@ pub fn register_uri(ctx: &mut Context) {
     // isNaN(value) — coerces to Number, then checks.
     ctx.register_native("isNaN", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let n = to_number(&v);
+        let n = try_to_number(&v)?;
         Ok(Value::Boolean(n.is_nan()))
     });
 

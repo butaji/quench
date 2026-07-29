@@ -57,10 +57,7 @@ pub fn register_iterator(ctx: &mut Context) {
 
     // ---- Iterator constructor / namespace ----
     let iterator_fn = NativeFunction::new(iterator_constructor);
-    let _ = iterator_fn.set_property(
-        "prototype",
-        Value::Object(Rc::clone(&proto_rc)),
-    );
+    let _ = iterator_fn.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     let _ = iterator_fn.set_property("name", Value::String("Iterator".to_string()));
 
     // Iterator.from (static method)
@@ -73,11 +70,14 @@ pub fn register_iterator(ctx: &mut Context) {
     );
 }
 
-fn register_proto_method(proto: &Rc<RefCell<Object>>, name: &str, f: fn(Vec<Value>) -> Result<Value, JsError>) {
-    proto.borrow_mut().set(
-        name,
-        Value::NativeFunction(Rc::new(NativeFunction::new(f))),
-    );
+fn register_proto_method(
+    proto: &Rc<RefCell<Object>>,
+    name: &str,
+    f: fn(Vec<Value>) -> Result<Value, JsError>,
+) {
+    proto
+        .borrow_mut()
+        .set(name, Value::NativeFunction(Rc::new(NativeFunction::new(f))));
 }
 
 /// Iterator (constructor) — ES2025 §27.1.1.1
@@ -99,8 +99,7 @@ fn iterator_from_internal(o: Value) -> Result<Value, JsError> {
         Value::Object(o) => o,
         Value::String(s) => {
             // Wrap string as a simple iterator over characters
-            let chars: Vec<Value> =
-                s.chars().map(|c| Value::String(c.to_string())).collect();
+            let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
             let mut result = Object::new(ObjectKind::Ordinary);
             let chars_rc = Rc::new(RefCell::new(chars));
             let index = Rc::new(RefCell::new(0usize));
@@ -143,7 +142,9 @@ fn iterator_from_internal(o: Value) -> Result<Value, JsError> {
                     let next_fn = NativeFunction::new(move |_args: Vec<Value>| {
                         Ok(Value::Object(Rc::clone(&done_rc)))
                     });
-                    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+                    result_rc
+                        .borrow_mut()
+                        .set("next", Value::NativeFunction(Rc::new(next_fn)));
                     return Ok(Value::Object(result_rc));
                 }
             }
@@ -194,15 +195,15 @@ fn iterator_map(args: Vec<Value>) -> Result<Value, JsError> {
     let mapper = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        mapper,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(mapper, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.map called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.map called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -212,11 +213,7 @@ fn iterator_map(args: Vec<Value>) -> Result<Value, JsError> {
     let mapped: Vec<Value> = values
         .into_iter()
         .map(|v| {
-            crate::eval::function::call_value_with_this(
-                mapper.clone(),
-                vec![v],
-                Value::Undefined,
-            )
+            crate::eval::function::call_value_with_this(mapper.clone(), vec![v], Value::Undefined)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -248,7 +245,9 @@ fn iterator_map(args: Vec<Value>) -> Result<Value, JsError> {
             Ok(Value::Object(Rc::clone(&done_rc)))
         }
     });
-    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+    result_rc
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next_fn)));
 
     let arr_proto = crate::builtins::get_array_prototype();
     if let Some(p) = arr_proto {
@@ -267,15 +266,15 @@ fn iterator_filter(args: Vec<Value>) -> Result<Value, JsError> {
     let filterer = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        filterer,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(filterer, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.filter called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.filter called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -316,7 +315,9 @@ fn iterator_filter(args: Vec<Value>) -> Result<Value, JsError> {
             Ok(Value::Object(Rc::clone(&done_rc)))
         }
     });
-    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+    result_rc
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next_fn)));
     let proto = get_iterator_prototype();
     if let Some(p) = proto {
         result_rc.borrow_mut().prototype = Some(p);
@@ -330,8 +331,9 @@ fn iterator_take(args: Vec<Value>) -> Result<Value, JsError> {
     let limit_val = args.first().map(to_number).unwrap_or(0.0);
     let limit = limit_val as usize;
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.take called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.take called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -362,7 +364,9 @@ fn iterator_take(args: Vec<Value>) -> Result<Value, JsError> {
             Ok(Value::Object(Rc::clone(&done_rc)))
         }
     });
-    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+    result_rc
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next_fn)));
     let proto = get_iterator_prototype();
     if let Some(p) = proto {
         result_rc.borrow_mut().prototype = Some(p);
@@ -376,8 +380,9 @@ fn iterator_drop(args: Vec<Value>) -> Result<Value, JsError> {
     let limit_val = args.first().map(to_number).unwrap_or(0.0);
     let skip = limit_val as usize;
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.drop called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.drop called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -408,7 +413,9 @@ fn iterator_drop(args: Vec<Value>) -> Result<Value, JsError> {
             Ok(Value::Object(Rc::clone(&done_rc)))
         }
     });
-    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+    result_rc
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next_fn)));
     let proto = get_iterator_prototype();
     if let Some(p) = proto {
         result_rc.borrow_mut().prototype = Some(p);
@@ -422,15 +429,15 @@ fn iterator_flat_map(args: Vec<Value>) -> Result<Value, JsError> {
     let mapper = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        mapper,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(mapper, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.flatMap called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.flatMap called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -439,11 +446,8 @@ fn iterator_flat_map(args: Vec<Value>) -> Result<Value, JsError> {
     let values = consume_iterator(&this_obj)?;
     let mut flattened = Vec::new();
     for v in values {
-        let mapped = crate::eval::function::call_value_with_this(
-            mapper.clone(),
-            vec![v],
-            Value::Undefined,
-        )?;
+        let mapped =
+            crate::eval::function::call_value_with_this(mapper.clone(), vec![v], Value::Undefined)?;
         // Flatten: if iterable, spread; else push single value
         if let Value::Object(o) = &mapped {
             match consume_iterator(o) {
@@ -477,7 +481,9 @@ fn iterator_flat_map(args: Vec<Value>) -> Result<Value, JsError> {
             Ok(Value::Object(Rc::clone(&done_rc)))
         }
     });
-    result_rc.borrow_mut().set("next", Value::NativeFunction(Rc::new(next_fn)));
+    result_rc
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next_fn)));
     let proto = get_iterator_prototype();
     if let Some(p) = proto {
         result_rc.borrow_mut().prototype = Some(p);
@@ -491,15 +497,15 @@ fn iterator_reduce(args: Vec<Value>) -> Result<Value, JsError> {
     let reducer = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        reducer,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(reducer, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.reduce called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.reduce called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -537,15 +543,18 @@ fn iterator_reduce(args: Vec<Value>) -> Result<Value, JsError> {
             }
             Ok(accumulator)
         }
-        (None, None) => Err(JsError("TypeError: Reduce of empty sequence with no initial value".to_string())),
+        (None, None) => Err(JsError(
+            "TypeError: Reduce of empty sequence with no initial value".to_string(),
+        )),
         (Some(acc), None) => Ok(acc),
     }
 }
 
 /// Iterator.prototype.toArray — ES2025 §27.1.4.10
 fn iterator_to_array(_args: Vec<Value>) -> Result<Value, JsError> {
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.toArray called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.toArray called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -566,16 +575,16 @@ fn iterator_for_each(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        callback,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.forEach called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.forEach called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -583,11 +592,7 @@ fn iterator_for_each(args: Vec<Value>) -> Result<Value, JsError> {
 
     let values = consume_iterator(&this_obj)?;
     for v in values {
-        crate::eval::function::call_value_with_this(
-            callback.clone(),
-            vec![v],
-            this_arg.clone(),
-        )?;
+        crate::eval::function::call_value_with_this(callback.clone(), vec![v], this_arg.clone())?;
     }
     Ok(Value::Undefined)
 }
@@ -597,16 +602,16 @@ fn iterator_some(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        callback,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.some called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.some called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -631,16 +636,16 @@ fn iterator_every(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        callback,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.every called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.every called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),
@@ -665,16 +670,16 @@ fn iterator_find(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args
         .first()
         .ok_or_else(|| JsError("TypeError: undefined is not a function".to_string()))?;
-    if !matches!(
-        callback,
-        Value::Function(_) | Value::NativeFunction(_)
-    ) {
-        return Err(JsError("TypeError: undefined is not a function".to_string()));
+    if !matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        return Err(JsError(
+            "TypeError: undefined is not a function".to_string(),
+        ));
     }
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
 
-    let this_val = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("TypeError: Iterator.prototype.find called with no this".to_string()))?;
+    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError("TypeError: Iterator.prototype.find called with no this".to_string())
+    })?;
     let this_obj = match this_val {
         Value::Object(o) => o,
         _ => return Err(JsError("TypeError: not an object".to_string())),

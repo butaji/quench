@@ -404,17 +404,15 @@ pub fn register_function(ctx: &mut Context) {
         let key = sym.property_key();
         generator_proto_rc.borrow_mut().set_symbol(
             &key,
-            Value::NativeFunction(Rc::new(NativeFunction::new(
-                |_args: Vec<Value>| {
-                    let this_val = crate::builtins::get_native_this().ok_or_else(|| {
-                        JsError(
-                            "Generator.prototype[Symbol.iterator] called on incompatible receiver"
-                                .to_string(),
-                        )
-                    })?;
-                    Ok(this_val)
-                },
-            ))),
+            Value::NativeFunction(Rc::new(NativeFunction::new(|_args: Vec<Value>| {
+                let this_val = crate::builtins::get_native_this().ok_or_else(|| {
+                    JsError(
+                        "Generator.prototype[Symbol.iterator] called on incompatible receiver"
+                            .to_string(),
+                    )
+                })?;
+                Ok(this_val)
+            }))),
         );
     }
     // Set %GeneratorPrototype%[@@toStringTag] = "Generator"

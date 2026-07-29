@@ -119,11 +119,6 @@ pub fn run_single_test(
     if let Some(reason) = crate::test262::skip::should_skip(&meta) {
         return TestOutcome::Skip { reason };
     }
-    if let Some(tp) = test_path.to_str() {
-        if let Some(reason) = crate::test262::skip::should_skip_path(tp) {
-            return TestOutcome::Skip { reason };
-        }
-    }
     run_prepared(harness, test_path, &source, &meta)
 }
 
@@ -225,10 +220,7 @@ fn run_with_timeout(
     match rx.recv_timeout(timeout) {
         Ok(outcome) => outcome,
         Err(mpsc::RecvTimeoutError::Timeout) => TestOutcome::Fail {
-            failure: TestFailure::from_message(format!(
-                "timed out after {}s",
-                TEST_TIMEOUT_SECS
-            )),
+            failure: TestFailure::from_message(format!("timed out after {}s", TEST_TIMEOUT_SECS)),
         },
         Err(mpsc::RecvTimeoutError::Disconnected) => TestOutcome::Fail {
             failure: TestFailure::from_message("panicked"),
@@ -368,7 +360,11 @@ fn classify_isolated(out: &std::process::Output, test_path: &Path) -> TestOutcom
         .reduce(|a, b| format!("{}\n{}", a, b));
 
     let failure = TestFailure {
-        message: format!("isolated exit {}: {}", out.status.code().unwrap_or(-1), reason),
+        message: format!(
+            "isolated exit {}: {}",
+            out.status.code().unwrap_or(-1),
+            reason
+        ),
         error_type,
         error_message,
         js_stack,

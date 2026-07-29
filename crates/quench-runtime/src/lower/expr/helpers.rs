@@ -59,9 +59,9 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
             pattern: r.regex.pattern.text.to_string(),
             flags: r.regex.flags.to_string(),
         }),
-        ast::Expression::BigIntLiteral(b) => Ok(Expression::BigInt(
-            super::super::helpers::bigint_raw(b),
-        )),
+        ast::Expression::BigIntLiteral(b) => {
+            Ok(Expression::BigInt(super::super::helpers::bigint_raw(b)))
+        }
         ast::Expression::TaggedTemplateExpression(tagged) => lower_tagged_template(tagged),
         ast::Expression::TemplateLiteral(tpl) => lower_template_literal(tpl),
         ast::Expression::ClassExpression(class_expr) => lower_class_expr(class_expr),

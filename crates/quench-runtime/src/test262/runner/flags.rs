@@ -9,7 +9,6 @@ pub struct RunnerFlags {
     pub parallel: bool,
     pub stage: usize,
     pub quick_limit: usize,
-
 }
 
 impl RunnerFlags {

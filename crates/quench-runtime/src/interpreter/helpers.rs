@@ -100,6 +100,8 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                     *is_generator,
                 );
                 func.strict = crate::interpreter::is_strict_mode();
+                // Set VarKind::Var so delete on function decls returns false
+                env.borrow_mut().declare_var(name.clone(), VarKind::Var);
                 env.borrow_mut().define(name.clone(), Value::Function(func));
             }
             Statement::Block(stmts) => hoist_functions(stmts, env),

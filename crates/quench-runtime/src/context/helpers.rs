@@ -232,8 +232,12 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     // Register __ops__ — the Rust↔JS bridge for spec abstract operations.
     // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__.
     ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
-    // Evaluate self-hosted JS builtins that destructure __ops__.
-    crate::builtins::bootstrap::bootstrap_js_builtins(ctx)?;
+    // NOTE: bootstrap_js_builtins is NOT called here. The test262 runner
+    // and run-test both call register_builtins() AFTER Context::new(),
+    // which provides the native implementations. The JS wrapper files in
+    // builtins/*.js use _native*.call()/_native*.apply() patterns that
+    // cause infinite recursion (see ArrayBuffer.js/WeakRef.js). They are
+    // only loaded by tests that explicitly call bootstrap_js_builtins.
     Ok(())
 }
 

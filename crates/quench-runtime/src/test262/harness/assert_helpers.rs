@@ -327,7 +327,7 @@ pub fn debug_string(v: &Value) -> String {
             } else {
                 n.to_string()
             }
-        },
+        }
         Value::String(s) => format!("\"{}\"", s),
         Value::Object(_) | Value::Generator(_) => "[object]".to_string(),
         Value::Function(_) => "[Function]".to_string(),

@@ -81,7 +81,9 @@ pub fn run_stage_digest(
             passed,
             failed: failures.len(),
             skipped,
-            first_failure: failures.first().map(|(p, f)| (p.clone(), f.message.clone())),
+            first_failure: failures
+                .first()
+                .map(|(p, f)| (p.clone(), f.message.clone())),
         },
     }
 }
@@ -90,7 +92,7 @@ fn inprocess_digest() -> bool {
     std::env::var("TEST262_INPROCESS")
         .ok()
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
-        .unwrap_or(true)  // default to in-process
+        .unwrap_or(false) // default to isolated (crash = failure, not skip)
 }
 
 fn run_serial(
@@ -187,12 +189,6 @@ fn trim_quick(indexed: &mut Vec<(usize, String, TestOutcome)>, limit: usize) {
 }
 
 fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome {
-    if let Some(reason) = path
-        .to_str()
-        .and_then(crate::test262::skip::should_skip_path)
-    {
-        return TestOutcome::Skip { reason };
-    }
     if isolated {
         return run_isolated(path);
     }
@@ -225,10 +221,7 @@ struct TestFailureSample {
     source_context: String,
 }
 
-fn group_failures(
-    failures: &[(String, TestFailure)],
-    include_detail: bool,
-) -> Vec<GroupEntry> {
+fn group_failures(failures: &[(String, TestFailure)], include_detail: bool) -> Vec<GroupEntry> {
     // Group by normalized reason.
     let mut by_key: BTreeMap<String, Vec<(String, TestFailure)>> = BTreeMap::new();
     for (path, failure) in failures {
@@ -319,11 +312,7 @@ fn print_digest(out: &DigestOutput<'_>) {
         for group in out.groups {
             if group.count == 1 {
                 if let Some(sample) = group.samples.first() {
-                    println!(
-                        "\n  {}: {}",
-                        sample.path,
-                        group.reason
-                    );
+                    println!("\n  {}: {}", sample.path, group.reason);
                     if let Some(ref et) = sample.error_type {
                         println!("    Type: {}", et);
                     }
@@ -340,7 +329,16 @@ fn print_digest(out: &DigestOutput<'_>) {
                     }
                 }
             } else {
-                println!("\n  {} ({} tests) — {}", group.sample_paths.first().map(|s| s.as_str()).unwrap_or("?"), group.count, group.reason);
+                println!(
+                    "\n  {} ({} tests) — {}",
+                    group
+                        .sample_paths
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("?"),
+                    group.count,
+                    group.reason
+                );
             }
         }
     }
@@ -441,8 +439,7 @@ fn normalize_comparison_values(s: &str) -> String {
             if cursor + op_len <= bytes.len()
                 && &bytes[cursor..cursor + op_len] == op.as_bytes()
                 && (cursor == 0 || bytes[cursor - 1].is_ascii_whitespace())
-                && (cursor + op_len >= bytes.len()
-                    || bytes[cursor + op_len].is_ascii_whitespace())
+                && (cursor + op_len >= bytes.len() || bytes[cursor + op_len].is_ascii_whitespace())
             {
                 found_op = Some((*op, op_len));
                 break;
@@ -537,13 +534,24 @@ mod tests {
         let fails = vec![
             ("a.js".into(), TestFailure::from_message("TypeError: x")),
             ("b.js".into(), TestFailure::from_message("TypeError: x")),
-            ("c.js".into(), TestFailure::from_message("ReferenceError: y")),
+            (
+                "c.js".into(),
+                TestFailure::from_message("ReferenceError: y"),
+            ),
         ];
         let g = group_failures(&fails, false);
         // g is Vec<GroupEntry> now
-        let x_count = g.iter().find(|e| e.reason == "x").map(|e| e.count).unwrap_or(0);
+        let x_count = g
+            .iter()
+            .find(|e| e.reason == "x")
+            .map(|e| e.count)
+            .unwrap_or(0);
         assert_eq!(x_count, 2);
-        let y_count = g.iter().find(|e| e.reason == "y").map(|e| e.count).unwrap_or(0);
+        let y_count = g
+            .iter()
+            .find(|e| e.reason == "y")
+            .map(|e| e.count)
+            .unwrap_or(0);
         assert_eq!(y_count, 1);
     }
 
@@ -552,9 +560,7 @@ mod tests {
         let mut f = TestFailure::from_message("TypeError: boom");
         f.error_type = Some("TypeError".into());
         f.error_message = Some("boom".into());
-        let fails = vec![
-            ("a.js".into(), f.clone()),
-        ];
+        let fails = vec![("a.js".into(), f.clone())];
         // Without detail: samples empty
         let g = group_failures(&fails, false);
         assert!(g[0].samples.is_empty());

@@ -152,9 +152,20 @@ impl Scope {
 
     pub fn declare_var(&mut self, name: String, kind: VarKind) {
         self.var_kinds.insert(name.clone(), kind);
+        // If the name is already bound (from `define`) or already declared
+        // (from `hoist_classes` or earlier `predeclare_var`), don't shadow it
+        // with a new declaration entry.
+        // Per ES spec §10.2.11 step 28c: `var arguments` in a function body
+        // must not shadow the built-in arguments binding.
+        // Also per §15.3: var hoisting must not shadow earlier class/function
+        // hoisting.
+        if self.bindings.contains_key(&name) || self.declarations.contains_key(&name) {
+            return;
+        }
         match kind {
             VarKind::Var => {
-                self.declarations.insert(name.clone(), VarState::DeclaredOnly);
+                self.declarations
+                    .insert(name.clone(), VarState::DeclaredOnly);
                 // Create property on the global object for var declarations.
                 // Per spec §15.1.8: writable=true, enumerable=true, configurable=false.
                 // Enumerable ensures for...in can see it. Configurable=false ensures
@@ -209,7 +220,8 @@ impl Scope {
 
     pub fn initialize_declared(&mut self, name: &str, value: Value) {
         self.declarations.remove(name);
-        self.bindings.insert(name.to_string(), Rc::new(RefCell::new(value)));
+        self.bindings
+            .insert(name.to_string(), Rc::new(RefCell::new(value)));
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {

@@ -5,10 +5,10 @@
 
 pub mod assert_helpers;
 pub mod deep_equal;
-pub mod host262;
-pub mod property_helpers;
 #[cfg(test)]
 mod harness_loader_tests;
+pub mod host262;
+pub mod property_helpers;
 #[cfg(test)]
 mod property_helpers_tests;
 pub mod test_deep_equal;
@@ -1515,17 +1515,20 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         let mut ctx = Context::new().unwrap();
         try_inject_harness(&mut ctx).expect("harness ok");
 
-        let methods = ["sameValue", "throws", "compareArray", "deepEqual", "notSameValue", "notUnreachable"];
+        let methods = [
+            "sameValue",
+            "throws",
+            "compareArray",
+            "deepEqual",
+            "notSameValue",
+            "notUnreachable",
+        ];
         let assert_val = ctx.get_global("assert").unwrap();
 
         if let Value::NativeFunction(nf) = assert_val {
             for m in methods {
                 let prop = nf.get_property(m);
-                assert!(
-                    prop.is_some(),
-                    "assert.{} should be defined",
-                    m
-                );
+                assert!(prop.is_some(), "assert.{} should be defined", m);
                 assert!(
                     matches!(prop, Some(Value::NativeFunction(_))),
                     "assert.{} should be NativeFunction, got: {:?}",
@@ -1564,11 +1567,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         if let Value::Object(o) = val {
             let methods = ["createRealm", "evalScript", "gc", "detachArrayBuffer"];
             for m in methods {
-                assert!(
-                    o.borrow().has_own(m),
-                    "$262.{} should be defined",
-                    m
-                );
+                assert!(o.borrow().has_own(m), "$262.{} should be defined", m);
             }
         }
     }
@@ -1582,10 +1581,22 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         let val = ctx.eval("typeof $262.agent === 'object'").unwrap();
         assert_eq!(val, Value::Boolean(true));
 
-        let methods = ["sleep", "getReport", "report", "broadcast", "start", "leave"];
+        let methods = [
+            "sleep",
+            "getReport",
+            "report",
+            "broadcast",
+            "start",
+            "leave",
+        ];
         for m in methods {
             let result = ctx.eval(&format!("typeof $262.agent.{} === 'function'", m));
-            assert_eq!(result.unwrap(), Value::Boolean(true), "$262.agent.{} should be function", m);
+            assert_eq!(
+                result.unwrap(),
+                Value::Boolean(true),
+                "$262.agent.{} should be function",
+                m
+            );
         }
     }
 
@@ -1622,10 +1633,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         // Setting a global in ctx1 should NOT affect ctx2
         ctx1.set_global("__quench_test_marker".to_string(), Value::Number(1.0));
         let marker = ctx2.get_global("__quench_test_marker");
-        assert!(
-            marker.is_none(),
-            "ctx2 should not see globals set on ctx1"
-        );
+        assert!(marker.is_none(), "ctx2 should not see globals set on ctx1");
     }
 
     /// verifyProperty must be a NativeFunction (not from JS).
@@ -1655,7 +1663,11 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
             s.indexOf('Test262Error') >= 0 && s.indexOf('test message') >= 0
             "#,
         );
-        assert!(result.is_ok(), "Test262Error.toString should work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Test262Error.toString should work: {:?}",
+            result
+        );
     }
 
     /// Test262ErrorThrower must throw a Test262Error.
@@ -1665,10 +1677,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         try_inject_harness(&mut ctx).expect("harness ok");
 
         let result = ctx.eval("Test262ErrorThrower('boom')");
-        assert!(
-            result.is_err(),
-            "Test262ErrorThrower should throw"
-        );
+        assert!(result.is_err(), "Test262ErrorThrower should throw");
         let caught = ctx.eval(
             r#"
             var err = null;
@@ -1710,7 +1719,11 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         );
         // Must return the global object
         let result = ctx.eval("typeof fnGlobalObject() === 'object'");
-        assert_eq!(result.unwrap(), Value::Boolean(true), "fnGlobalObject() should return an object");
+        assert_eq!(
+            result.unwrap(),
+            Value::Boolean(true),
+            "fnGlobalObject() should return an object"
+        );
     }
 
     /// print must be a NativeFunction that outputs to stderr.
@@ -1732,10 +1745,7 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         let mut ctx = Context::new().unwrap();
         try_inject_harness(&mut ctx).expect("harness ok");
 
-        assert!(
-            ctx.get_global("stop").is_some(),
-            "stop should be defined"
-        );
+        assert!(ctx.get_global("stop").is_some(), "stop should be defined");
         assert!(
             ctx.get_global("$DONOTEVALUATE").is_some(),
             "$DONOTEVALUATE should be defined"
@@ -1752,7 +1762,11 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         assert_eq!(ne, Value::Boolean(true), "nativeErrors should be an array");
 
         let ae = ctx.eval("Array.isArray(allErrorConstructors)").unwrap();
-        assert_eq!(ae, Value::Boolean(true), "allErrorConstructors should be an array");
+        assert_eq!(
+            ae,
+            Value::Boolean(true),
+            "allErrorConstructors should be an array"
+        );
 
         let len = ctx.eval("nativeErrors.length").unwrap();
         assert!(

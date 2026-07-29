@@ -113,14 +113,16 @@ impl TestFailure {
             .and_then(|s| s.rsplit_once("\")"))
             .map(|(inner, _)| inner)
             .unwrap_or(&self.message);
-        let body = raw.split_once(':').map(|(_, rest)| rest.trim()).unwrap_or(raw);
+        let body = raw
+            .split_once(':')
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or(raw);
 
         // Extract candidate keywords: words > 4 chars, no common tokens.
         let stop_words = [
-            "Actual", "expected", "should", "have", "same", "contents",
-            "this", "that", "with", "from", "been", "call", "called",
-            "value", "values", "throw", "thrown", "error", "failed",
-            "after", "before", "true", "false",
+            "Actual", "expected", "should", "have", "same", "contents", "this", "that", "with",
+            "from", "been", "call", "called", "value", "values", "throw", "thrown", "error",
+            "failed", "after", "before", "true", "false",
         ];
         let keywords: Vec<&str> = body
             .split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -133,7 +135,11 @@ impl TestFailure {
             .enumerate()
             .filter_map(|(i, line)| {
                 let count = keywords.iter().filter(|kw| line.contains(*kw)).count();
-                if count > 0 { Some((i, count)) } else { None }
+                if count > 0 {
+                    Some((i, count))
+                } else {
+                    None
+                }
             })
             .collect();
         scored.sort_by(|a, b| b.1.cmp(&a.1));
@@ -679,11 +685,7 @@ verifyProperty(obj, prop, desc);
         host1.run_script("var __marker = 'host1'").ok();
         // host2 should NOT see host1's marker
         let result = host2.run_script("typeof __marker === 'undefined'");
-        assert_eq!(
-            result,
-            Ok(()),
-            "host2 should not see host1's globals"
-        );
+        assert_eq!(result, Ok(()), "host2 should not see host1's globals");
     }
 
     /// run_script sets non-strict mode (sloppy eval).
@@ -728,7 +730,11 @@ verifyProperty(obj, prop, desc);
 
         // Second call should start clean (no stale thrown value)
         let result = host.run_script("var x = 1; x === 1");
-        assert_eq!(result, Ok(()), "second call should start clean after first threw");
+        assert_eq!(
+            result,
+            Ok(()),
+            "second call should start clean after first threw"
+        );
     }
 
     /// Error from run_script is propagated as Err(String).
@@ -753,12 +759,7 @@ verifyProperty(obj, prop, desc);
 
         for i in 1..=3 {
             let result = host.run_script(script);
-            assert_eq!(
-                result,
-                Ok(()),
-                "run {} should succeed",
-                i
-            );
+            assert_eq!(result, Ok(()), "run {} should succeed", i);
         }
     }
 
@@ -805,9 +806,8 @@ verifyProperty(obj, prop, desc);
     fn test_quench_host_test262_error_initialized() {
         let mut host = QuenchHost::new();
         // Test262Error should be a constructor
-        let result = host.run_script(
-            "var err = new Test262Error('test'); err.name === 'Test262Error'",
-        );
+        let result =
+            host.run_script("var err = new Test262Error('test'); err.name === 'Test262Error'");
         assert_eq!(result, Ok(()), "Test262Error should work: {:?}", result);
     }
 

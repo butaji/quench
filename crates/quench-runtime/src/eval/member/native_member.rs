@@ -33,26 +33,48 @@ pub fn eval_native_function_member(
         "apply" => eval_native_apply_method(nf),
         "bind" => eval_native_bind_method(nf),
         "toPrimitive" | "hasInstance" | "isConcatSpreadable" => eval_well_known_symbol(prop_name),
-        _ => {
-            // Fall through to Function.prototype for inherited properties
-            // (hasOwnProperty, toString, valueOf, etc.), then walk up to
-            // Object.prototype via Function.prototype.[[Prototype]].
-            if let Some(fp) = crate::builtins::get_function_prototype() {
-                let fp_borrowed = fp.borrow();
-                if fp_borrowed.has_getter(prop_name) || fp_borrowed.has_setter(prop_name) {
-                    return crate::eval::member::eval_object_member(&fp, prop_name, None);
-                }
-                if let Some(val) = fp_borrowed.get(prop_name) {
-                    return Ok(val);
-                }
-                // Walk Function.prototype's own [[Prototype]] chain (→ Object.prototype)
-                if let Some(ref obj_proto) = fp_borrowed.prototype {
-                    return crate::eval::member::eval_object_member(obj_proto, prop_name, None);
-                }
+        "caller" | "arguments" => {
+            // Per ES2015 §19.2.4.1, bound functions must throw TypeError on
+            // caller/arguments access. Check via the "name" property.
+            let is_bound = nf.get_property("name").is_some_and(|v| {
+                matches!(&v, Value::String(n) if n.starts_with("bound "))
+            });
+            if is_bound {
+                let (err, js_err) = crate::value::create_js_error_with_type(
+                    "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
             }
-            Ok(Value::Undefined)
+            // Fall through to Function.prototype chain
+            eval_native_function_member_fallback(nf, prop_name)
+        }
+        _ => {
+            eval_native_function_member_fallback(nf, prop_name)
         }
     }
+}
+
+/// Resolve a property via Function.prototype and its [[Prototype]] chain.
+fn eval_native_function_member_fallback(
+    _nf: &Rc<NativeFunction>,
+    prop_name: &str,
+) -> Result<Value, JsError> {
+    if let Some(fp) = crate::builtins::get_function_prototype() {
+        let fp_borrowed = fp.borrow();
+        if fp_borrowed.has_getter(prop_name) || fp_borrowed.has_setter(prop_name) {
+            return crate::eval::member::eval_object_member(&fp, prop_name, None);
+        }
+        if let Some(val) = fp_borrowed.get(prop_name) {
+            return Ok(val);
+        }
+        // Walk Function.prototype's own [[Prototype]] chain (→ Object.prototype)
+        if let Some(ref obj_proto) = fp_borrowed.prototype {
+            return crate::eval::member::eval_object_member(obj_proto, prop_name, None);
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 fn eval_native_prototype(nf: &Rc<NativeFunction>) -> Result<Value, JsError> {

@@ -82,8 +82,7 @@ fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsErro
         }
         let mut names = Vec::new();
         for param in &params.items {
-            if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) = &param.pattern
-            {
+            if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) = &param.pattern {
                 let name = ident.name.as_str();
                 if name == "arguments" || name == "eval" {
                     return Err(JsError(format!(
@@ -226,8 +225,7 @@ fn walk_body_expr(expr: &oxc::ast::ast::Expression, strict: bool) -> Result<(), 
             if body_is_strict {
                 // Check for eval/arguments as parameter names
                 for param in &arrow.params.items {
-                    if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) =
-                        &param.pattern
+                    if let oxc::ast::ast::BindingPattern::BindingIdentifier(ident) = &param.pattern
                     {
                         let name = ident.name.as_str();
                         if name == "eval" || name == "arguments" {
@@ -311,11 +309,21 @@ pub fn parse_es_module(source: &str) -> Result<Program, JsError> {
     if !ret.diagnostics.is_empty() {
         return Err(JsError(format!("Parse error: {:?}", ret.diagnostics)));
     }
-    if let Some(name) = crate::strict_reserved::find_strict_reserved_binding(&ret.program) {
-        return Err(JsError(format!(
-            "SyntaxError: Unexpected strict mode reserved word: {}",
-            name
-        )));
+    check_strict_reserved(&ret.program)?;
+    check_strict_fn_params(&ret.program)?;
+    check_strict_fn_body(&ret.program)?;
+    early_errors::check_early_errors(&ret.program)?;
+    early_errors::check_break_continue_errors(&ret.program)?;
+    early_errors::check_super_outside_class(&ret.program)?;
+    // oxc_semantic-based early error detection
+    {
+        let semantic_ret = oxc_semantic::SemanticBuilder::new()
+            .with_build_nodes(false)
+            .build(&ret.program);
+        if !semantic_ret.diagnostics.is_empty() {
+            let msg = format!("{:?}", semantic_ret.diagnostics);
+            return Err(JsError(format!("SyntaxError: {}", msg)));
+        }
     }
     lower_program(&ret.program).map_err(|e| JsError(e.to_string()))
 }
@@ -648,7 +656,11 @@ mod tests {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source, source_type).parse();
-        assert!(ret.diagnostics.is_empty(), "Parse errors: {:?}", ret.diagnostics);
+        assert!(
+            ret.diagnostics.is_empty(),
+            "Parse errors: {:?}",
+            ret.diagnostics
+        );
 
         let cls = &ret.program.body[0];
         println!("Statement type: {:?}", cls);

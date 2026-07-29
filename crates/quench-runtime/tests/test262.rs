@@ -3,9 +3,9 @@
 //! Run with:
 //!   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 
-use quench_runtime::test262::runner::execute::run_single_test;
-use quench_runtime::test262::{QuenchHost, Test262Host, Test262Runner, HarnessLoader};
 use quench_runtime::test262::host::TestOutcome;
+use quench_runtime::test262::runner::execute::run_single_test;
+use quench_runtime::test262::{HarnessLoader, QuenchHost, Test262Host, Test262Runner};
 use std::path::PathBuf;
 
 #[test]
@@ -39,7 +39,11 @@ fn test_assert_same_value_basic() {
 fn test_assert_same_value_nan() {
     let mut host = QuenchHost::new();
     let result = host.run_script("assert.sameValue(NaN, NaN, 'NaN equals NaN')");
-    assert!(result.is_ok(), "sameValue(NaN,NaN) should pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "sameValue(NaN,NaN) should pass: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -54,9 +58,8 @@ fn test_assert_same_value_negative_zero() {
 #[test]
 fn test_assert_throws_basic() {
     let mut host = QuenchHost::new();
-    let result = host.run_script(
-        "assert.throws(TypeError, function() { null.x }, 'null.x throws TypeError')",
-    );
+    let result = host
+        .run_script("assert.throws(TypeError, function() { null.x }, 'null.x throws TypeError')");
     assert!(result.is_ok(), "assert.throws should pass: {:?}", result);
 }
 
@@ -85,7 +88,11 @@ fn test_for_loop_let_per_iteration_basic() {
         assert.sameValue(result[2](), 2, "third closure sees i=2");
         "#,
     );
-    assert!(result.is_ok(), "per-iteration let binding failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "per-iteration let binding failed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -103,7 +110,11 @@ fn test_for_loop_let_per_iteration_increment() {
         assert.sameValue(result[2](), 2, "third closure sees i=2");
         "#,
     );
-    assert!(result.is_ok(), "per-iteration let with ++i failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "per-iteration let with ++i failed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -154,7 +165,11 @@ fn test_for_loop_const_per_iteration() {
         assert.sameValue(result[2](), 2);
         "#,
     );
-    assert!(result.is_ok(), "per-iteration const binding failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "per-iteration const binding failed: {:?}",
+        result
+    );
 }
 
 // ── Test isolation regression ────────────────────────────────────────────────
@@ -203,15 +218,17 @@ fn test_runner_path_per_iteration_binding() {
 
     let test_path = test262_dir.join(
         "test/language/statements/let/syntax/\
-         let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js"
+         let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js",
     );
 
     let outcome = run_single_test(&mut host, &harness, &test_path);
     match outcome {
         TestOutcome::Pass => {} // good
         TestOutcome::Fail { failure } => {
-            panic!("runner path failed: {} (type={:?})",
-                failure.message, failure.error_type);
+            panic!(
+                "runner path failed: {} (type={:?})",
+                failure.message, failure.error_type
+            );
         }
         TestOutcome::Skip { reason } => {
             panic!("runner path skipped: {}", reason);
@@ -235,13 +252,17 @@ fn test_runner_path_multi_let_per_iteration() {
     ];
 
     for name in &tests {
-        let test_path = test262_dir.join("test/language/statements/let/syntax").join(name);
+        let test_path = test262_dir
+            .join("test/language/statements/let/syntax")
+            .join(name);
         let outcome = run_single_test(&mut host, &harness, &test_path);
         match outcome {
             TestOutcome::Pass => {}
             TestOutcome::Fail { failure } => {
-                panic!("{} failed: {} (type={:?})",
-                    name, failure.message, failure.error_type);
+                panic!(
+                    "{} failed: {} (type={:?})",
+                    name, failure.message, failure.error_type
+                );
             }
             TestOutcome::Skip { reason } => {
                 panic!("{} skipped: {}", name, reason);
@@ -259,9 +280,7 @@ fn test262_staged() {
     // during deep parsing (default Rust test threads have ~2MB stack).
     let builder = std::thread::Builder::new().stack_size(64 * 1024 * 1024);
     let result = builder
-        .spawn(|| {
-            test262_staged_impl()
-        })
+        .spawn(|| test262_staged_impl())
         .expect("failed to spawn runner thread")
         .join();
     match result {
@@ -372,10 +391,7 @@ fn for_loop_with_let_should_terminate() {
         }
     }
 
-    assert!(
-        handle.join().is_ok(),
-        "eval thread panicked"
-    );
+    assert!(handle.join().is_ok(), "eval thread panicked");
 }
 
 #[test]
@@ -392,17 +408,18 @@ fn for_loop_let_body_update_should_terminate() {
 
     match rx.recv_timeout(Duration::from_secs(3)) {
         Ok(result) => {
-            assert!(result.is_ok(), "for loop with body update must terminate, got: {:?}", result);
+            assert!(
+                result.is_ok(),
+                "for loop with body update must terminate, got: {:?}",
+                result
+            );
         }
         Err(_) => {
             panic!("TIMEOUT: for loop with body update did not terminate in 3s");
         }
     }
 
-    assert!(
-        handle.join().is_ok(),
-        "eval thread panicked"
-    );
+    assert!(handle.join().is_ok(), "eval thread panicked");
 }
 
 #[test]

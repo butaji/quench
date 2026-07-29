@@ -414,9 +414,9 @@ pub fn eval_program(
             let eval_is_strict = script_is_strict || is_strict_mode();
             set_strict_mode(eval_is_strict);
 
-            hoist_functions(statements, env);
             hoist_classes(statements, env);
             predeclare_var(statements, &mut env.borrow_mut());
+            hoist_functions(statements, env);
             predeclare_let_const(statements, &mut env.borrow_mut());
 
             if set_this {

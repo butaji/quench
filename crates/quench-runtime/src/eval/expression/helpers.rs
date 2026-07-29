@@ -475,9 +475,9 @@ mod tests {
     // ─── eval_block_expr: block as expression (arrow function body) ───────────
 
     #[test]
-    fn block_expr_returns_last() {
+    fn block_expr_no_implicit_return() {
         let r = eval("var f = () => { 1; 2; 3 }; f()").unwrap();
-        assert_eq!(r, Value::Number(3.0));
+        assert_eq!(r, Value::Undefined);
     }
 
     #[test]

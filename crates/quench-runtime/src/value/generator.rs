@@ -356,9 +356,7 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             // completion propagates through the generator body.
             if let Some(ref suspend) = g.for_of_suspend {
                 if let Some(close_err) =
-                    crate::eval::object::call_iterator_return(
-                        &suspend.iterator,
-                    )
+                    crate::eval::object::call_iterator_return(&suspend.iterator)
                 {
                     return Err(close_err);
                 }
@@ -396,6 +394,15 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                     done: true,
                 }
                 .to_object());
+            }
+            // If generator is suspended mid for-of, close the inner iterator
+            // before resuming — same as generator_return_fn.
+            if let Some(ref suspend) = g.for_of_suspend {
+                if let Some(close_err) =
+                    crate::eval::object::call_iterator_return(&suspend.iterator)
+                {
+                    return Err(close_err);
+                }
             }
             crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Throw(
                 arg.clone(),

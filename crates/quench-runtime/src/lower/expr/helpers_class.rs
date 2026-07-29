@@ -37,9 +37,7 @@ fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember,
         .items
         .iter()
         .filter_map(|p| match &p.pattern {
-            ast::BindingPattern::BindingIdentifier(ident) => {
-                Some(ident.name.as_str().to_string())
-            }
+            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
             _ => None,
         })
         .collect();
@@ -153,9 +151,9 @@ pub fn lower_prop_name_key_oxc(key: &ast::PropertyKey) -> Result<PropertyKey, Lo
         ast::PropertyKey::PrivateIdentifier(i) => Ok(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Ok(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Ok(PropertyKey::Number(n.value)),
-        ast::PropertyKey::BigIntLiteral(b) => Ok(PropertyKey::String(
-            super::super::helpers::bigint_raw(b),
-        )),
+        ast::PropertyKey::BigIntLiteral(b) => {
+            Ok(PropertyKey::String(super::super::helpers::bigint_raw(b)))
+        }
         ast::PropertyKey::BooleanLiteral(b) => Ok(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Ok(PropertyKey::String("null".to_string())),
         ast::PropertyKey::TemplateLiteral(t) if t.expressions.is_empty() => {

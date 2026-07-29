@@ -385,6 +385,11 @@ impl ClassValue {
         *cell = proto;
     }
 
+    /// Get the class constructor's own [[Prototype]] (the superclass).
+    pub fn get_own_prototype(&self) -> Option<Value> {
+        self.super_class_own_proto_cell.borrow().clone()
+    }
+
     /// Set a static field value on this class
     pub fn set_static_field(&self, name: &str, value: Value) -> Result<(), JsError> {
         if is_private_name_key(name) && !*self.extensible_cell.borrow() {
@@ -694,7 +699,10 @@ impl Value {
     /// Check if this value is callable (a function).
     pub fn is_callable(&self) -> bool {
         match self {
-            Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) | Value::Class(_) => true,
+            Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_) => true,
             Value::Object(o) => o.borrow().is_callable(),
             _ => false,
         }
