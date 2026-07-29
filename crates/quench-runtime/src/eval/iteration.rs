@@ -484,7 +484,7 @@ pub fn eval_for_of(
 
     let iterator = match &iter_value {
         Value::String(s) => {
-            let items: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+            let items: Vec<Value> = crate::value::wtf8::wtf8_for_of_iterate(s);
             let arr = Object::new_array_from(items);
             Rc::new(RefCell::new(arr))
         }
