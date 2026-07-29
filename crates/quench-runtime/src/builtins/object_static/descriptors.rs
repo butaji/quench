@@ -153,20 +153,23 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // invocation and getOwnPropertyDescriptor see the same values.
         if let Value::Object(o) = &obj {
             let mut obj = o.borrow_mut();
-            // Per ES §9.4.2.1: if defining an array index >= length, update length.
-            if let Some(idx) = as_array_index(&prop) {
-                let current_len = obj
-                    .get("length")
-                    .and_then(|v| {
-                        if let Value::Number(n) = v {
-                            Some(n as usize)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                if idx + 1 > current_len {
-                    obj.set("length", Value::Number((idx + 1) as f64));
+            // Per ES §9.4.2.1 (Array Exotic Objects): if defining an array index
+            // >= length, update length. For ordinary objects this does not apply.
+            if obj.kind == ObjectKind::Array {
+                if let Some(idx) = as_array_index(&prop) {
+                    let current_len = obj
+                        .get("length")
+                        .and_then(|v| {
+                            if let Value::Number(n) = v {
+                                Some(n as usize)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    if idx + 1 > current_len {
+                        obj.set("length", Value::Number((idx + 1) as f64));
+                    }
                 }
             }
             if obj.has_own(&prop) {
@@ -197,20 +200,23 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
 
     if let Value::Object(o) = &obj {
         let mut obj = o.borrow_mut();
-        // Per ES §9.4.2.1: if defining an array index >= length, update length.
-        if let Some(idx) = as_array_index(&prop) {
-            let current_len = obj
-                .get("length")
-                .and_then(|v| {
-                    if let Value::Number(n) = v {
-                        Some(n as usize)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0);
-            if idx + 1 > current_len {
-                obj.set("length", Value::Number((idx + 1) as f64));
+        // Per ES §9.4.2.1 (Array Exotic Objects): if defining an array index
+        // >= length, update length. For ordinary objects this does not apply.
+        if obj.kind == ObjectKind::Array {
+            if let Some(idx) = as_array_index(&prop) {
+                let current_len = obj
+                    .get("length")
+                    .and_then(|v| {
+                        if let Value::Number(n) = v {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                if idx + 1 > current_len {
+                    obj.set("length", Value::Number((idx + 1) as f64));
+                }
             }
         }
         if obj.has_own(&prop) {

@@ -1013,6 +1013,12 @@ impl<'a> Visit<'a> for SuperChecker {
         let prev_body = self.in_class_body;
         self.in_class_body = false;
         self.is_class_method.push(push);
+        // Visit parameter default value expressions (e.g. `x = super()`)
+        for param in &func.params.items {
+            if let Some(init) = &param.initializer {
+                self.visit_expression(init);
+            }
+        }
         if let Some(body) = &func.body {
             for stmt in &body.statements {
                 self.visit_statement(stmt);
@@ -1029,6 +1035,12 @@ impl<'a> Visit<'a> for SuperChecker {
         // Arrow functions inherit super from enclosing context.
         let push = self.is_class_method.last().copied().unwrap_or(false);
         self.is_class_method.push(push);
+        // Visit parameter default value expressions (e.g. `(x = super()) => {}`)
+        for param in &arrow.params.items {
+            if let Some(init) = &param.initializer {
+                self.visit_expression(init);
+            }
+        }
         for stmt in &arrow.body.statements {
             self.visit_statement(stmt);
         }
@@ -1045,6 +1057,37 @@ impl<'a> Visit<'a> for SuperChecker {
             self.visit_class_element(elem);
         }
         self.in_class_body = prev;
+    }
+}
+
+/// Check that all private name references (`#name`) are valid.
+/// Private fields are only valid inside a class that declares the field.
+/// Since we don't have class fields yet, any private name reference is
+/// a SyntaxError.
+pub fn check_private_names(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = PrivateNameChecker { error: None };
+    checker.visit_program(program);
+    match checker.error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+struct PrivateNameChecker {
+    error: Option<JsError>,
+}
+
+impl<'a> Visit<'a> for PrivateNameChecker {
+    fn visit_private_field_expression(
+        &mut self,
+        _expr: &ast::PrivateFieldExpression<'a>,
+    ) {
+        if self.error.is_some() {
+            return;
+        }
+        self.error = Some(JsError(
+            "SyntaxError: Private field '#...' must be declared in an enclosing class".into(),
+        ));
     }
 }
 

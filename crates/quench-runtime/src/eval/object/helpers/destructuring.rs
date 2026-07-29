@@ -1998,6 +1998,22 @@ mod tests {
     // BEFORE initializing the TDZ slot, so that x = 23 (not TDZ error).
 
     #[test]
+    fn object_rest_excludes_symbol_keys_from_object_keys() {
+        // Object.keys(rest) must NOT include symbol keys
+        let r = eval(
+            "var rest; var o = {}; \
+             Object.defineProperty(o, 'z', { get: function() { return 1; }, enumerable: true }); \
+             Object.defineProperty(o, 'a', { get: function() { return 2; }, enumerable: true }); \
+             Object.defineProperty(o, 1, { get: function() { return 3; }, enumerable: true }); \
+             Object.defineProperty(o, Symbol('foo'), { get: function() { return 4; }, enumerable: true }); \
+             for ({...rest} of [o]) {} \
+             Object.keys(rest).length",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(3.0));
+    }
+
+    #[test]
     fn let_destruct_array_default_with_hole() {
         let r = eval("let [x = 23] = [,]; x").unwrap();
         assert_eq!(r, Value::Number(23.0));
