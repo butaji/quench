@@ -80,6 +80,18 @@ pub fn extract_property_name(
     in_arrow_function: bool,
 ) -> Result<String, JsError> {
     if computed {
+        // When destructuring with `yield` in a computed property key, the
+        // DESTRUCTURING_YIELD_KEY was stored by array_destructuring_impl
+        // before the destructuring restarted after a generator resume. Use
+        // this cached value to avoid re-evaluating the yield expression
+        // (which would incorrectly yield a second time).
+        if crate::interpreter::peek_destructuring_yield_key() {
+            let key = crate::interpreter::take_destructuring_yield_key().unwrap();
+            return match &key {
+                Value::Symbol(s) => Ok(s.property_key()),
+                _ => Ok(crate::value::to_js_string(&key)),
+            };
+        }
         match property {
             PropertyKey::Computed(e) => {
                 let val = eval_expression(e, env, in_arrow_function)?;
@@ -278,7 +290,12 @@ pub(crate) fn touch_assignment_target(
             // computed property keys. This happens BEFORE IteratorStep (step 2),
             // so throws/yields in the property key must fire before the iterator
             // is consumed.
-            let _key = extract_property_name(property, true, env, false)?;
+            // If DESTRUCTURING_YIELD_KEY is set, the generator was resumed and
+            // the key is already cached — no need to re-evaluate the expression
+            // (especially `yield`, which would yield a second time).
+            if !crate::interpreter::peek_destructuring_yield_key() {
+                let _key = extract_property_name(property, true, env, false)?;
+            }
             Ok(())
         }
         Expression::Member { object, .. } => {

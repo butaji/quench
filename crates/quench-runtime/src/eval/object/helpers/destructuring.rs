@@ -323,27 +323,15 @@ fn array_with_iterator_impl(
         }
         if let BindingElement::Rest(inner) = binding {
             if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
-                // touch_assignment_target pre-check may throw before any step
-                crate::eval::object::touch_assignment_target(target, env)?;
-                // For direct Member targets with computed key (e.g. `...{}[yield/thrower()]`),
-                // evaluate the key BEFORE collecting remaining elements. Per ES
-                // DestructuringAssignmentEvaluation step 1, the full reference is
-                // evaluated before the rest is collected. This ensures throws or
-                // yields in the computed key fire before the iterator is drained.
-                if let Expression::Member {
-                    property,
-                    computed: true,
-                    ..
-                } = target
-                {
-                    if let Err(e) =
-                        crate::eval::object::extract_property_name(property, true, env, false)
-                    {
-                        if !iterator_done {
-                            let _close_err = call_iterator_return(iterator);
-                        }
-                        return Err(e);
+                // Per ES §13.15.5.3 IteratorDestructuringAssignmentEvaluation step 1,
+                // the full reference evaluation happens before IteratorStep. If the
+                // computed property key throws (e.g. `...{}[thrower()]`) or yields,
+                // the iterator must be closed and body must not execute.
+                if let Err(error) = crate::eval::object::touch_assignment_target(target, env) {
+                    if !iterator_done {
+                        let _close_err = call_iterator_return(iterator);
                     }
+                    return Err(error);
                 }
                 if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
                     return result;
