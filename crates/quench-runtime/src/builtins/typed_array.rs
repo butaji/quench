@@ -201,7 +201,7 @@ fn construct_typed_array(
     buffer.borrow_mut().set("byteLength", Value::Number(0.0));
 
     // Parse arguments
-    let mut src_elements: Vec<Value> = Vec::new();
+    let buffer: Rc<RefCell<Object>>;
     if !args.is_empty() {
         let arg = &args[0];
 
@@ -210,69 +210,104 @@ fn construct_typed_array(
             Value::Number(n) if *n >= 0.0 && n.is_finite() => {
                 length = *n as u64;
                 byte_length = length * bytes_per_element as u64;
-                buffer
-                    .borrow_mut()
-                    .set("byteLength", Value::Number(byte_length as f64));
+                let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
+                new_buf.borrow_mut().elements =
+                    (0..byte_length as usize).map(|_| Value::Number(0.0)).collect();
+                buffer = new_buf;
             }
             // new TypedArray(typedArray) or new TypedArray(array-like)
             Value::Object(src_rc) if !Rc::ptr_eq(src_rc, &object_rc) => {
                 let src = src_rc.borrow();
-                // Check if it has elements (treat as array-like)
+                // Check if it has elements (treat as array-like or ArrayBuffer)
                 if !src.elements.is_empty() {
-                    length = src.elements.len() as u64;
-                    byte_length = length * bytes_per_element as u64;
-                    src_elements = src.elements.clone();
-                    buffer
-                        .borrow_mut()
-                        .set("byteLength", Value::Number(byte_length as f64));
+                    // ArrayBuffer: use as shared backing store
+                    // array-like: copy elements
+                    if src.get("byteLength").is_some() {
+                        // This is an ArrayBuffer (has byteLength property)
+                        drop(src);
+                        buffer = Rc::clone(src_rc);
+                        // After the match, handle byteOffset and length args
+                    } else {
+                        length = src.elements.len() as u64;
+                        byte_length = length * bytes_per_element as u64;
+                        let cloned = src.elements.clone();
+                        drop(src);
+                        let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                        new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
+                        new_buf.borrow_mut().elements = cloned;
+                        buffer = new_buf;
+                    }
                 } else if let Some(len) = src.get("length") {
                     let len_num = to_number(&len);
                     if len_num >= 0.0 && len_num.is_finite() {
                         length = len_num as u64;
                         byte_length = length * bytes_per_element as u64;
-                        buffer
-                            .borrow_mut()
-                            .set("byteLength", Value::Number(byte_length as f64));
                     }
+                    drop(src);
+                    let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                    new_buf.borrow_mut().set("byteLength", Value::Number(byte_length as f64));
+                    new_buf.borrow_mut().elements =
+                        (0..byte_length as usize).map(|_| Value::Number(0.0)).collect();
+                    buffer = new_buf;
+                } else {
+                    drop(src);
+                    let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                    new_buf.borrow_mut().set("byteLength", Value::Number(0.0));
+                    buffer = new_buf;
                 }
             }
-            _ => {}
+            _ => {
+                let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                new_buf.borrow_mut().set("byteLength", Value::Number(0.0));
+                buffer = new_buf;
+            }
         }
 
-        // Handle optional byteOffset argument: new TypedArray(buffer, byteOffset)
+        // Handle optional byteOffset and length arguments (for ArrayBuffer construction)
         if args.len() > 1 {
             byte_offset = to_number(&args[1]) as u64;
-        }
-        // Handle optional length argument: new TypedArray(buffer, byteOffset, length)
-        if args.len() > 2 {
-            let new_length = to_number(&args[2]) as u64;
-            length = new_length;
+            if args.len() > 2 {
+                let new_length = to_number(&args[2]) as u64;
+                length = new_length;
+                byte_length = length * bytes_per_element as u64;
+            } else {
+                // ArrayBuffer with byteOffset but no explicit length: length-track
+                let buf_byte_len = buffer.borrow().get("byteLength")
+                    .map(|v| to_number(&v) as u64)
+                    .unwrap_or(0);
+                if byte_offset < buf_byte_len {
+                    length = (buf_byte_len - byte_offset) / bytes_per_element as u64;
+                    byte_length = length * bytes_per_element as u64;
+                }
+            }
+        } else if args.len() == 1 && buffer.borrow().get("byteLength").is_some() {
+            // Single ArrayBuffer argument: derive length from buffer byteLength
+            let buf_byte_len = buffer.borrow().get("byteLength")
+                .map(|v| to_number(&v) as u64)
+                .unwrap_or(0);
+            length = buf_byte_len / bytes_per_element as u64;
             byte_length = length * bytes_per_element as u64;
-            buffer
-                .borrow_mut()
-                .set("byteLength", Value::Number(byte_length as f64));
         }
+    } else {
+        let new_buf = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+        new_buf.borrow_mut().set("byteLength", Value::Number(0.0));
+        buffer = new_buf;
     }
 
     // Set up the object as a TypedArray using ObjData::Idx
     object.data = ObjData::Idx {
-        buffer,
+        buffer: Rc::clone(&buffer),
         offset: byte_offset,
         length,
         name: typed_array_name,
     };
 
-    // Populate elements from source array if provided
-    object.elements = src_elements;
-
     // Set standard TypedArray properties
     object.set("length", Value::Number(length as f64));
     object.set("byteLength", Value::Number(byte_length as f64));
     object.set("byteOffset", Value::Number(byte_offset as f64));
-    object.set(
-        "buffer",
-        Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
-    );
+    object.set("buffer", Value::Object(Rc::clone(&buffer)));
 
     drop(object);
     Ok(Value::Object(object_rc))

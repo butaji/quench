@@ -74,13 +74,22 @@ impl Object {
             );
         }
         if let Some(idx) = as_array_index(key) {
-            if let ObjData::Idx { length, name, .. } = self.data {
+            if let ObjData::Idx {
+                ref buffer,
+                offset,
+                length,
+                name,
+                ..
+            } = self.data
+            {
                 if (idx as u64) < length {
                     let coerced = coerce_typed_array_element(name, &value);
-                    while self.elements.len() <= idx {
-                        self.elements.push(Value::Undefined);
+                    let mut buf = buffer.borrow_mut();
+                    let buf_idx = offset as usize + idx;
+                    while buf.elements.len() <= buf_idx {
+                        buf.elements.push(Value::Number(0.0));
                     }
-                    self.elements[idx] = coerced;
+                    buf.elements[buf_idx] = coerced;
                     self.properties.shift_remove(key);
                     return;
                 }
@@ -167,9 +176,19 @@ impl Object {
             return Some(v.clone());
         }
         if let Some(idx) = as_array_index(key) {
-            if let ObjData::Idx { length, .. } = self.data {
-                if (idx as u64) < length && idx < self.elements.len() {
-                    return Some(self.elements[idx].clone());
+            if let ObjData::Idx {
+                ref buffer,
+                offset,
+                length,
+                ..
+            } = self.data
+            {
+                if (idx as u64) < length {
+                    let buf = buffer.borrow();
+                    let buf_idx = offset as usize + idx;
+                    if buf_idx < buf.elements.len() {
+                        return Some(buf.elements[buf_idx].clone());
+                    }
                 }
             }
             // Arguments objects (ObjData::Args) also store indexed values in

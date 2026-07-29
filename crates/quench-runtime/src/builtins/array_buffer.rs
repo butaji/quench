@@ -49,6 +49,8 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 sliced.prototype = Some(p);
             }
             sliced.set("byteLength", Value::Number(sliced_len));
+            // Copy sliced elements from the original buffer
+            sliced.elements = this_obj.borrow().elements[start..end].to_vec();
             crate::builtins::object::set_boxed_value(&mut sliced, Value::Number(sliced_len));
             Ok(Value::Object(Rc::new(RefCell::new(sliced))))
         }))),
@@ -64,6 +66,10 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     Value::Number(len),
                 );
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
+                // Allocate zero-initialized storage for the buffer data
+                let len_usize = len as usize;
+                this_obj.borrow_mut().elements =
+                    (0..len_usize).map(|_| Value::Number(0.0)).collect();
                 if this_obj.borrow().prototype.is_none() {
                     this_obj.borrow_mut().prototype = Some(Rc::clone(&proto_clone));
                 }
