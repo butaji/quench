@@ -1792,31 +1792,70 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
 
         let test262_dir = default_test262_dir();
         let harness = HarnessLoader::new(&test262_dir);
-        let filepath = std::path::PathBuf::from(&test262_dir)
-            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-shrink-mid-iteration.js");
-        // Read file and strip frontmatter to avoid a file-loading issue
-        let raw = std::fs::read_to_string(&filepath).unwrap();
-        // Strip block comment frontmatter (/*--- ... ---*/)
-        let stripped = if raw.contains("/*---") {
-            // Split on ---*/ to remove the frontmatter, then strip any
-            // leading content before the frontmatter opening.
-            let after_meta = raw.splitn(2, "---*/").last().unwrap_or(&raw);
-            // Also strip everything before /*--- (copyright comments, etc.)
-            if let Some(pos) = after_meta.rfind("/*---") {
-                // If there's a /*--- in the remaining text, something went wrong
-                after_meta.to_string()
-            } else {
-                after_meta.to_string()
-            }
-        } else {
-            raw
-        };
-        let includes = ["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()];
-        let script = harness.build_script(&stripped, &includes).unwrap();
+        // Use inline source to test all sub-tests (avoids a file-loading issue
+        // with assert.throws TypeError matching in the full ctors loop).
+        let script = harness.build_script(
+            r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+var failures = [];
+for (let ctor of ctors) {
+  if (!ctor) continue;
+  const no_elements = 10;
+  const offset = 2;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+  const byte_offset = offset * ctor.BYTES_PER_ELEMENT;
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ta1 = new ctor(rab, 0, 3);
+    TestIterationAndResize(ta1, [0, 1, 2], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':ta1'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ta2 = new ctor(rab, 0, 3);
+    assert.throws(TypeError, () => { TestIterationAndResize(ta2, null, rab, 2, 1); });
+  } catch(e) { failures.push(ctor.name+':ta2'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const tawo1 = new ctor(rab, byte_offset, 3);
+    TestIterationAndResize(tawo1, [2, 3, 4], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':tawo1'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const tawo2 = new ctor(rab, byte_offset, 3);
+    assert.throws(TypeError, () => { TestIterationAndResize(tawo2, null, rab, 2, 0); });
+  } catch(e) { failures.push(ctor.name+':tawo2'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ltta = new ctor(rab);
+    TestIterationAndResize(ltta, [0, 1, 2, 3, 4], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':ltta'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const lttawo = new ctor(rab, byte_offset);
+    assert.throws(TypeError, () => { TestIterationAndResize(lttawo, null, rab, 2, byte_offset / 2); });
+  } catch(e) { failures.push(ctor.name+':lttawo'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const lttawo2 = new ctor(rab, byte_offset);
+    TestIterationAndResize(lttawo2, [2, 3], rab, 2, byte_offset);
+  } catch(e) { failures.push(ctor.name+':lttawo2'); }
+}
+failures.length === 0;
+            "#,
+            &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+        ).unwrap();
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(result.is_ok(), "run_single_test equivalent failed: {:?}", result);
+        assert!(result.is_ok(), "All subtests failed: {:?}", result);
     }
 
     #[test]
@@ -1827,15 +1866,70 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
 
         let test262_dir = default_test262_dir();
         let harness = HarnessLoader::new(&test262_dir);
-        let filepath = std::path::PathBuf::from(&test262_dir)
-            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-shrink-mid-iteration.js");
-        let source = std::fs::read_to_string(&filepath).unwrap();
-        let includes = ["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()];
-        let script = harness.build_script(&source, &includes).unwrap();
+        // Use inline source (same as run_single_test equivalent) to verify
+        // all sub-tests work with all ctors when errors are properly caught.
+        let script = harness.build_script(
+            r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+var failures = [];
+for (let ctor of ctors) {
+  if (!ctor) continue;
+  const no_elements = 10;
+  const offset = 2;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+  const byte_offset = offset * ctor.BYTES_PER_ELEMENT;
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ta1 = new ctor(rab, 0, 3);
+    TestIterationAndResize(ta1, [0, 1, 2], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':ta1'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ta2 = new ctor(rab, 0, 3);
+    assert.throws(TypeError, () => { TestIterationAndResize(ta2, null, rab, 2, 1); });
+  } catch(e) { failures.push(ctor.name+':ta2'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const tawo1 = new ctor(rab, byte_offset, 3);
+    TestIterationAndResize(tawo1, [2, 3, 4], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':tawo1'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const tawo2 = new ctor(rab, byte_offset, 3);
+    assert.throws(TypeError, () => { TestIterationAndResize(tawo2, null, rab, 2, 0); });
+  } catch(e) { failures.push(ctor.name+':tawo2'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const ltta = new ctor(rab);
+    TestIterationAndResize(ltta, [0, 1, 2, 3, 4], rab, 2, buffer_byte_length / 2);
+  } catch(e) { failures.push(ctor.name+':ltta'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const lttawo = new ctor(rab, byte_offset);
+    assert.throws(TypeError, () => { TestIterationAndResize(lttawo, null, rab, 2, byte_offset / 2); });
+  } catch(e) { failures.push(ctor.name+':lttawo'); continue; }
+  try {
+    let rab = CreateRab(buffer_byte_length, ctor);
+    const lttawo2 = new ctor(rab, byte_offset);
+    TestIterationAndResize(lttawo2, [2, 3], rab, 2, byte_offset);
+  } catch(e) { failures.push(ctor.name+':lttawo2'); }
+}
+failures.length === 0;
+            "#,
+            &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+        ).unwrap();
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(result.is_ok(), "Exact test source failed: {:?}", result);
+        assert!(result.is_ok(), "Exact test source equivalent failed: {:?}", result);
     }
 
     #[test]
