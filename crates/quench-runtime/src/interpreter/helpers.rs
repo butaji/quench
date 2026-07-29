@@ -82,6 +82,7 @@ pub fn set_this_binding_value(env: &Rc<RefCell<Environment>>, value: Value) {
 
 /// Hoist function declarations to the top of the script/function scope
 pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>) {
+    let strict = crate::interpreter::is_strict_mode();
     for stmt in statements {
         match stmt {
             Statement::FunctionDeclaration {
@@ -99,27 +100,41 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                     *is_async,
                     *is_generator,
                 );
-                func.strict = crate::interpreter::is_strict_mode();
+                func.strict = strict;
                 // Set VarKind::Var so delete on function decls returns false
                 env.borrow_mut().declare_var(name.clone(), VarKind::Var);
                 env.borrow_mut().define(name.clone(), Value::Function(func));
             }
-            Statement::Block(stmts) => hoist_functions(stmts, env),
+            // ES2015+ strict mode: function declarations in blocks are
+            // block-scoped (hoisted via Let by eval_block), not hoisted
+            // to the enclosing function scope. Only recurse in sloppy mode
+            // where Annex B hoists them to the function scope.
+            Statement::Block(stmts) => {
+                if !strict {
+                    hoist_functions(stmts, env);
+                }
+            }
             Statement::If {
                 consequent,
                 alternate,
                 ..
             } => {
-                hoist_functions(std::slice::from_ref(consequent.as_ref()), env);
-                if let Some(alt) = alternate {
-                    hoist_functions(std::slice::from_ref(alt.as_ref()), env);
+                if !strict {
+                    hoist_functions(std::slice::from_ref(consequent.as_ref()), env);
+                    if let Some(alt) = alternate {
+                        hoist_functions(std::slice::from_ref(alt.as_ref()), env);
+                    }
                 }
             }
             Statement::While { body, .. } => {
-                hoist_functions(std::slice::from_ref(body.as_ref()), env)
+                if !strict {
+                    hoist_functions(std::slice::from_ref(body.as_ref()), env);
+                }
             }
             Statement::For { body, .. } => {
-                hoist_functions(std::slice::from_ref(body.as_ref()), env)
+                if !strict {
+                    hoist_functions(std::slice::from_ref(body.as_ref()), env);
+                }
             }
             _ => {}
         }

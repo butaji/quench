@@ -700,9 +700,11 @@ fn assign_to_native_function(
 ) -> Result<(), JsError> {
     // Bound functions throw TypeError on caller/arguments assignment.
     if prop_name == "caller" || prop_name == "arguments" {
-        let is_bound = nf
-            .get_property("name")
-            .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
+        eprintln!("DEBUG assign_to_native_function: prop_name={}, nf.name={}", prop_name, nf.name);
+        let name_val = nf.get_property("name");
+        eprintln!("DEBUG name_val={:?}", name_val);
+        let is_bound = name_val.is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
+        eprintln!("DEBUG is_bound={}", is_bound);
         if is_bound {
             let (err, js_err) = crate::value::create_js_error_with_type(
                 "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",

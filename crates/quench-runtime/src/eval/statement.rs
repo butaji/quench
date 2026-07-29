@@ -805,8 +805,26 @@ fn eval_func_decl(
     );
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
-    // Set VarKind::Var so delete on function declarations returns false
-    env.borrow_mut().declare_var(name.to_owned(), VarKind::Var);
+    // ES2015+ strict mode: function declarations in blocks are block-scoped
+    // (already handled by hoist_functions skipping block recursion).
+    // Use VarKind::Let so the function stays in the block scope.
+    // In sloppy mode (Annex B), function declarations use VarKind::Var and
+    // are hoisted to the function scope (handled in hoist_functions).
+    //
+    // Check if the env has more than 1 scope (meaning we're in a nested block:
+    // scope[0] = function scope, scope[1+] = block scopes). If so, and we're
+    // in strict mode, use Let to stay block-scoped.
+    // This mirrors what hoist_functions does: it skips recursion into blocks
+    // in strict mode, so the function decl is NOT pre-declared at function level.
+    // During eval, we declare it in the current block scope via Let.
+    let scope_depth = env.borrow().scopes.len();
+    let in_block = scope_depth > 1;
+    let kind = if crate::interpreter::is_strict_mode() && in_block {
+        VarKind::Let
+    } else {
+        VarKind::Var
+    };
+    env.borrow_mut().declare_var(name.to_owned(), kind);
     env.borrow_mut().define(name.to_owned(), value.clone());
     // Top-level function declarations are globals (same as var).
     if env.borrow().get_parent().is_none() {

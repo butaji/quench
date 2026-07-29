@@ -52,10 +52,17 @@ pub(crate) fn call_value_impl(
                     Ok(val) => {
                         crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
                     }
-                    Err(err) => crate::builtins::promise::promise_reject_impl_static(
-                        vec![Value::String(err.to_string())],
-                        proto,
-                    ),
+                    Err(err) => {
+                        // Use the original thrown value (e.g. Error object) instead of
+                        // converting to a string, so that Promise rejection handlers
+                        // receive the actual error value.
+                        let rejection = crate::value::take_thrown_value()
+                            .unwrap_or(Value::String(err.to_string()));
+                        crate::builtins::promise::promise_reject_impl_static(
+                            vec![rejection],
+                            proto,
+                        )
+                    }
                 }
             } else if f.is_async && f.is_generator {
                 // Async generator: evaluate params eagerly at call time (ES §15.8.1).

@@ -258,6 +258,11 @@ fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
         ctx.eval(source)
     };
     result.map_err(|e| format!("{:?}", e))?;
+    // Clear any stale thrown_value left by an uncaught error that was
+    // converted to a rejected Promise (e.g. TDZ ReferenceError in for-of
+    // head with `await using`). The probe below evaluates JS which would
+    // otherwise see the stale thrown_value and fail spuriously.
+    crate::value::take_thrown_value();
     async_done_probe(&mut ctx)
 }
 

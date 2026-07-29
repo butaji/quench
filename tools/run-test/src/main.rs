@@ -382,6 +382,8 @@ fn judge_negative(
 
 /// Verify an async test called $DONE exactly once. None = ok, Some(1) = fail.
 fn async_done_verdict(ctx: &mut Context, label: &str) -> Option<i32> {
+    // Clear any stale thrown_value that could interfere with the probe eval.
+    quench_runtime::value::take_thrown_value();
     match ctx.eval("globalThis.__test262DoneCount|0") {
         Ok(Value::Number(1.0)) => None,
         other => {
