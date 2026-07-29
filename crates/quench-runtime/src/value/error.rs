@@ -178,6 +178,8 @@ pub fn register_error_constructor(error: Value, error_prototype: Rc<RefCell<Obje
             .get("name")
             .map(|v| crate::value::to_js_string(&v))
             .unwrap_or_default()
+    } else if let Value::NativeConstructor(nc) = &error {
+        nc.name()
     } else {
         String::new()
     };
