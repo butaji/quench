@@ -49,6 +49,17 @@ pub enum TypedArrayName {
     BigUint64,
 }
 
+/// Return the number of bytes per element for a given TypedArray kind.
+pub fn bytes_per_element(name: TypedArrayName) -> usize {
+    use TypedArrayName::*;
+    match name {
+        Int8 | Uint8 | Uint8Clamped => 1,
+        Int16 | Uint16 => 2,
+        Int32 | Uint32 | Float32 => 4,
+        Float64 | BigInt64 | BigUint64 => 8,
+    }
+}
+
 /// Exotic-specific typed state.
 #[derive(Debug, Clone)]
 pub enum ObjData {

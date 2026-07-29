@@ -173,6 +173,22 @@ impl Object {
             return Some(v.clone());
         }
         if let Some(v) = self.properties.get(key) {
+            // For TypedArrays backed by resizable buffers, compute "length" and
+            // "byteLength" dynamically from the buffer's current state.
+            if (key == "length" || key == "byteLength") {
+                if let ObjData::Idx { ref buffer, offset, name, .. } = self.data {
+                    let max_bl = buffer.borrow().get("maxByteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                    if max_bl > 0 {
+                        let buf_bl = buffer.borrow().get("byteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                        if key == "byteLength" {
+                            return Some(Value::Number(buf_bl as f64));
+                        }
+                        let bpe = crate::value::object::helpers::bytes_per_element(name);
+                        let len = if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 };
+                        return Some(Value::Number(len as f64));
+                    }
+                }
+            }
             return Some(v.clone());
         }
         if let Some(idx) = as_array_index(key) {
@@ -180,6 +196,7 @@ impl Object {
                 ref buffer,
                 offset,
                 length,
+                name,
                 ..
             } = self.data
             {

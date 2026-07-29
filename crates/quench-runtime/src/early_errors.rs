@@ -219,8 +219,44 @@ fn check_fn_params_in_stmt(stmt: &ast::Statement) -> Result<(), JsError> {
         if let Some(body) = &func.body {
             check_fn_params(&func.params, body)?;
         }
+        // ES2025 §15.5.1: yield in generator parameter defaults is SyntaxError.
+        if func.generator {
+            check_generator_params_no_yield(&func.params)?;
+        }
     }
     Ok(())
+}
+
+/// Search for yield in an expression using OXC's Visit trait.
+struct YieldFinder(bool);
+impl<'a> oxc::ast_visit::Visit<'a> for YieldFinder {
+    fn visit_yield_expression(&mut self, _expr: &ast::YieldExpression<'a>) {
+        self.0 = true;
+    }
+}
+
+/// `yield` in a generator function parameter default expression is a SyntaxError.
+fn check_generator_params_no_yield(params: &ast::FormalParameters) -> Result<(), JsError> {
+    for param in &params.items {
+        if let Some(init) = &param.initializer {
+            let mut finder = YieldFinder(false);
+            finder.visit_expression(init);
+            if finder.0 {
+                return Err(JsError(
+                    "SyntaxError: yield not allowed in generator parameter default".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check if parameters contain simple names (not destructuring). Used for
+/// detecting strict-mode-with-non-simple-param early errors.
+pub(crate) fn has_simple_params(params: &ast::FormalParameters) -> bool {
+    params.items.iter().all(|p| {
+        matches!(p.pattern, ast::BindingPattern::BindingIdentifier(_))
+    }) && params.rest.is_none()
 }
 
 /// Check function parameter early errors:
@@ -278,13 +314,19 @@ fn check_body_strict_with_destructuring(
                 "SyntaxError: Destructuring parameter not allowed in strict mode function".into(),
             ));
         }
-    }
-    if let Some(rest) = &params.rest {
-        if has_destructuring_pattern(&rest.rest.argument) {
+        // Default values (initializers) also make the parameter non-simple.
+        if param.initializer.is_some() {
             return Err(JsError(
-                "SyntaxError: Destructuring parameter not allowed in strict mode function".into(),
+                "SyntaxError: Default parameter not allowed in strict mode function".into(),
             ));
         }
+    }
+    // Per ES2025 §14.1.2: any non-simple parameter (including rest parameter)
+    // combined with a strict body is a SyntaxError.
+    if params.rest.is_some() {
+        return Err(JsError(
+            "SyntaxError: Rest parameter not allowed in strict mode function".into(),
+        ));
     }
     Ok(())
 }
@@ -1750,5 +1792,41 @@ mod tests {
         assert!(ret.diagnostics.is_empty());
         let result = check_super_outside_class(&ret.program);
         assert!(result.is_ok(), "no super should be ok: {:?}", result);
+    }
+
+    /// Reproduces test262: generators/param-dflt-yield.js
+    /// `yield` in a generator function parameter default is a SyntaxError.
+    #[test]
+    fn yield_in_generator_param_is_early_error() {
+        let s = "function* g(x = yield) {}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty(), "OXC should accept this");
+        // Find the FunctionDeclaration and check params
+        let func = ret.program.body.iter().find_map(|stmt| {
+            if let ast::Statement::FunctionDeclaration(f) = stmt { Some(f) } else { None }
+        }).expect("should have FunctionDeclaration");
+        assert!(func.generator, "should be generator");
+        assert_eq!(func.params.items.len(), 1, "should have 1 param");
+        let param = &func.params.items[0];
+        // In OXC, default values are stored in formal_parameter.initializer,
+        // not in BindingPattern::AssignmentPattern. Check initializer.
+        assert!(param.initializer.is_some(), "param should have initializer");
+        if let Some(init) = &param.initializer {
+            let mut finder = YieldFinder(false);
+            oxc::ast_visit::Visit::visit_expression(&mut finder, init);
+            assert!(finder.0, "initializer should contain yield");
+        }
+        // Now test check_generator_params_no_yield
+        let result = check_generator_params_no_yield(&func.params);
+        assert!(
+            result.is_err(),
+            "check_generator_params_no_yield should return error"
+        );
+        assert!(
+            result.as_ref().unwrap_err().0.contains("SyntaxError"),
+            "error should contain SyntaxError"
+        );
     }
 }

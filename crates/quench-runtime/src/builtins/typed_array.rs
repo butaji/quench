@@ -165,6 +165,8 @@ fn make_typed_array_constructor(
     let ctor_rc = Rc::new(ctor_fn);
     // Set name on the constructor function
     let _ = ctor_rc.set_property("name", Value::String(name.to_string()));
+    // Set BYTES_PER_ELEMENT on the constructor (static property), per ES spec
+    let _ = ctor_rc.set_property("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
     // Set per-type prototype as the constructor's .prototype property
     let _ = ctor_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     // Set constructor property on per-type prototype to point back to constructor

@@ -1,9 +1,4 @@
-//! Minimal ArrayBuffer builtin.
-//!
-//! Only construction with a byte length is supported — enough for the
-//! test262 harness (`detachArrayBuffer.js` and friends). Resizable buffers
-//! and views (TypedArray/DataView) are intentionally out of scope here and
-//! tracked as regular test-by-test work.
+//! ArrayBuffer builtin with resizable buffer support.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -49,10 +44,81 @@ pub fn register_array_buffer(ctx: &mut Context) {
                 sliced.prototype = Some(p);
             }
             sliced.set("byteLength", Value::Number(sliced_len));
-            // Copy sliced elements from the original buffer
             sliced.elements = this_obj.borrow().elements[start..end].to_vec();
             crate::builtins::object::set_boxed_value(&mut sliced, Value::Number(sliced_len));
             Ok(Value::Object(Rc::new(RefCell::new(sliced))))
+        }))),
+    );
+
+    // ArrayBuffer.prototype.resizable getter
+    let resizable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+        let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+        let Value::Object(o) = this_val else {
+            return Err(crate::JsError::new(
+                "TypeError: ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
+            ));
+        };
+        let o = o.borrow();
+        let max_bl = o.get("maxByteLength").map(|v| to_number(&v)).unwrap_or(0.0);
+        Ok(Value::Boolean(max_bl > 0.0))
+    })));
+    proto_rc.borrow_mut().set("resizable", resizable_getter);
+
+    // ArrayBuffer.prototype.maxByteLength getter
+    let max_bl_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+        let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+        let Value::Object(o) = this_val else {
+            return Err(crate::JsError::new(
+                "TypeError: ArrayBuffer.prototype.maxByteLength requires an ArrayBuffer receiver",
+            ));
+        };
+        let o = o.borrow();
+        Ok(o.get("maxByteLength").unwrap_or(Value::Number(0.0)))
+    })));
+    proto_rc.borrow_mut().set("maxByteLength", max_bl_getter);
+
+    // ArrayBuffer.prototype.resize(newByteLength)
+    proto_rc.borrow_mut().set(
+        "resize",
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let Value::Object(this_obj) = this_val else {
+                return Err(crate::JsError::new(
+                    "TypeError: ArrayBuffer.prototype.resize requires an ArrayBuffer receiver",
+                ));
+            };
+            let new_len = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
+            if new_len < 0 {
+                return Err(crate::JsError::new(
+                    "RangeError: ArrayBuffer.prototype.resize requires a non-negative length",
+                ));
+            }
+            let max_bl = this_obj
+                .borrow()
+                .get("maxByteLength")
+                .map(|v| to_number(&v) as i64)
+                .unwrap_or(0);
+            if max_bl <= 0 {
+                return Err(crate::JsError::new(
+                    "TypeError: ArrayBuffer.prototype.resize called on non-resizable ArrayBuffer",
+                ));
+            }
+            if new_len > max_bl {
+                return Err(crate::JsError::new(
+                    "RangeError: ArrayBuffer.prototype.resize: new length exceeds maxByteLength",
+                ));
+            }
+            let mut obj = this_obj.borrow_mut();
+            let old_len = obj.elements.len();
+            obj.set("byteLength", Value::Number(new_len as f64));
+            if new_len > old_len as i64 {
+                // Grow: append zero-initialized elements
+                obj.elements.resize(new_len as usize, Value::Number(0.0));
+            } else {
+                // Shrink: truncate
+                obj.elements.truncate(new_len as usize);
+            }
+            Ok(Value::Undefined)
         }))),
     );
 
@@ -65,8 +131,18 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     &mut this_obj.borrow_mut(),
                     Value::Number(len),
                 );
+                // Read maxByteLength from options argument
+                let max_bl = args.get(1).and_then(|v| {
+                    if let Value::Object(o) = v {
+                        Some(o.borrow().get("maxByteLength").map(|v| to_number(&v)).unwrap_or(0.0))
+                    } else {
+                        None
+                    }
+                }).unwrap_or(0.0);
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
-                // Allocate zero-initialized storage for the buffer data
+                if max_bl > 0.0 {
+                    this_obj.borrow_mut().set("maxByteLength", Value::Number(max_bl));
+                }
                 let len_usize = len as usize;
                 this_obj.borrow_mut().elements =
                     (0..len_usize).map(|_| Value::Number(0.0)).collect();
@@ -84,7 +160,6 @@ pub fn register_array_buffer(ctx: &mut Context) {
     );
     ab_native.name = "ArrayBuffer".to_string();
     let ab_fn_rc = Rc::new(ab_native);
-    // Set prototype property so eval_new can find it
     let _ = ab_fn_rc.set_property("prototype", Value::Object(Rc::clone(&proto_rc)));
     let ab_fn = Value::NativeFunction(ab_fn_rc);
 
@@ -171,6 +246,52 @@ mod tests {
     }
 
     #[test]
+    fn array_buffer_resizable() {
+        let result = eval_ok("var ab = new ArrayBuffer(8, { maxByteLength: 16 }); ab.resizable");
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn array_buffer_resizable_false() {
+        let result = eval_ok("var ab = new ArrayBuffer(8); ab.resizable");
+        assert_eq!(result, Value::Boolean(false));
+    }
+
+    #[test]
+    fn array_buffer_max_byte_length() {
+        let result = eval_ok("var ab = new ArrayBuffer(8, { maxByteLength: 16 }); ab.maxByteLength");
+        assert_eq!(result.to_string(), "16");
+    }
+
+    #[test]
+    fn array_buffer_resize_grow() {
+        let result = eval_ok(
+            "var ab = new ArrayBuffer(4, { maxByteLength: 8 }); \
+             ab.resize(6); ab.byteLength",
+        );
+        assert_eq!(result.to_string(), "6");
+    }
+
+    #[test]
+    fn array_buffer_resize_shrink() {
+        let result = eval_ok(
+            "var ab = new ArrayBuffer(8, { maxByteLength: 16 }); \
+             ab.resize(4); ab.byteLength",
+        );
+        assert_eq!(result.to_string(), "4");
+    }
+
+    #[test]
+    fn array_buffer_resize_preserves_data() {
+        let result = eval_ok(
+            "var ab = new ArrayBuffer(4, { maxByteLength: 8 }); \
+             var ta = new Uint8Array(ab); ta[0] = 42; ta[1] = 43; \
+             ab.resize(6); ta[0] + ',' + ta[1] + ',' + ta[2]",
+        );
+        assert_eq!(result.to_string(), "42,43,0");
+    }
+
+    #[test]
     fn array_buffer_subclass_auto_super() {
         assert_eq!(
             eval_ok("class AB extends ArrayBuffer {} new AB(4).byteLength").to_string(),
@@ -227,7 +348,6 @@ mod tests {
     #[test]
     fn dataview_regular_subclassing() {
         let mut ctx = Context::new().unwrap();
-        // First create an ArrayBuffer, then subclass DataView
         let r = ctx
             .eval(
                 r#"
