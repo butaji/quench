@@ -354,8 +354,18 @@ pub(crate) fn bind_params(
     args: &[Value],
     call_env_rc: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    let mut found_rest = false;
-    for (i, param) in params.iter().enumerate() {
+    // Direct eval in parameter default expressions must see the parameter
+    // bindings (which are VarKind::Let) so that EvalDeclarationInstantiation
+    // can detect var/lexical conflicts. Set the eval env to the call env
+    // before evaluating defaults, then restore.
+    let prev_eval_env = crate::interpreter::get_current_eval_env();
+    if params.iter().any(|p| p.default.is_some()) {
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(call_env_rc)));
+    }
+
+    let result = (|| {
+        let mut found_rest = false;
+        for (i, param) in params.iter().enumerate() {
         if found_rest {
             call_env_rc
                 .borrow_mut()
@@ -417,6 +427,12 @@ pub(crate) fn bind_params(
         }
     }
     Ok(())
+})();
+// Restore the previous eval env that was set before bind_params.
+if params.iter().any(|p| p.default.is_some()) {
+    crate::interpreter::set_current_eval_env(prev_eval_env);
+}
+result
 }
 
 fn binding_pattern_expression(pattern: BindingElement) -> Expression {

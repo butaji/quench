@@ -698,6 +698,20 @@ fn assign_to_native_function(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
+    // Bound functions throw TypeError on caller/arguments assignment.
+    if prop_name == "caller" || prop_name == "arguments" {
+        let is_bound = nf
+            .get_property("name")
+            .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")));
+        if is_bound {
+            let (err, js_err) = crate::value::create_js_error_with_type(
+                "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
+        }
+    }
     if crate::interpreter::is_strict_mode() && (prop_name == "length" || prop_name == "name") {
         let (_, error) = crate::value::error::create_js_error_with_type(
             "Cannot assign to read only property",

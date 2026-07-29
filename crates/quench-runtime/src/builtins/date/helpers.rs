@@ -106,12 +106,10 @@ pub fn spec_parse_float(string: &str) -> f64 {
     let sign = parse_float_sign(&mut chars);
 
     let rest: String = chars.clone().collect();
-    if rest == "Infinity" {
+    // StrDecimalLiteral includes "Infinity". parseFloat takes the longest
+    // prefix, so "Infinity1" should return Infinity (not NaN).
+    if rest.starts_with("Infinity") {
         return f64::INFINITY * sign;
-    }
-
-    if let Some(val) = try_parse_hex_float(&mut chars) {
-        return val * sign;
     }
 
     let (significand, has_digit) = parse_decimal_significand(&mut chars);

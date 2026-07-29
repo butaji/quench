@@ -3,40 +3,48 @@
 //! JavaScript strings are sequences of 16-bit code units (like UTF-16), meaning
 //! lone surrogates (U+D800..U+DFFF) are valid code units.  The oxc parser
 //! cannot store them as Rust `char` values (surrogates are not Unicode scalar
-//! values), so it writes them as the literal 6-character escape sequence
-//! `\uXXXX` (e.g. `\ud801`).
+//! values), so it encodes them as `\u{FFFD}XXXX` in the decoded value — the
+//! replacement character U+FFFD followed by the 4-hex-digit code point
+//! (e.g. `\u{FFFD}d801` for U+D801).
 //!
-//! This module provides functions that scan a Rust `&str` for these `\uXXXX`
+//! This module provides functions that scan a Rust `&str` for these encoded
 //! sequences and handle them correctly for JS string iteration, length
 //! computation, and index access.
 
 use crate::value::Value;
 
-/// Decode a `\uXXXX` escape at position `i` in `bytes`.
-/// Returns `(code_point, consumed)` where `consumed` is the number of bytes
-/// consumed (6 for `\uXXXX`).  Returns `None` if `bytes[i..]` doesn't start
-/// with a valid `\uXXXX` sequence.
+/// oxc 0.142 encodes lone surrogates as U+FFFD followed by 4 hex digits.
+/// U+FFFD in UTF-8 is 0xEF 0xBF 0xBD.
+const U_FFFD_BYTES: [u8; 3] = [0xEF, 0xBF, 0xBD];
+
+/// Check if `bytes[i..]` starts with the U+FFFD signature followed by 4 hex
+/// digits (oxc's encoding for lone surrogates).
+/// Returns `Some((code_point, consumed))` or `None`.
 fn try_decode_escape(bytes: &[u8], i: usize) -> Option<(u32, usize)> {
-    if i + 5 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'u' {
-        let hex_slice = &bytes[i + 2..i + 6];
+    // oxc 0.142 format: U+FFFD (3 UTF-8 bytes) followed by 4 hex digits
+    if i + 6 < bytes.len()
+        && bytes[i] == U_FFFD_BYTES[0]
+        && bytes[i + 1] == U_FFFD_BYTES[1]
+        && bytes[i + 2] == U_FFFD_BYTES[2]
+    {
+        let hex_slice = &bytes[i + 3..i + 7];
         if hex_slice.iter().all(|b| b.is_ascii_hexdigit()) {
             let code_point =
                 u32::from_str_radix(std::str::from_utf8(hex_slice).unwrap(), 16).ok()?;
-            if code_point <= 0x10FFFF {
-                return Some((code_point, 6));
+            if (0xD800..=0xDFFF).contains(&code_point) || code_point <= 0x10FFFF {
+                return Some((code_point, 7)); // 3 + 4 = 7 bytes consumed
             }
         }
     }
     None
 }
 
-/// Count UTF-16 code units in a string that may contain `\uXXXX` escape
-/// sequences (used by oxc for lone surrogates).
+/// Count UTF-16 code units in a string that may contain lone surrogate
+/// encodings (produced by oxc parser).
 ///
 /// Each non-surrogate BMP character = 1 code unit.
-/// Each `\uXXXX` escape that decodes to a surrogate = 1 code unit.
-/// Each astral character (pair of `\uXXXX\uXXXX` or a 4-byte UTF-8 sequence)
-/// = 2 code units (surrogate pair).
+/// Each lone surrogate = 1 code unit.
+/// Each astral character (surrogate pair) = 2 code units.
 pub fn wtf8_utf16_count(s: &str) -> usize {
     let bytes = s.as_bytes();
     let mut count = 0;
@@ -80,21 +88,23 @@ pub fn wtf8_utf16_count(s: &str) -> usize {
     count
 }
 
-/// Iterate over a string that may contain `\uXXXX` escape sequences,
-/// yielding each visible code unit.  For lone surrogates (stored as
-/// `\uD800`..`\uDFFF` by oxc), yields the surrogate as a single-character
-/// string.  For valid UTF-8 characters, yields the character as-is.
-/// For surrogate pairs (two `\uXXXX\uXXXX` sequences for an astral code
-/// point), yields the combined code point.
+/// Iterate over a string that may contain lone surrogate encodings (produced
+/// by oxc parser), yielding each visible code unit.
+///
+/// For lone surrogates (stored as `\u{FFFD}D800`..`\u{FFFD}DFFF` by oxc),
+/// yields the same literal encoding text so it matches how the parser stores
+/// the same literal in user code.  For valid UTF-8 characters, yields the
+/// character as-is.  For surrogate pairs (two encoded sequences for an astral
+/// code point), yields the combined code point.
 pub fn wtf8_for_of_iterate(s: &str) -> Vec<Value> {
     let bytes = s.as_bytes();
     let mut result = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        // Check for \uXXXX escape sequence
+        // Check for oxc-encoded surrogate
         if let Some((mut cp, consumed)) = try_decode_escape(bytes, i) {
             // Check if this is a high surrogate (U+D800..U+DBFF) followed by
-            // a low surrogate escape (U+DC00..U+DFFF) — ie. a surrogate pair.
+            // a low surrogate escape (U+DC00..U+DFFF) — a surrogate pair.
             if (0xD800..=0xDBFF).contains(&cp) {
                 let next_i = i + consumed;
                 if let Some((low_cp, _)) = try_decode_escape(bytes, next_i) {
@@ -107,17 +117,14 @@ pub fn wtf8_for_of_iterate(s: &str) -> Vec<Value> {
                             // SAFETY: astral code points produce valid UTF-8
                             unsafe { String::from_utf8_unchecked(encoded) },
                         ));
-                        i = next_i + 6;
+                        i = next_i + 7; // second escape also 7 bytes
                         continue;
                     }
                 }
             }
-            // Lone surrogate: oxc stores it as the literal 6-char escape
-            // sequence `\uXXXX`.  We yield this literal substring so it
-            // matches `var x = '\\uXXXX'` which oxc also stores literally.
-            // Normal BMP code points: also yield the original substring
-            // from the source (it's valid UTF-8 and matches any literal
-            // in user code that uses the same escape).
+            // Lone surrogate or BMP code point: yield the same literal text
+            // that oxc produced.  This matches how oxc stores a JS source
+            // literal like '\ud801' — as the same encoding.
             result.push(Value::String(
                 std::str::from_utf8(&bytes[i..i + consumed])
                     .unwrap_or("")
@@ -172,8 +179,8 @@ fn encode_utf8(cp: u32) -> Vec<u8> {
 }
 
 /// Convert a string index (code unit offset) to the corresponding `Value`.
-/// This is used for `str[i]` access where the string may contain `\uXXXX`
-/// patterns for lone surrogates.
+/// This is used for `str[i]` access where the string may contain lone
+/// surrogate encodings.
 pub fn wtf8_nth(s: &str, n: u32) -> Option<Value> {
     let items = wtf8_for_of_iterate(s);
     items.into_iter().nth(n as usize)
@@ -189,35 +196,38 @@ mod tests {
     }
 
     #[test]
-    fn test_utf16_count_surrogates() {
-        // 'a' + \ud801 + 'b' + \ud801
-        let s = "a\\ud801b\\ud801";
+    fn test_utf16_count_lone_surrogates() {
+        // 'a' + \ud801 + 'b' + \ud801 - oxc 0.142 encodes as U+FFFD + "d801"
+        let s = concat!("a", "\u{FFFD}", "d801", "b", "\u{FFFD}", "d801");
         assert_eq!(wtf8_utf16_count(s), 4);
     }
 
     #[test]
     fn test_utf16_count_astral() {
         // U+1F600 (😀) encoded as surrogate pair \uD83D\uDE00
-        let s = "\\ud83d\\ude00";
+        let s = concat!("\u{FFFD}", "d83d", "\u{FFFD}", "de00");
         assert_eq!(wtf8_utf16_count(s), 2);
     }
 
     #[test]
-    fn test_for_of_iterate_surrogates() {
-        let s = "a\\ud801b\\ud801";
+    fn test_for_of_iterate_lone_surrogates() {
+        // 'a' + \ud801 + 'b' + \ud801
+        let s = concat!("a", "\u{FFFD}", "d801", "b", "\u{FFFD}", "d801");
         let chars = wtf8_for_of_iterate(s);
         assert_eq!(chars.len(), 4);
         assert_eq!(chars[0], Value::String("a".to_string()));
-        // The surrogate at index 1: should be the literal \uXXXX text
-        assert_eq!(chars[1], Value::String("\\ud801".to_string()));
+        // The surrogate at index 1: yields the oxc encoding text (U+FFFD + "d801")
+        let expected: String = "\u{FFFD}d801".into();
+        assert_eq!(chars[1], Value::String(expected));
         assert_eq!(chars[2], Value::String("b".to_string()));
-        assert_eq!(chars[3], Value::String("\\ud801".to_string()));
+        let expected4: String = "\u{FFFD}d801".into();
+        assert_eq!(chars[3], Value::String(expected4));
     }
 
     #[test]
     fn test_for_of_iterate_astral_pair() {
         // U+1F600 😀 as surrogate pair
-        let s = "\\ud83d\\ude00";
+        let s = concat!("\u{FFFD}", "d83d", "\u{FFFD}", "de00");
         let chars = wtf8_for_of_iterate(s);
         assert_eq!(chars.len(), 1);
         // Should produce the 4-byte UTF-8 encoding of U+1F600
@@ -227,10 +237,21 @@ mod tests {
     #[test]
     fn test_for_of_iterate_mixed() {
         // 'a' + U+1F600 (😀) + 'b'
-        let s = "a\\ud83d\\ude00b";
+        let s = concat!("a", "\u{FFFD}", "d83d", "\u{FFFD}", "de00", "b");
         let chars = wtf8_for_of_iterate(s);
         assert_eq!(chars.len(), 3);
         assert_eq!(chars[0], Value::String("a".to_string()));
         assert_eq!(chars[2], Value::String("b".to_string()));
+    }
+
+    #[test]
+    fn test_for_of_iterate_standalone_ufffd() {
+        // Standalone U+FFFD (replacement character) NOT followed by hex digits
+        let s = concat!("a", "\u{FFFD}", "x");
+        let chars = wtf8_for_of_iterate(s);
+        assert_eq!(chars.len(), 3);
+        assert_eq!(chars[0], Value::String("a".to_string()));
+        assert_eq!(chars[1], Value::String("\u{FFFD}".to_string()));
+        assert_eq!(chars[2], Value::String("x".to_string()));
     }
 }
