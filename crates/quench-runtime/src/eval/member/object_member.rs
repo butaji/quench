@@ -5,6 +5,7 @@ use crate::env::Environment;
 use crate::eval::object::call_getter;
 use crate::eval::object::{private_field_object, proxy_handler_and_target};
 use crate::value::object::as_array_index;
+use crate::value::object::ObjData;
 use crate::value::{create_js_error_with_type, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -103,7 +104,28 @@ fn eval_object_member_inner(
                         &Rc::new(RefCell::new(Environment::new())),
                     );
                 }
-                if let Some(val) = obj.properties.get(prop_name) {
+                // For TypedArrays (ObjData::Idx): always check get_own first for length/byteLength
+                // and indexed elements — get_own computes these dynamically from the buffer.
+                if matches!(obj.data, ObjData::Idx { .. })
+                    && (prop_name == "length"
+                        || prop_name == "byteLength"
+                        || as_array_index(prop_name).is_some())
+                {
+                    // For element access on an out-of-bounds TA (buffer was shrunk),
+                    // the spec requires a TypeError even for indices that would be
+                    // within the current buffer if the TA's fixed bounds are exceeded.
+                    if as_array_index(prop_name).is_some() && obj.typed_array_is_out_of_bounds() {
+                        let (_, js_err) = create_js_error_with_type(
+                            "TypedArray is out of bounds",
+                            "TypeError",
+                        );
+                        return Err(js_err);
+                    }
+                    if let Some(val) = obj.get_own(prop_name) {
+                        return Ok(val);
+                    }
+                    // get_own returned None: skip properties.get (stale) and continue to prototype chain
+                } else if let Some(val) = obj.properties.get(prop_name) {
                     return Ok(val.clone());
                 }
                 // Check symbol properties (key stored as raw "Symbol():N" format)

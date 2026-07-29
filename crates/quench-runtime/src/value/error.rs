@@ -370,8 +370,17 @@ pub fn create_js_error_with_type(message: &str, error_type: &str) -> (Value, JsE
     if let Some(proto_rc) = proto_rc {
         let arg = Value::String(message.to_string());
         let mut obj = Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&proto_rc));
-        obj.set("message", arg);
+        obj.set("message", arg.clone());
         obj.set("name", Value::String(error_type.to_string()));
+        // Set constructor so assert.throws(TypeError, ...) checks pass.
+        // Try the global constructor for this error type first.
+        let ctor = CURRENT_CONTEXT.with(|cell| *cell.borrow()).and_then(|p| {
+            let ctx = unsafe { &*p };
+            ctx.get_global(error_type)
+        });
+        if let Some(ref ctor_val) = ctor {
+            obj.set("constructor", ctor_val.clone());
+        }
         let err_val = Value::Object(Rc::new(RefCell::new(obj)));
         set_thrown_value(err_val.clone());
         return (err_val, JsError(format!("{}: {}", error_type, message)));

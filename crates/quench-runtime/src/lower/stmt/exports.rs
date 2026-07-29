@@ -4,7 +4,6 @@
 //! This file is kept for backwards compatibility and any additional helpers.
 
 use crate::ast::{Expression, PropertyKey, Statement};
-use crate::lower::expr::lower_expr;
 use oxc::ast::ast;
 
 use super::declarations::lower_class;

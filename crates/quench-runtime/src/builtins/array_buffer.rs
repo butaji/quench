@@ -51,31 +51,34 @@ pub fn register_array_buffer(ctx: &mut Context) {
     );
 
     // ArrayBuffer.prototype.resizable getter
-    let resizable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+    let resizable_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(o) = this_val else {
             return Err(crate::JsError::new(
                 "TypeError: ArrayBuffer.prototype.resizable requires an ArrayBuffer receiver",
             ));
         };
         let o = o.borrow();
-        let max_bl = o.get("maxByteLength").map(|v| to_number(&v)).unwrap_or(0.0);
+        let max_bl = o
+            .get_own_value("maxByteLength")
+            .map(|v| to_number(&v))
+            .unwrap_or(0.0);
         Ok(Value::Boolean(max_bl > 0.0))
     })));
-    proto_rc.borrow_mut().set("resizable", resizable_getter);
+    proto_rc.borrow_mut().set_getter_func("resizable", resizable_getter);
 
     // ArrayBuffer.prototype.maxByteLength getter
-    let max_bl_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let this_val = args.first().cloned().unwrap_or(Value::Undefined);
+    let max_bl_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(o) = this_val else {
             return Err(crate::JsError::new(
                 "TypeError: ArrayBuffer.prototype.maxByteLength requires an ArrayBuffer receiver",
             ));
         };
         let o = o.borrow();
-        Ok(o.get("maxByteLength").unwrap_or(Value::Number(0.0)))
+        Ok(o.get_own_value("maxByteLength").unwrap_or(Value::Number(0.0)))
     })));
-    proto_rc.borrow_mut().set("maxByteLength", max_bl_getter);
+    proto_rc.borrow_mut().set_getter_func("maxByteLength", max_bl_getter);
 
     // ArrayBuffer.prototype.resize(newByteLength)
     proto_rc.borrow_mut().set(
@@ -95,7 +98,7 @@ pub fn register_array_buffer(ctx: &mut Context) {
             }
             let max_bl = this_obj
                 .borrow()
-                .get("maxByteLength")
+                .get_own_value("maxByteLength")
                 .map(|v| to_number(&v) as i64)
                 .unwrap_or(0);
             if max_bl <= 0 {

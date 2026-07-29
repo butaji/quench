@@ -56,15 +56,8 @@ pub fn register_typed_arrays(ctx: &mut Context) {
         "Symbol.toStringTag",
         Value::String("TypedArray".to_string()),
     );
-    typed_array_proto_rc
-        .borrow_mut()
-        .set("byteLength", Value::Number(0.0));
-    typed_array_proto_rc
-        .borrow_mut()
-        .set("byteOffset", Value::Number(0.0));
-    typed_array_proto_rc
-        .borrow_mut()
-        .set("length", Value::Number(0.0));
+    // length, byteLength, byteOffset are NOT set on typed_array_proto.
+    // TypedArray instances use ObjData::Idx to provide these values dynamically.
     // Register fill method
     typed_array_proto_rc.borrow_mut().set(
         "fill",
@@ -134,9 +127,9 @@ fn make_typed_array_constructor(
     proto.set("constructor", Value::Undefined);
     proto.set("Symbol.toStringTag", Value::String(name.to_string()));
     proto.set("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
-    proto.set("length", Value::Number(0.0));
-    proto.set("byteLength", Value::Number(0.0));
-    proto.set("byteOffset", Value::Number(0.0));
+    // length, byteLength, byteOffset omitted: per-type proto inherits from typed_array_proto
+    // which has no own properties here, so TypedArray instances return dynamic values
+    // from ObjData::Idx via the prototype chain.
     // Per-type prototype's [[Prototype]] = typed_array_proto
     proto.prototype = Some(typed_array_proto);
 
@@ -229,8 +222,20 @@ fn construct_typed_array(
                     // ArrayBuffer: use as shared backing store
                     // array-like: copy elements
                     if src.get("byteLength").is_some() {
-                        // This is an ArrayBuffer (has byteLength property)
+                        // This is an ArrayBuffer (has byteLength property).
+                        // Clone the buffer and ensure its elements vector covers the full
+                        // byte length so TypedArray element reads (via ObjData::Idx in get_own)
+                        // find valid entries.
+                        let buf_bl = src
+                            .get("byteLength")
+                            .map(|v| to_number(&v) as usize)
+                            .unwrap_or(0);
                         drop(src);
+                        let mut buf_clone = (*src_rc).borrow_mut();
+                        if buf_clone.elements.len() < buf_bl {
+                            buf_clone.elements.resize(buf_bl, Value::Number(0.0));
+                        }
+                        drop(buf_clone);
                         buffer = Rc::clone(src_rc);
                         // After the match, handle byteOffset and length args
                     } else {
@@ -242,7 +247,15 @@ fn construct_typed_array(
                         new_buf
                             .borrow_mut()
                             .set("byteLength", Value::Number(byte_length as f64));
-                        new_buf.borrow_mut().elements = cloned;
+                        // Expand elements into byte layout: each TypedArray element takes
+                        // bytes_per_element slots in buffer.elements (matching byte layout).
+                        let mut expanded = Vec::with_capacity(byte_length as usize);
+                        for val in cloned {
+                            for _ in 0..bytes_per_element {
+                                expanded.push(val.clone());
+                            }
+                        }
+                        new_buf.borrow_mut().elements = expanded;
                         buffer = new_buf;
                     }
                 } else if let Some(len) = src.get("length") {
@@ -318,10 +331,21 @@ fn construct_typed_array(
     };
 
     // Set standard TypedArray properties
-    object.set("length", Value::Number(length as f64));
-    object.set("byteLength", Value::Number(byte_length as f64));
     object.set("byteOffset", Value::Number(byte_offset as f64));
     object.set("buffer", Value::Object(Rc::clone(&buffer)));
+    // For resizable buffers: only set explicit length/byteLength as own properties when
+    // an explicit length was provided (args.len() > 2). Otherwise, the dynamic getter
+    // in get_own computes them from the buffer's current byteLength (length-tracking).
+    let max_bl = buffer
+        .borrow()
+        .get("maxByteLength")
+        .map(|v| to_number(&v) as u64)
+        .unwrap_or(0);
+    if max_bl > 0 && args.len() > 2 {
+        // Explicit length: own property overrides dynamic getter
+        object.set("length", Value::Number(length as f64));
+        object.set("byteLength", Value::Number(byte_length as f64));
+    }
 
     drop(object);
     Ok(Value::Object(object_rc))
@@ -548,6 +572,71 @@ mod tests {
     }
 
     #[test]
+    fn typed_array_from_arraybuffer_element_access() {
+        // TypedArray constructed from ArrayBuffer must have working element read/write.
+        // This is the root cause of 5 resizable-buffer test262 failures.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Float32Array from ArrayBuffer
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40); \
+                 var ta = new Float32Array(buf); \
+                 ta[0] = 42; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::Number(42.0),
+            "Float32Array element write/read via ArrayBuffer should work"
+        );
+
+        // Uint8Array from ArrayBuffer
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10); \
+                 var ta = new Uint8Array(buf); \
+                 ta[0] = 255; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::Number(255.0),
+            "Uint8Array element write/read via ArrayBuffer should work"
+        );
+
+        // Int32Array from ArrayBuffer
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40); \
+                 var ta = new Int32Array(buf); \
+                 ta[0] = -12345; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::Number(-12345.0),
+            "Int32Array element write/read via ArrayBuffer should work"
+        );
+
+        // Resizable ArrayBuffer
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf); \
+                 ta[0] = 99; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::Number(99.0),
+            "Float32Array from resizable ArrayBuffer should support element access"
+        );
+    }
+
+    #[test]
     fn test_typed_array_iterator() {
         let mut ctx = Context::new().unwrap();
         register_typed_arrays(&mut ctx);
@@ -581,5 +670,1316 @@ mod tests {
         assert_eq!(length, 3);
         let keys = crate::eval::iteration::get_enumerable_keys(&ta).unwrap();
         assert_eq!(keys, vec!["0", "1", "2"]);
+    }
+
+    #[test]
+    fn typed_array_resizable_explicit_length_property() {
+        // Resizable buffer with EXPLICIT length: own length property must
+        // return the explicit length, NOT the buffer byteLength.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Uint8Array: buffer=40 bytes, explicit length=3 should give length=3
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Uint8Array(buf, 0, 3); \
+                 ta.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0), "explicit length should be 3, not buffer size");
+
+        // Float32Array: buffer=40 bytes (10 Float32 elements), explicit length=3
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf, 0, 3); \
+                 ta.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0), "Float32Array explicit length should be 3");
+    }
+
+    #[test]
+    fn typed_array_resizable_iteration_with_explicit_length() {
+        // Iteration with for-of: TypedArray from resizable buffer with explicit length.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Uint8Array(buf, 0, 3); \
+                 ta[0] = 10; ta[1] = 20; ta[2] = 30; \
+                 var result = []; \
+                 for (var v of ta) result.push(v); \
+                 result.join(',');",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::String("10,20,30".to_string()),
+            "iteration should yield exactly 3 elements"
+        );
+    }
+
+    #[test]
+    fn typed_array_resizable_iteration_with_offset() {
+        // Iteration with for-of: TypedArray from resizable buffer with byte offset.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta_write = new Uint8Array(buf); \
+                 for (var i = 0; i < 10; i++) ta_write[i] = i; \
+                 var ta = new Uint8Array(buf, 2, 3); \
+                 ta.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(3.0), "offset TypedArray length should be 3");
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta_write = new Uint8Array(buf); \
+                 for (var i = 0; i < 10; i++) ta_write[i] = i; \
+                 var ta = new Uint8Array(buf, 2, 3); \
+                 var result = []; \
+                 for (var v of ta) result.push(v); \
+                 result.join(',');",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::String("2,3,4".to_string()),
+            "offset TypedArray iteration should yield [2,3,4]"
+        );
+    }
+
+    #[test]
+    fn typed_array_resizable_iteration_length_tracking() {
+        // Iteration: TypedArray from resizable buffer WITHOUT explicit length
+        // (length tracks buffer byteLength dynamically).
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Step 1: check ArrayBuffer is set up correctly
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 buf.byteLength;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(10.0), "buffer.byteLength should be 10");
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 buf.maxByteLength;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(20.0), "buffer.maxByteLength should be 20");
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 buf.resizable;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true), "buffer.resizable should be true");
+
+        // Step 2: check TypedArray is set up correctly
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 var ta = new Uint8Array(buf); \
+                 ta.buffer.byteLength;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(10.0), "ta.buffer.byteLength should be 10");
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 var ta = new Uint8Array(buf); \
+                 ta.byteOffset;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(0.0), "ta.byteOffset should be 0");
+
+        // Step 3: check element access works
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 var ta = new Uint8Array(buf); \
+                 ta[0] = 5; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(5.0), "ta[0] should be 5 after assignment");
+
+        // Step 4: check length
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 var ta = new Uint8Array(buf); \
+                 ta[0] = 5; ta[1] = 6; ta[2] = 7; \
+                 ta.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(10.0), "length should track buffer byteLength=10");
+
+        // Step 5: check iteration
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+                 var ta = new Uint8Array(buf); \
+                 ta[0] = 5; ta[1] = 6; ta[2] = 7; \
+                 var result = []; \
+                 for (var v of ta) result.push(v); \
+                 result.join(',');",
+            )
+            .unwrap();
+        assert_eq!(
+            r, Value::String("5,6,7,0,0,0,0,0,0,0".to_string()),
+            "iteration should yield all 10 elements"
+        );
+    }
+
+    #[test]
+    fn typed_array_float32_resizable_length_tracking_iteration() {
+        // Float32Array from resizable buffer WITHOUT explicit length (length-tracking).
+        // This is the specific case that fails in test262.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Create Float32Array from resizable buffer: 40 bytes = 10 Float32 elements
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf); \
+                 ta.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(10.0), "Float32Array length should be 10");
+
+        // Write values and check they are readable
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf); \
+                 ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+                 ta[0];",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(1.0), "Float32Array[0] should be 1");
+
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf); \
+                 ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+                 ta[1];",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(2.0), "Float32Array[1] should be 2");
+
+        // Test iteration with resize during iteration
+        let r = ctx
+            .eval(
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta = new Float32Array(buf); \
+                 ta[0] = 0; ta[1] = 1; ta[2] = 2; ta[3] = 3; \
+                 ta[4] = 4; ta[5] = 5; ta[6] = 6; ta[7] = 7; \
+                 ta[8] = 8; ta[9] = 9; \
+                 var result = []; \
+                 for (var v of ta) { \
+                   result.push(v); \
+                   if (result.length === 10) buf.resize(80); \
+                 } \
+                 result.length;",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Number(20.0), "Should iterate 20 elements after resize");
+    }
+
+    #[test]
+    fn typed_array_float32_resizable_buffer_layout_regression() {
+        // REGRESSION: Float32Array from resizable ArrayBuffer.
+        // The buffer.elements must be laid out in byte layout (4 slots per Float32)
+        // so that element[i] reads buf.elements[i*4] correctly.
+        // Bug: NaN values appear when buffer.elements is only byte-sized.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Exact test262 flow: CreateRab(40) + Float32Array(buf) + write + iterate + resize
+        let r = ctx
+            .eval(
+                // Create resizable buffer with 40 bytes = 10 Float32 elements
+                "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+                 var ta_write = new Float32Array(buf); \
+                 for (let i = 0; i < 10; ++i) { ta_write[i] = i; } \
+                 var length_tracking_ta = new Float32Array(buf); \
+                 var values = []; \
+                 for (let v of length_tracking_ta) { \
+                   values.push(v); \
+                   if (values.length === 10) buf.resize(80); \
+                 } \
+                 values.slice(0, 10).join(',');",
+            )
+            .unwrap();
+        assert_eq!(
+            r,
+            Value::String("0,1,2,3,4,5,6,7,8,9".to_string()),
+            "Should iterate 0-9 before resize, got: {}",
+            r
+        );
+    }
+
+    /// Debug test: Check if Float32Array direct element access works through QuenchHost
+    #[test]
+    fn typed_array_float32_debug_direct_access_through_quench_host() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test Float32Array direct element access through QuenchHost
+        let script = harness
+            .build_script(
+                r#"
+                var buf = new ArrayBuffer(40, { maxByteLength: 80 });
+                var ta = new Float32Array(buf);
+                ta[0] = 42;
+                ta[1] = 99;
+                ta[0] + ',' + ta[1];
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        match &result {
+            Ok(_) => println!("Direct access result: {:?}", result),
+            Err(e) => println!("Direct access ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Float32Array direct access through QuenchHost failed: {:?}", result);
+    }
+
+    /// Debug test: Check if Float32Array iteration works through QuenchHost (without resize)
+    #[test]
+    fn typed_array_float32_debug_iteration_no_resize_quench_host() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test Float32Array iteration WITHOUT resize through QuenchHost
+        let script = harness
+            .build_script(
+                r#"
+                var buf = new ArrayBuffer(40);
+                var ta = new Float32Array(buf);
+                for (var i = 0; i < 10; ++i) { ta[i] = i; }
+                var values = [];
+                for (var v of ta) { values.push(v); }
+                values.join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        match &result {
+            Ok(_) => println!("Iteration (no resize) result: {:?}", result),
+            Err(e) => println!("Iteration (no resize) ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Float32Array iteration (no resize) through QuenchHost failed: {:?}", result);
+    }
+
+    /// Debug test: Check if Float32Array iteration works through QuenchHost (with resizable buffer, no resize call)
+    #[test]
+    fn typed_array_float32_debug_resizable_no_resize_quench_host() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test Float32Array iteration with resizable buffer but NO resize call
+        let script = harness
+            .build_script(
+                r#"
+                var buf = new ArrayBuffer(40, { maxByteLength: 80 });
+                var ta = new Float32Array(buf);
+                for (var i = 0; i < 10; ++i) { ta[i] = i; }
+                var values = [];
+                for (var v of ta) { values.push(v); }
+                values.join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        match &result {
+            Ok(_) => println!("Resizable (no resize) result: {:?}", result),
+            Err(e) => println!("Resizable (no resize) ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Float32Array resizable (no resize) through QuenchHost failed: {:?}", result);
+    }
+
+    /// Debug test: Run the EXACT JS code from the disk test file inline
+    #[test]
+    fn typed_array_float32_debug_exact_disk_test_code_inline() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Exact code from the disk test file
+        let script = harness
+            .build_script(
+                r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+for (let ctor of [Float32Array]) {
+  const no_elements = 10;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+
+  let rab = CreateRab(buffer_byte_length, ctor);
+  const length_tracking_ta = new ctor(rab);
+  {
+    let expected = [];
+    for (let i = 0; i < no_elements; ++i) {
+      expected.push(i % 128);
+    }
+    for (let i = 0; i < no_elements; ++i) {
+      expected.push(0);
+    }
+    TestIterationAndResize(length_tracking_ta, expected, rab, no_elements, buffer_byte_length * 2);
+  }
+}
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        match &result {
+            Ok(_) => println!("EXACT disk test code (Float32Array only) PASSED"),
+            Err(e) => println!("EXACT disk test code ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "EXACT disk test code inline failed: {:?}", result);
+    }
+
+    /// Debug test: EXACT same as disk test but with ctors instead of [Float32Array], inline
+    #[test]
+    fn typed_array_float32_debug_exact_disk_all_ctors_inline() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::context::Context;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        let script = harness
+            .build_script(
+                r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+var results = [];
+for (var ci = 0; ci < ctors.length; ci++) {
+  var ctor = ctors[ci];
+  var no_elements = 10;
+  var buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+
+  try {
+    var rab = CreateRab(buffer_byte_length, ctor);
+    var length_tracking_ta = new ctor(rab);
+    var expected = [];
+    for (var i = 0; i < no_elements; ++i) {
+      expected.push(i % 128);
+    }
+    for (var i = 0; i < no_elements; ++i) {
+      expected.push(0);
+    }
+    TestIterationAndResize(length_tracking_ta, expected, rab, no_elements, buffer_byte_length * 2);
+    results.push(ctor.name + ':PASS');
+  } catch(e) {
+    results.push(ctor.name + ':FAIL:' + e.message);
+  }
+}
+results.join(',');
+                "#,
+                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let ctx = &mut Context::new().unwrap();
+        crate::builtins::register_builtins(ctx);
+        crate::test262::harness::try_inject_harness(ctx).unwrap();
+        let result = ctx.eval(&script);
+        match &result {
+            Ok(Value::String(s)) => println!("ALL CTORS inline results: {}", s),
+            Ok(v) => println!("ALL CTORS inline result: {:?}", v),
+            Err(e) => println!("ALL CTORS inline ERROR: {:?}", e),
+        }
+        assert!(result.is_ok(), "ALL CTORS inline failed: {:?}", result);
+    }
+
+    /// Debug test: Check if Float32Array iteration works through QuenchHost with direct resize
+    #[test]
+    fn typed_array_float32_debug_resize_during_iteration_quench_host() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test Float32Array iteration WITH resize during iteration
+        let script = harness
+            .build_script(
+                r#"
+                var buf = new ArrayBuffer(40, { maxByteLength: 80 });
+                var ta = new Float32Array(buf);
+                for (var i = 0; i < 10; ++i) { ta[i] = i; }
+                var values = [];
+                for (var v of ta) {
+                    values.push(v);
+                    if (values.length === 10) buf.resize(80);
+                }
+                values.slice(0, 10).join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        match &result {
+            Ok(_) => println!("Resize during iteration result: {:?}", result),
+            Err(e) => println!("Resize during iteration ERROR: {}", e),
+        }
+        assert!(result.is_ok(), "Float32Array resize during iteration through QuenchHost failed: {:?}", result);
+    }
+
+    /// Regression: Float32Array iteration through the full test262 harness path
+    /// produces NaN values instead of the correct integers.
+    ///
+    /// Root cause hypothesis: The harness loads JS files from disk via `HarnessLoader`,
+    /// which modifies the runtime behavior. The SIMPLER unit test
+    /// (typed_array_float32_resizable_buffer_layout_regression) passes because it
+    /// bypasses the harness entirely. This test reproduces the exact failing path
+    /// by going through `run_single_test` → `HarnessLoader::build_script` →
+    /// `QuenchHost::run_script`.
+    ///
+    /// Expected failure: `[NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, 0, 0, ...]`
+    /// instead of `[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, ...]`.
+    #[test]
+    fn typed_array_float32_resizable_harness_path_reproduces_nan_bug() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, TestOutcome};
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let test_path = std::path::PathBuf::from(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-grow-before-end.js");
+
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &test_path);
+        // This should FAIL — NaN bug reproduces here
+        assert_eq!(
+            outcome,
+            TestOutcome::Pass,
+            "Float32Array resizable buffer test should pass (bug is fixed): {:?}",
+            outcome
+        );
+    }
+
+    /// Isolates the NaN bug to either the builtin Float32Array or MyFloat32Array (subclass).
+    #[test]
+    fn typed_array_float32_subclass_minimal() {
+        // Test the subclass path WITHOUT the harness. This uses the EXACT same
+        // test262 logic but bypasses HarnessLoader to get cleaner failure signal.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Create a subclass the same way resizableArrayBufferUtils.js does:
+        // new Function('return class MyFloat32Array extends Float32Array {}')()
+        let r = ctx.eval(
+            "var MyFloat32Array = new Function('return class MyFloat32Array extends Float32Array {}')(); \
+             var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+             var ta = new MyFloat32Array(buf); \
+             ta[0] = 42.5; \
+             ta[1] = 99.25; \
+             ta[0] + ',' + ta[1];",
+        );
+        // Expected: "42.5,99.25"
+        // If this is NaN, the subclass constructor doesn't set ObjData::Idx correctly
+        assert_eq!(
+            r.unwrap(),
+            Value::String("42.5,99.25".to_string()),
+            "Subclass Float32Array read/write should work"
+        );
+    }
+
+    /// Test the full harness flow but only with Float32Array (no subclass).
+    #[test]
+    fn typed_array_float32_harness_builtin_only() {
+        // This tests whether the harness itself causes issues for the builtin Float32Array.
+        // If this FAILS, the harness is the problem. If it PASSES, MyFloat32Array is the problem.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        // Simulate what the harness does but only for Float32Array (no subclass)
+        let r = ctx.eval(
+            "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+             var ta_write = new Float32Array(buf); \
+             for (let i = 0; i < 10; ++i) { ta_write[i] = i; } \
+             var length_tracking_ta = new Float32Array(buf); \
+             var values = []; \
+             for (let v of length_tracking_ta) { \
+               values.push(v); \
+               if (values.length === 10) buf.resize(80); \
+             } \
+             values.slice(0, 10).join(',');",
+        );
+        assert_eq!(
+            r.unwrap(),
+            Value::String("0,1,2,3,4,5,6,7,8,9".to_string()),
+            "Builtin Float32Array harness path should work"
+        );
+    }
+
+    /// Test the full harness flow with Float32Array AND MyFloat32Array (subclass).
+    #[test]
+    fn typed_array_float32_harness_subclass_minimal() {
+        // This tests the FULL harness path with subclasses. If this fails but
+        // typed_array_float32_harness_builtin_only passes, the subclass is the bug.
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+
+        let r = ctx.eval(
+            "var MyFloat32Array = new Function('return class MyFloat32Array extends Float32Array {}')(); \
+             var MyUint8Array = new Function('return class MyUint8Array extends Uint8Array {}')(); \
+             var ctors = [Float32Array, MyFloat32Array, MyUint8Array]; \
+             var allPassed = true; \
+             var failures = []; \
+             for (var ctor of ctors) { \
+               var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+               var ta_write = new ctor(buf); \
+               for (var i = 0; i < 10; ++i) { ta_write[i] = i; } \
+               var length_tracking_ta = new ctor(buf); \
+               var values = []; \
+               for (var v of length_tracking_ta) { \
+                 values.push(v); \
+                 if (values.length === 10) buf.resize(80); \
+               } \
+               var got = values.slice(0, 10).join(','); \
+               var expected = '0,1,2,3,4,5,6,7,8,9'; \
+               if (got !== expected) { \
+                 allPassed = false; \
+                 failures.push(ctor.name + ': got ' + got + ' expected ' + expected); \
+               } \
+             } \
+             allPassed ? 'PASS' : 'FAIL:' + failures.join(';');",
+        );
+        assert_eq!(
+            r.as_ref().unwrap(),
+            &Value::String("PASS".to_string()),
+            "Harness path with subclasses: {}",
+            r.as_ref().unwrap()
+        );
+    }
+
+    /// Compare harness-loader path vs direct eval path.
+    /// If this PASSES for Float32Array but FAILS for MyFloat32Array:
+    /// the issue is with the subclass path.
+    #[test]
+    fn typed_array_float32_harness_loader_vs_direct() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test with MyFloat32Array (subclass) through the harness loader
+        // This should replicate the full harness-loader path behavior
+        let script = harness
+            .build_script(
+                r#"
+                // Use MyFloat32Array (created by resizableArrayBufferUtils.js)
+                var buf = new ArrayBuffer(40, { maxByteLength: 80 });
+                var ta_write = new MyFloat32Array(buf);
+                for (var i = 0; i < 10; ++i) { ta_write[i] = i; }
+                var length_tracking_ta = new MyFloat32Array(buf);
+                var values = [];
+                for (var v of length_tracking_ta) {
+                    values.push(v);
+                    if (values.length === 10) buf.resize(80);
+                }
+                values.slice(0, 10).join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let r = ctx.eval(&script);
+        // Expected: "0,1,2,3,4,5,6,7,8,9"
+        assert!(
+            r.is_ok(),
+            "Harness-loader path with MyFloat32Array: got error: {:?}",
+            r
+        );
+        // Also check the actual values
+        let val = r.as_ref().unwrap();
+        assert_eq!(
+            val,
+            &Value::String("0,1,2,3,4,5,6,7,8,9".to_string()),
+            "Harness-loader path should return correct values, got: {:?}",
+            val
+        );
+    }
+
+    /// Test the FULL QuenchHost path (like run_single_test) to see if NaN appears.
+    #[test]
+    fn typed_array_float32_quench_host_vs_direct_eval() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Build the script through the harness
+        let script = harness
+            .build_script(
+                r#"
+                var buf = new ArrayBuffer(40, { maxByteLength: 80 });
+                var ta_write = new MyFloat32Array(buf);
+                for (var i = 0; i < 10; ++i) { ta_write[i] = i; }
+                var length_tracking_ta = new MyFloat32Array(buf);
+                var values = [];
+                for (var v of length_tracking_ta) {
+                    values.push(v);
+                    if (values.length === 10) buf.resize(80);
+                }
+                values.slice(0, 10).join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        // Path 1: Direct eval (known to work)
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let direct_result = ctx.eval(&script);
+        assert!(
+            direct_result.is_ok(),
+            "Direct eval failed: {:?}",
+            direct_result
+        );
+        let direct_val = direct_result.as_ref().unwrap();
+        assert_eq!(
+            direct_val,
+            &Value::String("0,1,2,3,4,5,6,7,8,9".to_string()),
+            "Direct eval wrong values: {:?}",
+            direct_val
+        );
+
+        // Path 2: QuenchHost (like execute_script uses)
+        let mut host = QuenchHost::new();
+        let host_result = host.run_script(&script);
+        assert!(
+            host_result.is_ok(),
+            "QuenchHost failed: {:?}",
+            host_result
+        );
+    }
+
+    /// Test through run_single_test like the actual test262 runner does.
+    /// This uses the actual test file from disk with full frontmatter parsing.
+    #[test]
+    fn typed_array_float32_run_single_test_path() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use crate::test262::runner::run_single_test;
+        use std::fs;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let test_path = std::path::PathBuf::from(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-grow-before-end.js");
+
+        // Read the test file
+        let source = fs::read_to_string(&test_path).unwrap();
+        let meta = crate::test262::metadata::Test262Metadata::parse(&source).unwrap();
+
+        // Build script exactly like run_single_test does
+        let script = harness.build_script(&source, &meta.includes).unwrap();
+
+        // Run via QuenchHost (like execute_script)
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(
+            result.is_ok(),
+            "QuenchHost run of actual test file failed: {:?}",
+            result
+        );
+    }
+
+    /// Replicate the exact failing test scenario using harness files.
+    #[test]
+    fn typed_array_exact_failing_test() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Build script exactly like the test does: harness includes + test source
+        let test_source = r#"
+for (var ci = 0; ci < ctors.length; ci++) {
+    var ctor = ctors[ci];
+    var no_elements = 10;
+    var buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+    var byte_offset = 0;
+
+    var rab = new ArrayBuffer(buffer_byte_length, { maxByteLength: 2 * buffer_byte_length });
+    var ta_write = new ctor(rab);
+    for (var i = 0; i < no_elements; ++i) {
+        ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+    }
+
+    var length_tracking_ta = new ctor(rab);
+    var expected = [];
+    for (var i = 0; i < no_elements; ++i) {
+        expected.push(i % 128);
+    }
+    for (var i = 0; i < no_elements; ++i) {
+        expected.push(0);
+    }
+    var values = [];
+    for (var value of length_tracking_ta) {
+        values.push(Number(value));
+        if (values.length === no_elements) {
+            rab.resize(buffer_byte_length * 2);
+        }
+    }
+    if (values.join(',') !== expected.join(',')) {
+        throw new Error('FAIL: ' + ctor.name + ' - got [' + values.join(',') + '] expected [' + expected.join(',') + ']');
+    }
+}
+'PASS';
+"#;
+        let script = harness.build_script(
+            test_source,
+            &["resizableArrayBufferUtils.js".to_string()],
+        ).unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        if let Err(e) = &result {
+            eprintln!("=== FAILURE ===\n{}", e);
+        }
+        assert!(result.is_ok(), "Exact failing test failed: {:?}", result);
+    }
+
+    /// Debug test: print individual Float32Array values through the actual test file path.
+    /// This helps identify whether the issue is with writing or reading.
+    #[test]
+    fn typed_array_float32_debug_individual_values() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+        use std::fs;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let test_path = std::path::PathBuf::from(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-grow-before-end.js");
+
+        let source = fs::read_to_string(&test_path).unwrap();
+        let meta = crate::test262::metadata::Test262Metadata::parse(&source).unwrap();
+        let script = harness.build_script(&source, &meta.includes).unwrap();
+
+        // Now run and print the error
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        if let Err(e) = &result {
+            eprintln!("=== ERROR ===\n{}", e);
+        }
+        assert!(result.is_ok(), "Debug test failed: {:?}", result);
+    }
+
+    /// Debug test: test only Float32Array (index 6 in ctors) through the actual test file.
+    #[test]
+    fn typed_array_float32_only_float32array_through_quenchhost() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test ONLY Float32Array through QuenchHost (like the real test does)
+        let script = harness
+            .build_script(
+                r#"
+                // Float32Array is at index 6 in ctors
+                var ctor = ctors[6]; // Float32Array
+                var no_elements = 10;
+                var buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+                var byte_offset = 0;
+
+                var rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+                var ta_write = new ctor(rab);
+                for (var i = 0; i < no_elements; ++i) {
+                    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+                }
+
+                var length_tracking_ta = new ctor(rab);
+                var expected = [];
+                for (var i = 0; i < no_elements; ++i) {
+                    expected.push(i % 128);
+                }
+                for (var i = 0; i < no_elements; ++i) {
+                    expected.push(0);
+                }
+                TestIterationAndResize(length_tracking_ta, expected, rab, no_elements, buffer_byte_length * 2);
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "Float32Array only through QuenchHost failed: {:?}", result);
+    }
+
+    /// Debug test: test ALL ctors individually to find which one fails.
+    #[test]
+    fn typed_array_float32_all_ctors_individually() {
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+
+        // Test each ctor individually
+        let script = harness
+            .build_script(
+                r#"
+                var results = [];
+                for (var ci = 0; ci < ctors.length; ci++) {
+                    try {
+                        var ctor = ctors[ci];
+                        var no_elements = 10;
+                        var buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+                        var byte_offset = 0;
+
+                        var rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+                        var ta_write = new ctor(rab);
+                        for (var i = 0; i < no_elements; ++i) {
+                            ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+                        }
+
+                        var length_tracking_ta = new ctor(rab);
+                        var expected = [];
+                        for (var i = 0; i < no_elements; ++i) {
+                            expected.push(i % 128);
+                        }
+                        for (var i = 0; i < no_elements; ++i) {
+                            expected.push(0);
+                        }
+                        TestIterationAndResize(length_tracking_ta, expected, rab, no_elements, buffer_byte_length * 2);
+                        results.push(ctor.name + ':PASS');
+                    } catch(e) {
+                        results.push(ctor.name + ':FAIL:' + e.message);
+                    }
+                }
+                results.join(',');
+                "#,
+                &["resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        if let Err(e) = &result {
+            eprintln!("=== ALL CTORS ERROR ===\n{}", e);
+        }
+        // Print results if the test fails
+        assert!(result.is_ok(), "All ctors test failed: {:?}", result);
+    }
+
+    #[test]
+    fn typed_array_shrink_mid_iteration_throws_typeerror() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             var values = []; \
+             var threw = false; \
+             try { \
+               for (var v of ta) { \
+                 values.push(v); \
+                 if (values.length === 2) buf.resize(1); \
+               } \
+             } catch (e) { \
+               threw = e instanceof TypeError; \
+             } \
+             threw",
+        );
+        assert_eq!(result.unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn typed_array_oob_iterator_next_throws_typeerror() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             buf.resize(1); \
+             ta.length + ',' + buf.byteLength + ',' + (ta.length > buf.byteLength);",
+        );
+        assert_eq!(result.unwrap(), Value::String("3,1,true".to_string()));
+    }
+
+    #[test]
+    fn typed_array_oob_iterator_next_step_by_step() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             var iter = ta[Symbol.iterator](); \
+             var r0 = iter.next(); \
+             var r1 = iter.next(); \
+             buf.resize(1); \
+             var threw = false; \
+             var r2desc = 'no_err'; \
+             try { var r2 = iter.next(); r2desc = 'v:' + r2.value + ',d:' + r2.done; } \
+             catch (e) { threw = e instanceof TypeError; r2desc = 'err:' + e.constructor.name; } \
+             threw + ',' + r0.value + ',' + r1.value + ',' + r0.done + ',' + r1.done + ',' + r2desc;",
+        );
+        assert!(result.is_ok(), "eval failed: {:?}", result);
+        assert_eq!(result.unwrap(), Value::String("true,1,2,false,false,err:TypeError".to_string()));
+    }
+
+    #[test]
+    fn typed_array_oob_direct_access_throws_typeerror() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             buf.resize(1); \
+             var threw = false; \
+             try { ta[0]; } catch (e) { threw = e instanceof TypeError; } \
+             threw",
+        );
+        assert_eq!(result.unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn typed_array_shrink_quench_host_repro() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let script = harness
+            .build_script(
+                r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+var failures = [];
+for (let ctor of ctors) {
+  if (!ctor) { failures.push('SKIP:undefined'); continue; }
+  const no_elements = 10;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+
+  let rab = CreateRab(buffer_byte_length, ctor);
+  const ta = new ctor(rab, 0, 3);
+  try {
+    assert.throws(TypeError, () => {
+      TestIterationAndResize(ta, null, rab, 2, 1);
+    });
+  } catch(e) {
+    failures.push(ctor.name + ':' + e.message);
+  }
+}
+failures.length === 0 ? 'ALL_PASS' : failures.join('|');
+                "#,
+                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "QuenchHost repro failed: {:?}", result);
+    }
+
+    #[test]
+    fn typed_array_shrink_run_single_test() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, TestOutcome};
+        use crate::test262::runner::{default_test262_dir, run_single_test};
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let test_path = std::path::PathBuf::from(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-shrink-mid-iteration.js");
+
+        let mut host = QuenchHost::new();
+        let outcome = run_single_test(&mut host, &harness, &test_path);
+        assert_eq!(outcome, TestOutcome::Pass, "run_single_test failed: {:?}", outcome);
+    }
+
+    #[test]
+    fn typed_array_shrink_exact_test_source() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let filepath = std::path::PathBuf::from(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-shrink-mid-iteration.js");
+        let source = std::fs::read_to_string(&filepath).unwrap();
+        let includes = ["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()];
+        let script = harness.build_script(&source, &includes).unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "Exact test source failed: {:?}", result);
+    }
+
+    #[test]
+    fn typed_array_shrink_exact_source_uint8_only() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let script = harness.build_script(
+            r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+for (let ctor of [Uint8Array]) {
+  const no_elements = 10;
+  const offset = 2;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+  const byte_offset = offset * ctor.BYTES_PER_ELEMENT;
+
+  // Subtest 1: in-bounds shrink
+  let rab = CreateRab(buffer_byte_length, ctor);
+  const ta1 = new ctor(rab, 0, 3);
+  TestIterationAndResize(ta1, [0, 1, 2], rab, 2, buffer_byte_length / 2);
+
+  // Subtest 2: out-of-bounds shrink (should throw TypeError)
+  rab = CreateRab(buffer_byte_length, ctor);
+  const ta2 = new ctor(rab, 0, 3);
+  assert.throws(TypeError, () => {
+    TestIterationAndResize(ta2, null, rab, 2, 1);
+  });
+}
+true;
+            "#,
+            &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+        ).unwrap();
+
+        let mut host = QuenchHost::new();
+        let result = host.run_script(&script);
+        assert!(result.is_ok(), "Uint8 only test failed: {:?}", result);
+    }
+
+    #[test]
+    fn typed_array_shrink_list_ctors() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var MyUint8Array = new Function('return class MyUint8Array extends Uint8Array {}')(); \
+             var MyFloat32Array = new Function('return class MyFloat32Array extends Float32Array {}')(); \
+             var builtinCtors = [Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array, Float64Array, Uint8ClampedArray]; \
+             var ctors = builtinCtors.concat(MyUint8Array, MyFloat32Array); \
+             ctors.map(function(c) { return c ? c.name : 'UNDEFINED'; }).join(',');",
+        );
+        // Just verify no error
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn typed_array_shrink_int8() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Int8Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             var values = []; \
+             for (var v of ta) { values.push(v); if (values.length === 2) buf.resize(1); } \
+             'iterated:' + values.join(',');",
+        );
+        assert!(result.is_err(), "Int8Array shrink should throw TypeError");
+    }
+
+    #[test]
+    fn typed_array_shrink_float32() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(40, { maxByteLength: 80 }); \
+             var ta = new Float32Array(buf, 0, 3); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             var values = []; \
+             for (var v of ta) { values.push(v); if (values.length === 2) buf.resize(1); } \
+             'iterated:' + values.join(',');",
+        );
+        assert!(result.is_err(), "Float32Array shrink should throw TypeError");
+    }
+
+    #[test]
+    fn typed_array_shrink_spawned_thread() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
+        use crate::test262::runner::default_test262_dir;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let script = harness
+            .build_script(
+                r#"
+function CreateRab(buffer_byte_length, ctor) {
+  const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
+  let ta_write = new ctor(rab);
+  for (let i = 0; i < buffer_byte_length / ctor.BYTES_PER_ELEMENT; ++i) {
+    ta_write[i] = MayNeedBigInt(ta_write, i % 128);
+  }
+  return rab;
+}
+
+var failures = [];
+for (let ctor of ctors) {
+  if (!ctor) { failures.push('SKIP:undefined'); continue; }
+  const no_elements = 10;
+  const buffer_byte_length = no_elements * ctor.BYTES_PER_ELEMENT;
+
+  let rab = CreateRab(buffer_byte_length, ctor);
+  const ta = new ctor(rab, 0, 3);
+  try {
+    assert.throws(TypeError, () => {
+      TestIterationAndResize(ta, null, rab, 2, 1);
+    });
+  } catch(e) {
+    failures.push(ctor.name + ':' + e.message);
+  }
+}
+failures.length === 0 ? 'ALL_PASS' : failures.join('|');
+                "#,
+                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+            )
+            .unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let mut host = QuenchHost::new();
+            host.run_script(&script)
+        });
+        let result = handle.join().unwrap();
+        assert!(result.is_ok(), "Spawned thread failed: {:?}", result);
+    }
+
+    #[test]
+    fn typed_array_shrink_does_not_throw_for_length_tracking() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf); \
+             ta[0] = 1; ta[1] = 2; ta[2] = 3; \
+             var values = []; \
+             for (var v of ta) { \
+               values.push(v); \
+               if (values.length === 5) buf.resize(5); \
+             } \
+             values.join(',');",
+        );
+        assert_eq!(result.unwrap(), Value::String("1,2,3,0,0".to_string()));
     }
 }

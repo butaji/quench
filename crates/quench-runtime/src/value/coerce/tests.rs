@@ -300,12 +300,14 @@ fn test_to_js_string_null() {
 // ── to_number ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_to_number_bigint_returns_nan() {
-    // Per ES spec, ToNumber(BigInt) is not a simple coercion — BigInt-to-Number
-    // throws via BigInt::toNumber or Number() with BigInt arg. Our runtime handles
-    // this via BigInt::to_number JS builtin; raw to_number returns NaN.
+fn test_to_number_bigint() {
+    // to_number handles BigInt → f64 conversion (ES ToNumber spec §7.1.4)
     let bi = num_bigint::BigInt::from(42);
-    assert!(to_number(&Value::BigInt(Rc::new(bi))).is_nan());
+    assert_eq!(to_number(&Value::BigInt(Rc::new(bi))), 42.0);
+    let bi_neg = num_bigint::BigInt::from(-123);
+    assert_eq!(to_number(&Value::BigInt(Rc::new(bi_neg))), -123.0);
+    let bi_zero = num_bigint::BigInt::from(0);
+    assert_eq!(to_number(&Value::BigInt(Rc::new(bi_zero))), 0.0);
 }
 
 #[test]
