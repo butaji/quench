@@ -254,7 +254,17 @@ pub(crate) fn touch_assignment_target(
             // trigger HasBinding on each environment scope (including Proxy
             // has traps for `with` scopes). The result is discarded; the real
             // assignment happens in assign_to_identifier/init_to_identifier.
-            let _ = eval_expression(&Expression::Identifier(name.clone()), env, false)?;
+            // In sloppy mode, unresolvable references are valid assignment targets
+            // (the PutValue creates a property on the global object).
+            let result = eval_expression(&Expression::Identifier(name.clone()), env, false);
+            if result.is_err() && !crate::interpreter::is_strict_mode() {
+                // In sloppy mode, unresolvable references are valid assignment targets
+                // (the PutValue creates a property on the global object).
+                // Clear any thrown value that was set by create_js_error_with_type.
+                let _ = crate::value::take_thrown_value();
+                return Ok(());
+            }
+            result?;
             Ok(())
         }
         Expression::Member { object, .. } => {
