@@ -140,7 +140,11 @@ fn array_destructuring_impl(
             // that check_generator_flow (called inside array_with_iterator_impl) cannot
             // re-trigger on the same yield. The DESTRUCTURING_YIELD_KEY was already
             // saved at the top of this function.
-            if matches!(cf, crate::interpreter::ControlFlow::Yield(_) | crate::interpreter::ControlFlow::YieldDelegate(_)) {
+            if matches!(
+                cf,
+                crate::interpreter::ControlFlow::Yield(_)
+                    | crate::interpreter::ControlFlow::YieldDelegate(_)
+            ) {
                 let _ = crate::interpreter::take_generator_yield();
             } else {
                 crate::interpreter::set_control_flow(cf);
@@ -154,7 +158,8 @@ fn array_destructuring_impl(
         let len = chars.len();
         let mut arr = Object::new(ObjectKind::Array);
         arr.elements = chars;
-        arr.properties.insert("length".to_string(), Value::Number(len as f64));
+        arr.properties
+            .insert("length".to_string(), Value::Number(len as f64));
         Rc::new(RefCell::new(arr))
     } else if let Value::Object(arr_rc) = value {
         if arr_rc.borrow().kind == ObjectKind::Array {
@@ -247,6 +252,14 @@ fn check_generator_flow(
     iterator: &Rc<RefCell<Object>>,
     iterator_done: &mut bool,
 ) -> Option<Result<(), JsError>> {
+    // Check for generator yield flag first (set by yield inside computed property
+    // key evaluation in touch_assignment_target). This is NOT the same as
+    // ControlFlow::Yield, which is set by the outer eval loop.
+    if crate::interpreter::peek_generator_yield() {
+        let yielded = crate::interpreter::take_generator_yield().unwrap_or(Value::Undefined);
+        crate::interpreter::set_generator_yield(yielded);
+        return Some(Ok(()));
+    }
     let cf = crate::interpreter::take_control_flow()?;
     match cf {
         crate::interpreter::ControlFlow::Return(val) => {
@@ -312,6 +325,24 @@ fn array_with_iterator_impl(
             if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
                 // touch_assignment_target pre-check may throw before any step
                 crate::eval::object::touch_assignment_target(target, env)?;
+                // Evaluate computed property key BEFORE collecting remaining
+                // elements (per ES DestructuringAssignmentEvaluation step 1:
+                // the full reference is evaluated before the rest is collected).
+                // This triggers any generator yield in the computed key
+                // expression (e.g. `...{}[yield]`) BEFORE the iterator is drained.
+                if let Expression::Member {
+                    property,
+                    computed: true,
+                    ..
+                } = target
+                {
+                    let _ = crate::eval::object::extract_property_name(
+                        property,
+                        true,
+                        env,
+                        false,
+                    )?;
+                }
                 if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
                     return result;
                 }
@@ -344,7 +375,11 @@ fn array_with_iterator_impl(
         iterator_done = done;
         if let Err(error) = apply(binding, &elem_value) {
             let original = crate::value::take_thrown_value();
-            if !iterator_done {
+            // Always close the iterator on destructuring error, regardless of done state.
+            // Per ES spec, IteratorClose should be called if the iterator wasn't
+            // consumed normally. The done state from take_iterator_step reflects
+            // whether next() returned { done: true }, but we should still clean up.
+            if !crate::interpreter::peek_generator_yield() {
                 let _close_err = call_iterator_return(iterator);
             }
             if let Some(thrown) = original {

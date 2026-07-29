@@ -14,9 +14,9 @@ use crate::eval::statement::eval_statement;
 use crate::interpreter::{
     loop_handles_break, loop_handles_continue, set_control_flow, take_control_flow, ControlFlow,
 };
+use crate::value::generator::{ForOfResume, ForOfSuspend};
 use crate::value::object::enumerate_for_in_keys;
 use crate::value::object::helpers::ObjData;
-use crate::value::generator::{ForOfResume, ForOfSuspend};
 use crate::value::{JsError, Object, Value};
 
 /// Get an iterator for for-of/for-in loops (materialized; spread/destructuring).
@@ -274,7 +274,10 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                 // For an init yield (suspend_init=true): pending keeps init=true so init re-runs.
                 if run.pending.is_none() && !matches!(item, Value::Undefined) {
                     let resume = if suspend_init {
-                        ForOfResume { init: true, ..Default::default() }
+                        ForOfResume {
+                            init: true,
+                            ..Default::default()
+                        }
                     } else {
                         ForOfResume {
                             body_only: true,
@@ -1380,7 +1383,11 @@ mod tests {
         );
         match result {
             Ok(Value::String(s)) => {
-                assert_eq!(s.as_str(), "[1,0]", "expected IteratorClose before body, got {s}");
+                assert_eq!(
+                    s.as_str(),
+                    "[1,0]",
+                    "expected IteratorClose before body, got {s}"
+                );
             }
             Ok(v) => panic!("expected string [1,0], got {v:?}"),
             Err(e) => panic!("expected [1,0], got error: {e}"),
@@ -1402,5 +1409,113 @@ mod tests {
              finallyCount",
         );
         assert_eq!(result.unwrap(), Value::Number(1.0));
+    }
+
+    /// Reproduces test262: for-of/dstr/array-elem-nested-array-yield-expr.js
+    /// When `yield` appears in a computed property key within a destructuring
+    /// pattern inside a for-of loop, the generator must suspend and resume
+    /// correctly — the destructuring must complete with the resumed value
+    /// as the property key, and the loop body must execute.
+    #[test]
+    fn for_of_destructure_yield_in_computed_key() {
+        let mut ctx = new_ctx();
+        // This reproduces the test262 case: `for ([[x[yield]]] of [value])`
+        // with a generator, testing that the body runs after the yield in the
+        // computed property key is resolved via iter.next('prop').
+        let result = ctx.eval(
+            "var value = [[22]]; \
+             var x = {}; \
+             var iter = (function*() { \
+               var counter = 0; \
+               for ([[x[yield]]] of [value]) { \
+                 counter += 1; \
+               } \
+               return counter; \
+             }()); \
+             iter.next(); \
+             var r2 = iter.next('prop'); \
+             JSON.stringify([r2.done, r2.value, x.prop])",
+        );
+        match result {
+            Ok(Value::String(s)) => {
+                assert_eq!(s.as_str(), "[true,1,22]", "expected [true,1,22], got {s}");
+            }
+            Ok(v) => panic!("expected string result, got {v:?}"),
+            Err(e) => panic!("expected success, got error: {e}"),
+        }
+    }
+
+    /// Simpler: yield directly in for-of destructuring target (no nesting).
+    #[test]
+    fn for_of_destructure_yield_in_computed_key_simple() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "var x = {}; \
+             var iter = (function*() { \
+               var count = 0; \
+               for ([x[yield]] of [[42]]) { \
+                 count += 1; \
+               } \
+               return count; \
+             }()); \
+             iter.next(); \
+             var r2 = iter.next('key'); \
+             JSON.stringify([r2.done, r2.value, x.key])",
+        );
+        match result {
+            Ok(Value::String(s)) => {
+                assert_eq!(s.as_str(), "[true,1,42]", "expected [true,1,42], got {s}");
+            }
+            Ok(v) => panic!("expected string result, got {v:?}"),
+            Err(e) => panic!("expected success, got error: {e}"),
+        }
+    }
+
+    /// Reproduces test262:
+    /// test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close
+    /// Iteration is limited to 1 next() call — yield in rest computed key
+    /// suspends generator BEFORE remaining elements are collected.
+    #[test]
+    fn for_of_destructure_rest_yield_iterator_close() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "var nextCount = 0; \
+             var returnCount = 0; \
+             var iterator = { \
+               next: function() { \
+                 nextCount += 1; \
+                 return { done: nextCount > 10, value: nextCount }; \
+               }, \
+               return: function() { \
+                 returnCount += 1; \
+                 return {}; \
+               } \
+             }; \
+             var iterable = {}; \
+             iterable[Symbol.iterator] = function() { return iterator; }; \
+             var gen = (function*() { \
+               var counter = 0; \
+               for ([x, ...{}[yield]] of [iterable]) { \
+                 counter += 1; \
+               } \
+               return counter; \
+             }()); \
+             gen.next(); \
+             var r2 = gen.return(999); \
+             JSON.stringify([nextCount, returnCount, r2.done, r2.value])",
+        );
+        match result {
+            Ok(Value::String(s)) => {
+                // After gen.next(): 1 next call (for 'x'), generator suspended at yield.
+                // After gen.return(999): iterator.return() called, generator returns 999.
+                assert_eq!(
+                    s.as_str(),
+                    "[1,1,true,999]",
+                    "expected [1,1,true,999], got {s}"
+                );
+            }
+            Ok(v) => panic!("expected string result, got {v:?}"),
+            Err(e) => panic!("expected success, got error: {e}"),
+        }
     }
 }

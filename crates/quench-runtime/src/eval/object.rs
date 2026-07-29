@@ -257,17 +257,8 @@ pub(crate) fn touch_assignment_target(
             let _ = eval_expression(&Expression::Identifier(name.clone()), env, false)?;
             Ok(())
         }
-        Expression::Member {
-            object,
-            property,
-            computed,
-        } => {
+        Expression::Member { object, .. } => {
             touch_assignment_target(object, env)?;
-            if *computed {
-                if let PropertyKey::Computed(e) = property {
-                    let _ = eval_expression(e, env, false)?;
-                }
-            }
             Ok(())
         }
         Expression::ArrayPattern(bindings) => {
