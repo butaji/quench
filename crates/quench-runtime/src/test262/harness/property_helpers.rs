@@ -97,7 +97,9 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         Value::Function(f) => {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(&name) {
                 if key_str == "prototype" {
-                    f.get_property("prototype").is_some() || f.has_prototype()
+                    // Non-arrow functions always have .prototype as an own property
+                    // (created lazily on first access). Even generator functions.
+                    !f.is_arrow
                 } else {
                     f.get_property(&key_str).is_some()
                 }

@@ -247,13 +247,13 @@ impl ValueFunction {
 
     /// Build the prototype object for this function.
     /// Per ES spec §19.2.4.3, a function's `.prototype` is a plain object
-    /// with `constructor` pointing back to the function. Its [[Prototype]]
-    /// is `Object.prototype`, NOT `Function.prototype` — otherwise inherited
-    /// methods like `Function.prototype.toString` would shadow
-    /// `Object.prototype.toString` and break `fun.prototype.toString()`.
+    /// with `constructor` pointing back to the function (unless it's a
+    /// generator function, whose prototype has no own properties). Its
+    /// [[Prototype]] is `Object.prototype`, NOT `Function.prototype`.
     fn new_prototype_object(&self) -> Object {
         let mut proto = Object::new(ObjectKind::Ordinary);
-        if !self.empty_prototype {
+        // Generator functions' .prototype has no own properties per ES spec.
+        if !self.empty_prototype && !self.is_generator {
             proto.set("constructor", self.constructor_value());
         }
         if let Some(obj_proto) = crate::builtins::get_object_prototype() {
