@@ -27,6 +27,7 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
     early_errors::check_break_continue_errors(&ret.program)?;
+    early_errors::check_super_outside_class(&ret.program)?;
     // oxc_semantic-based early error detection
     {
         let semantic_ret = oxc_semantic::SemanticBuilder::new()
