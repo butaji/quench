@@ -325,19 +325,17 @@ fn array_with_iterator_impl(
             if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
                 // touch_assignment_target pre-check may throw before any step
                 crate::eval::object::touch_assignment_target(target, env)?;
-                // Evaluate computed property key BEFORE collecting remaining
-                // elements (per ES DestructuringAssignmentEvaluation step 1:
-                // the full reference is evaluated before the rest is collected).
-                // This triggers any generator yield in the computed key
-                // expression (e.g. `...{}[yield]`) BEFORE the iterator is drained.
+                // For direct Member targets with computed key (e.g. `...{}[yield/thrower()]`),
+                // evaluate the key BEFORE collecting remaining elements. Per ES
+                // DestructuringAssignmentEvaluation step 1, the full reference is
+                // evaluated before the rest is collected. This ensures throws or
+                // yields in the computed key fire before the iterator is drained.
                 if let Expression::Member {
                     property,
                     computed: true,
                     ..
                 } = target
                 {
-                    // Close the iterator if the computed key evaluation throws
-                    // (e.g. `...{}[thrower()]`), per ES IteratorDestructuringAssignmentEvaluation.
                     if let Err(e) = crate::eval::object::extract_property_name(
                         property,
                         true,
