@@ -299,22 +299,20 @@ impl Object {
             return false;
         };
         let buf = buffer.borrow();
-        let is_resizable = buf.get("maxByteLength")
-            .map(|v| crate::value::to_number(&v) as u64 > 0)
+        let is_resizable = buf.properties.get("maxByteLength")
+            .map(|v| crate::value::to_number(v) as u64 > 0)
             .unwrap_or(false);
         if !is_resizable {
             return false;
         }
-        let buf_bl = buf.get("byteLength")
-            .map(|v| crate::value::to_number(&v) as u64)
+        let buf_bl = buf.properties.get("byteLength")
+            .map(|v| crate::value::to_number(v) as u64)
             .unwrap_or(0);
         // Fixed-length TA: has explicit byteLength own property
         if let Some(bl) = self.properties.get("byteLength") {
             let explicit_bl = crate::value::to_number(bl) as u64;
-            // Out of bounds when explicit byteLength exceeds available buffer bytes
             explicit_bl > buf_bl.saturating_sub(offset as u64)
         } else {
-            // Length-tracking TA: out of bounds when offset >= buffer.byteLength
             (offset as u64) >= buf_bl
         }
     }
