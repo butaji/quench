@@ -94,7 +94,8 @@ impl Object {
                 if (idx as u64) < effective_length {
                     let coerced = coerce_typed_array_element(name, &value);
                     let mut buf = buffer.borrow_mut();
-                    let buf_idx = offset as usize + idx;
+                    let bpe = crate::value::object::helpers::bytes_per_element(name);
+                    let buf_idx = (offset as usize / bpe) + idx;
                     while buf.elements.len() <= buf_idx {
                         buf.elements.push(Value::Number(0.0));
                     }
@@ -220,7 +221,8 @@ impl Object {
                 };
                 if (idx as u64) < effective_length {
                     let buf = buffer.borrow();
-                    let buf_idx = offset as usize + idx;
+                    let bpe = crate::value::object::helpers::bytes_per_element(name);
+                    let buf_idx = (offset as usize / bpe) + idx;
                     if buf_idx < buf.elements.len() {
                         return Some(buf.elements[buf_idx].clone());
                     }
