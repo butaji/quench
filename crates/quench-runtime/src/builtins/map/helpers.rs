@@ -230,11 +230,9 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                         }
                     } else {
                         if borrowed.typed_array_is_out_of_bounds() {
-                            let (_, js_err) = crate::value::create_js_error_with_type(
-                                "TypedArray is out of bounds",
-                                "TypeError",
-                            );
-                            return Err(js_err);
+                            return Err(JsError::from(
+                                "TypeError: TypedArray is out of bounds",
+                            ));
                         }
                         borrowed.get(&key).unwrap_or_else(|| {
                             if current_idx < borrowed.elements.len() {
@@ -267,11 +265,9 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                         }
                     } else {
                         if borrowed.typed_array_is_out_of_bounds() {
-                            let (_, js_err) = crate::value::create_js_error_with_type(
-                                "TypedArray is out of bounds",
-                                "TypeError",
-                            );
-                            return Err(js_err);
+                            return Err(JsError::from(
+                                "TypeError: TypedArray is out of bounds",
+                            ));
                         }
                         borrowed.get(&key).unwrap_or_else(|| {
                             if current_idx < borrowed.elements.len() {
