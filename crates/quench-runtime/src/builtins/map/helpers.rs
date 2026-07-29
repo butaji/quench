@@ -229,7 +229,25 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                             Value::Undefined
                         }
                     } else {
-                        if borrowed.typed_array_is_out_of_bounds() {
+                        // Check out-of-bounds inline: use explicit byteLength from properties
+                        let is_oob = if let crate::value::object::helpers::ObjData::Idx { ref buffer, offset, .. } = borrowed.data {
+                            let explicit_bl = borrowed.properties.get("byteLength")
+                                .and_then(|v| Some(crate::value::to_number(v) as u64))
+                                .unwrap_or(0);
+                            if explicit_bl > 0 {
+                                let b = buffer.borrow();
+                                let is_rab = b.properties.get("maxByteLength")
+                                    .map(|v| crate::value::to_number(v) as u64 > 0)
+                                    .unwrap_or(false);
+                                if is_rab {
+                                    let buf_bl = b.properties.get("byteLength")
+                                        .map(|v| crate::value::to_number(v) as u64)
+                                        .unwrap_or(0);
+                                    explicit_bl > buf_bl.saturating_sub(offset as u64)
+                                } else { false }
+                            } else { false }
+                        } else { false };
+                        if is_oob {
                             let (_, js_err) = crate::value::create_js_error_with_type(
                                 "TypedArray is out of bounds",
                                 "TypeError",
@@ -266,7 +284,25 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
                             Value::Undefined
                         }
                     } else {
-                        if borrowed.typed_array_is_out_of_bounds() {
+                        // Check out-of-bounds inline: use explicit byteLength from properties
+                        let is_oob = if let crate::value::object::helpers::ObjData::Idx { ref buffer, offset, .. } = borrowed.data {
+                            let explicit_bl = borrowed.properties.get("byteLength")
+                                .and_then(|v| Some(crate::value::to_number(v) as u64))
+                                .unwrap_or(0);
+                            if explicit_bl > 0 {
+                                let b = buffer.borrow();
+                                let is_rab = b.properties.get("maxByteLength")
+                                    .map(|v| crate::value::to_number(v) as u64 > 0)
+                                    .unwrap_or(false);
+                                if is_rab {
+                                    let buf_bl = b.properties.get("byteLength")
+                                        .map(|v| crate::value::to_number(v) as u64)
+                                        .unwrap_or(0);
+                                    explicit_bl > buf_bl.saturating_sub(offset as u64)
+                                } else { false }
+                            } else { false }
+                        } else { false };
+                        if is_oob {
                             let (_, js_err) = crate::value::create_js_error_with_type(
                                 "TypedArray is out of bounds",
                                 "TypeError",
