@@ -657,6 +657,31 @@ fn object_destructuring_impl(
     env: &Rc<RefCell<Environment>>,
     init: bool,
 ) -> Result<(), JsError> {
+    // Handle pending Return/Throw from generator.return()/throw().
+    // If the generator was resumed with Return/Throw, re-set the control
+    // flow so it propagates correctly.
+    if let Some(cf) = crate::interpreter::take_control_flow() {
+        match cf {
+            crate::interpreter::ControlFlow::Return(val) => {
+                crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(val));
+                return Ok(());
+            }
+            crate::interpreter::ControlFlow::Throw(val) => {
+                crate::value::set_thrown_value(val);
+                return Err(JsError("Generator threw".to_string()));
+            }
+            crate::interpreter::ControlFlow::Yield(_)
+            | crate::interpreter::ControlFlow::YieldDelegate(_) => {
+                // Consume the stale control flow. DESTRUCTURING_YIELD_KEY
+                // was already saved from the resume value above.
+                let _ = crate::interpreter::take_generator_yield();
+            }
+            other => {
+                crate::interpreter::set_control_flow(other);
+            }
+        }
+    }
+
     let obj = match value {
         Value::Null | Value::Undefined => {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -714,6 +739,29 @@ fn object_destructuring_impl(
             } else {
                 excluded.insert(key_str.clone());
                 crate::eval::object::touch_assignment_target(target, env)?;
+                // If the computed key evaluation triggered a generator yield
+                // (e.g. `yield` in `x[yield]`), check if this is a real
+                // suspension (ControlFlow::Yield is set) or a stale flag from
+                // yield resolution on resume (only GENERATOR_YIELD_VALUE).
+                if crate::interpreter::peek_generator_yield() {
+                    let cf = crate::interpreter::take_control_flow();
+                    match cf {
+                        Some(crate::interpreter::ControlFlow::Yield(_))
+                        | Some(crate::interpreter::ControlFlow::YieldDelegate(_)) => {
+                            // Real suspension; restore control flow for
+                            // the outer handler to detect.
+                            crate::interpreter::set_control_flow(cf.unwrap());
+                            return Ok(());
+                        }
+                        other => {
+                            // Stale flag from yield resolution on resume.
+                            if let Some(cf_val) = other {
+                                crate::interpreter::set_control_flow(cf_val);
+                            }
+                            let _ = crate::interpreter::take_generator_yield();
+                        }
+                    }
+                }
                 let prop_value =
                     crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
                 if init {

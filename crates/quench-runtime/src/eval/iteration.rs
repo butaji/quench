@@ -60,7 +60,7 @@ fn get_object_iterator(o: &Rc<RefCell<Object>>) -> Result<Vec<Value>, JsError> {
 }
 
 fn get_string_iterator(s: &str) -> Result<Vec<Value>, JsError> {
-    Ok(s.chars().map(|c| Value::String(c.to_string())).collect())
+    Ok(crate::value::wtf8::wtf8_for_of_iterate(s))
 }
 
 /// Get enumerable property keys for for-in loop

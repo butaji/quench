@@ -16,6 +16,7 @@ pub mod generator_replay;
 pub mod kind;
 pub mod object;
 pub mod primitive;
+pub mod wtf8;
 mod val;
 
 pub use coerce::number_to_string;
