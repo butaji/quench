@@ -1078,10 +1078,7 @@ struct PrivateNameChecker {
 }
 
 impl<'a> Visit<'a> for PrivateNameChecker {
-    fn visit_private_field_expression(
-        &mut self,
-        _expr: &ast::PrivateFieldExpression<'a>,
-    ) {
+    fn visit_private_field_expression(&mut self, _expr: &ast::PrivateFieldExpression<'a>) {
         if self.error.is_some() {
             return;
         }

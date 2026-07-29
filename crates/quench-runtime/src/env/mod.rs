@@ -291,7 +291,9 @@ impl Environment {
                     }
                     Value::NativeFunction(ref nf) => {
                         if (prop == "caller" || prop == "arguments")
-                            && nf.get_property("name").is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")))
+                            && nf.get_property("name").is_some_and(
+                                |v| matches!(&v, Value::String(n) if n.starts_with("bound ")),
+                            )
                         {
                             return false;
                         }

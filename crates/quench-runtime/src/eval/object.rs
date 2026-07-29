@@ -416,7 +416,10 @@ pub fn assign_to_member(
         Value::NativeFunction(ref nf) => {
             // Bound functions throw TypeError on caller/arguments assignment.
             if prop_name == "caller" || prop_name == "arguments" {
-                if nf.get_property("name").is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound "))) {
+                if nf
+                    .get_property("name")
+                    .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")))
+                {
                     let (err, js_err) = crate::value::create_js_error_with_type(
                         "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
                         "TypeError",

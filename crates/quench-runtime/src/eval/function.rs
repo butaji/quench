@@ -58,10 +58,7 @@ pub(crate) fn call_value_impl(
                         // receive the actual error value.
                         let rejection = crate::value::take_thrown_value()
                             .unwrap_or(Value::String(err.to_string()));
-                        crate::builtins::promise::promise_reject_impl_static(
-                            vec![rejection],
-                            proto,
-                        )
+                        crate::builtins::promise::promise_reject_impl_static(vec![rejection], proto)
                     }
                 }
             } else if f.is_async && f.is_generator {
@@ -373,81 +370,81 @@ pub(crate) fn bind_params(
     let result = (|| {
         let mut found_rest = false;
         for (i, param) in params.iter().enumerate() {
-        if found_rest {
-            call_env_rc
-                .borrow_mut()
-                .define(param.name.clone(), Value::Undefined);
-            continue;
-        }
-
-        if param.rest {
-            let rest_value = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
-                args.get(i..).unwrap_or_default().to_vec(),
-            ))));
-            found_rest = true;
-            if let Some(pattern) = &param.pattern {
-                declare_pattern_bindings(pattern, call_env_rc);
-                let target = binding_pattern_expression(pattern.clone());
-                crate::eval::object::assign_to(&target, &rest_value, call_env_rc)?;
-            } else {
+            if found_rest {
                 call_env_rc
                     .borrow_mut()
-                    .define(param.name.clone(), rest_value);
-            }
-        } else {
-            let arg = args.get(i).cloned();
-            // Declare params with defaults in TDZ before evaluating default expressions.
-            if param.default.is_some() {
-                call_env_rc
-                    .borrow_mut()
-                    .declare_var(param.name.clone(), crate::ast::VarKind::Let);
+                    .define(param.name.clone(), Value::Undefined);
+                continue;
             }
 
-            let value = match arg {
-                Some(Value::Undefined) if param.default.is_some() => {
-                    eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
-                }
-                Some(v) => v,
-                None if param.default.is_some() => {
-                    eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
-                }
-                None => Value::Undefined,
-            };
-
-            if param.default.is_some() {
+            if param.rest {
+                let rest_value = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
+                    args.get(i..).unwrap_or_default().to_vec(),
+                ))));
+                found_rest = true;
                 if let Some(pattern) = &param.pattern {
+                    declare_pattern_bindings(pattern, call_env_rc);
+                    let target = binding_pattern_expression(pattern.clone());
+                    crate::eval::object::assign_to(&target, &rest_value, call_env_rc)?;
+                } else {
+                    call_env_rc
+                        .borrow_mut()
+                        .define(param.name.clone(), rest_value);
+                }
+            } else {
+                let arg = args.get(i).cloned();
+                // Declare params with defaults in TDZ before evaluating default expressions.
+                if param.default.is_some() {
+                    call_env_rc
+                        .borrow_mut()
+                        .declare_var(param.name.clone(), crate::ast::VarKind::Let);
+                }
+
+                let value = match arg {
+                    Some(Value::Undefined) if param.default.is_some() => {
+                        eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
+                    }
+                    Some(v) => v,
+                    None if param.default.is_some() => {
+                        eval_expression(param.default.as_ref().unwrap(), call_env_rc, f.is_arrow)?
+                    }
+                    None => Value::Undefined,
+                };
+
+                if param.default.is_some() {
+                    if let Some(pattern) = &param.pattern {
+                        declare_pattern_bindings(pattern, call_env_rc);
+                        let target = binding_pattern_expression(pattern.clone());
+                        crate::eval::object::assign_to(&target, &value, call_env_rc)?;
+                    } else {
+                        call_env_rc
+                            .borrow_mut()
+                            .initialize_declared(&param.name, value);
+                    }
+                } else if let Some(pattern) = &param.pattern {
                     declare_pattern_bindings(pattern, call_env_rc);
                     let target = binding_pattern_expression(pattern.clone());
                     crate::eval::object::assign_to(&target, &value, call_env_rc)?;
                 } else {
+                    // Declare simple parameters with VarKind::Let so that
+                    // `delete` on a parameter name returns false (parameters
+                    // are non-configurable in sloppy mode per ES spec).
+                    call_env_rc
+                        .borrow_mut()
+                        .declare_var(param.name.clone(), crate::ast::VarKind::Let);
                     call_env_rc
                         .borrow_mut()
                         .initialize_declared(&param.name, value);
                 }
-            } else if let Some(pattern) = &param.pattern {
-                declare_pattern_bindings(pattern, call_env_rc);
-                let target = binding_pattern_expression(pattern.clone());
-                crate::eval::object::assign_to(&target, &value, call_env_rc)?;
-            } else {
-                // Declare simple parameters with VarKind::Let so that
-                // `delete` on a parameter name returns false (parameters
-                // are non-configurable in sloppy mode per ES spec).
-                call_env_rc
-                    .borrow_mut()
-                    .declare_var(param.name.clone(), crate::ast::VarKind::Let);
-                call_env_rc
-                    .borrow_mut()
-                    .initialize_declared(&param.name, value);
             }
         }
+        Ok(())
+    })();
+    // Restore the previous eval env that was set before bind_params.
+    if params.iter().any(|p| p.default.is_some()) {
+        crate::interpreter::set_current_eval_env(prev_eval_env);
     }
-    Ok(())
-})();
-// Restore the previous eval env that was set before bind_params.
-if params.iter().any(|p| p.default.is_some()) {
-    crate::interpreter::set_current_eval_env(prev_eval_env);
-}
-result
+    result
 }
 
 fn binding_pattern_expression(pattern: BindingElement) -> Expression {
