@@ -336,12 +336,19 @@ fn array_with_iterator_impl(
                     ..
                 } = target
                 {
-                    let _ = crate::eval::object::extract_property_name(
+                    // Close the iterator if the computed key evaluation throws
+                    // (e.g. `...{}[thrower()]`), per ES IteratorDestructuringAssignmentEvaluation.
+                    if let Err(e) = crate::eval::object::extract_property_name(
                         property,
                         true,
                         env,
                         false,
-                    )?;
+                    ) {
+                        if !iterator_done {
+                            let _close_err = call_iterator_return(iterator);
+                        }
+                        return Err(e);
+                    }
                 }
                 if let Some(result) = check_generator_flow(iterator, &mut iterator_done) {
                     return result;
