@@ -251,13 +251,7 @@ fn check_generator_params_no_yield(params: &ast::FormalParameters) -> Result<(),
     Ok(())
 }
 
-/// Check if parameters contain simple names (not destructuring). Used for
-/// detecting strict-mode-with-non-simple-param early errors.
-pub(crate) fn has_simple_params(params: &ast::FormalParameters) -> bool {
-    params.items.iter().all(|p| {
-        matches!(p.pattern, ast::BindingPattern::BindingIdentifier(_))
-    }) && params.rest.is_none()
-}
+
 
 /// Check function parameter early errors:
 /// 1. Rest parameter cannot have initializer (e.g. `(...x = []) => {}`)

@@ -5,6 +5,7 @@ use crate::value::{
     create_js_error_with_type, get_thrown_value, loose_eq, strict_eq, to_bool, to_js_string,
     to_number, to_primitive, to_uint32, JsError, Value,
 };
+use std::rc::Rc;
 
 /// Evaluate a binary operator
 pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, JsError> {
@@ -315,6 +316,41 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         (Value::Function(func), Value::Class(class)) => {
             let class_proto = get_class_prototype_for_instanceof(class)?;
             let result = function_instanceof(func, &class_proto);
+            Ok(Value::Boolean(result))
+        }
+        // Generator objects as left operand: check prototype chain.
+        // The generator's `prototype` field stores the function's `.prototype`,
+        // so we check if the function's prototype is self (direct match) or
+        // an ancestor of the stored prototype.
+        (Value::Generator(gen), Value::Function(ctor)) => {
+            let ctor_proto = ctor.get_prototype();
+            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+                Rc::ptr_eq(gen_proto, &ctor_proto) || has_prototype_in_chain(&gen_proto.borrow(), &ctor_proto)
+            });
+            Ok(Value::Boolean(result))
+        }
+        (Value::Generator(gen), Value::NativeConstructor(ctor)) => {
+            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+                Rc::ptr_eq(gen_proto, &ctor.prototype)
+                    || has_prototype_in_chain(&gen_proto.borrow(), &ctor.prototype)
+            });
+            Ok(Value::Boolean(result))
+        }
+        (Value::Generator(gen), Value::NativeFunction(nf)) => {
+            if let Some(Value::Object(proto)) = nf.get_property("prototype") {
+                let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+                    Rc::ptr_eq(gen_proto, &proto) || has_prototype_in_chain(&gen_proto.borrow(), &proto)
+                });
+                Ok(Value::Boolean(result))
+            } else {
+                Ok(Value::Boolean(false))
+            }
+        }
+        (Value::Generator(gen), Value::Class(class)) => {
+            let class_proto = get_class_prototype_for_instanceof(class)?;
+            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+                has_prototype_in_chain(&gen_proto.borrow(), &class_proto)
+            });
             Ok(Value::Boolean(result))
         }
         _ => Ok(Value::Boolean(false)),

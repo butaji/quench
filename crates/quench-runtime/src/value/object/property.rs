@@ -82,7 +82,16 @@ impl Object {
                 ..
             } = self.data
             {
-                if (idx as u64) < length {
+                // Compute effective length; for resizable buffers this is
+                // computed dynamically from the buffer's current byteLength.
+                let effective_length = if buffer.borrow().get("maxByteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0) > 0 {
+                    let buf_bl = buffer.borrow().get("byteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                    let bpe = crate::value::object::helpers::bytes_per_element(name);
+                    if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 }
+                } else {
+                    length
+                };
+                if (idx as u64) < effective_length {
                     let coerced = coerce_typed_array_element(name, &value);
                     let mut buf = buffer.borrow_mut();
                     let buf_idx = offset as usize + idx;
@@ -200,7 +209,16 @@ impl Object {
                 ..
             } = self.data
             {
-                if (idx as u64) < length {
+                // Compute effective length; for resizable buffers this is
+                // computed dynamically from the buffer's current byteLength.
+                let effective_length = if buffer.borrow().get("maxByteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0) > 0 {
+                    let buf_bl = buffer.borrow().get("byteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                    let bpe = crate::value::object::helpers::bytes_per_element(name);
+                    if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 }
+                } else {
+                    length
+                };
+                if (idx as u64) < effective_length {
                     let buf = buffer.borrow();
                     let buf_idx = offset as usize + idx;
                     if buf_idx < buf.elements.len() {
