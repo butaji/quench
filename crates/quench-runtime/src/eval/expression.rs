@@ -420,6 +420,14 @@ pub fn eval_expression(
             // Identifier with known scope: update binding directly (avoids nested borrow).
             if let (Some(name), Some(scope)) = (ident_name, scope) {
                 let kind = scope.borrow().get_kind(&name);
+                if scope.borrow().is_object_binding()
+                    && scope
+                        .borrow()
+                        .set_object_property(&name, result.clone(), false)
+                        == Some(true)
+                {
+                    return Ok(result);
+                }
                 if kind == Some(crate::ast::VarKind::Var) {
                     // For var: try set_object_property first (for global var → global object).
                     if scope

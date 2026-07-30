@@ -194,7 +194,12 @@ impl Environment {
 
     pub fn binding_scope(&self, name: &str) -> Option<Rc<RefCell<Scope>>> {
         for scope in self.scopes.iter().rev() {
-            if scope.borrow().has(name) {
+            let scope_ref = scope.borrow();
+            if scope_ref.has(name)
+                || scope_ref
+                    .object_binding_has(name)
+                    .is_some_and(|present| present)
+            {
                 return Some(Rc::clone(scope));
             }
         }

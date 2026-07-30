@@ -385,6 +385,14 @@ JSON.stringify([target.p, log]);
     }
 
     #[test]
+    fn with_compound_assignment_updates_visible_object_binding() {
+        let result = eval_ok_with_builtins(
+            "var object = {x: 4, [Symbol.unscopables]: {}}; with (object) { x++; } object.x",
+        );
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
     fn reflect_has_own_property() {
         let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
         assert_eq!(result, Value::Boolean(true));

@@ -1077,6 +1077,23 @@ pub fn assign_to_identifier(
         return Err(js_err);
     }
 
+    if !env.borrow().has(name) {
+        if let Some(result) = env.borrow().set_in_object_env(
+            name,
+            value.clone(),
+            crate::interpreter::is_strict_mode(),
+        ) {
+            if !result && crate::interpreter::is_strict_mode() {
+                return Err(crate::value::error::create_js_error_with_type(
+                    &format!("Cannot assign to read-only property '{}'.", name),
+                    "TypeError",
+                )
+                .1);
+            }
+            return Ok(());
+        }
+    }
+
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
