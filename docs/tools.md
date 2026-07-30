@@ -65,6 +65,10 @@ bash tools/pending-stages.sh --top 10 --json
 # Top 10 by failure ratio (failed/tests)
 bash tools/pending-stages.sh --top-ratio 10
 bash tools/pending-stages.sh --top-ratio 10 --json
+# Plan or execute a pending stage batch (default top-3 by failed)
+bash tools/run-pending-batch.sh
+bash tools/run-pending-batch.sh --ratio --top 5
+bash tools/run-pending-batch.sh --ratio --top 5 --run
 # Quick aggregate remaining-work summary
 bash tools/pending-stages.sh --summary
 bash tools/pending-stages.sh --summary --json
