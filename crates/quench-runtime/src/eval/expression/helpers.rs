@@ -151,12 +151,12 @@ pub fn eval_delete(
                     name
                 )));
             }
+            if let Some(deleted) = env.borrow_mut().delete_from_object_env(name) {
+                return Ok(Value::Boolean(deleted));
+            }
             let kind = env.borrow().get_kind(name);
             if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const)) {
                 return Ok(Value::Boolean(false));
-            }
-            if let Some(deleted) = env.borrow_mut().delete_from_object_env(name) {
-                return Ok(Value::Boolean(deleted));
             }
             // Implicit global (no kind) — delete from scope chain and globalThis
             // Try deleting from globalThis if the binding exists there
@@ -441,6 +441,17 @@ mod tests {
         // (Spec says true, but this reflects current runtime behavior.)
         let r = eval("var o = {}; delete o.missing").unwrap();
         assert_eq!(r, Value::Boolean(false));
+    }
+
+    #[test]
+    fn delete_identifier_in_with_object_scope_updates_object_property() {
+        let r = eval(
+            "var myObj = { p1: 'a', del: false }; \
+             eval('with(myObj){del = delete p1}'); \
+             myObj.p1 === undefined && myObj.del === true",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
