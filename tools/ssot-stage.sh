@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Compatibility wrapper retained for legacy callers. Canonical command is:
-# `tools/test-run-stage.sh` (terminology: "test-run").
-# `--ssot` is deprecated in shell helpers; this wrapper exists only for legacy
-# callers.
+# Compatibility wrapper retained for legacy callers.
+# Canonical command is `tools/test-run-stage.sh`.
+# Terminology is now "test-run".
+# This wrapper is deprecated and exists only for legacy callers.
 set -euo pipefail
 
 if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then

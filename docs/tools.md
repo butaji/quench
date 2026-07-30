@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-Implementation status is sourced only from stage test runs.
+Implementation status is sourced only from stage test runs ("test-run").
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
@@ -50,7 +50,7 @@ bash tools/next-stage.sh
 bash tools/run-next-pending.sh
 # Run a unified plan selector for next stage or batch selection
 bash tools/run-test-plan.sh
-# Canonical SSOT status entrypoint (always machine-readable by default)
+# Canonical test-run status entrypoint (always machine-readable by default)
 bash tools/run-test-plan-status.sh
 # Raw legacy payload for older automation
 bash tools/run-test-plan-status.sh --raw
