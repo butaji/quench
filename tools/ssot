@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SSOT is the canonical shorthand for implementation status of the current
-# test-run stage. This is the single command you should use for status/checkpoint
-# loops.
+# SSOT is the canonical shorthand for the current test-run stage status.
+# It is intentionally the single command for status/run/commit flows in this repo.
 # Usage:
-#   bash tools/ssot                         # status snapshot for current test-run stage
+#   bash tools/ssot                         # test-run status snapshot for current stage
 #   bash tools/ssot --run                   # run current stage test-run (explicit)
 #   bash tools/ssot --status                # status snapshot for current stage
 #   bash tools/ssot --run --commit           # run, then commit current milestone
 #   bash tools/ssot --run --commit --push    # run, commit, and push current milestone
 #   bash tools/ssot --run --json             # run current stage with JSON stage result
-#   bash tools/ssot --status                # show current test-run summary
+#   bash tools/ssot --status                # show current test-run summary (same as default)
 #   bash tools/ssot --status --json         # show summary JSON
 #   bash tools/ssot --next                  # print next pending stage id
 #   bash tools/ssot --next --run             # run next pending stage
@@ -27,11 +26,14 @@ set -euo pipefail
 #   bash tools/ssot --sprint                  # check blocker status, then run fast test-run
 #   bash tools/ssot --sprint --commit         # run current stage fast, commit if tests pass
 #   bash tools/ssot --sprint --commit --push    # run fast, commit, push current milestone
+#   bash tools/ssot --milestone              # run next pending stage fast, commit milestone
+#   bash tools/ssot --milestone --push       # run next, commit, and push milestone
 
 RUN=0
 STATUS=0
 STAGE=""
 NEXT=0
+MILESTONE=0
 JSON=0
 COMMIT=0
 PUSH=0
@@ -47,6 +49,14 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --next)
       NEXT=1
+      shift
+      ;;
+    --milestone)
+      MILESTONE=1
+      NEXT=1
+      RUN=1
+      FAST=1
+      COMMIT=1
       shift
       ;;
     --run|--test|--test-run)
@@ -158,6 +168,15 @@ PY
   else
     bash tools/ssot --run --fast
   fi
+  exit 0
+fi
+
+if [[ "$MILESTONE" -eq 1 ]]; then
+  GO_NEXT_ARGS=(--run --no-preflight --commit)
+  if [[ "$PUSH" -eq 1 ]]; then
+    GO_NEXT_ARGS+=(--push)
+  fi
+  bash tools/test-run-go-next.sh "${GO_NEXT_ARGS[@]}"
   exit 0
 fi
 
