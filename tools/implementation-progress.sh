@@ -59,50 +59,44 @@ if [[ "$RAW" -eq 1 ]]; then
     exit 0
 fi
 
-if ! CURRENT_JSON=$(bash tools/stage-status.sh --json --current); then
-    echo "error: failed to read current stage status" >&2
+if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
+    echo "error: failed to read overall stage status" >&2
     exit 1
 fi
-NEXT_JSON=''
-if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
-    if ! NEXT_JSON=$(bash tools/stage-status.sh --json --next); then
-        echo "error: failed to read next stage status" >&2
-        exit 1
-    fi
-fi
 
-STATS_JSON=''
 if [[ "$CI" -eq 1 ]]; then
     INCLUDE_SUMMARY=1
 fi
 
-if [[ "$INCLUDE_SUMMARY" -eq 1 ]]; then
-    if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
-        echo "error: failed to read overall stage status" >&2
-        exit 1
-    fi
-fi
-
-python3 - "$CURRENT_JSON" "$NEXT_JSON" "$STATS_JSON" "$INCLUDE_NEXT" "$INCLUDE_SUMMARY" "$CI" <<'PY'
+python3 - "$STATS_JSON" "$INCLUDE_NEXT" "$INCLUDE_SUMMARY" "$CI" <<'PY'
 import json
 import sys
 
-current_json = sys.argv[1]
-next_json = sys.argv[2]
-stats_json = sys.argv[3]
-include_next = sys.argv[4] == "1"
-include_summary = sys.argv[5] == "1"
-ci_mode = sys.argv[6] == "1"
+stats_json = sys.argv[1]
+include_next = sys.argv[2] == "1"
+include_summary = sys.argv[3] == "1"
+ci_mode = sys.argv[4] == "1"
 
-current_payload = json.loads(current_json)
-next_payload = json.loads(next_json) if next_json else None
 stats_payload = json.loads(stats_json) if stats_json else None
 
-current_stage = current_payload.get("stage") if isinstance(current_payload, dict) else None
-current_status = current_stage.get("status") if isinstance(current_stage, dict) else None
 all_stages = []
 if stats_payload and isinstance(stats_payload, dict):
     all_stages = stats_payload.get('stages', [])
+current_stage_id = stats_payload.get('current_stage') if isinstance(stats_payload, dict) else None
+current_stage = None
+next_payload = None
+if isinstance(all_stages, list):
+    for stage in all_stages:
+        if stage.get('id') == current_stage_id:
+            current_stage = stage
+        if include_next and next_payload is None and stage.get('id') > (current_stage_id or 0) and stage.get('status') != 'done':
+            next_payload = {
+                'current_stage': current_stage_id,
+                'next_stage': stage.get('id'),
+                'stage': stage,
+            }
+
+current_status = current_stage.get("status") if isinstance(current_stage, dict) else None
 
 has_pending = False
 if include_next and isinstance(next_payload, dict):
@@ -113,7 +107,10 @@ else:
 
 out = {
     "implementation": {
-        "current": current_payload,
+        "current": {
+            "current_stage": current_stage_id,
+            "stage": current_stage,
+        },
         "has_pending": has_pending,
         "ci_ready": bool(current_status == "done" and not has_pending),
     }
