@@ -7,6 +7,7 @@
 #   bash tools/milestone-rerun.sh --test tests/... # rerun explicit test file
 #   bash tools/milestone-rerun.sh --log /tmp/rerun.log # save diagnostic output
 #   bash tools/milestone-rerun.sh -- --filter "some filter"
+#   bash tools/milestone-rerun.sh --json            # output JSON summary
 
 set -euo pipefail
 
@@ -14,6 +15,32 @@ STAGE=""
 TEST=""
 LOG_FILE="${MILESTONE_RERUN_LOG:-./.test262_milestone_rerun.log}"
 EXTRA_ARGS=()
+OUTPUT_JSON=0
+RERUN_ARGS_JSON="[]"
+
+emit_json() {
+    local status="$1"
+    local payload
+    payload="$(python3 - "$STAGE" "$TEST" "$LOG_FILE" "$status" "$RERUN_ARGS_JSON" <<'PY'
+import json
+import sys
+
+stage = sys.argv[1]
+test = sys.argv[2]
+log_file = sys.argv[3]
+status = sys.argv[4]
+rerun_args = json.loads(sys.argv[5])
+print(json.dumps({
+    "stage": stage,
+    "test": test,
+    "status": status,
+    "log": log_file,
+    "rerun_args": rerun_args,
+}))
+PY
+)"
+    echo "$payload"
+}
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -40,6 +67,10 @@ while [[ ${#} -gt 0 ]]; do
     -h|--help)
       sed -n '1,200p' "$0"
       exit 0
+      ;;
+    --json)
+      OUTPUT_JSON=1
+      shift
       ;;
     --)
       shift
@@ -120,9 +151,33 @@ if [[ ! -d "$log_dir" ]]; then
     mkdir -p "$log_dir"
 fi
 
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    RERUN_ARGS_JSON="$(python3 - "${EXTRA_ARGS[@]}" <<'PY'
+import json
+import sys
+print(json.dumps(sys.argv[1:]))
+PY
+)"
+fi
+
+RUN_STATUS=0
 {
   echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
   cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
 } | tee -a "$LOG_FILE"
+RUN_STATUS="${PIPESTATUS[0]}"
 
-echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
+if [[ "$RUN_STATUS" -ne 0 ]]; then
+    if [[ "$OUTPUT_JSON" -eq 1 ]]; then
+        emit_json "fail"
+    else
+        echo "[milestone-rerun] Diagnostics failed for ${TEST}."
+    fi
+    exit 1
+fi
+
+if [[ "$OUTPUT_JSON" -eq 1 ]]; then
+    emit_json "pass"
+else
+    echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
+fi
