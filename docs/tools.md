@@ -73,6 +73,8 @@ bash tools/run-pending-batch.sh --ratio --top 5
 bash tools/run-pending-batch.sh --ratio --top 5 --run
 # Machine-readable status object for batch plan
 bash tools/run-pending-batch.sh --ratio --top 5 --status
+# Include wrapped raw JSON payload alongside the status object
+bash tools/run-pending-batch.sh --ratio --top 5 --run --status --json
 # Stop immediately when first stage in batch fails
 bash tools/run-pending-batch.sh --ratio --run --stop-on-fail
 # Allow at most N failures before aborting (0 = unlimited, default)

@@ -69,7 +69,7 @@ while [[ ${#} -gt 0 ]]; do
             exit 1
             ;;
     esac
-done
+ done
 
 cd "$(dirname "$0")/.."
 
@@ -93,6 +93,42 @@ print("\n".join(str(s.get('id', '')) for s in data.get('stages', [])))
 PY
 )
 
+if [[ "$STATUS" -eq 1 ]]; then
+    export TOP
+    export RATIO
+    export DRY_RUN
+    export BUILD
+    export STOP_ON_FAIL
+    export MAX_FAILURES
+    export JSON
+    export PAYLOAD
+    python3 - <<PY
+import json
+import os
+
+data = json.loads(os.environ["PAYLOAD"])
+stages = data.get("stages", [])
+payload = {
+    "count": data.get("count", 0),
+    "top": int(os.environ["TOP"]),
+    "ratio": os.environ["RATIO"] == "1",
+    "run": os.environ["DRY_RUN"] == "0",
+    "build": os.environ["BUILD"] == "1",
+    "stop_on_fail": os.environ["STOP_ON_FAIL"] == "1",
+    "max_failures": int(os.environ["MAX_FAILURES"]),
+    "stages": stages,
+}
+if os.environ["JSON"] == "1":
+    print(json.dumps({
+        "run-pending-batch": payload,
+        "run-pending-batch-json": data,
+    }, sort_keys=True))
+else:
+    print(json.dumps({"run-pending-batch": payload}, sort_keys=True))
+PY
+    exit 0
+fi
+
 if [[ -z "$STAGES" ]]; then
     echo "No pending stages found for requested batch."
     exit 0
@@ -100,34 +136,6 @@ fi
 
 if [[ "$JSON" -eq 1 ]]; then
     echo "$PAYLOAD"
-    exit 0
-fi
-
-if [[ "$STATUS" -eq 1 ]]; then
-    export TOP_BATCH="$TOP"
-    export RATIO_BATCH="$RATIO"
-    export DRY_RUN_BATCH="$DRY_RUN"
-    export BUILD_BATCH="$BUILD"
-    export STOP_ON_FAIL_BATCH="$STOP_ON_FAIL"
-    export MAX_FAILURES_BATCH="$MAX_FAILURES"
-    export PAYLOAD_BATCH="$PAYLOAD"
-    python3 - <<PY
-import json
-import os
-
-data = json.loads(os.environ["PAYLOAD_BATCH"])
-payload = {
-    "count": data.get("count", 0),
-    "top": int(os.environ["TOP_BATCH"]),
-    "ratio": os.environ["RATIO_BATCH"] == "1",
-    "run": os.environ["DRY_RUN_BATCH"] == "0",
-    "build": os.environ["BUILD_BATCH"] == "1",
-    "stop_on_fail": os.environ["STOP_ON_FAIL_BATCH"] == "1",
-    "max_failures": int(os.environ["MAX_FAILURES_BATCH"]),
-    "stages": data.get("stages", []),
-}
-print(json.dumps({"run-pending-batch": payload}, sort_keys=True))
-PY
     exit 0
 fi
 
