@@ -48,12 +48,19 @@ bash tools/milestone.sh --status --next-id
 bash tools/next-stage.sh
 # Run the next pending stage (auto-resolves stage id, supports --json/--build)
 bash tools/run-next-pending.sh
+# Run highest-failure-ratio pending stage
+bash tools/run-next-pending.sh --by-ratio
+# Restrict ratio-driven pick to top-N candidate window
+bash tools/run-next-pending.sh --by-ratio --top 20
 # List all pending stages (id-only output)
 bash tools/pending-stages.sh
 # List top 10 highest-failure pending stages (human table)
 bash tools/pending-stages.sh --top 10 --verbose
 # Top 10 pending stages as JSON
 bash tools/pending-stages.sh --top 10 --json
+# Top 10 by failure ratio (failed/tests)
+bash tools/pending-stages.sh --top-ratio 10
+bash tools/pending-stages.sh --top-ratio 10 --json
 # Quick aggregate remaining-work summary
 bash tools/pending-stages.sh --summary
 bash tools/pending-stages.sh --summary --json

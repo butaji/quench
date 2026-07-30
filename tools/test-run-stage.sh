@@ -76,4 +76,4 @@ if [[ "$OUTPUT_JSON" -eq 0 ]]; then
   echo "[test-run-stage] Stage $STAGE (digest)"
 fi
 
-TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+env TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

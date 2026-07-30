@@ -8,6 +8,7 @@ COUNT_ONLY=0
 TOP=0
 VERBOSE=0
 SUMMARY=0
+RATIO_ONLY=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -31,6 +32,15 @@ while [[ ${#} -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        --top-ratio)
+            if [[ "${2:-}" == "" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "error: --top-ratio requires a numeric argument" >&2
+                exit 1
+            fi
+            TOP="$2"
+            RATIO_ONLY=1
+            shift 2
+            ;;
         --summary)
             SUMMARY=1
             shift
@@ -46,7 +56,7 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-python3 - "$JSON" "$COUNT_ONLY" "$TOP" "$VERBOSE" "$SUMMARY" <<'PY'
+python3 - "$JSON" "$COUNT_ONLY" "$TOP" "$VERBOSE" "$SUMMARY" "$RATIO_ONLY" <<'PY'
 import json
 import sys
 
@@ -55,6 +65,7 @@ count_only = int(sys.argv[2])
 top = int(sys.argv[3])
 verbose = int(sys.argv[4])
 summary = int(sys.argv[5])
+ratio_only = int(sys.argv[6])
 
 try:
     with open('tasks/index.json') as f:
@@ -65,7 +76,15 @@ except (OSError, json.JSONDecodeError) as exc:
 
 stages = data.get('stages', [])
 pending = [s for s in stages if s.get('status') != 'done']
-pending.sort(key=lambda s: (-int(s.get('failed', 0)), s.get('id', 0)))
+if ratio_only:
+    def failure_ratio(s):
+        tests = float(s.get('tests', 0) or 0)
+        if tests == 0:
+            return -1.0
+        return float(s.get('failed', 0)) / tests
+    pending.sort(key=lambda s: (-failure_ratio(s), s.get('id', 0)))
+else:
+    pending.sort(key=lambda s: (-int(s.get('failed', 0)), s.get('id', 0)))
 if top > 0:
     pending = pending[:top]
 done_stages = [s for s in stages if s.get('status') == 'done']
@@ -103,6 +122,13 @@ if count_only:
     raise SystemExit(0)
 
 if use_json:
+    if ratio_only:
+        for s in pending:
+            tests = float(s.get('tests', 0) or 0)
+            if tests == 0:
+                s['failure_ratio'] = None
+            else:
+                s['failure_ratio'] = float(s.get('failed', 0)) / tests
     print(json.dumps({'count': len(pending), 'stages': pending}, sort_keys=True))
     raise SystemExit(0)
 

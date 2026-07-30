@@ -6,9 +6,12 @@ set -euo pipefail
 #   bash tools/run-next-pending.sh
 #   bash tools/run-next-pending.sh --stage-override <n>
 #   bash tools/run-next-pending.sh --json --build
+#   bash tools/run-next-pending.sh --by-ratio --top 3
 
 RUN_JSON=0
 RUN_BUILD=0
+BY_RATIO=0
+TOP=1
 STAGE_OVERRIDE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -20,6 +23,18 @@ while [[ ${#} -gt 0 ]]; do
         --build)
             RUN_BUILD=1
             shift
+            ;;
+        --by-ratio)
+            BY_RATIO=1
+            shift
+            ;;
+        --top)
+            if [[ "${2:-}" == "" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "error: --top requires a numeric argument" >&2
+                exit 1
+            fi
+            TOP="$2"
+            shift 2
             ;;
         --stage-override)
             if [[ "${2:-}" == "" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
@@ -45,7 +60,31 @@ cd "$(dirname "$0")/.."
 if [[ -n "$STAGE_OVERRIDE" ]]; then
     STAGE="$STAGE_OVERRIDE"
 else
-    STAGE="$(bash tools/next-stage.sh)"
+    if [[ "$BY_RATIO" -eq 1 ]]; then
+        RATIO_PAYLOAD="$(mktemp)"
+        bash tools/pending-stages.sh --top-ratio "$TOP" --json > "$RATIO_PAYLOAD"
+        STAGE="$(python3 - "$RATIO_PAYLOAD" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except (OSError, json.JSONDecodeError) as exc:
+    print(f"error: failed to read next ratio stage payload: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+stages = data.get('stages', [])
+if not stages:
+    print(0)
+    raise SystemExit(0)
+print(stages[0].get('id', 0))
+PY
+)"
+        rm -f "$RATIO_PAYLOAD"
+    else
+        STAGE="$(bash tools/next-stage.sh)"
+    fi
 fi
 
 if [[ -z "${STAGE}" || "${STAGE}" == "0" ]]; then
