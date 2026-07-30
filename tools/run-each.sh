@@ -49,16 +49,18 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 TOTAL=0
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+LAST_RUN_OUTPUT=""
 
 # timeout(1) is GNU coreutils — absent on stock macOS.
 run_one() {
+    set +e
     if command -v timeout >/dev/null 2>&1; then
-        timeout 15 cargo run --bin run-test -- "$1" > "$TMPDIR/out.txt" 2>&1
+        LAST_RUN_OUTPUT="$(timeout 15 cargo run --bin run-test -- "$1" 2>&1)"
     else
-        cargo run --bin run-test -- "$1" > "$TMPDIR/out.txt" 2>&1
+        LAST_RUN_OUTPUT="$(cargo run --bin run-test -- "$1" 2>&1)"
     fi
+    set -e
+    return "$LAST_RUN_RC"
 }
 
 show_failure() {
@@ -66,7 +68,7 @@ show_failure() {
     echo ""
     echo "  $label: $rel"
     if [ $FAILED -le 5 ]; then
-        head -3 "$TMPDIR/out.txt" | while read -r line; do echo "    $line"; done
+        printf '%s\n' "$LAST_RUN_OUTPUT" | head -3 | while read -r line; do echo "    $line"; done
         echo ""
     fi
 }
