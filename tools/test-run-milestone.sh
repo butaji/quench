@@ -32,7 +32,7 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 if [[ "$MESSAGE" == "" ]]; then
-  MESSAGE="ssot milestone stage ${STAGE}"
+  MESSAGE="test run milestone stage ${STAGE}"
 fi
 
 ARGS=(--stage "$STAGE" --test-run --commit "$MESSAGE")

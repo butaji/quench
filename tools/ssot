@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Canonical lightweight alias for implementation-status execution.
+# Usage:
+#   bash tools/ssot                    # run current stage test-run
+#   bash tools/ssot --json             # run current stage test-run with JSON (via runner)
+#   bash tools/ssot --status           # print current implementation-status summary
+
+if [[ ${#} -gt 0 && "${1:-}" == "--status" ]]; then
+  shift
+  bash tools/test-run-status-summary.sh "$@"
+  exit 0
+fi
+
+bash tools/test-run-stage.sh "$@"
