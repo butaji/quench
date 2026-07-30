@@ -81,6 +81,10 @@ bash tools/test-run-go-next.sh --print
 bash tools/test-run-go-next.sh --print-json
 # Status payload now includes current/match/advance-eligible fields
 bash tools/test-run-go-next.sh --status
+# Fastest next-stage path: JSON + auto-advance
+bash tools/test-run-go-next-fast.sh
+bash tools/test-run-go-next-fast.sh --no-preflight
+bash tools/test-run-go-next-fast.sh --by-ratio --top 5
 # Single JSON readout with optional immediate run
 bash tools/test-run-go.sh --ready --json
 # Fast mode: skip preflight when reruns are intentionally unsafe
