@@ -54,6 +54,12 @@ bash tools/implementation-progress.sh --summary
 bash tools/test-run-status-summary.sh
 # Fail with non-zero exit code only when current stage has failures
 bash tools/test-run-status-summary.sh --blocker
+# One-shot test-run dashboard (current + next + aggregate signals)
+bash tools/test-run-dashboard.sh
+# Dashboard JSON for automation
+bash tools/test-run-dashboard.sh --json
+# Assert ready-to-run gate (ready=true && blocked=false)
+bash tools/test-run-dashboard.sh --assert-ready
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
