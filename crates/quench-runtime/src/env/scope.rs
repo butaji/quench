@@ -138,14 +138,13 @@ impl Scope {
         self.per_iteration_scope
     }
 
-    fn object_has_binding_property(&self, name: &str) -> bool {
-        self.object_binding
-            .as_ref()
-            .is_some_and(|obj| proxy_has_property(obj, name).unwrap_or(false))
+    fn object_has_binding_property(&self, name: &str) -> Option<bool> {
+        let obj = self.object_binding.as_ref()?;
+        Some(proxy_has_property(obj, name).ok()?)
     }
 
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {
-        if !self.object_has_binding_property(name) {
+        if !matches!(self.object_has_binding_property(name), Some(true)) {
             return None;
         }
         if self.object_binding.is_none() {
@@ -187,7 +186,7 @@ impl Scope {
 
     pub fn set_object_property(&mut self, name: &str, value: Value, _strict: bool) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
-        if !self.object_has_binding_property(name) {
+        if !matches!(self.object_has_binding_property(name), Some(true)) {
             return None;
         }
         self.load_with_unscopables();
@@ -201,7 +200,7 @@ impl Scope {
             object.borrow_mut().set(name, value);
             return Some(true);
         }
-        if !proxy_has_property(object, name).unwrap_or(false) {
+        if !matches!(proxy_has_property(object, name).ok(), Some(true)) {
             return None;
         }
         if let Some(flags) = object.borrow().get_descriptor(name) {
@@ -218,7 +217,7 @@ impl Scope {
 
     pub fn delete_object_property(&mut self, name: &str) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
-        if !self.object_has_binding_property(name) {
+        if !matches!(self.object_has_binding_property(name), Some(true)) {
             return None;
         }
         self.load_with_unscopables();
@@ -328,7 +327,15 @@ impl Scope {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
                 if self.object_binding_has(name) == Some(true) {
-                    return proxy_get_property(obj, name).ok();
+                    // Declared-only env entries still require a second HasProperty check
+                    // before GetBindingValue per ObjectEnvironmentRecord semantics.
+                    if !matches!(self.object_has_binding_property(name), Some(true)) {
+                        return Some(Value::Undefined);
+                    }
+                    return match proxy_get_property(obj, name) {
+                        Ok(v) => Some(v),
+                        Err(_) => Some(Value::Undefined),
+                    };
                 }
                 return Some(Value::Undefined);
             }
@@ -341,11 +348,17 @@ impl Scope {
             return Some(value.borrow().clone());
         }
         if let Some(object) = self.object_binding.as_ref() {
-            if self.object_has_binding_property(name) {
+            if self.object_binding_has(name).is_some_and(|has| has) {
                 if self.with_unscopables_loaded.get() && self.is_unscopable(name) {
                     return None;
                 }
-                return proxy_get_property(object, name).ok();
+                if !matches!(self.object_has_binding_property(name), Some(true)) {
+                    return None;
+                }
+                return match proxy_get_property(object, name) {
+                    Ok(v) => Some(v),
+                    Err(_) => Some(Value::Undefined),
+                };
             }
         }
         None
@@ -530,6 +543,29 @@ mod tests {
     fn test_scope_set_missing_returns_false() {
         let mut scope = Scope::new();
         assert!(!scope.set("x".to_string(), Value::Number(1.0), false));
+    }
+
+    #[test]
+    fn with_scope_proxy_has_throw_propagates_from_lookup() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            r#"var log = [];
+             var proxy = new Proxy({}, {
+               has(t, pk) {
+                 if (pk === 'Object') {
+                   throw new Error("has-throw");
+                 }
+                 return true;
+               },
+               get(t, pk) {
+                 return Reflect.get(t, pk);
+               },
+             });
+             with (proxy) { Object; }
+             log.join(',');"#
+        );
+        let err = result.expect_err("expected proxy has trap throw");
+        assert!(err.to_string().contains("has-throw"));
     }
 
     #[test]

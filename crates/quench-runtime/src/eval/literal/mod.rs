@@ -38,7 +38,7 @@ use crate::builtins;
 use crate::env::Environment;
 use crate::eval::iteration::get_iterator;
 use crate::value::error::create_js_error_with_type;
-use crate::value::{to_object, JsError, Object, ObjectKind, Value};
+use crate::value::{take_thrown_value, to_js_string, to_object, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -89,8 +89,17 @@ pub fn eval_identifier(
     // Use get() which handles DeclaredOnly (hoisted var) → undefined
     // and truly unknown vars → None (caught below as ReferenceError).
     match env.borrow().get(name) {
-        Some(v) => Ok(v),
+        Some(v) => {
+            if let Some(thrown) = take_thrown_value() {
+                return Err(JsError(to_js_string(&thrown)));
+            }
+            Ok(v)
+        }
         None => {
+            if let Some(thrown) = take_thrown_value() {
+                return Err(JsError(to_js_string(&thrown)));
+            }
+
             // Fallback: try to get from Context's globals directly.
             // This handles cases where the environment chain doesn't have access
             // to globalThis (e.g., super constructor calls with isolated environments).
