@@ -27,6 +27,104 @@ pub fn private_field_object(
     Rc::clone(obj)
 }
 
+pub fn proxy_has_property(
+    obj: &Rc<RefCell<Object>>,
+    prop_name: &str,
+) -> Result<bool, JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(obj) else {
+        return Ok(obj.borrow().has(prop_name));
+    };
+    let trap = handler.borrow().get_own_value("has");
+    let Some(trap_val) = trap else {
+        let Value::Object(target_obj) = target else {
+            return Ok(false);
+        };
+        return Ok(target_obj.borrow().has(prop_name));
+    };
+    let trap = match trap_val {
+        Value::Object(f) => Value::Object(f),
+        Value::Function(f) => Value::Function(f),
+        Value::NativeFunction(f) => Value::NativeFunction(f),
+        Value::NativeConstructor(f) => Value::NativeConstructor(f),
+        Value::Undefined => {
+            let Value::Object(target_obj) = target else {
+                return Ok(false);
+            };
+            return Ok(target_obj.borrow().has(prop_name));
+        }
+        _ => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "has trap is not callable",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            return Err(js_err);
+        }
+    };
+    crate::eval::function::call_value_with_this(
+        trap,
+        vec![target, Value::String(prop_name.to_string())],
+        Value::Object(Rc::clone(obj)),
+    )
+    .map(|v| crate::value::to_bool(&v))
+}
+
+pub fn proxy_get_property(
+    obj: &Rc<RefCell<Object>>,
+    prop_name: &str,
+) -> Result<Value, JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(obj) else {
+        return Ok(obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
+    };
+
+    let trap = handler.borrow().get_own_value("get").or_else(|| {
+        handler
+            .borrow()
+            .get_getter("get")
+            .and_then(|g| g.func.clone())
+    });
+    let Some(trap_val) = trap else {
+        let Value::Object(target_obj) = target else {
+            return Ok(Value::Undefined);
+        };
+        return Ok(target_obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
+    };
+    let trap = match trap_val {
+        Value::Object(f) => Value::Object(f),
+        Value::Function(f) => Value::Function(f),
+        Value::NativeFunction(f) => Value::NativeFunction(f),
+        Value::NativeConstructor(f) => Value::NativeConstructor(f),
+        Value::Undefined => {
+            let Value::Object(target_obj) = target else {
+                return Ok(Value::Undefined);
+            };
+            return Ok(target_obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
+        }
+        _ => {
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                "get trap is not callable",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(err_val);
+            return Err(js_err);
+        }
+    };
+
+    crate::eval::function::call_value_with_this(
+        trap,
+        vec![
+            target.clone(),
+            Value::String(prop_name.to_string()),
+            Value::Object(Rc::clone(obj)),
+        ],
+        Value::Object(Rc::clone(obj)),
+    )
+    .map(|v| {
+        let _ = crate::interpreter::take_control_flow();
+        v
+    })
+}
+
 /// Find a proxy in the prototype chain, returning (proxy_rc, handler, target).
 #[allow(clippy::type_complexity)]
 pub fn find_proxy_in_prototype_chain(

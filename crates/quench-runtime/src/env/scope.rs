@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::VarKind;
+use crate::eval::object::{proxy_get_property, proxy_has_property};
 use crate::value::Value;
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
@@ -114,8 +115,12 @@ impl Scope {
         if self.is_unscopable(name) {
             return Some(false);
         }
-        let result = self.object_binding.as_ref().map(|o| o.borrow().has(name)).unwrap_or(false);
-        Some(result)
+        Some(
+            self.object_binding
+                .as_ref()
+                .map(|obj| proxy_has_property(obj, name).unwrap_or(false))
+                .unwrap_or(false),
+        )
     }
 
     pub fn is_object_binding(&self) -> bool {
@@ -158,7 +163,7 @@ impl Scope {
             object.borrow_mut().set(name, value);
             return Some(true);
         }
-        if !object.borrow().has(name) {
+        if !proxy_has_property(object, name).unwrap_or(false) {
             return None;
         }
         if let Some(flags) = object.borrow().get_descriptor(name) {
@@ -178,7 +183,7 @@ impl Scope {
         if self.is_unscopable(name) {
             return None;
         }
-        if !object.borrow().has(name) {
+        if !proxy_has_property(object, name).unwrap_or(false) {
             return None;
         }
         if let Some(flags) = object.borrow().get_descriptor(name) {
@@ -219,7 +224,7 @@ impl Scope {
                 // Enumerable ensures for...in can see it. Configurable=false ensures
                 // delete returns false for var-declared bindings.
                 if let Some(ref obj) = self.object_binding {
-                    if !obj.borrow().has(&name) {
+                    if !proxy_has_property(obj, &name).unwrap_or(false) {
                         let mut obj_mut = obj.borrow_mut();
                         obj_mut.define(
                             &name,
@@ -283,8 +288,8 @@ impl Scope {
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
-                if obj.borrow().has(name) {
-                    return obj.borrow().get(name);
+                if proxy_has_property(obj, name).unwrap_or(false) {
+                    return proxy_get_property(obj, name).ok();
                 }
             }
             return Some(Value::Undefined);
@@ -296,8 +301,8 @@ impl Scope {
             return Some(value.borrow().clone());
         }
         if let Some(object) = self.object_binding.as_ref() {
-            if !self.is_unscopable(name) && object.borrow().has(name) {
-                return object.borrow().get(name);
+            if !self.is_unscopable(name) && proxy_has_property(object, name).unwrap_or(false) {
+                return proxy_get_property(object, name).ok();
             }
         }
         None
@@ -351,7 +356,7 @@ impl Scope {
             std::collections::hash_map::Entry::Vacant(e) => {
                 // Check if the global object has this property (e.g. , )
                 if let Some(ref obj) = self.object_binding {
-                    if obj.borrow().has(&name) {
+                    if proxy_has_property(obj, &name).unwrap_or(false) {
                         // Check writability before setting
                         let writable = obj
                             .borrow()
@@ -445,6 +450,7 @@ impl Default for Scope {
 mod tests {
     use super::*;
     use crate::ast::VarKind;
+    use crate::Context;
     use crate::value::Value;
 
     #[test]
@@ -481,6 +487,28 @@ mod tests {
     fn test_scope_set_missing_returns_false() {
         let mut scope = Scope::new();
         assert!(!scope.set("x".to_string(), Value::Number(1.0), false));
+    }
+
+    #[test]
+    fn with_scope_object_binding_has_uses_proxy_has_trap() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var log = []; \
+                 var proxy = new Proxy({Object}, { \
+                   has(t, p) { log.push('has:' + String(p)); return Reflect.has(t, p); }, \
+                   get(t, p, r) { log.push('get:' + String(p)); return Reflect.get(t, p, r); }, \
+                 }); \
+                 with (proxy) { Object(); } \
+                 log.join(',');",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::String(
+                "has:Object,get:Symbol(Symbol.unscopables),has:Object,get:Object".to_string()
+            )
+        );
     }
 
     #[test]
