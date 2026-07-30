@@ -54,6 +54,10 @@ bash tools/run-test-plan.sh
 bash tools/run-test-plan-status.sh
 # Raw legacy payload for older automation
 bash tools/run-test-plan-status.sh --raw
+# Canonical stage test-run status entrypoint
+bash tools/test-run-status.sh
+# Stage test-run status in raw human mode
+bash tools/test-run-status.sh --raw
 # Run and persist a machine-readable plan execution record
 bash tools/run-test-plan-log.sh --status-json
 # Log only compact status summary (no command output replay)
