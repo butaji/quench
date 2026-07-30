@@ -205,6 +205,9 @@ pub fn collect_var_names_recursive(stmts: &[Statement], names: &mut Vec<String>)
                 names.extend(crate::lower::pattern::collect_pattern_identifiers(pattern));
             }
             Statement::Block(inner_stmts) => collect_var_names_recursive(inner_stmts, names),
+            Statement::With { body, .. } => {
+                collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names)
+            }
             Statement::If {
                 consequent,
                 alternate,
@@ -848,6 +851,20 @@ mod tests {
         }];
         let names = crate::interpreter::helpers::collect_var_names(&stmts);
         assert!(names.contains(&"inner".to_string()));
+    }
+
+    #[test]
+    fn test_collect_var_names_in_with() {
+        let stmts = vec![Statement::With {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            body: Box::new(Statement::Block(vec![Statement::VarDeclaration {
+                kind: VarKind::Var,
+                name: "withVar".to_string(),
+                init: None,
+            }])),
+        }];
+        let names = crate::interpreter::helpers::collect_var_names(&stmts);
+        assert!(names.contains(&"withVar".to_string()));
     }
 
     #[test]
