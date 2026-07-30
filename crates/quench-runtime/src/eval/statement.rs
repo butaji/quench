@@ -15,7 +15,6 @@ use crate::value::{
     ObjectKind, Value,
 };
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 /// Returns true if expr is a Call expression eligible for tail-call optimization.
@@ -774,6 +773,8 @@ pub fn eval_statement(
             };
             env.borrow_mut().push_scope();
             {
+                let current_scope = env.borrow_mut().current_scope();
+                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
                 let with_scope_names = crate::eval::object::proxy_handler_and_target(&obj_rc)
                     .and_then(|(_, target)| match target {
                         crate::value::Value::Object(target_obj) => {
@@ -782,42 +783,11 @@ pub fn eval_statement(
                         _ => None,
                     })
                     .unwrap_or_else(|| obj_rc.borrow().own_property_names());
-                // Check Symbol.unscopables (§13.11.7): properties blocked by
-                // unscopables are not added to the with-scope.
-                let blocked: HashSet<String> = {
-                    let unscopables_val = (|| -> Option<Value> {
-                        let unscopables_sym =
-                            crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")?;
-                        crate::eval::member::eval_object_member_value(&obj_rc, &unscopables_sym, None)
-                            .ok()
-                    })();
-                    match unscopables_val {
-                        Some(Value::Object(u_obj)) => {
-                            let u = u_obj.borrow();
-                            u.properties
-                                .iter()
-                                .filter(|(_, v)| crate::value::to_bool(v))
-                                .map(|(k, _)| k.clone())
-                                .collect()
-                        }
-                        _ => HashSet::new(),
-                    }
-                };
-                let current_scope = env.borrow_mut().current_scope();
-                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
                 for name in &with_scope_names {
-                    if blocked.contains(name) {
-                        continue;
-                    }
-                    if crate::eval::object::proxy_has_property(&obj_rc, name).unwrap_or(false) {
-                        current_scope
-                            .borrow_mut()
-                            .declare_with_var(name.to_string(), VarKind::Var);
-                    }
+                    current_scope
+                        .borrow_mut()
+                        .declare_with_var(name.to_string(), VarKind::Var);
                 }
-                current_scope
-                    .borrow_mut()
-                    .set_with_unscopables(blocked);
             }
             let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
             env.borrow_mut().current_scope().borrow_mut().clear_with_unscopables();

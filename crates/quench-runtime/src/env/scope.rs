@@ -1,7 +1,7 @@
 //! Scope — an environment frame holding variable bindings.
 //! Extracted from env.rs to satisfy the 500-line-per-file linter limit.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -37,7 +37,8 @@ pub struct Scope {
     /// Whether `this` has been initialized for this scope.
     this_initialized: bool,
     object_binding: Option<Rc<RefCell<crate::value::Object>>>,
-    with_unscopables: HashSet<String>,
+    with_unscopables: RefCell<HashSet<String>>,
+    with_unscopables_loaded: Cell<bool>,
     /// Marker for static class body scope.
     is_static_class_body: bool,
     /// When set, `set` operations skip this scope. Used for for-loop per-iteration
@@ -72,6 +73,7 @@ impl Clone for Scope {
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
             with_unscopables: self.with_unscopables.clone(),
+            with_unscopables_loaded: Cell::new(self.with_unscopables_loaded.get()),
             is_static_class_body: self.is_static_class_body,
             per_iteration_scope: self.per_iteration_scope,
         }
@@ -87,10 +89,38 @@ impl Scope {
             this_value: None,
             this_initialized: false,
             object_binding: None,
-            with_unscopables: HashSet::new(),
+            with_unscopables: RefCell::new(HashSet::new()),
+            with_unscopables_loaded: Cell::new(false),
             is_static_class_body: false,
             per_iteration_scope: false,
         }
+    }
+
+    fn load_with_unscopables(&self) {
+        if self.with_unscopables_loaded.get() {
+            return;
+        }
+        let blocked = if let Some(ref obj) = self.object_binding {
+            let unscopables_val = crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")
+                .and_then(|symbol| {
+                    crate::eval::member::eval_object_member_value(obj, &symbol.into(), None).ok()
+                });
+            match unscopables_val {
+                Some(Value::Object(u_obj)) => {
+                    let u = u_obj.borrow();
+                    u.properties
+                        .iter()
+                        .filter(|(_, v)| crate::value::to_bool(v))
+                        .map(|(k, _)| k.clone())
+                        .collect()
+                }
+                _ => HashSet::new(),
+            }
+        } else {
+            HashSet::new()
+        };
+        *self.with_unscopables.borrow_mut() = blocked;
+        self.with_unscopables_loaded.set(true);
     }
 
     /// Mark this scope as a per-iteration scope for for-loop let bindings.
@@ -108,19 +138,21 @@ impl Scope {
         self.per_iteration_scope
     }
 
+    fn object_has_binding_property(&self, name: &str) -> bool {
+        self.object_binding
+            .as_ref()
+            .is_some_and(|obj| proxy_has_property(obj, name).unwrap_or(false))
+    }
+
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {
-        if !self.is_object_binding() {
+        if !self.object_has_binding_property(name) {
             return None;
         }
-        if self.is_unscopable(name) {
-            return Some(false);
+        if self.object_binding.is_none() {
+            return None;
         }
-        Some(
-            self.object_binding
-                .as_ref()
-                .map(|obj| proxy_has_property(obj, name).unwrap_or(false))
-                .unwrap_or(false),
-        )
+        self.load_with_unscopables();
+        Some(!self.is_unscopable(name))
     }
 
     pub fn is_object_binding(&self) -> bool {
@@ -132,15 +164,17 @@ impl Scope {
     }
 
     pub fn set_with_unscopables(&mut self, blocked: HashSet<String>) {
-        self.with_unscopables = blocked;
+        *self.with_unscopables.borrow_mut() = blocked;
+        self.with_unscopables_loaded.set(true);
     }
 
     pub fn clear_with_unscopables(&mut self) {
-        self.with_unscopables.clear();
+        self.with_unscopables.borrow_mut().clear();
+        self.with_unscopables_loaded.set(false);
     }
 
     fn is_unscopable(&self, name: &str) -> bool {
-        self.with_unscopables.contains(name)
+        self.with_unscopables.borrow().contains(name)
     }
 
     pub fn is_static_class_body(&self) -> bool {
@@ -153,6 +187,10 @@ impl Scope {
 
     pub fn set_object_property(&mut self, name: &str, value: Value, _strict: bool) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
+        if !self.object_has_binding_property(name) {
+            return None;
+        }
+        self.load_with_unscopables();
         if self.is_unscopable(name) {
             return None;
         }
@@ -180,10 +218,11 @@ impl Scope {
 
     pub fn delete_object_property(&mut self, name: &str) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
-        if self.is_unscopable(name) {
+        if !self.object_has_binding_property(name) {
             return None;
         }
-        if !proxy_has_property(object, name).unwrap_or(false) {
+        self.load_with_unscopables();
+        if self.is_unscopable(name) {
             return None;
         }
         if let Some(flags) = object.borrow().get_descriptor(name) {
@@ -288,9 +327,12 @@ impl Scope {
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
-                if proxy_has_property(obj, name).unwrap_or(false) {
-                    return proxy_get_property(obj, name).ok();
+                if let Some(true) = self.object_binding_has(name) {
+                    if self.object_has_binding_property(name) {
+                        return proxy_get_property(obj, name).ok();
+                    }
                 }
+                return Some(Value::Undefined);
             }
             return Some(Value::Undefined);
         }
@@ -301,7 +343,10 @@ impl Scope {
             return Some(value.borrow().clone());
         }
         if let Some(object) = self.object_binding.as_ref() {
-            if !self.is_unscopable(name) && proxy_has_property(object, name).unwrap_or(false) {
+            if self.object_has_binding_property(name) {
+                if self.with_unscopables_loaded.get() && self.is_unscopable(name) {
+                    return None;
+                }
                 return proxy_get_property(object, name).ok();
             }
         }

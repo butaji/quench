@@ -237,9 +237,27 @@ mod with_statement {
              with (proxy) { Object(); }\n\
              log.join(',');",
         );
-        let log = result.unwrap();
-        assert!(log.to_string().contains("has:Object"));
-        assert!(log.to_string().contains("get:Object"));
+        assert_eq!(
+            result.unwrap(),
+            Value::String(
+                "has:Object,get:Symbol(Symbol.unscopables),has:Object,get:Object".to_string(),
+            ),
+        );
+    }
+
+    #[test]
+    fn with_proxy_binding_missing_name_still_performs_has_binding() {
+        let result = eval(
+            "var log = [];\n\
+             var env = {};\n\
+             var proxy = new Proxy(env, {\n\
+              has(t, pk) { log.push('has:' + String(pk)); return pk in t; },\n\
+              get(t, pk, r) { log.push('get:' + String(pk)); return t[pk]; },\n\
+             });\n\
+             with (proxy) { Object; }\n\
+             log.join(',');",
+        );
+        assert_eq!(result.unwrap(), Value::String("has:Object".to_string()));
     }
 }
 
