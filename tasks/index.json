@@ -451,7 +451,7 @@
       "id": 36,
       "path": "test/language/statements/while",
       "tests": 38,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "50\u2013100",

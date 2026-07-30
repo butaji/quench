@@ -13,6 +13,7 @@ PUSH=0
 JSON=0
 MESSAGE=""
 UNIT_FILTER=""
+RUN=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -22,6 +23,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --json)
             JSON=1
+            shift
+            ;;
+        --run)
+            RUN=1
             shift
             ;;
         --unit)
@@ -68,6 +73,11 @@ if [[ -n "$UNIT_FILTER" ]]; then
     cargo test -p quench-runtime "$UNIT_FILTER" -- --exact
     echo "[ship-milestone] unit preflight passed: $UNIT_FILTER"
     echo
+fi
+
+if [[ "$RUN" -eq 1 && "$JSON" -eq 1 && "$PUSH" -eq 1 ]]; then
+    echo "error: --json and --push are not supported with --run in this command" >&2
+    exit 1
 fi
 
 if [[ "$JSON" -eq 1 ]]; then
