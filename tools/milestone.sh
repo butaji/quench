@@ -4,7 +4,7 @@
 #   bash tools/milestone.sh                    # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
-#   bash tools/milestone.sh --stage 32 --test-run       # run stage test-run first
+#   bash tools/milestone.sh --stage 32 --test-run --preflight # preflight + stage test-run
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
@@ -33,6 +33,7 @@ STATUS_CURRENT=0
 STATUS_NEXT=0
 NEXT_ID_ONLY=0
 RUN_TEST_RUN=0
+RUN_TEST_RUN_PREFLIGHT=1
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
@@ -117,11 +118,15 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --ssot)
             RUN_TEST_RUN=1
-            echo "[milestone] warning: --ssot is deprecated; use --test-run" >&2
+echo "[milestone] warning: --ssot is deprecated; use --test-run" >&2
             shift
             ;;
         --test-run)
             RUN_TEST_RUN=1
+            shift
+            ;;
+        --preflight)
+            RUN_TEST_RUN_PREFLIGHT=1
             shift
             ;;
         --advance)
@@ -239,6 +244,9 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
+    if [[ "$RUN_TEST_RUN_PREFLIGHT" -eq 1 ]]; then
+        bash tools/test-run-preflight.sh || exit 1
+    fi
     log_msg "[milestone] Running test-run check for stage ${STAGE}..."
     if bash tools/test-run-stage.sh "$STAGE"; then
         log_msg "[milestone] Test-run check complete for stage ${STAGE}."
