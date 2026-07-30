@@ -48,9 +48,9 @@ for s in d['stages']:
 
     EXIT_CODE=0
     if [ "$HAS_TIMEOUT" = "1" ]; then
-        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout "$STAGE_TIMEOUT" cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 timeout "$STAGE_TIMEOUT" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture 2>&1) || EXIT_CODE=$?
     else
-        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture 2>&1) || EXIT_CODE=$?
+        OUTPUT=$(TEST262_STAGE=$stage TEST262_DIGEST=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture 2>&1) || EXIT_CODE=$?
     fi
 
     # Digest prints "Passed:  N" and "Total:   N (files)" on separate lines.

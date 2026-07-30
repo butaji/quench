@@ -16,7 +16,7 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 TEST262_STAGE=N TEST262_DIGEST=1 TEST262_DETAIL=1 cargo test -p quench-runtime --test test262
 
 # Run a single stage (stops at first failure)
-TEST262_STAGE=N cargo test -p quench-runtime --test test262
+TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
 
 # Run all stages (stops at first failure)
 ALL_STAGES=1 cargo test -p quench-runtime --test test262
@@ -32,6 +32,9 @@ bash tools/digest-all.sh
 
 # Quick overview of all stages
 bash tools/stage-status.sh
+
+# Diagnose current stage quickly (digest + first failure run-test)
+TEST262_STAGE=N bash tools/fix-stage.sh
 
 # Check if current stage is 100% and advance
 TEST262_STAGE=N bash tools/advance-stage.sh
