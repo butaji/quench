@@ -82,11 +82,21 @@ PY
     exit 0
 fi
 
-CURRENT_STAGE="$(echo "$CURRENT_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("current_stage",""))')"
-CURRENT_STATUS="$(echo "$CURRENT_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("stage",{}).get("status",""))')"
-CURRENT_PATH="$(echo "$CURRENT_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("stage",{}).get("path",""))')"
-CURRENT_FAILED="$(echo "$CURRENT_JSON" | python3 -c 'import sys,json;print(int(json.load(sys.stdin).get("stage",{}).get("failed",0) or 0))')"
-CURRENT_TESTS="$(echo "$CURRENT_JSON" | python3 -c 'import sys,json;print(int(json.load(sys.stdin).get("stage",{}).get("tests",0) or 0))')"
-NEXT_ID="$(echo "$NEXT_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("next_stage",0) or 0)')"
+python3 - "$CURRENT_JSON" "$NEXT_JSON" <<'PY'
+import json
+import sys
 
-printf '%s\t%s\t%s\t%6s\t%6s\t%s\n' "$CURRENT_STAGE" "$CURRENT_STATUS" "${CURRENT_FAILED}" "$CURRENT_TESTS" "$( [ "$NEXT_ID" -eq 0 ] && echo 0 || echo 1 )" "$CURRENT_PATH"
+current_payload = json.loads(sys.argv[1])
+next_payload = json.loads(sys.argv[2]) if sys.argv[2] else {}
+
+stage = current_payload.get("stage", {})
+current_stage = current_payload.get("current_stage", "")
+current_status = stage.get("status", "")
+current_path = stage.get("path", "")
+current_failed = int(stage.get("failed", 0) or 0)
+current_tests = int(stage.get("tests", 0) or 0)
+next_id = int(next_payload.get("next_stage", 0) or 0)
+has_next = 1 if next_id != 0 else 0
+
+print(f"{current_stage}\t{current_status}\t{current_failed}\t{current_tests:>6}\t{has_next:>6}\t{current_path}")
+PY
