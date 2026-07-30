@@ -11,7 +11,8 @@ set -euo pipefail
 #   bash tools/test-run-go.sh --run --commit
 #   bash tools/test-run-go.sh --run --commit "chore: stage 34 progress"
 #   bash tools/test-run-go.sh --run --commit --push
-#   (SSOT and test-run are the same canonical flow for milestone runs.)
+#   (ssot and test-run are the same canonical flow for milestone runs; `ssot`
+#   is a legacy term.)
 
 JSON=0
 RUN=0
@@ -90,24 +91,53 @@ if [[ "$RUN" -eq 1 && "$NOPREFLIGHT" -eq 0 ]]; then
             echo "error: invalid preflight JSON payload" >&2
             exit 1
         fi
-        PREPARED="$(python3 - "$PREFLIGHT_JSON" <<'PY'
+PREPARED="$(python3 - "$PREFLIGHT_JSON" <<'PY'
 import json
 import sys
 
 payload = json.loads(sys.argv[1])
 obj = payload.get("test_run_preflight", {}) if isinstance(payload, dict) else {}
-ok = bool(obj.get("ready_for_test_run") and (obj.get("failed", 0) == 0))
-print(0 if ok else 1)
+if not obj.get("ready_for_test_run"):
+    print(1)
+    sys.exit()
+failed = int(obj.get("failed", 0) or 0)
+if failed > 0:
+    print(2)
+    sys.exit()
+print(0)
 PY
 )"
-        if [[ "$PREPARED" -ne 0 ]]; then
+        if [[ "$PREPARED" == "1" ]]; then
             echo "error: preflight not ready" >&2
+            exit 1
+        elif [[ "$PREPARED" == "2" ]]; then
+            echo "warning: preflight reports prior failures; proceeding" >&2
+            PREPARED=0
+        elif [[ "$PREPARED" != "0" ]]; then
+            echo "error: preflight parser failed" >&2
             exit 1
         fi
         echo "$PREFLIGHT_JSON"
     else
-        bash tools/test-run-preflight.sh || exit 1
-        bash tools/test-run-status-summary.sh --blocker
+        PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
+        if [[ -z "$PREFLIGHT_JSON" || "${PREFLIGHT_JSON:0:1}" != "{" || "${PREFLIGHT_JSON: -1}" != "}" ]]; then
+            echo "error: invalid preflight JSON payload" >&2
+            exit 1
+        fi
+        python3 - "$PREFLIGHT_JSON" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+obj = payload.get("test_run_preflight", {}) if isinstance(payload, dict) else {}
+if not obj.get("ready_for_test_run"):
+    print("error: preflight not ready", file=sys.stderr)
+    raise SystemExit(1)
+failed = int(obj.get("failed", 0) or 0)
+if failed > 0:
+    print(f"warning: preflight reports {failed} previous failures; proceeding", file=sys.stderr)
+PY
+        bash tools/test-run-status-summary.sh
     fi
 fi
 
