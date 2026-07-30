@@ -115,6 +115,11 @@ if [[ "$TEST" != *.js ]]; then
   exit 1
 fi
 
+log_dir="$(dirname "$LOG_FILE")"
+if [[ ! -d "$log_dir" ]]; then
+    mkdir -p "$log_dir"
+fi
+
 {
   echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
   cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
