@@ -1,185 +1,127 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Compatibility wrapper for SSOT/test-run status snapshots.
-# Usage:
-#   bash tools/implementation-progress.sh
-#   bash tools/implementation-progress.sh --next
-#   bash tools/implementation-progress.sh --raw
-#   bash tools/implementation-progress.sh --ci
-#   bash tools/implementation-progress.sh --summary
-#   bash tools/implementation-progress.sh --json
+# Thin compatibility wrapper. Canonical implementation status command is:
+# `bash tools/ssot --status`.
+# This script is intentionally kept for compatibility.
+
+NEXT=0
+JSON=0
 RAW=0
-INCLUDE_NEXT=0
 CI=0
-INCLUDE_SUMMARY=0
+SUMMARY=0
 
 while [[ ${#} -gt 0 ]]; do
-    case "${1:-}" in
-        --raw)
-            RAW=1
-            shift
-            ;;
-        --next)
-            INCLUDE_NEXT=1
-            shift
-            ;;
-        --ci)
-            CI=1
-            shift
-            ;;
-        --summary)
-            INCLUDE_SUMMARY=1
-            shift
-            ;;
-        --json)
-            shift
-            ;;
-        -h|--help)
-            sed -n '1,120p' "$0"
-            exit 0
-            ;;
-        *)
-            echo "error: unexpected argument: $1" >&2
-            exit 1
-            ;;
-    esac
+  case "${1:-}" in
+    --next)
+      NEXT=1
+      shift
+      ;;
+    --status)
+      # compatibility-only flag; retained for older call sites
+      shift
+      ;;
+    --json)
+      JSON=1
+      shift
+      ;;
+    --raw)
+      RAW=1
+      shift
+      ;;
+    --ci)
+      CI=1
+      shift
+      ;;
+    --summary)
+      SUMMARY=1
+      shift
+      ;;
+    -h|--help)
+      sed -n '1,140p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "error: unexpected argument: $1" >&2
+      exit 1
+      ;;
+  esac
 done
 
 if [[ "$RAW" -eq 1 ]]; then
-    if [[ "$CI" -eq 1 ]]; then
-        echo "error: --ci requires machine-readable output" >&2
-        exit 1
-    fi
-    if [[ "$INCLUDE_SUMMARY" -eq 1 ]]; then
-        echo "error: --summary requires machine-readable output" >&2
-        exit 1
-    fi
+  if [[ "$CI" -eq 1 || "$SUMMARY" -eq 1 || "$JSON" -eq 1 ]]; then
+    echo "error: --raw is mutually exclusive with --json/--summary/--ci" >&2
+    exit 1
+  fi
+fi
 
-    if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
-        echo "error: failed to read overall stage status" >&2
-        exit 1
-    fi
+if [[ "$NEXT" -eq 1 ]]; then
+  if [[ "$JSON" -eq 1 ]]; then
+    bash tools/test-run-go-next.sh --status --json
+  else
+    bash tools/test-run-go-next.sh --status
+  fi
+  exit 0
+fi
 
-    python3 - "$STATS_JSON" "$INCLUDE_NEXT" <<'PY'
+if [[ "$SUMMARY" -eq 1 && "$JSON" -eq 0 ]]; then
+  echo "error: --summary requires --json (consistency with ssot output)" >&2
+  exit 1
+fi
+
+if [[ "$JSON" -eq 1 ]]; then
+  if [[ "$CI" -eq 1 ]]; then
+    bash tools/ssot --status --json | python3 - <<'PY'
 import json
 import sys
 
-payload = json.loads(sys.argv[1])
-include_next = sys.argv[2] == "1"
-
-stages = payload.get('stages', []) if isinstance(payload, dict) else []
-current_stage_id = payload.get('current_stage') if isinstance(payload, dict) else None
-current = next((s for s in stages if s.get('id') == current_stage_id), {})
-
-if not isinstance(current, dict):
-    current = {}
-
-print(f"Current stage: {current_stage_id}")
-print(f"Path:       {current.get('path', '')}")
-print(f"Status:     {current.get('status', 'unknown')}")
-print(f"Tests:      {current.get('tests', 0)}")
-print(f"Failed:     {current.get('failed', 0)}")
-
-if include_next:
-    next_stage = next((s for s in stages if s.get('id', 0) > (current_stage_id or 0) and s.get('status') != 'done'), None)
-    print()
-    if next_stage is None:
-        print("No pending next stage found.")
-    else:
-        print(f"Next stage: {next_stage.get('id')}")
-        print(f"Path:      {next_stage.get('path', '')}")
-        print(f"Status:    {next_stage.get('status', 'unknown')}")
-        print(f"Tests:     {next_stage.get('tests', 0)}")
-
+payload = json.loads(sys.stdin.read() or "{}").get("test_run_status_summary", {})
+blocked = bool(payload.get("is_blocked", False))
+has_next = bool(payload.get("has_next", False))
+if blocked or has_next:
+    print(json.dumps(payload, sort_keys=True))
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
 PY
-
-    if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
-        :
-    fi
-    exit 0
+  else
+    bash tools/ssot --status --json
+  fi
+  exit 0
 fi
 
-if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
-    echo "error: failed to read overall stage status" >&2
-    exit 1
+if [[ "$RAW" -eq 1 ]]; then
+  bash tools/ssot --status --json | python3 - <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.stdin.read() or "{}").get("test_run_status_summary", {})
+print(f"Current stage: {payload.get('current_stage')}")
+print(f"Path: {payload.get('path', '')}")
+print(f"Status: {payload.get('status')}")
+print(f"Tests: {payload.get('tests')}")
+print(f"Failed: {payload.get('failed')}")
+print(f"Has next: {1 if payload.get('has_next') else 0}")
+next_stage = payload.get('next_stage', {}) or {}
+if next_stage:
+    print(f"Next stage: {next_stage.get('id')} ({next_stage.get('status', 'pending')})")
+PY
+  exit 0
 fi
 
 if [[ "$CI" -eq 1 ]]; then
-    INCLUDE_SUMMARY=1
-fi
-
-python3 - "$STATS_JSON" "$INCLUDE_NEXT" "$INCLUDE_SUMMARY" "$CI" <<'PY'
+  bash tools/ssot --status --json | python3 - <<'PY'
 import json
 import sys
-
-stats_json = sys.argv[1]
-include_next = sys.argv[2] == "1"
-include_summary = sys.argv[3] == "1"
-ci_mode = sys.argv[4] == "1"
-
-stats_payload = json.loads(stats_json) if stats_json else None
-
-all_stages = []
-if stats_payload and isinstance(stats_payload, dict):
-    all_stages = stats_payload.get('stages', [])
-current_stage_id = stats_payload.get('current_stage') if isinstance(stats_payload, dict) else None
-current_stage = None
-next_payload = None
-if isinstance(all_stages, list):
-    for stage in all_stages:
-        if stage.get('id') == current_stage_id:
-            current_stage = stage
-        if include_next and next_payload is None and stage.get('id') > (current_stage_id or 0) and stage.get('status') != 'done':
-            next_payload = {
-                'current_stage': current_stage_id,
-                'next_stage': stage.get('id'),
-                'stage': stage,
-            }
-
-current_status = current_stage.get("status") if isinstance(current_stage, dict) else None
-
-has_pending = False
-if include_next and isinstance(next_payload, dict):
-    has_pending = bool(next_payload.get("next_stage") not in (None, 0, "0"))
-else:
-    if all_stages:
-        has_pending = any(s.get('status') != 'done' for s in all_stages)
-
-out = {
-    "test_run": {
-        "current": {
-            "current_stage": current_stage_id,
-            "stage": current_stage,
-        },
-        "has_pending": has_pending,
-        "ci_ready": bool(current_status == "done" and not has_pending),
-    }
-}
-
-if include_next:
-    out["test_run"]["next"] = next_payload
-
-if include_summary:
-    stages = stats_payload.get('stages', []) if isinstance(stats_payload, dict) else []
-    total_stages = len(stages)
-    done_stages = sum(1 for s in stages if s.get('status') == 'done')
-    total_tests = sum(s.get('tests', 0) for s in stages)
-    done_tests = sum(s.get('tests', 0) for s in stages if s.get('status') == 'done')
-    pending_tests = max(0, total_tests - done_tests)
-    out["test_run"]["summary"] = {
-        "stages_done": done_stages,
-        "stages_total": total_stages,
-        "tests_done": done_tests,
-        "tests_total": total_tests,
-        "tests_pending": pending_tests,
-        "progress_percent": 0.0 if total_tests == 0 else round((done_tests * 100.0) / total_tests, 4),
-    }
-
-print(json.dumps(out, sort_keys=True))
-
-if ci_mode:
-    if current_status != "done" or has_pending:
-        raise SystemExit(1)
-    raise SystemExit(0)
+payload = json.loads(sys.stdin.read() or "{}").get("test_run_status_summary", {})
+print(payload.get("is_blocked", True) and "not ready" or "ready")
+sys.exit(1 if payload.get("is_blocked") else 0)
 PY
+  exit 0
+fi
+
+if [[ "$SUMMARY" -eq 1 ]]; then
+  echo "error: --summary requires --json" >&2
+  exit 1
+fi
+
+bash tools/ssot --status

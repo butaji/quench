@@ -3,10 +3,9 @@
 ## Quick Reference
 
 Canonical language:
-- `SSOT` is the short alias for the canonical **test-run** workflow.
-- `SSOT` and `test-run` are 1:1 aliases.
-- `test-run` is the canonical term for stage status and milestone execution.
-- `implementation-progress` is a legacy compatibility wrapper.
+- `SSOT` is the canonical short alias for the test-run workflow.
+- `test-run` and all legacy status helpers are compatibility entrypoints that delegate to `SSOT`.
+- `implementation-progress` is retained only for compatibility and forwards status to `SSOT`.
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
 
 ```bash
