@@ -8,6 +8,8 @@ set -euo pipefail
 #   bash tools/run-next-pending.sh --json --build
 #   bash tools/run-next-pending.sh --by-ratio --top 3
 #   bash tools/run-next-pending.sh --print
+#   bash tools/run-next-pending.sh --print-json
+#   bash tools/run-next-pending.sh --status
 
 RUN_JSON=0
 RUN_BUILD=0
@@ -16,6 +18,7 @@ TOP=1
 STAGE_OVERRIDE=""
 PRINT_ONLY=0
 PRINT_JSON=0
+STATUS=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -46,6 +49,10 @@ while [[ ${#} -gt 0 ]]; do
         --print-json)
             PRINT_ONLY=1
             PRINT_JSON=1
+            shift
+            ;;
+        --status)
+            STATUS=1
             shift
             ;;
         --stage-override)
@@ -107,9 +114,9 @@ if [[ -z "${STAGE}" || "${STAGE}" == "0" ]]; then
     exit 1
 fi
 
-if [[ "$PRINT_ONLY" -eq 1 ]]; then
-    if [[ "$PRINT_JSON" -eq 1 ]]; then
-        STAGE_PATH="$(bash tools/stage-path.sh "$STAGE")"
+if [[ "$PRINT_ONLY" -eq 1 || "$STATUS" -eq 1 ]]; then
+    STAGE_PATH="$(bash tools/stage-path.sh "$STAGE")"
+    if [[ "$PRINT_JSON" -eq 1 || "$STATUS" -eq 1 ]]; then
         export STAGE
         export SOURCE
         export STAGE_PATH
@@ -121,7 +128,7 @@ stage = int(os.environ["STAGE"])
 payload = {
     "source": os.environ["SOURCE"],
     "stage": stage,
-    "path": os.environ["STAGE_PATH"]
+    "path": os.environ["STAGE_PATH"],
 }
 print(json.dumps(payload, sort_keys=True))
 PY

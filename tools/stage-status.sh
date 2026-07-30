@@ -8,8 +8,7 @@
 # Usage: bash tools/stage-status.sh --json --next
 # Usage: bash tools/stage-status.sh --next-id
 #
-# Shows pass rate for each stage based on index.json status,
-# plus quick-test for the current stage.
+# Shows stage status from tasks/index.json (derived from test-run updates).
 
 cd "$(dirname "$0")/.."
 

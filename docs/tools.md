@@ -52,6 +52,8 @@ bash tools/run-next-pending.sh
 bash tools/run-next-pending.sh --print
 # Print resolved stage as JSON metadata (source/id/path)
 bash tools/run-next-pending.sh --print-json
+# SSOT metadata for next pending stage (same payload as --print-json)
+bash tools/run-next-pending.sh --status
 # Run highest-failure-ratio pending stage
 bash tools/run-next-pending.sh --by-ratio
 # Restrict ratio-driven pick to top-N candidate window
