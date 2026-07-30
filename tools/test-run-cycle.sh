@@ -12,6 +12,7 @@ set -euo pipefail
 RUN=0
 ASSERT_READY=0
 JSON=0
+DASHBOARD_PRECHECK_DONE=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -47,6 +48,7 @@ if [[ "$JSON" -eq 1 ]]; then
         echo "error: dashboard check failed" >&2
         exit 1
     fi
+    DASHBOARD_PRECHECK_DONE=1
     if [[ "$RUN" -eq 0 ]]; then
         echo "$DASHBOARD_JSON"
         exit 0
@@ -54,7 +56,7 @@ if [[ "$JSON" -eq 1 ]]; then
     echo "$DASHBOARD_JSON"
 fi
 
-if [[ "$ASSERT_READY" -eq 1 ]]; then
+if [[ "$ASSERT_READY" -eq 1 && "$DASHBOARD_PRECHECK_DONE" -eq 0 ]]; then
     bash tools/test-run-dashboard.sh --assert-ready || exit 1
 fi
 
