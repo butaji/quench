@@ -259,6 +259,32 @@ impl Scope {
         Some(true)
     }
 
+    pub fn set_object_property_after_get(&self, name: &str, value: Value) -> Option<bool> {
+        let object = self.object_binding.as_ref()?.clone();
+        if !self.load_with_unscopables() || self.is_unscopable(name) {
+            return None;
+        }
+        if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
+            return Some(false);
+        }
+        if let Some((handler, target)) = proxy_handler_and_target(&object) {
+            if proxy_has_property(&object, name).ok() != Some(true) {
+                return None;
+            }
+            return call_proxy_set_trap(
+                &target,
+                &handler,
+                &Value::Object(Rc::clone(&object)),
+                name,
+                value,
+            )
+            .ok()
+            .map(|success| success.then_some(true).unwrap_or(false));
+        }
+        object.borrow_mut().set(name, value);
+        Some(true)
+    }
+
     pub fn delete_object_property(&mut self, name: &str) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
         if !matches!(self.object_has_binding_property(name), Some(true)) {

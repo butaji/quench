@@ -410,9 +410,15 @@ pub fn eval_expression(
             } else {
                 None
             };
-            let scope = ident_name
-                .as_ref()
-                .and_then(|n| env.borrow().binding_scope(n));
+            let scope = ident_name.as_ref().and_then(|name| {
+                let env_ref = env.borrow();
+                env_ref
+                    .live_scopes_snapshot()
+                    .into_iter()
+                    .rev()
+                    .find(|scope| scope.borrow().is_object_binding())
+                    .or_else(|| env_ref.binding_scope(name))
+            });
             drop(env.borrow());
             // Evaluate right side after borrow is dropped.
             let right_val = eval_expression(right, env, in_arrow_function)?;
@@ -423,7 +429,7 @@ pub fn eval_expression(
                 if scope.borrow().is_object_binding()
                     && scope
                         .borrow()
-                        .set_object_property(&name, result.clone(), false)
+                        .set_object_property_after_get(&name, result.clone())
                         == Some(true)
                 {
                     return Ok(result);
