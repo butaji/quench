@@ -78,7 +78,12 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --status)
             STATUS_ONLY=1
-            shift
+            if [[ "${2:-}" == "--json" ]]; then
+                STATUS_JSON=1
+                shift 2
+            else
+                shift
+            fi
             ;;
         --status-json)
             STATUS_ONLY=1
