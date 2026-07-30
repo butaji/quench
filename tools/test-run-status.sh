@@ -17,7 +17,7 @@ while [[ ${#} -gt 0 ]]; do
             shift
             ;;
         --json)
-            # Idempotent: already explicit machine-readable mode.
+            # Idempotent: machine-readable mode is already explicit.
             shift
             ;;
         -h|--help)
@@ -36,4 +36,3 @@ if [[ "$RAW" -eq 1 ]]; then
 else
     bash tools/test-run-stage.sh --json "${ARGS[@]}"
 fi
-
