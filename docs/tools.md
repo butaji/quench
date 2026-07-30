@@ -5,9 +5,11 @@
 Canonical language:
 - `SSOT` is the canonical short alias for the test-run workflow.
 - `test-run` is canonical status workflow name and maps to `SSOT`.
-- `implementation-progress` is retained only for compatibility and forwards status/readiness checks to `SSOT`.
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
 - There is **no separate status model**: `SSOT` and test-run status are the same source of truth.
+
+Use `bash tools/test-run` for status/run/commit/push flows.
+`tools/ssot` and `tools/ssot-fast.sh` are compatibility wrappers.
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
@@ -161,6 +163,8 @@ bash tools/run-test-plan-status.sh --raw
 bash tools/test-run-status.sh
 # Stage test-run status in raw human mode
 bash tools/test-run-status.sh --raw
+# Canonical shorthand for both status and execution flows
+bash tools/test-run
 # Run and persist a machine-readable plan execution record
 bash tools/run-test-plan-log.sh --status-json
 # Log only compact status summary (no command output replay)

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Canonical short command for Stage test-run workflows.
+# SSOT is the single source of truth and maps to the same flow.
+#
+# Examples:
+#   bash tools/test-run                 # status snapshot
+#   bash tools/test-run --run           # run current stage
+#   bash tools/test-run --run --commit [--push]   # run, commit, optionally push
+#   bash tools/test-run --next --run     # run next pending stage
+#   bash tools/test-run --fast --next    # skip preflight for speed
+#
+# All flags are passed through to ssot.
+
+bash tools/ssot "$@"
