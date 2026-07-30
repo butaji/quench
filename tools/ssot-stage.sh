@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Usage:
+#   bash tools/ssot-stage.sh                  # run current stage test-run (legacy name retained)
+#   bash tools/ssot-stage.sh --stage 42        # explicit stage
+#   TEST262_TEST_RUN_BUILD=1 bash tools/ssot-stage.sh  # prebuild run-test before running
 
 STAGE="${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}"
 AUTO_HELP=0
 
-if [[ ${#} -gt 0 && "${1:-}" == --help ]]; then
+if [[ ${#} -gt 0 && ("${1:-}" == --help || "${1:-}" == -h) ]]; then
     AUTO_HELP=1
 fi
 if [[ "$AUTO_HELP" -eq 1 ]]; then
@@ -22,14 +26,15 @@ fi
 
 if [[ -z "$STAGE" ]]; then
   echo "Usage: $0 [--stage N] " >&2
+  echo "Canonical term: test-run (legacy name ssot-stage retained)." >&2
   echo "Or: TEST262_STAGE=<stage> $0" >&2
   echo "Or: $0 <stage>" >&2
   exit 1
 fi
 
-if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
+if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" || "${TEST262_TEST_RUN_BUILD:-0}" == "1" ]]; then
   cargo build --bin run-test --quiet
 fi
 
-echo "[ssot-stage] Stage $STAGE (digest)"
+echo "[test-run-stage] Stage $STAGE (digest)"
 TEST262_STAGE="$STAGE" TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "$@"
