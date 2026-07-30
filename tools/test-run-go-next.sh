@@ -12,6 +12,9 @@ set -euo pipefail
 #   bash tools/test-run-go-next.sh --status
 #   bash tools/test-run-go-next.sh --run --by-ratio --top 5
 #   bash tools/test-run-go-next.sh --run --advance
+#   bash tools/test-run-go-next.sh --run --commit
+#   bash tools/test-run-go-next.sh --run --commit "chore: stage fix"
+#   bash tools/test-run-go-next.sh --run --commit --push
 
 RUN=0
 JSON=0
@@ -21,6 +24,9 @@ BY_RATIO=0
 TOP=1
 NOPREFLIGHT=0
 AUTO_ADVANCE=0
+AUTO_COMMIT=0
+AUTO_PUSH=0
+COMMIT_MESSAGE=""
 STAGE_OVERRIDE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -61,6 +67,19 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --advance)
             AUTO_ADVANCE=1
+            shift
+            ;;
+        --commit)
+            AUTO_COMMIT=1
+            if [[ "${2:-}" != "" && "${2:-}" != --* ]]; then
+                COMMIT_MESSAGE="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --push)
+            AUTO_PUSH=1
             shift
             ;;
         --stage)
@@ -185,23 +204,45 @@ if [[ "$NOPREFLIGHT" -eq 0 ]]; then
     fi
 fi
 
+if [[ "$JSON" -eq 1 && "$AUTO_COMMIT" -eq 1 ]]; then
+    echo "error: --json is not supported with --commit in this command" >&2
+    exit 1
+fi
+
 if [[ "$JSON" -eq 0 ]]; then
     echo "[test-run-go-next] running stage ${STAGE} (${SOURCE})"
 fi
 
-if [[ "$JSON" -eq 1 ]]; then
-    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json
+if [[ "$AUTO_COMMIT" -eq 1 ]]; then
+    MILESTONE_ARGS=(--stage "$STAGE" --test-run)
+    if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
+        MILESTONE_ARGS+=(--advance)
+    fi
+    if [[ "$AUTO_PUSH" -eq 1 ]]; then
+        MILESTONE_ARGS+=(--push)
+    fi
+    if [[ -n "$COMMIT_MESSAGE" ]]; then
+        MILESTONE_ARGS+=(--commit "$COMMIT_MESSAGE")
+    else
+        MILESTONE_ARGS+=(--commit)
+    fi
+    bash tools/milestone.sh "${MILESTONE_ARGS[@]}"
     RUN_RC=$?
 else
-    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh
-    RUN_RC=$?
+    if [[ "$JSON" -eq 1 ]]; then
+        TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json
+        RUN_RC=$?
+    else
+        TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh
+        RUN_RC=$?
+    fi
 fi
 
 if [[ "$RUN_RC" -ne 0 ]]; then
     exit "$RUN_RC"
 fi
 
-if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
+if [[ "$AUTO_COMMIT" -eq 0 && "$AUTO_ADVANCE" -eq 1 ]]; then
     if [[ "$STAGE" == "$CURRENT_STAGE" ]]; then
         bash tools/advance-stage.sh
     elif [[ "$JSON" -eq 0 ]]; then
