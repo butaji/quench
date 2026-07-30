@@ -12,7 +12,7 @@
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
-#   bash tools/milestone.sh --rerun-json --rerun-json-out /tmp/milestone-rerun.json
+#   bash tools/milestone.sh --rerun-json --rerun-json-out /tmp/milestone-rerun.json # env: MILESTONE_RERUN_JSON_OUT
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
 #   bash tools/milestone.sh --quiet                    # suppress human-readable output
@@ -129,6 +129,7 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 STAGE="${STAGE:-${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}}"
+RERUN_JSON_OUT="${MILESTONE_RERUN_JSON_OUT:-$RERUN_JSON_OUT}"
 if [[ "$RERUN_JSON" -eq 1 && "$RERUN_JSON_OUT" == "" ]]; then
     RERUN_JSON_OUT=".milestone-rerun-${STAGE}.json"
 fi
