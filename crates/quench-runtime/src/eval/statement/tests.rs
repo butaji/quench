@@ -205,6 +205,25 @@ mod with_statement {
         );
         assert_eq!(result.unwrap(), Value::Boolean(true));
     }
+
+    #[test]
+    fn with_unscopables_blocks_truthy_non_boolean_values() {
+        let result = eval(
+            "var x = 1;\n\
+             var env = { x: 2 };\n\
+             env[Symbol.unscopables] = { x: true };\n\
+             with (env) { x = 0; }\n\
+             var first = x === 0;\n\
+             env[Symbol.unscopables].x = 'string';\n\
+             with (env) { x = 0; }\n\
+             var second = x === 0;\n\
+             env[Symbol.unscopables].x = 86;\n\
+             with (env) { x = 0; }\n\
+             var third = x === 0;\n\
+             first && second && third",
+        );
+        assert_eq!(result.unwrap(), Value::Boolean(true));
+    }
 }
 
 mod class_static_properties {

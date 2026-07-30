@@ -107,11 +107,13 @@ pub fn extract_property_name(
             PropertyKey::Ident(s) => Ok(s.clone()),
             PropertyKey::String(s) => Ok(s.clone()),
             PropertyKey::Number(n) => Ok(n.to_string()),
-            PropertyKey::Computed(e) => Ok(crate::value::to_js_string(&eval_expression(
-                e,
-                env,
-                in_arrow_function,
-            )?)),
+            PropertyKey::Computed(e) => {
+                let val = eval_expression(e, env, in_arrow_function)?;
+                match val {
+                    Value::Symbol(s) => Ok(s.property_key()),
+                    _ => Ok(crate::value::to_js_string(&val)),
+                }
+            }
         }
     }
 }
@@ -631,7 +633,11 @@ pub(crate) fn assign_to_object(
         }
     }
 
-    o.borrow_mut().set(prop_name, value.clone());
+    if prop_name.contains('\0') {
+        o.borrow_mut().set_symbol(prop_name, value.clone());
+    } else {
+        o.borrow_mut().set(prop_name, value.clone());
+    }
 
     // Mirror writes on globalThis into the global binding.
     let is_global_this = {

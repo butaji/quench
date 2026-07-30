@@ -802,7 +802,9 @@ pub fn eval_statement(
                 let current_scope = env.borrow_mut().current_scope();
                 current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
                 for name in with_scope_names {
-                    current_scope.borrow_mut().declare_with_var(name, VarKind::Var);
+                    if !blocked.contains(&name) {
+                        current_scope.borrow_mut().declare_with_var(name, VarKind::Var);
+                    }
                 }
                 current_scope
                     .borrow_mut()
