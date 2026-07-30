@@ -98,6 +98,7 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
             echo "[milestone] No working-tree changes to commit."
         fi
     fi
+    bash tools/stage-status.sh
     exit 0
 fi
 
@@ -124,6 +125,7 @@ if bash tools/fix-stage.sh; then
             echo "[milestone] No working-tree changes to commit."
         fi
     fi
+    bash tools/stage-status.sh
 
     exit 0
 else
