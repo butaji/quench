@@ -6,9 +6,10 @@ set -euo pipefail
 #   bash tools/implementation-progress.sh
 #   bash tools/implementation-progress.sh --next
 #   bash tools/implementation-progress.sh --raw
-
+#   bash tools/implementation-progress.sh --ci
 RAW=0
 INCLUDE_NEXT=0
+CI=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -18,6 +19,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --next)
             INCLUDE_NEXT=1
+            shift
+            ;;
+        --ci)
+            CI=1
             shift
             ;;
         -h|--help)
@@ -32,6 +37,10 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 if [[ "$RAW" -eq 1 ]]; then
+    if [[ "$CI" -eq 1 ]]; then
+        echo "error: --ci requires machine-readable output" >&2
+        exit 1
+    fi
     bash tools/stage-status.sh --current
     if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
         echo
@@ -52,25 +61,38 @@ if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
     fi
 fi
 
-python3 - "$CURRENT_JSON" "$NEXT_JSON" "$INCLUDE_NEXT" <<'PY'
+python3 - "$CURRENT_JSON" "$NEXT_JSON" "$INCLUDE_NEXT" "$CI" <<'PY'
 import json
 import sys
 
 current_json = sys.argv[1]
 next_json = sys.argv[2]
 include_next = sys.argv[3] == "1"
+ci_mode = sys.argv[4] == "1"
 
 current_payload = json.loads(current_json)
 next_payload = json.loads(next_json) if next_json else None
 
-payload = {
+current_stage = current_payload.get("stage") if isinstance(current_payload, dict) else None
+current_status = current_stage.get("status") if isinstance(current_stage, dict) else None
+has_pending = False
+if include_next and isinstance(next_payload, dict):
+    has_pending = bool(next_payload.get("next_stage") not in (None, 0, "0"))
+
+out = {
     "implementation": {
         "current": current_payload,
+        "has_pending": has_pending,
     }
 }
 
 if include_next:
-    payload["implementation"]["next"] = next_payload
+    out["implementation"]["next"] = next_payload
 
-print(json.dumps(payload, sort_keys=True))
+print(json.dumps(out, sort_keys=True))
+
+if ci_mode:
+    if current_status != "done" or has_pending:
+        raise SystemExit(1)
+    raise SystemExit(0)
 PY

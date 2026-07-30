@@ -38,8 +38,12 @@ bash tools/stage-status.sh
 bash tools/stage-status.sh --current
 # Canonical single-command implementation progress snapshot
 bash tools/implementation-progress.sh
+# Assert no pending work: exit 0 when all stages done, 1 otherwise
+bash tools/implementation-progress.sh --ci
 # Include next pending stage in the same snapshot
 bash tools/implementation-progress.sh --next
+# Include both next stage and CI gate in one output/exit code
+bash tools/implementation-progress.sh --next --ci
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
