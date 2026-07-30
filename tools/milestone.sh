@@ -10,6 +10,7 @@
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --ssot --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
+#   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 
 set -euo pipefail
 
@@ -22,6 +23,7 @@ AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
 DRY_RUN=0
+AUTO_RERUN=0
 COMMIT_MESSAGE=""
 HISTORY=0
 
@@ -46,6 +48,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --dry-run)
             DRY_RUN=1
+            shift
+            ;;
+        --rerun)
+            AUTO_RERUN=1
             shift
             ;;
         --status)
@@ -190,6 +196,9 @@ if bash tools/fix-stage.sh; then
     exit 0
 else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
+    if [[ "$AUTO_RERUN" -eq 1 ]]; then
+        bash tools/milestone-rerun.sh --stage "$STAGE"
+    fi
     show_history
     log_status "test-run" "failed"
     exit 1
