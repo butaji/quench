@@ -22,7 +22,7 @@ TIMED_OUT=""
 HAS_TIMEOUT=1
 command -v timeout >/dev/null 2>&1 || HAS_TIMEOUT=0
 
-for stage in $(seq 0 121); do
+while IFS= read -r stage; do
     echo "Stage $stage..."
     STAGE_PATH=$(bash tools/stage-path.sh "$stage")
     STAGE_COUNT=$(bash tools/stage-count.sh "$stage")
@@ -55,13 +55,13 @@ for stage in $(seq 0 121); do
         CRASHED="$CRASHED $stage"
         PCT="CRASH"
     else
-        PCT=$(python3 -c "print(f'{$PASSED/$TOTAL*100:.0f}')" 2>/dev/null || echo "$((PASSED * 100 / TOTAL))")
+        PCT=$(python3 -c "print(f'{(PASSED/$TOTAL*100):.0f}')" 2>/dev/null || echo "$((PASSED * 100 / TOTAL))")
         TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
         TOTAL_TESTS=$((TOTAL_TESTS + TOTAL))
     fi
 
     echo "| $stage | $STAGE_PATH | ${PASSED:--} | ${TOTAL:--} | $PCT |" >> "$REPORT"
-done
+done < <(bash tools/stage-ids.sh)
 
 echo "" >> "$REPORT"
 echo "## Summary" >> "$REPORT"
