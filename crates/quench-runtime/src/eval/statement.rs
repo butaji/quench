@@ -1365,19 +1365,31 @@ fn eval_try(
                 // Suspend pending control flow while finally runs.
                 let pending_cf = take_control_flow();
 
-                let fin_result = eval_statement(fin, env, false, in_arrow_function);
-                match fin_result {
-                    Ok(fin_val) => {
-                        // If finally has its own control flow (break/continue/return),
-                        // it overrides the original. Per ES §14.15.4, finally's completion
-                        // replaces the try's completion for [[Type]] break, continue, return.
-                        if let Some(cf) = take_control_flow() {
-                            set_control_flow(cf); // Propagate finally's control flow
-                        } else if crate::interpreter::is_in_async_function() {
-                            set_control_flow(ControlFlow::Return(fin_val.clone()));
-                            return Ok(fin_val);
-                        } else if let Some(cf) = pending_cf {
-                            set_control_flow(cf); // Restore original control flow
+                    let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                    match fin_result {
+                        Ok(fin_val) => {
+                            // If finally has its own control flow (break/continue/return),
+                            // it overrides the original. Per ES §14.15.4, finally's completion
+                            // replaces the try's completion for [[Type]] break, continue, return.
+                            if let Some(cf) = take_control_flow() {
+                                let cf = cf.clone();
+                                set_control_flow(cf.clone()); // Propagate finally's control flow
+                                return match cf {
+                                    ControlFlow::Return(value) => Ok(value),
+                                    ControlFlow::Break(_) | ControlFlow::Continue(_) => Ok(fin_val),
+                                    ControlFlow::Yield(value) => Ok(value),
+                                    ControlFlow::YieldDelegate(value) => Ok(value),
+                                    ControlFlow::Throw(value) => {
+                                        set_thrown_value(value.clone());
+                                        let msg = to_js_string(&value);
+                                        return Err(JsError(msg));
+                                    }
+                                };
+                            } else if crate::interpreter::is_in_async_function() {
+                                set_control_flow(ControlFlow::Return(fin_val.clone()));
+                                return Ok(fin_val);
+                            } else if let Some(cf) = pending_cf {
+                                set_control_flow(cf); // Restore original control flow
                         }
                         Ok(try_val)
                     }
@@ -1423,7 +1435,19 @@ fn eval_try(
                             // Finally's control flow overrides the catch's.
                             let fin_cf = take_control_flow();
                             if let Some(cf) = fin_cf {
-                                set_control_flow(cf); // Propagate finally's control flow
+                                let cf = cf.clone();
+                                set_control_flow(cf.clone()); // Propagate finally's control flow
+                                return match cf {
+                                    ControlFlow::Return(value) => Ok(value),
+                                    ControlFlow::Break(_) | ControlFlow::Continue(_) => Ok(fin_val),
+                                    ControlFlow::Yield(value) => Ok(value),
+                                    ControlFlow::YieldDelegate(value) => Ok(value),
+                                    ControlFlow::Throw(value) => {
+                                        set_thrown_value(value.clone());
+                                        let msg = to_js_string(&value);
+                                        Err(JsError(msg))
+                                    }
+                                };
                             } else if crate::interpreter::is_in_async_function() {
                                 set_control_flow(ControlFlow::Return(fin_val.clone()));
                                 return Ok(fin_val);

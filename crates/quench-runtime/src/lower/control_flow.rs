@@ -208,12 +208,27 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
                             pattern,
                             init: Some(Expression::Identifier(catch_param.clone())),
                         });
+                        let nested_body = Statement::Block(
+                            catch
+                                .body
+                                .body
+                                .iter()
+                                .filter_map(lower_stmt)
+                                .collect(),
+                        );
+                        handler_stmts.push(nested_body);
                         Some(catch_param)
                     }
                 },
                 None => None,
             };
-            handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
+            if catch_param.is_some() && handler_stmts.is_empty() {
+                handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
+            } else if catch.param.as_ref().is_none_or(|p| {
+                matches!(&p.pattern, ast::BindingPattern::BindingIdentifier(_))
+            }) {
+                handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
+            }
             (catch_param, Some(Box::new(Statement::Block(handler_stmts))))
         }
         None => (None, None),
