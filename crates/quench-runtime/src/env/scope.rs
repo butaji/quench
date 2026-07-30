@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use crate::ast::VarKind;
 use crate::eval::object::{proxy_get_property, proxy_has_property};
+use crate::value::error::set_thrown_value;
 use crate::value::Value;
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
@@ -96,15 +97,45 @@ impl Scope {
         }
     }
 
-    fn load_with_unscopables(&self) {
+    fn load_with_unscopables(&self) -> bool {
         if self.with_unscopables_loaded.get() {
-            return;
+            return true;
         }
         let blocked = if let Some(ref obj) = self.object_binding {
-            let unscopables_val = crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")
-                .and_then(|symbol| {
-                    crate::eval::member::eval_object_member_value(obj, &symbol.into(), None).ok()
-                });
+            let unscopables_val = if let Some(symbol) =
+                crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")
+            {
+                match crate::eval::member::eval_object_member_value(obj, &symbol.into(), None) {
+                    Ok(v) => Some(v),
+                    Err(err) => {
+                        if crate::value::get_thrown_value().is_none() {
+                            let msg = err.0;
+                            let (err_type, msg) = msg
+                                .strip_prefix("Test262Error: ")
+                                .map(|m| ("Test262Error", m))
+                                .or_else(|| {
+                                    msg.strip_prefix("TypeError: ").map(|m| ("TypeError", m))
+                                })
+                                .or_else(|| {
+                                    msg.strip_prefix("ReferenceError: ")
+                                        .map(|m| ("ReferenceError", m))
+                                })
+                                .or_else(|| {
+                                    msg.strip_prefix("SyntaxError: ").map(|m| ("SyntaxError", m))
+                                })
+                                .unwrap_or(("Error", msg.as_str()));
+                            set_thrown_value(crate::value::create_js_error_with_type(
+                                msg,
+                                err_type,
+                            )
+                            .0);
+                        }
+                        return false;
+                    }
+                }
+            } else {
+                None
+            };
             match unscopables_val {
                 Some(Value::Object(u_obj)) => {
                     let u = u_obj.borrow();
@@ -121,6 +152,7 @@ impl Scope {
         };
         *self.with_unscopables.borrow_mut() = blocked;
         self.with_unscopables_loaded.set(true);
+        true
     }
 
     /// Mark this scope as a per-iteration scope for for-loop let bindings.
@@ -144,13 +176,18 @@ impl Scope {
     }
 
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {
-        if !matches!(self.object_has_binding_property(name), Some(true)) {
-            return None;
-        }
         if self.object_binding.is_none() {
             return None;
         }
-        self.load_with_unscopables();
+        if !self.load_with_unscopables() {
+            return None;
+        }
+        if self.is_unscopable(name) {
+            return Some(false);
+        }
+        if matches!(self.object_has_binding_property(name), Some(false)) {
+            return None;
+        }
         Some(!self.is_unscopable(name))
     }
 
@@ -189,7 +226,9 @@ impl Scope {
         if !matches!(self.object_has_binding_property(name), Some(true)) {
             return None;
         }
-        self.load_with_unscopables();
+        if !self.load_with_unscopables() {
+            return None;
+        }
         if self.is_unscopable(name) {
             return None;
         }
@@ -220,7 +259,9 @@ impl Scope {
         if !matches!(self.object_has_binding_property(name), Some(true)) {
             return None;
         }
-        self.load_with_unscopables();
+        if !self.load_with_unscopables() {
+            return None;
+        }
         if self.is_unscopable(name) {
             return None;
         }
@@ -326,18 +367,21 @@ impl Scope {
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
-                if self.object_binding_has(name) == Some(true) {
-                    // Declared-only env entries still require a second HasProperty check
-                    // before GetBindingValue per ObjectEnvironmentRecord semantics.
-                    if !matches!(self.object_has_binding_property(name), Some(true)) {
+                match self.object_binding_has(name) {
+                    Some(true) => {
+                        return match proxy_get_property(obj, name) {
+                            Ok(v) => Some(v),
+                            Err(_) => Some(Value::Undefined),
+                        };
+                    }
+                    Some(false) => {
+                        if crate::interpreter::is_strict_mode() {
+                            return None;
+                        }
                         return Some(Value::Undefined);
                     }
-                    return match proxy_get_property(obj, name) {
-                        Ok(v) => Some(v),
-                        Err(_) => Some(Value::Undefined),
-                    };
+                    None => return None,
                 }
-                return Some(Value::Undefined);
             }
             return Some(Value::Undefined);
         }

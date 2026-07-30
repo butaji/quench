@@ -38,7 +38,7 @@ use crate::builtins;
 use crate::env::Environment;
 use crate::eval::iteration::get_iterator;
 use crate::value::error::create_js_error_with_type;
-use crate::value::{take_thrown_value, to_js_string, to_object, JsError, Object, ObjectKind, Value};
+use crate::value::{get_thrown_value, to_js_string, to_object, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -90,13 +90,13 @@ pub fn eval_identifier(
     // and truly unknown vars → None (caught below as ReferenceError).
     match env.borrow().get(name) {
         Some(v) => {
-            if let Some(thrown) = take_thrown_value() {
+            if let Some(thrown) = get_thrown_value() {
                 return Err(JsError(to_js_string(&thrown)));
             }
             Ok(v)
         }
         None => {
-            if let Some(thrown) = take_thrown_value() {
+            if let Some(thrown) = get_thrown_value() {
                 return Err(JsError(to_js_string(&thrown)));
             }
 

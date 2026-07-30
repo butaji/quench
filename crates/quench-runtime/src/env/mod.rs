@@ -11,7 +11,7 @@ use std::rc::Rc;
 mod scope;
 
 use crate::ast::{Expression, PropertyKey, VarKind};
-use crate::value::Value;
+use crate::value::{get_thrown_value, Value};
 pub use scope::{Scope, VarState};
 
 // ─── Environment ─────────────────────────────────────────────────────────────
@@ -215,6 +215,9 @@ impl Environment {
             if let Some(value) = scope_rc.borrow().get(name) {
                 return Some(value);
             }
+            if get_thrown_value().is_some() {
+                return None;
+            }
         }
         if let Some(ref parent) = self.parent {
             return parent.borrow().get(name);
@@ -244,6 +247,9 @@ impl Environment {
         for scope_rc in scopes_iter {
             if let Some(value) = scope_rc.borrow().get(name) {
                 return Some(value);
+            }
+            if get_thrown_value().is_some() {
+                return None;
             }
         }
         if let Some(ref parent) = self.parent {
@@ -371,6 +377,9 @@ impl Environment {
             {
                 return success;
             }
+            if get_thrown_value().is_some() {
+                return false;
+            }
             if scope.get_kind(name) == Some(VarKind::Var) && scope.is_declared_only(name) {
                 scope.initialize_declared(name, value.clone());
                 return true;
@@ -413,6 +422,9 @@ impl Environment {
                 .set_object_property(name, value.clone(), strict)
             {
                 return Some(result);
+            }
+            if get_thrown_value().is_some() {
+                return Some(false);
             }
         }
         self.parent

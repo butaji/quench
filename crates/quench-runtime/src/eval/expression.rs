@@ -342,6 +342,9 @@ pub fn eval_expression(
                 {
                     return Ok(right_val);
                 }
+                if let Some(thrown) = crate::value::get_thrown_value() {
+                    return Err(JsError(crate::value::to_js_string(&thrown)));
+                }
                 if !scope.borrow_mut().set(
                     name.clone(),
                     right_val.clone(),
@@ -371,6 +374,9 @@ pub fn eval_expression(
                     .borrow_mut()
                     .set_in_object_env(&name, right_val.clone(), false)
                 {
+                    if let Some(thrown) = crate::value::get_thrown_value() {
+                        return Err(JsError(crate::value::to_js_string(&thrown)));
+                    }
                     if !result {
                         if crate::interpreter::is_strict_mode() {
                             let (_, error) = crate::value::error::create_js_error_with_type(
