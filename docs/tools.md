@@ -63,6 +63,7 @@ bash tools/run-next-pending.sh --print-json
 # Test-run metadata for next pending stage (same payload as --print-json)
 bash tools/run-next-pending.sh --status
 # Normalized status-only plan metadata (single/batch)
+bash tools/run-test-plan.sh --status-json
 bash tools/run-test-plan.sh --batch --top 5 --status --json
 bash tools/run-test-plan.sh --batch --top 5 --status-json
 # Emit native payload (non-normalized), useful for older automation
