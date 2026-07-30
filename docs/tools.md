@@ -50,6 +50,8 @@ bash tools/next-stage.sh
 bash tools/run-next-pending.sh
 # Run a unified plan selector for next stage or batch selection
 bash tools/run-test-plan.sh
+# Run and persist a machine-readable plan execution record
+bash tools/run-test-plan-log.sh --status --json
 # Print resolved stage id without running
 bash tools/run-next-pending.sh --print
 # Print resolved stage as JSON metadata (source/id/path)
