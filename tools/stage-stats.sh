@@ -4,6 +4,7 @@ set -euo pipefail
 USE_JSON=0
 CURRENT_ONLY=0
 NEXT_ONLY=0
+NEXT_ID_ONLY=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -19,6 +20,11 @@ while [[ ${#} -gt 0 ]]; do
             NEXT_ONLY=1
             shift
             ;;
+        --next-id)
+            NEXT_ONLY=1
+            NEXT_ID_ONLY=1
+            shift
+            ;;
         --help|-h)
             sed -n '1,160p' "$0"
             exit 0
@@ -30,7 +36,7 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-python3 - "$USE_JSON" "$CURRENT_ONLY" "$NEXT_ONLY" <<'PY'
+python3 - "$USE_JSON" "$CURRENT_ONLY" "$NEXT_ONLY" "$NEXT_ID_ONLY" <<'PY'
 import json
 import sys
 
@@ -38,6 +44,7 @@ try:
     use_json = int(sys.argv[1])
     current_only = int(sys.argv[2])
     next_only = int(sys.argv[3])
+    next_id_only = int(sys.argv[4])
     with open('tasks/index.json') as f:
         data = json.load(f)
 except (OSError, json.JSONDecodeError) as exc:
@@ -60,6 +67,9 @@ if use_json:
         raise SystemExit(0)
     if next_only:
         next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+        if next_id_only:
+            print(0 if next_stage is None else next_stage.get('id', 0))
+            raise SystemExit(0)
         print(json.dumps({
             'current_stage': current,
             'next_stage': next_stage.get('id') if next_stage is not None else None,
@@ -85,6 +95,9 @@ if current_only:
     raise SystemExit(0)
 if next_only:
     next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+    if next_id_only:
+        print(0 if next_stage is None else next_stage.get('id', 0))
+        raise SystemExit(0)
     if next_stage is None:
         print("No pending next stage found.")
         raise SystemExit(0)

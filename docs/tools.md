@@ -41,6 +41,9 @@ bash tools/milestone.sh --status --current
 # Next pending stage (actionable target)
 bash tools/stage-status.sh --next
 bash tools/milestone.sh --status --next
+# Script-friendly next-stage id only
+bash tools/stage-status.sh --next-id
+bash tools/milestone.sh --status --next-id
 
 # Diagnose current stage quickly (digest + first failure run-test)
 TEST262_STAGE=N bash tools/fix-stage.sh
