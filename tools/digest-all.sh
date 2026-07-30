@@ -24,18 +24,8 @@ command -v timeout >/dev/null 2>&1 || HAS_TIMEOUT=0
 
 for stage in $(seq 0 121); do
     echo "Stage $stage..."
-    STAGE_INFO=$(python3 -c "
-import json
-with open('tasks/index.json') as f:
-    d = json.load(f)
-for s in d['stages']:
-    if s['id'] == $stage:
-        print(f\"{s['path']}|{s['tests']}\")
-        break
-" 2>/dev/null || echo "unknown|0")
-
-    STAGE_PATH=$(echo "$STAGE_INFO" | cut -d'|' -f1)
-    STAGE_COUNT=$(echo "$STAGE_INFO" | cut -d'|' -f2)
+    STAGE_PATH=$(bash tools/stage-path.sh "$stage")
+    STAGE_COUNT=$(bash tools/stage-count.sh "$stage")
 
     if [ "$STAGE_COUNT" = "0" ] || [ -z "$STAGE_PATH" ]; then
         echo "| $stage | MISSING | - | - | - |" >> "$REPORT"

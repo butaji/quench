@@ -13,11 +13,7 @@ STAGE=$(bash tools/current-stage.sh)
 echo "Checking Stage $STAGE..."
 
 # Per-stage timeout scaled to its test count: 10s + 0.2s/test, min 120s.
-STAGE_COUNT=$(python3 -c "
-import json
-d = json.load(open('tasks/index.json'))
-print(next((s['tests'] for s in d['stages'] if s['id'] == $STAGE), 0))
-")
+STAGE_COUNT=$(bash tools/stage-count.sh "$STAGE")
 STAGE_TIMEOUT=$((10 + STAGE_COUNT / 5))
 [ "$STAGE_TIMEOUT" -lt 120 ] && STAGE_TIMEOUT=120
 
