@@ -128,7 +128,9 @@ pub fn eval_expression(
                 }
             }
             // Replay path for class field computed keys (normal .next() only)
-            if expr.is_some() {
+            let in_class_field = crate::interpreter::is_eval_in_class_field()
+                || env.borrow().is_in_class_field_initializer();
+            if expr.is_some() && in_class_field {
                 if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
                     return Ok(replayed);
                 }

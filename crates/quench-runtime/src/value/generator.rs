@@ -210,9 +210,7 @@ impl GeneratorObject {
         let start = self.pending_stmt.unwrap_or(0);
         let mut completion = Value::Undefined;
         for (i, stmt) in self.body.iter().enumerate().skip(start) {
-            crate::value::generator_replay::set_resuming_pending_yield(
-                self.pending_stmt.is_some_and(|p| p == i),
-            );
+            crate::value::generator_replay::set_resuming_pending_yield(self.pending_stmt.is_some());
             crate::value::generator_replay::begin_stmt_run(
                 self.yields_to_replay,
                 &self.stored_resumes,

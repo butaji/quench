@@ -57,6 +57,38 @@ mod generator_tests {
     }
 
     #[test]
+    fn generator_yield_spread_array_multiple() {
+        let r = eval(
+            "function* g() { yield [...yield yield]; } \
+             var iter = g(); \
+             var a = iter.next(false); \
+             var b = iter.next(['a','b','c']); \
+             var c = iter.next(b.value); \
+             [String(a.value === undefined), String(a.done), b.value[0], b.value[1], b.value[2], c.value[0], c.value[1], c.value[2], String(b.done), String(c.done)].join('|');",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("true|false|a|b|c|a|b|c|false|false".to_string()));
+    }
+
+    #[test]
+    fn generator_yield_identifier_in_nested_call() {
+        let r = eval(
+            "function *gen() {\n\
+             return (function(arg) {\n\
+             var yield = arg + 1;\n\
+             return yield;\n\
+             }(yield));\n\
+            }\n\
+            var iter = gen();\n\
+            iter.next();\n\
+            var item = iter.next(42);\n\
+            item.value",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Number(43.0));
+    }
+
+    #[test]
     fn generator_explicit_return_value() {
         let r = eval("function* g() { return 42; } g().next().value").unwrap();
         assert_eq!(r, Value::Number(42.0));
