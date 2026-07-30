@@ -52,6 +52,9 @@ bash tools/pending-stages.sh
 bash tools/pending-stages.sh --top 10 --verbose
 # Top 10 pending stages as JSON
 bash tools/pending-stages.sh --top 10 --json
+# Quick aggregate remaining-work summary
+bash tools/pending-stages.sh --summary
+bash tools/pending-stages.sh --summary --json
 bash tools/pending-stages.sh --json
 
 # Diagnose current stage quickly (digest + first failure run-test)

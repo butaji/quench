@@ -7,6 +7,7 @@ JSON=0
 COUNT_ONLY=0
 TOP=0
 VERBOSE=0
+SUMMARY=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -30,6 +31,10 @@ while [[ ${#} -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        --summary)
+            SUMMARY=1
+            shift
+            ;;
         -h|--help)
             sed -n '1,160p' "$0"
             exit 0
@@ -41,7 +46,7 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-python3 - "$JSON" "$COUNT_ONLY" "$TOP" "$VERBOSE" <<'PY'
+python3 - "$JSON" "$COUNT_ONLY" "$TOP" "$VERBOSE" "$SUMMARY" <<'PY'
 import json
 import sys
 
@@ -49,6 +54,7 @@ use_json = int(sys.argv[1])
 count_only = int(sys.argv[2])
 top = int(sys.argv[3])
 verbose = int(sys.argv[4])
+summary = int(sys.argv[5])
 
 try:
     with open('tasks/index.json') as f:
@@ -62,6 +68,35 @@ pending = [s for s in stages if s.get('status') != 'done']
 pending.sort(key=lambda s: (-int(s.get('failed', 0)), s.get('id', 0)))
 if top > 0:
     pending = pending[:top]
+done_stages = [s for s in stages if s.get('status') == 'done']
+
+if summary:
+    total_pending_tests = sum(int(s.get('tests', 0)) for s in stages if s.get('status') != 'done')
+    total_done_tests = sum(int(s.get('tests', 0)) for s in stages if s.get('status') == 'done')
+    total_pending_failed = sum(int(s.get('failed', 0)) for s in stages if s.get('status') != 'done')
+    total_done = len(done_stages)
+    total_stages = len(stages)
+    total_tests = total_pending_tests + total_done_tests
+    payload = {
+        'pending_stages': len([s for s in stages if s.get('status') != 'done']),
+        'done_stages': total_done,
+        'total_stages': total_stages,
+        'pending_tests': total_pending_tests,
+        'done_tests': total_done_tests,
+        'total_tests': total_tests,
+        'pending_failed': total_pending_failed,
+    }
+    if use_json:
+        print(json.dumps({'summary': payload}, sort_keys=True))
+        raise SystemExit(0)
+    print(f"Pending stages: {payload['pending_stages']}")
+    print(f"Done stages:    {payload['done_stages']}")
+    print(f"Total stages:   {payload['total_stages']}")
+    print(f"Pending tests:  {payload['pending_tests']}")
+    print(f"Done tests:     {payload['done_tests']}")
+    print(f"Total tests:    {payload['total_tests']}")
+    print(f"Pending failed: {payload['pending_failed']}")
+    raise SystemExit(0)
 
 if count_only:
     print(len(pending) if top == 0 else min(top, len(pending)))
