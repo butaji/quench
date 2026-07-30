@@ -74,11 +74,13 @@ bash tools/test-run-dashboard.sh
 bash tools/test-run-dashboard.sh --json
 # Assert ready-to-run gate (ready=true && blocked=false)
 bash tools/test-run-dashboard.sh --assert-ready
-# One-command cycle helper: summary + optional run of current stage
+# One-command SSOT/test-run cycle: summary + optional run of current stage
 bash tools/test-run-cycle.sh
 bash tools/test-run-cycle.sh --json
 # Assert ready and run current stage immediately
 bash tools/test-run-cycle.sh --assert-ready --run
+# SSOT fast milestone flow (run + auto-commit + optional push)
+bash tools/test-run-cycle.sh --run --commit --push
 # One-command preflight + run for current stage
 bash tools/test-run-go.sh --run
 # Run current stage with machine-readable preflight + run payloads
