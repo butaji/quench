@@ -6,10 +6,12 @@ set -euo pipefail
 #   bash tools/test-run-go-next-dryrun.sh
 #   bash tools/test-run-go-next-dryrun.sh --print-json
 #   bash tools/test-run-go-next-dryrun.sh --run-check
+#   bash tools/test-run-go-next-dryrun.sh --assert-ready
 #   bash tools/test-run-go-next-dryrun.sh --by-ratio --top 5
 
 PRINT_JSON=0
 RUN_CHECK=0
+ASSERT_READY=0
 ARGS=()
 
 while [[ ${#} -gt 0 ]]; do
@@ -22,8 +24,13 @@ while [[ ${#} -gt 0 ]]; do
             RUN_CHECK=1
             shift
             ;;
+        --assert-ready)
+            ASSERT_READY=1
+            RUN_CHECK=1
+            shift
+            ;;
         -h|--help)
-            sed -n '1,180p' "$0"
+            sed -n '1,220p' "$0"
             exit 0
             ;;
         *)
@@ -52,15 +59,27 @@ else
     echo "can_auto_advance=$AUTO"
 fi
 
+MATCHES_CURRENT="$(python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); o=p.get("test_run_go_next", {}); print("1" if o.get("matches_current") else "0")' <<<"$PAYLOAD")"
+
 if [[ "$RUN_CHECK" -eq 1 ]]; then
-    MATCHES_CURRENT="$(python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); o=p.get("test_run_go_next", {}); print("1" if o.get("matches_current") else "0")' <<<"$PAYLOAD")"
     if [[ "$MATCHES_CURRENT" == "1" ]]; then
         PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
         if ! python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$PREFLIGHT_JSON"; then
             exit 1
         fi
+        if [[ "$ASSERT_READY" -eq 1 ]]; then
+            if ! python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); \
+obj=p.get("test_run_go_next", {}); sys.exit(0 if obj.get("can_auto_advance") else 1)' <<<"$PREFLIGHT_JSON"; then
+                echo "[test-run-go-next-dryrun] stage is not auto-advance ready in preflight payload" >&2
+                exit 1
+            fi
+        fi
     else
         echo "[test-run-go-next-dryrun] skipped preflight check (target is not current stage)" >&2
+        if [[ "$ASSERT_READY" -eq 1 ]]; then
+            echo "[test-run-go-next-dryrun] assert-ready failed: matches_current=false" >&2
+            exit 1
+        fi
     fi
 fi
 

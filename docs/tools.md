@@ -88,7 +88,10 @@ bash tools/test-run-go-next-fast.sh --by-ratio --top 5
 # Dry-run selected next-stage flow (metadata + optional readiness gate)
 bash tools/test-run-go-next-dryrun.sh
 bash tools/test-run-go-next-dryrun.sh --print-json
+bash tools/test-run-go-next-dryrun.sh --assert-ready
 bash tools/test-run-go-next-dryrun.sh --run-check
+# CI gate for next-stage flow (asserts current-stage + preflight payload validity)
+bash tools/test-run-go-next-ci.sh
 # Single JSON readout with optional immediate run
 bash tools/test-run-go.sh --ready --json
 # Fast mode: skip preflight when reruns are intentionally unsafe
