@@ -10,7 +10,7 @@ use crate::ast::VarKind;
 use crate::eval::object::{proxy_get_property, proxy_has_property};
 use crate::value::error::set_thrown_value;
 use crate::value::get_thrown_value;
-use crate::value::Value;
+use crate::value::{to_bool, Value};
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
 #[derive(Debug, Clone, PartialEq)]
@@ -123,11 +123,17 @@ impl Scope {
             match unscopables_val {
                 Some(Value::Object(u_obj)) => {
                     let u = u_obj.borrow();
-                    u.properties
-                        .iter()
-                        .filter(|(_, v)| crate::value::to_bool(v))
-                        .map(|(k, _)| k.clone())
-                        .collect()
+                    let mut blocked = HashSet::new();
+                    for name in u.own_property_names() {
+                        let value = match crate::eval::object::proxy_get_property(&u_obj, &name) {
+                            Ok(v) => v,
+                            Err(_) => return false,
+                        };
+                        if to_bool(&value) {
+                            blocked.insert(name);
+                        }
+                    }
+                    blocked
                 }
                 _ => HashSet::new(),
             }
@@ -353,17 +359,26 @@ impl Scope {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
                 match self.object_binding_has(name) {
-                    Some(true) => {
-                        return match proxy_get_property(obj, name) {
-                            Ok(v) => Some(v),
-                            Err(_) => Some(Value::Undefined),
-                        };
-                    }
                     Some(false) => {
                         if crate::interpreter::is_strict_mode() {
                             return None;
                         }
                         return Some(Value::Undefined);
+                    }
+                    Some(true) => {
+                        // Evaluate `HasProperty` again for GetBindingValue step 2:
+                        // the proxy trap must run once for declaration lookup and again
+                        // when the binding value is actually loaded.
+                        if self.object_has_binding_property(name) != Some(true) {
+                            if crate::interpreter::is_strict_mode() {
+                                return None;
+                            }
+                            return Some(Value::Undefined);
+                        }
+                        return match proxy_get_property(obj, name) {
+                            Ok(v) => Some(v),
+                            Err(_) => Some(Value::Undefined),
+                        };
                     }
                     None => return None,
                 }

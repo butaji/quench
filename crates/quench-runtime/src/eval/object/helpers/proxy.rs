@@ -387,4 +387,111 @@ mod tests {
         };
         assert!(super::proxy_has_property(&obj, "Object").unwrap());
     }
+
+    #[test]
+    fn with_proxy_lookup_calls_has_twice_then_get() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var log = [];
+            var env = {
+              Object,
+            };
+            var proxy = new Proxy(env, {
+              has(t, pk) {
+                log.push('has:' + String(pk));
+                return Reflect.has(t, pk);
+              },
+              get(t, pk, r) {
+                log.push('get:' + String(pk));
+                return Reflect.get(t, pk, r);
+              },
+            });
+            with (proxy) {
+              Object();
+            }
+            log.join(',');
+        "#,
+        );
+        assert_eq!(
+            result.unwrap(),
+            Value::String("has:Object,get:Symbol(Symbol.unscopables),has:Object,get:Object".into())
+        );
+    }
+
+    #[test]
+    fn with_proxy_set_binding_calls_has_twice_before_set() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var log = [];
+            var env = { p: 0 };
+            var proxy = new Proxy(env, {
+              has(t, pk) {
+                log.push('has:' + String(pk));
+                return Reflect.has(t, pk);
+              },
+              get(t, pk, r) {
+                log.push('get:' + String(pk));
+                return Reflect.get(t, pk, r);
+              },
+              set(t, pk, v, r) {
+                log.push('set:' + String(pk));
+                return Reflect.set(t, pk, v, r);
+              },
+              getOwnPropertyDescriptor(t, pk) {
+                log.push('getOwnPropertyDescriptor:' + String(pk));
+                return Reflect.getOwnPropertyDescriptor(t, pk);
+              },
+              defineProperty(t, pk, d) {
+                log.push('defineProperty:' + String(pk));
+                return Reflect.defineProperty(t, pk, d);
+              },
+            });
+            with (proxy) {
+              p = 1;
+            }
+            log.join(',');
+        "#,
+        );
+        assert_eq!(
+            result.unwrap(),
+            Value::String("has:p,get:Symbol(Symbol.unscopables),has:p,set:p,getOwnPropertyDescriptor:p,defineProperty:p".into())
+        );
+    }
+
+    #[test]
+    fn with_proxy_unscopables_get_accessor_throw_is_propagated() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var log = [];
+            var env = { x: 0 };
+            env[Symbol.unscopables] = {};
+            Object.defineProperty(env[Symbol.unscopables], 'x', {
+              get() {
+                log.push('unscopables-get');
+                throw new TypeError('blocked');
+              },
+            });
+            try {
+              with (env) {
+                x;
+              }
+              false;
+            } catch (e) {
+              log.push(e instanceof TypeError ? 'typeerror' : 'other');
+              true;
+            }
+            log.join(',');
+        "#,
+        );
+        assert_eq!(
+            result.unwrap(),
+            Value::String("unscopables-get,typeerror".into())
+        );
+    }
 }
