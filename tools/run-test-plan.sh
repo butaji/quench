@@ -8,6 +8,7 @@ set -euo pipefail
 #   bash tools/run-test-plan.sh --batch --ratio --top 5
 #   bash tools/run-test-plan.sh --batch --run
 #   bash tools/run-test-plan.sh --batch --run --status
+#   bash tools/run-test-plan.sh --batch --run --json
 #   bash tools/run-test-plan.sh --status --json
 #   bash tools/run-test-plan.sh --json --build
 
@@ -105,8 +106,7 @@ if [[ "$MODE" == "batch" ]]; then
     fi
 
     if [[ "$JSON" -eq 1 ]]; then
-        echo "error: --json is only supported with --status for batch mode" >&2
-        exit 1
+        FLAGS+=(--status --json)
     fi
 
     FLAGS+=(--run)

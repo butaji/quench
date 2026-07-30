@@ -54,7 +54,7 @@ bash tools/run-test-plan.sh
 bash tools/run-next-pending.sh --print
 # Print resolved stage as JSON metadata (source/id/path)
 bash tools/run-next-pending.sh --print-json
-# SSOT metadata for next pending stage (same payload as --print-json)
+# Test-run metadata for next pending stage (same payload as --print-json)
 bash tools/run-next-pending.sh --status
 # Run highest-failure-ratio pending stage
 bash tools/run-next-pending.sh --by-ratio
@@ -62,6 +62,8 @@ bash tools/run-next-pending.sh --by-ratio
 bash tools/run-next-pending.sh --by-ratio --top 20
 # Run one batch selection from the same entrypoint (status payload)
 bash tools/run-test-plan.sh --batch --ratio --top 10 --status
+# Run one batch selection with machine-readable status payload + raw JSON
+bash tools/run-test-plan.sh --batch --ratio --top 10 --run --json
 # List all pending stages (id-only output)
 bash tools/pending-stages.sh
 # List top 10 highest-failure pending stages (human table)
