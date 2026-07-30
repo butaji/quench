@@ -48,6 +48,8 @@ bash tools/milestone.sh --status --next-id
 bash tools/next-stage.sh
 # Run the next pending stage (auto-resolves stage id, supports --json/--build)
 bash tools/run-next-pending.sh
+# Run a unified plan selector for next stage or batch selection
+bash tools/run-test-plan.sh
 # Print resolved stage id without running
 bash tools/run-next-pending.sh --print
 # Print resolved stage as JSON metadata (source/id/path)
@@ -58,6 +60,8 @@ bash tools/run-next-pending.sh --status
 bash tools/run-next-pending.sh --by-ratio
 # Restrict ratio-driven pick to top-N candidate window
 bash tools/run-next-pending.sh --by-ratio --top 20
+# Run one batch selection from the same entrypoint (status payload)
+bash tools/run-test-plan.sh --batch --ratio --top 10 --status
 # List all pending stages (id-only output)
 bash tools/pending-stages.sh
 # List top 10 highest-failure pending stages (human table)
