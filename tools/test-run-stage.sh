@@ -8,20 +8,15 @@ set -euo pipefail
 #   bash tools/test-run-stage.sh --json            # emit machine-readable stage result
 
 STAGE="$(bash tools/current-stage.sh)"
-AUTO_HELP=0
 OUTPUT_JSON=0
+EXTRA_ARGS=()
 
 if [[ ${#} -gt 0 && ("${1:-}" == --help || "${1:-}" == -h) ]]; then
-    AUTO_HELP=1
-fi
-if [[ "$AUTO_HELP" -eq 1 ]]; then
     sed -n '1,120p' "$0"
     exit 0
 fi
 
-EXTRA_ARGS=()
-
-if [[ ${#} -gt 0 ]]; then
+while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
         --json)
             OUTPUT_JSON=1
@@ -31,22 +26,28 @@ if [[ ${#} -gt 0 ]]; then
             STAGE="$2"
             shift 2
             ;;
-        -h|--help)
-            sed -n '1,120p' "$0"
-            exit 0
-            ;;
         --)
             shift
             EXTRA_ARGS=("$@")
             set --
             ;;
+        -h|--help)
+            sed -n '1,120p' "$0"
+            exit 0
+            ;;
         *)
-            STAGE="${1:-$STAGE}"
-            shift
-            EXTRA_ARGS=("$@")
+            if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+                STAGE="${1:-$STAGE}"
+                shift
+                EXTRA_ARGS=("$@")
+                set --
+            else
+                echo "error: unexpected argument: $1" >&2
+                exit 1
+            fi
             ;;
     esac
-fi
+done
 
 if [[ "$#" -gt 0 ]]; then
     echo "error: unexpected trailing arguments: $*" >&2
@@ -75,4 +76,4 @@ if [[ "$OUTPUT_JSON" -eq 0 ]]; then
   echo "[test-run-stage] Stage $STAGE (digest)"
 fi
 
-TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]}"
+TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

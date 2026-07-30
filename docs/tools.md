@@ -46,6 +46,8 @@ bash tools/stage-status.sh --next-id
 bash tools/milestone.sh --status --next-id
 # direct helper (prints stage id, non-zero exit if none)
 bash tools/next-stage.sh
+# Run the next pending stage (auto-resolves stage id, supports --json/--build)
+bash tools/run-next-pending.sh
 # List all pending stages (id-only output)
 bash tools/pending-stages.sh
 # List top 10 highest-failure pending stages (human table)
