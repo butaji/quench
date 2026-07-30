@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Compatibility wrapper retained for legacy callers.
-# Canonical term and command are "test-run".
+# Deprecated alias for the canonical command: test-run-stage.sh.
 # This wrapper exists only for legacy callers.
 set -euo pipefail
+
+echo "[ssot-stage] Deprecated: use test-run-stage.sh instead." >&2
 
 if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
   # Legacy environment alias for prebuild mode.
