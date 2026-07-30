@@ -31,33 +31,30 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-CURRENT_JSON=$(bash tools/stage-status.sh --json --current)
-NEXT_JSON=$(bash tools/stage-status.sh --json --next)
 ALL_JSON=$(bash tools/stage-status.sh --json)
 
-python3 - "$CURRENT_JSON" "$NEXT_JSON" "$ALL_JSON" "$JSON" "$ASSERT_READY" <<'PY'
+python3 - "$ALL_JSON" "$JSON" "$ASSERT_READY" <<'PY'
 import json
 import sys
 
-current_payload = json.loads(sys.argv[1])
-next_payload = json.loads(sys.argv[2])
-all_payload = json.loads(sys.argv[3])
-json_mode = sys.argv[4] == "1"
-assert_ready = sys.argv[5] == "1"
+all_payload = json.loads(sys.argv[1])
+json_mode = sys.argv[2] == "1"
+assert_ready = sys.argv[3] == "1"
 
-if not isinstance(current_payload, dict) or not isinstance(next_payload, dict) or not isinstance(all_payload, dict):
+if not isinstance(all_payload, dict):
     print("error: invalid stage payload", file=sys.stderr)
     raise SystemExit(2)
 
-current = current_payload.get("stage", {}) if isinstance(current_payload, dict) else {}
-next_stage = next_payload.get("stage") if isinstance(next_payload, dict) else None
-next_id = next_payload.get("next_stage") if isinstance(next_payload, dict) else None
 stages = all_payload.get("stages", []) if isinstance(all_payload, dict) else []
+current_stage = all_payload.get("current_stage", None)
+current = next((s for s in stages if s.get("id") == current_stage), {})
+next_entry = next((s for s in stages if s.get("status") != "done" and s.get("id", 0) > (current_stage or 0)), None)
+next_id = next_entry.get('id') if isinstance(next_entry, dict) else None
 
 status = current.get("status", "unknown")
 failed = int(current.get("failed", 0) or 0)
 tests = int(current.get("tests", 0) or 0)
-stage_id = current_payload.get("current_stage")
+stage_id = current_stage
 
 all_done = all(s.get("status") == "done" for s in stages) if stages else False
 has_pending = any(s.get("status") != "done" for s in stages) if stages else True
@@ -76,8 +73,8 @@ dashboard = {
     },
     "next": {
         "stage": next_id,
-        "path": next_stage.get("path") if isinstance(next_stage, dict) else None,
-        "status": next_stage.get("status") if isinstance(next_stage, dict) else None,
+        "path": next_entry.get("path") if isinstance(next_entry, dict) else None,
+        "status": next_entry.get("status") if isinstance(next_entry, dict) else None,
     } if has_next else None,
     "metrics": {
         "total_stages": len(stages),
