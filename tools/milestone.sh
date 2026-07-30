@@ -11,6 +11,7 @@
 #   bash tools/milestone.sh --stage 32 --ssot --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
+#   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 
 set -euo pipefail
 
@@ -69,6 +70,14 @@ while [[ ${#} -gt 0 ]]; do
         --history)
             if [[ "${2:-}" == "" ]]; then
                 echo "error: --history requires a numeric argument" >&2
+                exit 1
+            fi
+            HISTORY="$2"
+            shift 2
+            ;;
+        --tail)
+            if [[ "${2:-}" == "" ]]; then
+                echo "error: --tail requires a numeric argument" >&2
                 exit 1
             fi
             HISTORY="$2"
