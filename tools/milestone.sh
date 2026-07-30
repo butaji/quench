@@ -77,6 +77,11 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
     echo "[milestone] Running SSOT check for stage ${STAGE}..."
     bash tools/ssot-stage.sh "$STAGE"
     echo "[milestone] SSOT check complete for stage ${STAGE}."
+
+    if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
+        bash tools/advance-stage.sh
+    fi
+
     if [[ "$AUTO_COMMIT" -eq 1 ]]; then
         if ! git diff --quiet || ! git diff --cached --quiet; then
             if [[ -z "$COMMIT_MESSAGE" ]]; then
