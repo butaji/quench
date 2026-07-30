@@ -432,7 +432,9 @@ stages = payload.get('stages', []) if isinstance(payload, dict) else []
 status_scope = sys.argv[2]
 current_stage = payload.get('current_stage') if isinstance(payload, dict) else None
 current_entry = next((s for s in stages if isinstance(s, dict) and s.get('id') == current_stage), {}) if isinstance(stages, list) else {}
-next_stage = payload.get('stage') if isinstance(payload, dict) else None
+next_stage = None
+if isinstance(stages, list) and isinstance(current_stage, int):
+    next_stage = next((s for s in stages if isinstance(s, dict) and s.get('id', 0) > current_stage and s.get('status') != 'done'), None)
 
 
 def fmt(value):
