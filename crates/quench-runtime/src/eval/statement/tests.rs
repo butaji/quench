@@ -87,6 +87,48 @@ mod throw_statement {
     }
 }
 
+mod var_declarations {
+    use super::*;
+
+    #[test]
+    fn var_declaration_with_resolves_to_binding_not_with_object() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "var obj = { test262id: 1 }; \
+             with (obj) { var test262id = delete obj.test262id; } \
+             if (obj.test262id !== true || test262id !== undefined) { throw new Error('binding mismatch'); }",
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn var_decl_assignment_class_name_is_inferred_on_assignment() {
+        let value = eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").value")
+            .unwrap();
+        assert_eq!(value, Value::String("cls".to_string()));
+
+        let writable =
+            eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").writable").unwrap();
+        assert_eq!(writable, Value::Boolean(false));
+    }
+}
+
+mod class_static_properties {
+    use super::*;
+
+    #[test]
+    fn class_name_property_is_not_writable_in_strict_mode() {
+        let err = eval("\"use strict\"; var cls = class {}; cls.name = 'q';");
+        assert!(err.is_err(), "strict class static name write must throw");
+    }
+
+    #[test]
+    fn class_name_property_is_not_writable_in_sloppy_mode() {
+        let result = eval("var cls = class {}; cls.name = 'q'; cls.name;");
+        assert_eq!(result.unwrap(), Value::String("cls".to_string()));
+    }
+}
+
 mod try_statement {
     use super::*;
 

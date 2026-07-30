@@ -15,7 +15,7 @@ set -euo pipefail
 #   bash tools/test-run-go-next.sh --run --commit
 #   bash tools/test-run-go-next.sh --run --commit "chore: stage fix"
 #   bash tools/test-run-go-next.sh --run --commit --push
-#   (ssot and test-run are equivalent aliases here; `test run` is the canonical term.)
+#   `test run` is the canonical term; aliases are preserved for compatibility.
 
 RUN=0
 JSON=0

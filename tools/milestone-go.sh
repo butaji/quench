@@ -10,7 +10,6 @@ set -euo pipefail
 #
 # Runs the next target stage via test-run, requires it to pass, advances
 # current_stage on success, and optionally commits/pushes milestone updates.
-# `ssot` is a legacy alias name for this same flow.
 
 JSON=0
 PUSH=0

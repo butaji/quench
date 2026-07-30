@@ -226,7 +226,13 @@ pub fn eval_expression(
                 }
                 _ => {}
             }
-            let right_val = eval_expression(right, env, in_arrow_function)?;
+            let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
+                (left.as_ref(), right.as_ref())
+            {
+                crate::eval::class::eval_class_expr(class, env, Some(name))?
+            } else {
+                eval_expression(right, env, in_arrow_function)?
+            };
             eval_binary_op(*op, &left_val, &right_val)
         }
         Expression::Unary { op, argument } => {
@@ -248,7 +254,13 @@ pub fn eval_expression(
                 Expression::Identifier(name) => env.borrow().binding_scope(name),
                 _ => None,
             };
-            let right_val = eval_expression(right, env, in_arrow_function)?;
+            let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
+                (left.as_ref(), right.as_ref())
+            {
+                eval_class_expr(class, env, Some(name))?
+            } else {
+                eval_expression(right, env, in_arrow_function)?
+            };
             // Handle super.property = value — uses super [[Set]] semantics.
             if let Expression::Member {
                 object,

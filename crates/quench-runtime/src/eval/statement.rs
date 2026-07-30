@@ -893,7 +893,11 @@ fn eval_var_decl(
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let mut value = if let Some(expr) = init {
-        eval_expression(expr, env, in_arrow_function)?
+        if let Expression::Class(class) = expr {
+            crate::eval::class::eval_class_expr(class, env, Some(name))?
+        } else {
+            eval_expression(expr, env, in_arrow_function)?
+        }
     } else {
         Value::Undefined
     };
@@ -904,8 +908,47 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
+    let strict = crate::interpreter::is_strict_mode();
+    if !init.is_some() && *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+        let existing_global = env
+            .borrow()
+            .get("globalThis")
+            .and_then(|global| {
+                let Value::Object(global_this) = global else {
+                    return None;
+                };
+                if global_this.borrow().has(name) {
+                    Some(global_this.borrow().get(name))
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .or_else(|| {
+                env.borrow()
+                    .get(name)
+                    .filter(|value| matches!(value, Value::Undefined))
+            });
+
+        if let Some(existing_global) = existing_global {
+            if let Some(scope) = env.borrow().binding_scope(name) {
+                scope.borrow_mut().set(name.to_string(), existing_global, strict);
+            }
+            if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+                set_on_global_this(env, name, existing_global);
+            }
+            return Ok(Value::Undefined);
+        }
+    }
+
     if existing_var && init.is_some() {
-        env.borrow_mut().set(name, value.clone());
+        if let Some(scope) = env.borrow().binding_scope(name) {
+            scope
+                .borrow_mut()
+                .set(name.to_string(), value.clone(), strict);
+        } else {
+            env.borrow_mut().initialize_declared(name, value.clone());
+        }
         if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
             set_on_global_this(env, name, value);
         }

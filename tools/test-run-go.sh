@@ -11,8 +11,7 @@ set -euo pipefail
 #   bash tools/test-run-go.sh --run --commit
 #   bash tools/test-run-go.sh --run --commit "chore: stage 34 progress"
 #   bash tools/test-run-go.sh --run --commit --push
-#   (ssot and test-run are the same canonical flow for milestone runs; `ssot`
-#   is a legacy term.)
+#   `test-run` is the canonical term for milestone stage runs.
 
 JSON=0
 RUN=0
