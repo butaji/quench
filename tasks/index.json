@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 37,
+  "current_stage": 38,
   "goal": "100% of test262, staged, as soon as possible, with the minimum possible implementation LOC \u2014 small Rust core plus self-hosted JS builtins. Execution order: tasks/plan.md (Phases A\u2013C); work queue: tasks/refactor-plan.md; architecture: docs/architecture.md.",
   "scope": {
     "includes": [
@@ -463,7 +463,7 @@
       "id": 37,
       "path": "test/language/statements/with",
       "tests": 181,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "100\u2013200",
