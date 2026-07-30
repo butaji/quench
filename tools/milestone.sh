@@ -179,9 +179,9 @@ if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
         log_msg "[milestone] Test-run check complete for stage ${STAGE}."
         log_status "test-run" "pass"
     else
-        if [[ "$AUTO_RERUN" -eq 1 ]]; then
+            if [[ "$AUTO_RERUN" -eq 1 ]]; then
             if [[ "$RERUN_JSON" -eq 1 ]]; then
-                bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet
+                bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out ".milestone-rerun-${STAGE}.json"
             else
                 bash tools/milestone-rerun.sh --stage "$STAGE"
             fi
@@ -256,7 +256,7 @@ else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
     if [[ "$AUTO_RERUN" -eq 1 ]]; then
         if [[ "$RERUN_JSON" -eq 1 ]]; then
-            bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet
+            bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out ".milestone-rerun-${STAGE}.json"
         else
             bash tools/milestone-rerun.sh --stage "$STAGE"
         fi

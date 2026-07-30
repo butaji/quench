@@ -9,6 +9,7 @@
 #   bash tools/milestone-rerun.sh -- --filter "some filter"
 #   bash tools/milestone-rerun.sh --json            # output JSON summary
 #   bash tools/milestone-rerun.sh --json --no-log     # output JSON summary only
+#   bash tools/milestone-rerun.sh --json --out /tmp/rerun.json
 
 set -euo pipefail
 
@@ -19,6 +20,7 @@ EXTRA_ARGS=()
 OUTPUT_JSON=0
 NO_LOG=0
 QUIET=0
+JSON_OUT=""
 
 log_msg() {
   if [[ "$QUIET" -eq 0 ]]; then
@@ -48,7 +50,11 @@ print(json.dumps({
 }))
 PY
 )"
-    echo "$payload"
+    if [[ -n "$JSON_OUT" ]]; then
+        echo "$payload" > "$JSON_OUT"
+    else
+        echo "$payload"
+    fi
 }
 
 while [[ ${#} -gt 0 ]]; do
@@ -88,6 +94,10 @@ while [[ ${#} -gt 0 ]]; do
     --quiet)
       QUIET=1
       shift
+      ;;
+    --out)
+      JSON_OUT="$2"
+      shift 2
       ;;
     --)
       shift
