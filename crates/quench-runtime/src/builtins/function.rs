@@ -815,6 +815,15 @@ mod tests {
     }
 
     #[test]
+    fn test_function_constructor_strict_with_in_nested_function_throws() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "Function(\"'use strict'; var f1 = function () { var o = {}; with (o) {}; }\");",
+        );
+        assert!(result.is_err(), "strict with in nested function expression must throw");
+    }
+
+    #[test]
     fn test_function_constructor_immediate_call() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("Function('a', 'return a')(3)").unwrap();

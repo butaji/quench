@@ -102,12 +102,12 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             }
         }
         ast::Statement::ExpressionStatement(expr) => {
-            check_expr_for_fn_params(&expr.expression)?;
+            check_expr_for_fn_params(&expr.expression, strict)?;
         }
         ast::Statement::VariableDeclaration(var_decl) => {
             for d in &var_decl.declarations {
                 if let Some(init) = &d.init {
-                    check_expr_for_fn_params(init)?;
+                    check_expr_for_fn_params(init, strict)?;
                 }
             }
         }
@@ -122,12 +122,12 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
                 for stmt in &body.statements {
                     check_stmt(stmt, is_func_strict)?;
                 }
+                check_fn_params(&func.params, body)?;
             }
-            check_fn_params(&func.params, is_func_strict)?;
         }
         ast::Statement::ReturnStatement(ret) => {
             if let Some(arg) = &ret.argument {
-                check_expr_for_fn_params(arg)?;
+                check_expr_for_fn_params(arg, strict)?;
             }
         }
         ast::Statement::SwitchStatement(switch_stmt) => {
@@ -255,7 +255,7 @@ fn walk_inner_statements_for_fn_params(stmt: &ast::Statement, strict: bool) -> R
             }
         }
         ast::Statement::ExpressionStatement(expr) => {
-            check_expr_for_fn_params(&expr.expression)?;
+            check_expr_for_fn_params(&expr.expression, strict)?;
         }
         ast::Statement::LabeledStatement(labeled) => {
             walk_inner_statements_for_fn_params(&labeled.body, strict)?;
@@ -285,13 +285,30 @@ fn is_named_function(stmt: &ast::Statement<'_>) -> bool {
     matches!(stmt, ast::Statement::FunctionDeclaration(_))
 }
 
-fn check_expr_for_fn_params(expr: &ast::Expression) -> Result<(), JsError> {
+fn check_expr_for_fn_params(expr: &ast::Expression, strict: bool) -> Result<(), JsError> {
     match expr {
         ast::Expression::ArrowFunctionExpression(arrow) => {
+            let body_is_strict = strict
+                || arrow
+                    .body
+                    .directives
+                    .iter()
+                    .any(|d| d.expression.value == "use strict");
+            for stmt in &arrow.body.statements {
+                check_stmt(stmt, body_is_strict)?;
+            }
             check_fn_params(&arrow.params, &arrow.body)?;
         }
         ast::Expression::FunctionExpression(func) => {
             if let Some(body) = &func.body {
+                let body_is_strict = strict
+                    || body
+                        .directives
+                        .iter()
+                        .any(|d| d.expression.value == "use strict");
+                for stmt in &body.statements {
+                    check_stmt(stmt, body_is_strict)?;
+                }
                 check_fn_params(&func.params, body)?;
             }
         }

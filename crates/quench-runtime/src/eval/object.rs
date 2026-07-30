@@ -634,17 +634,13 @@ pub(crate) fn assign_to_object(
     o.borrow_mut().set(prop_name, value.clone());
 
     // Mirror writes on globalThis into the global binding.
-    let this_value = crate::interpreter::get_this_binding(env);
     let is_global_this = {
         let global_this = crate::context::get_global_from_context("globalThis");
-        global_this.and_then(|global| match global {
+        let is_global = global_this.and_then(|global| match global {
             Value::Object(global_obj) => Some(Rc::ptr_eq(&global_obj, o)),
             _ => None,
-        }) == Some(true)
-            || matches!(
-                this_value,
-                Value::Object(ref this_obj) if Rc::ptr_eq(this_obj, o)
-            )
+        }) == Some(true);
+        is_global
             || env
                 .borrow()
                 .get("globalThis")

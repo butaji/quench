@@ -125,6 +125,27 @@ fn direct_arrow_returns_this() {
 }
 
 #[test]
+fn constructor_this_does_not_leak_to_global() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "var before = globalThis.p2; \
+             var f = function() { this.p2 = 'x2'; }; \
+             var obj = new f(); \
+             [obj.p2, globalThis.p2, before];",
+        )
+        .unwrap();
+    let arr = if let crate::value::Value::Object(o) = v {
+        o.borrow().elements.clone()
+    } else {
+        panic!("expected array");
+    };
+    assert_eq!(arr[0], crate::value::Value::String("x2".to_string()));
+    assert_eq!(arr[1], crate::value::Value::Undefined);
+    assert_eq!(arr[2], crate::value::Value::Undefined);
+}
+
+#[test]
 fn top_level_this_is_global() {
     let mut ctx = Context::new().unwrap();
     let v = ctx.eval("this;").unwrap();
