@@ -88,4 +88,3 @@ fi
 
 # Should not reach here because python script sets the required exit code.
 exit 0
-PY
