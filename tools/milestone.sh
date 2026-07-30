@@ -4,13 +4,17 @@
 #   bash tools/milestone.sh                    # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
+#   bash tools/milestone.sh --stage 32 --ssot           # run ssot-stage first
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
+#   bash tools/milestone.sh --status                   # print stage progress and current stage
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 STAGE=""
+STATUS_ONLY=0
+RUN_SSOT=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
@@ -35,6 +39,14 @@ while [[ ${#} -gt 0 ]]; do
             AUTO_PUSH=1
             shift
             ;;
+        --status)
+            STATUS_ONLY=1
+            shift
+            ;;
+        --ssot)
+            RUN_SSOT=1
+            shift
+            ;;
         --advance)
             AUTO_ADVANCE=1
             shift
@@ -52,6 +64,20 @@ done
 
 STAGE="${STAGE:-${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}}"
 export TEST262_STAGE="$STAGE"
+export TEST262_QUICK=1
+
+if [[ "$STATUS_ONLY" -eq 1 ]]; then
+    bash tools/stage-status.sh
+    echo "[milestone] Current stage is ${STAGE}."
+    exit 0
+fi
+
+if [[ "$RUN_SSOT" -eq 1 ]]; then
+    echo "[milestone] Running SSOT check for stage ${STAGE}..."
+    bash tools/ssot-stage.sh "$STAGE"
+    echo "[milestone] SSOT check complete for stage ${STAGE}."
+    exit 0
+fi
 
 if bash tools/fix-stage.sh; then
     if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
