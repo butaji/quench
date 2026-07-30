@@ -16,9 +16,10 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-Implementation status (SSOT) is the stage test run itself:
+Implementation status is the stage test run itself:
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
+`ssot` is a legacy alias for test-run stage entrypoints (same behavior).
 
 Stages live in `crates/quench-runtime/src/test262/runner.rs::STAGES` and
 mirror `tasks/index.json`. Each stage runs to **100% passing** before
@@ -42,7 +43,7 @@ bash tools/milestone-go.sh --push           # ...and push
 bash tools/milestone-go.sh --message "msg"  # custom commit message
 ```
 
-`tools/milestone-go.sh` is SSOT-first: it only advances on successful test-run.
+`tools/milestone-go.sh` is test-run-first: it only advances on successful test-run.
 
 ## TypeScript / JSX
 
