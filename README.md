@@ -16,7 +16,7 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-SSOT for implementation progress is the stage test run itself:
+Implementation progress for a stage is the stage test run itself:
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
 
