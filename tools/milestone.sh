@@ -286,11 +286,6 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
-    if [[ "$STATUS_WITH_CI" -eq 1 && ("$STATUS_CURRENT" -eq 1 || "$STATUS_NEXT" -eq 1 || "$NEXT_ID_ONLY" -eq 1) ]]; then
-        echo "error: --status --ci supports full status mode only (omit --current/--next/--next-id)" >&2
-        exit 1
-    fi
-
     if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
         if [[ "$STATUS_JSON" -eq 1 ]]; then
@@ -298,6 +293,9 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
             elif [[ "$STATUS_NEXT" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+            elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
+                NEXT_ID="$(bash tools/stage-status.sh --next-id)"
+                STATUS_PAYLOAD="{\"next_id\": \"${NEXT_ID}\"}"
             else
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
             fi
@@ -340,7 +338,17 @@ PY
             set -e
         else
             if [[ "$QUIET" -eq 0 ]]; then
-                bash tools/stage-status.sh
+                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
+                    bash tools/stage-status.sh --current
+                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+                    if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
+                        bash tools/stage-status.sh --next-id
+                    else
+                        bash tools/stage-status.sh --next
+                    fi
+                else
+                    bash tools/stage-status.sh
+                fi
                 set +e
                 bash tools/test-run-ci-gate.sh
                 CI_RC=$?

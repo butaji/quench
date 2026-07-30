@@ -117,6 +117,10 @@ bash tools/milestone.sh --status --current
 bash tools/milestone.sh --status --ci
 # Machine-readable combined readout
 bash tools/milestone.sh --status --ci --json
+# Scope-specific combined readout
+bash tools/milestone.sh --status --ci --current --json
+bash tools/milestone.sh --status --ci --next --json
+bash tools/milestone.sh --status --ci --next-id
 # Returned as JSON fields `status_rc`, `ci_rc`, and `ok`.
 # CI readiness gate from milestone automation
 bash tools/milestone.sh --ci-gate
