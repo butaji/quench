@@ -4,9 +4,10 @@
 
 Canonical language:
 - `SSOT` is the canonical short alias for the test-run workflow.
-- `test-run` is canonical status workflow name and maps to `SSOT`.
+- `SSOT` is the single source of truth for implementation status and execution.
+- `test-run` is a compatibility wrapper that delegates to `SSOT`.
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
-- There is **no separate status model**: `SSOT` and test-run status are the same source of truth.
+- `SSOT == test-run` (same status and execution model).
 
 Use `bash tools/test-run` for status/run/commit/push flows.
 `tools/ssot` and `tools/ssot-fast.sh` are compatibility wrappers.
