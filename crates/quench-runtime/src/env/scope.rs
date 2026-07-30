@@ -104,6 +104,11 @@ impl Scope {
         if self.with_unscopables_loaded.get() {
             return true;
         }
+        let before = self
+            .object_binding
+            .as_ref()
+            .map(|obj| obj.borrow().own_property_names())
+            .unwrap_or_default();
         let blocked = if let Some(ref obj) = self.object_binding {
             let unscopables_val = if let Some(symbol) =
                 crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")
@@ -142,6 +147,15 @@ impl Scope {
         } else {
             HashSet::new()
         };
+        let mut blocked = blocked;
+        if let Some(obj) = &self.object_binding {
+            let object = obj.borrow();
+            for name in before {
+                if !object.has(&name) {
+                    blocked.insert(format!("\0{name}"));
+                }
+            }
+        }
         *self.with_unscopables.borrow_mut() = blocked;
         self.with_unscopables_loaded.set(true);
         true
@@ -206,6 +220,12 @@ impl Scope {
         self.with_unscopables.borrow().contains(name)
     }
 
+    fn was_deleted_during_unscopables(&self, name: &str) -> bool {
+        self.with_unscopables
+            .borrow()
+            .contains(&format!("\0{name}"))
+    }
+
     pub fn is_static_class_body(&self) -> bool {
         self.is_static_class_body
     }
@@ -217,6 +237,10 @@ impl Scope {
     pub fn set_object_property(&self, name: &str, value: Value, strict: bool) -> Option<bool> {
         let object = self.object_binding.as_ref()?.clone();
         if !matches!(self.object_has_binding_property(name), Some(true)) {
+            if self.was_deleted_during_unscopables(name) {
+                object.borrow_mut().set(name, value);
+                return Some(true);
+            }
             return if strict { Some(false) } else { None };
         }
         if !self.load_with_unscopables() {
@@ -432,7 +456,14 @@ impl Scope {
             return Some(value.borrow().clone());
         }
         if let Some(object) = self.object_binding.as_ref() {
-            if self.object_binding_has(name).is_some_and(|has| has) {
+            let has_binding = self.object_binding_has(name);
+            if has_binding == Some(false)
+                && self.was_deleted_during_unscopables(name)
+                && !crate::interpreter::is_strict_mode()
+            {
+                return Some(Value::Undefined);
+            }
+            if has_binding.is_some_and(|has| has) {
                 if self.with_unscopables_loaded.get() && self.is_unscopable(name) {
                     return None;
                 }

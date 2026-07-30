@@ -18,6 +18,24 @@ fn native_js_eval() {
 }
 
 #[test]
+fn with_unscopables_deleted_binding_read_is_undefined() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var env={binding:0,get [Symbol.unscopables](){delete env.binding;return null;}};var result;with(env){result=binding;}result")
+        .unwrap();
+    assert_eq!(result, Value::Undefined);
+}
+
+#[test]
+fn with_unscopables_deleted_binding_write_recreates_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var env={binding:0,get [Symbol.unscopables](){delete env.binding;return null;}};with(env){binding=123;}env.binding")
+        .unwrap();
+    assert_eq!(result, Value::Number(123.0));
+}
+
+#[test]
 fn native_jsx_basic() {
     let result = parser::parse_jsx("const el = <div>hello</div>;");
     assert!(result.is_ok(), "Failed to parse JSX: {:?}", result);
