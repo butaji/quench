@@ -21,6 +21,8 @@
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
 #   bash tools/milestone.sh --quiet                    # suppress human-readable output
+#   bash tools/milestone.sh --ci-gate                 # run CI readiness gate (current + next)
+#   bash tools/milestone.sh --ci-gate --ci-gate-json # machine-readable gate payload
 
 set -euo pipefail
 
@@ -28,6 +30,10 @@ cd "$(dirname "$0")/.."
 
 STAGE=""
 STATUS_ONLY=0
+CI_GATE_ONLY=0
+CI_GATE_JSON=0
+CI_GATE_SKIP_CURRENT=0
+CI_GATE_SKIP_NEXT=0
 STATUS_JSON=0
 STATUS_CURRENT=0
 STATUS_NEXT=0
@@ -114,6 +120,23 @@ while [[ ${#} -gt 0 ]]; do
         --status-json)
             STATUS_ONLY=1
             STATUS_JSON=1
+            shift
+            ;;
+        --ci-gate)
+            CI_GATE_ONLY=1
+            shift
+            ;;
+        --ci-gate-json)
+            CI_GATE_ONLY=1
+            CI_GATE_JSON=1
+            shift
+            ;;
+        --skip-current)
+            CI_GATE_SKIP_CURRENT=1
+            shift
+            ;;
+        --skip-next)
+            CI_GATE_SKIP_NEXT=1
             shift
             ;;
         --ssot)
@@ -213,6 +236,22 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     AUTO_ADVANCE=0
     log_msg "[milestone] Dry-run mode: no commits/pushes or index updates will occur."
     log_msg "[milestone] Stage: ${STAGE}."
+fi
+
+if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
+    GATE_ARGS=()
+    if [[ "$CI_GATE_JSON" -eq 1 ]]; then
+        GATE_ARGS+=(--json)
+    fi
+    if [[ "$CI_GATE_SKIP_CURRENT" -eq 1 ]]; then
+        GATE_ARGS+=(--skip-current)
+    fi
+    if [[ "$CI_GATE_SKIP_NEXT" -eq 1 ]]; then
+        GATE_ARGS+=(--skip-next)
+    fi
+
+    bash tools/test-run-ci-gate.sh "${GATE_ARGS[@]}"
+    exit 0
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then

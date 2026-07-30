@@ -109,6 +109,9 @@ bash tools/test-run-go.sh --run --no-preflight
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
 bash tools/milestone.sh --status --current
+# CI readiness gate from milestone automation
+bash tools/milestone.sh --ci-gate
+bash tools/milestone.sh --ci-gate --ci-gate-json
 # Next pending stage (actionable target)
 bash tools/stage-status.sh --next
 bash tools/milestone.sh --status --next
