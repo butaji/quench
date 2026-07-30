@@ -91,6 +91,11 @@ pub fn eval_expression(
             if crate::interpreter::peek_generator_yield() {
                 return Ok(Value::Undefined);
             }
+            if crate::value::generator_replay::is_resuming_pending_yield() {
+                if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
+                    return Ok(replayed);
+                }
+            }
             let resume_val = crate::interpreter::take_generator_resume_value();
 
             // When generator.return() or generator.throw() resumes the generator,

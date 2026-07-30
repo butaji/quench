@@ -47,6 +47,27 @@ mod generator_tests {
     }
 
     #[test]
+    fn generator_declaration_function_returns_true_after_yield() {
+        let r = eval(
+            "function *foo(a) { yield a + 1; return; }\
+             var g = foo(3); \
+             var a = g.next(); \
+             var b = g.next(); \
+             [a.value === 4, a.done, b.done, b.value]",
+        )
+        .unwrap();
+        if let Value::Object(obj) = r {
+            let arr = obj.borrow();
+            assert_eq!(arr.elements[0], Value::Boolean(true));
+            assert_eq!(arr.elements[1], Value::Boolean(false));
+            assert_eq!(arr.elements[2], Value::Boolean(true));
+            assert_eq!(arr.elements[3], Value::Undefined);
+        } else {
+            panic!("Expected array");
+        }
+    }
+
+    #[test]
     fn generator_yield_in_array_then_completes_undefined() {
         let r = eval(
             "function* g() { [yield 1]; } \
