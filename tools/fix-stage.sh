@@ -21,21 +21,20 @@ fi
 
 echo "[fix-stage] Running stage $STAGE..."
 
-OUTFILE=$(mktemp)
-trap 'rm -f "$OUTFILE"' EXIT
+TEST_OUTPUT="$(TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture 2>&1)"
+TEST_RC=$?
 
-if ! TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture > "$OUTFILE" 2>&1; then
+if [[ "$TEST_RC" -ne 0 ]]; then
     echo "[fix-stage] Stage $STAGE failed. Extracting first failing test..."
 
     FAILS=()
     while IFS= read -r path; do
         [ -n "$path" ] && FAILS+=("$path")
-    done < <(python3 - "$OUTFILE" <<'PY'
-import pathlib
+    done < <(echo "$TEST_OUTPUT" | python3 - <<'PY'
 import re
 import sys
 
-text = pathlib.Path(sys.argv[1]).read_text(errors='ignore')
+text = sys.stdin.read()
 
 patterns = [
     re.compile(r'"sample_paths"\s*:\s*\[\s*"([^"]+\.js)"', re.DOTALL),
@@ -66,7 +65,7 @@ PY
 
     if [ ${#FAILS[@]} -eq 0 ]; then
         echo "[fix-stage] Could not parse first failing test path; showing tail:"
-        tail -80 "$OUTFILE"
+        printf '%s\n' "$TEST_OUTPUT" | tail -80
         exit 1
     fi
 

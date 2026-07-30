@@ -88,15 +88,20 @@ if [[ -n "$STAGE_OVERRIDE" ]]; then
 else
     if [[ "$BY_RATIO" -eq 1 ]]; then
         SOURCE="ratio"
-        RATIO_PAYLOAD="$(mktemp)"
-        bash tools/pending-stages.sh --top-ratio "$TOP" --json > "$RATIO_PAYLOAD"
-        STAGE="$(python3 - "$RATIO_PAYLOAD" <<'PY'
+        RATIO_OUTPUT="$(bash tools/pending-stages.sh --top-ratio "$TOP" --json)"
+        RATIO_RC=$?
+
+        if [[ "$RATIO_RC" -ne 0 ]]; then
+            echo "$RATIO_OUTPUT" >&2
+            exit "$RATIO_RC"
+        fi
+
+        STAGE="$(python3 - "$RATIO_OUTPUT" <<'PY'
 import json
 import sys
 
 try:
-    with open(sys.argv[1]) as f:
-        data = json.load(f)
+    data = json.loads(sys.argv[1])
 except (OSError, json.JSONDecodeError) as exc:
     print(f"error: failed to read ratio payload: {exc}", file=sys.stderr)
     raise SystemExit(1)
@@ -108,7 +113,6 @@ if not stages:
 print(stages[0].get('id', 0))
 PY
 )"
-        rm -f "$RATIO_PAYLOAD"
     else
         SOURCE="next"
         STAGE="$(bash tools/next-stage.sh)"

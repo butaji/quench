@@ -76,6 +76,39 @@ PY
     fi
 }
 
+extract_json_payload() {
+    local output="$1"
+
+    python3 - "$output" <<'PY'
+import json
+import sys
+
+text = (sys.argv[1] or "").strip()
+
+if not text:
+    sys.exit(0)
+
+try:
+    payload = json.loads(text)
+except Exception:
+    payload = None
+
+if payload is None:
+    for line in reversed(text.splitlines()):
+        candidate = line.strip()
+        if not (candidate.startswith("{") and candidate.endswith("}")):
+            continue
+        try:
+            payload = json.loads(candidate)
+            break
+        except Exception:
+            continue
+
+if isinstance(payload, dict):
+    print(json.dumps(payload))
+PY
+}
+
 compute_readiness() {
     python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CHECK_CURRENT" "$CHECK_NEXT" "$CURRENT_RC" "$NEXT_RC" <<'PY'
 import json
@@ -203,37 +236,47 @@ PY
 }
 
 if [[ "$CHECK_CURRENT" -eq 1 ]]; then
-    CURRENT_ERR_FILE="$(mktemp)"
     set +e
-    CURRENT_JSON="$(bash tools/test-run-dashboard.sh --json 2>"$CURRENT_ERR_FILE")"
+    CURRENT_CAPTURE="$(bash tools/test-run-dashboard.sh --json 2>&1)"
     CURRENT_RC=$?
     set -e
-    CURRENT_ERR="$(cat "$CURRENT_ERR_FILE")"
-    if [[ "$CURRENT_RC" -eq 0 ]] && ! require_json_obj "$CURRENT_JSON"; then
-        CURRENT_RC=1
-        CURRENT_ERR="invalid JSON payload from test-run-dashboard --json"
+    if [[ "$CURRENT_RC" -eq 0 ]]; then
+        CURRENT_JSON="$(extract_json_payload "$CURRENT_CAPTURE")"
+        if [[ -z "$CURRENT_JSON" ]] || ! require_json_obj "$CURRENT_JSON"; then
+            CURRENT_RC=1
+            CURRENT_ERR="invalid JSON payload from test-run-dashboard --json"
+        else
+            CURRENT_ERR=""
+        fi
+    else
+        CURRENT_ERR="$CURRENT_CAPTURE"
+        CURRENT_JSON=""
     fi
-    rm -f "$CURRENT_ERR_FILE"
 else
     CURRENT_JSON='{}'
 fi
 
 if [[ "$CHECK_NEXT" -eq 1 ]]; then
-    NEXT_ERR_FILE="$(mktemp)"
     set +e
     if [[ ${#NEXT_ARGS[@]} -gt 0 ]]; then
-        NEXT_JSON="$(bash tools/test-run-go-next-ci.sh --json-only "${NEXT_ARGS[@]}" 2>"$NEXT_ERR_FILE")"
+        NEXT_CAPTURE="$(bash tools/test-run-go-next-ci.sh --json-only "${NEXT_ARGS[@]}" 2>&1)"
     else
-        NEXT_JSON="$(bash tools/test-run-go-next-ci.sh --json-only 2>"$NEXT_ERR_FILE")"
+        NEXT_CAPTURE="$(bash tools/test-run-go-next-ci.sh --json-only 2>&1)"
     fi
     NEXT_RC=$?
     set -e
-    NEXT_ERR="$(cat "$NEXT_ERR_FILE")"
-    if [[ "$NEXT_RC" -eq 0 ]] && ! require_json_obj "$NEXT_JSON"; then
-        NEXT_RC=1
-        NEXT_ERR="invalid JSON payload from test-run-go-next-ci --json-only"
+    if [[ "$NEXT_RC" -eq 0 ]]; then
+        NEXT_JSON="$(extract_json_payload "$NEXT_CAPTURE")"
+        if [[ -z "$NEXT_JSON" ]] || ! require_json_obj "$NEXT_JSON"; then
+            NEXT_RC=1
+            NEXT_ERR="invalid JSON payload from test-run-go-next-ci --json-only"
+        else
+            NEXT_ERR=""
+        fi
+    else
+        NEXT_ERR="$NEXT_CAPTURE"
+        NEXT_JSON=""
     fi
-    rm -f "$NEXT_ERR_FILE"
 else
     NEXT_JSON='{}'
 fi
@@ -247,13 +290,11 @@ if [[ "$JSON" -eq 1 ]]; then
             exit 1
         fi
 
-        RUN_ERR_FILE="$(mktemp)"
         set +e
-        bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)" >"$RUN_ERR_FILE" 2>&1
+        RUN_CAPTURE="$(bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)" 2>&1)"
         RUN_RC=$?
         set -e
-        RUN_ERR="$(cat "$RUN_ERR_FILE")"
-        rm -f "$RUN_ERR_FILE"
+        RUN_ERR="$RUN_CAPTURE"
 
         emit_ci_payload 1 "$RUN_RC" "$CURRENT_READY" "$NEXT_READY" "$CURRENT_ERR" "$NEXT_ERR" "$RUN_ERR"
         exit "$RUN_RC"

@@ -123,16 +123,16 @@ if [[ "$TEST" == "" ]]; then
     exit 1
   fi
 
-  OUTFILE="$(mktemp)"
-  if ! TEST262_STAGE="$STAGE" TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture > "$OUTFILE" 2>&1; then
-    :
-  fi
+  set +e
+  TEST_OUTPUT="$(TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture 2>&1)"
+  TEST_RC=$?
+  set -e
 
-  TEST="$(python3 - "$OUTFILE" <<'PY'
-import pathlib
+  if [[ "$TEST_RC" -ne 0 ]]; then
+    TEST="$(echo "$TEST_OUTPUT" | python3 - <<'PY'
 import re
 import sys
-text = pathlib.Path(sys.argv[1]).read_text(errors='ignore')
+text = sys.stdin.read()
 patterns = [
     re.compile(r'"sample_paths"\s*:\s*\[\s*"([^"]+\.js)"', re.DOTALL),
     re.compile(r'"path"\s*:\s*"([^"]+\.js)"', re.DOTALL),
@@ -161,8 +161,10 @@ if not candidates:
     raise SystemExit(1)
 print(candidates[0])
 PY
-  )"
-  rm -f "$OUTFILE"
+    )"
+  else
+    TEST=""
+  fi
 fi
 
 if [[ "$TEST" == "" ]]; then

@@ -9,7 +9,6 @@ set -euo pipefail
 JSON=0
 ARGS=("--assert-ready")
 DRYRUN_OUTPUT=""
-DRYRUN_ERRFILE=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -29,22 +28,18 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 if [[ "$JSON" -eq 1 ]]; then
-    DRYRUN_ERRFILE="$(mktemp)"
     set +e
-    DRYRUN_OUTPUT="$(bash tools/test-run-go-next-dryrun.sh --print-json "${ARGS[@]}" 2>"$DRYRUN_ERRFILE")"
+    DRYRUN_CAPTURE="$(bash tools/test-run-go-next-dryrun.sh --print-json "${ARGS[@]}" 2>&1)"
     RC=$?
     set -e
-    DRYRUN_ERR="$(cat "$DRYRUN_ERRFILE")"
-    rm -f "$DRYRUN_ERRFILE"
 
     if [[ "$RC" -eq 0 ]]; then
-        python3 - "$DRYRUN_OUTPUT" "$DRYRUN_ERR" "$RC" <<'PY'
+        python3 - "$DRYRUN_CAPTURE" "$RC" <<'PY'
 import json
 import sys
 
 payload = sys.argv[1]
-error = sys.argv[2].strip()
-rc = int(sys.argv[3])
+rc = int(sys.argv[2])
 
 try:
     payload_obj = json.loads(payload) if payload else {}
@@ -59,7 +54,7 @@ obj = {
 print(json.dumps(obj))
 PY
     else
-        python3 - "$DRYRUN_ERR" "$RC" <<'PY'
+        python3 - "$DRYRUN_CAPTURE" "$RC" <<'PY'
 import json
 import sys
 
