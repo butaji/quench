@@ -29,13 +29,14 @@ if echo "$OUTPUT" | grep -q "ALL STAGES COMPLETE" && ! echo "$OUTPUT" | grep -qE
     echo "✅ Stage $STAGE is 100%!"
 
     # Update index.json
-    python3 - <<'PY'
+    TEST_STAGE=$STAGE python3 - <<'PY'
 import json
+import os
 
 with open('tasks/index.json') as f:
     d = json.load(f)
 
-stage = int('$STAGE')
+stage = int(os.environ['TEST_STAGE'])
 for s in d['stages']:
     if s['id'] == stage:
         s['status'] = 'done'
