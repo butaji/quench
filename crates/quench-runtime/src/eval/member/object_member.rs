@@ -20,7 +20,7 @@ fn proxy_get_property(
     proxy: &Rc<RefCell<Object>>,
     handler: &Rc<RefCell<Object>>,
     target: &Value,
-    prop_name: &str,
+    prop_name: &Value,
     env: Option<&Rc<RefCell<Environment>>>,
 ) -> Result<Value, JsError> {
     let trap_val = handler_get_trap(handler);
@@ -28,7 +28,7 @@ fn proxy_get_property(
         let Value::Object(target_obj) = target else {
             return Ok(Value::Undefined);
         };
-        return eval_object_member_inner(target_obj, prop_name, env);
+        return eval_object_member_inner_value(target_obj, prop_name, env);
     };
     let trap = match trap_val {
         Value::Object(_)
@@ -39,7 +39,7 @@ fn proxy_get_property(
             let Value::Object(target_obj) = target else {
                 return Ok(Value::Undefined);
             };
-            return eval_object_member_inner(target_obj, prop_name, env);
+            return eval_object_member_inner_value(target_obj, prop_name, env);
         }
         _ => {
             let (_, js_err) = create_js_error_with_type("get trap is not callable", "TypeError");
@@ -50,7 +50,7 @@ fn proxy_get_property(
         trap,
         vec![
             target.clone(),
-            Value::String(prop_name.to_string()),
+            prop_name.clone(),
             Value::Object(Rc::clone(proxy)),
         ],
         Value::Object(Rc::clone(handler)),
@@ -80,9 +80,26 @@ pub fn eval_object_member(
         return eval_private_name_get(&private_field_object(o), prop_name);
     }
     if let Some((handler, target)) = proxy_handler_and_target(o) {
-        return proxy_get_property(o, &handler, &target, prop_name, env);
+        let symbol_key = Value::String(prop_name.to_string());
+        return proxy_get_property(o, &handler, &target, &symbol_key, env);
     }
     eval_object_member_inner(o, prop_name, env)
+}
+
+pub fn eval_object_member_value(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &Value,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
+    if let Value::String(s) = prop_name
+        && crate::value::is_private_name_key(s)
+    {
+        return eval_private_name_get(&private_field_object(o), s);
+    }
+    if let Some((handler, target)) = proxy_handler_and_target(o) {
+        return proxy_get_property(o, &handler, &target, prop_name, env);
+    }
+    eval_object_member_inner_value(o, prop_name, env)
 }
 
 fn eval_object_member_inner(
@@ -174,6 +191,54 @@ fn eval_object_member_inner(
     Ok(Value::Undefined)
 }
 
+fn eval_object_member_inner_value(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &Value,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
+    match prop_name {
+        Value::Symbol(_) | Value::BigInt(_) | Value::Number(_) | Value::Boolean(_) => {
+            let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
+            while let Some(obj_rc) = current {
+                let obj = obj_rc.borrow();
+                if let Some(val) = obj.get_property(prop_name) {
+                    return Ok(val);
+                }
+                current = obj.prototype.as_ref().map(Rc::clone);
+            }
+        }
+        _ => {
+            return eval_object_member_inner(
+                o,
+                &crate::value::to_js_string(prop_name),
+                env,
+            );
+        }
+    }
+    let obj = o.borrow();
+    if obj.kind == ObjectKind::Date
+        && matches!(prop_name, Value::String(s) if s == "prototype")
+    {
+        let mut proto = Object::new(ObjectKind::Ordinary);
+        proto.set("constructor", Value::Object(Rc::clone(o)));
+        return Ok(Value::Object(Rc::new(RefCell::new(proto))));
+    }
+    if obj.kind == ObjectKind::Global && env.is_some() {
+        let fallback_env = env.or_else(|| {
+            CURRENT_CONTEXT.with(|cell| cell.borrow().map(|ptr| unsafe { &*ptr }.env()))
+        });
+        if let Some(e) = fallback_env {
+            if let Some(Value::Object(global_rc)) = e.borrow().get("globalThis").as_ref() {
+                let global = global_rc.borrow();
+                if let Some(found) = global.get(prop_name) {
+                    return Ok(found.clone());
+                }
+            }
+        }
+    }
+    Ok(Value::Undefined)
+}
+
 fn eval_private_name_get(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
     let obj = o.borrow();
     if let Some(getter_storage) = obj.get_getter(prop_name) {
@@ -235,5 +300,26 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.0.contains("TypeError"), "got {}", err.0);
+    }
+
+    #[test]
+    fn with_proxy_unscopables_lookup_passes_symbol_key() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var log = []; \
+                 var unscopables = Symbol.unscopables; \
+                 var env = new Proxy({}, { \
+                   get(_t, p) { \
+                     log.push(p); \
+                     if (p === unscopables) { return {}; } \
+                     return 0; \
+                   } \
+                 }); \
+                 with (env) {} \
+                 log[0] === unscopables",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
     }
 }

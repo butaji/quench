@@ -781,11 +781,8 @@ pub fn eval_statement(
                     let unscopables_val = (|| -> Option<Value> {
                         let unscopables_sym =
                             crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")?;
-                        let key = match &unscopables_sym {
-                            crate::value::Value::Symbol(s) => s.property_key(),
-                            _ => return None,
-                        };
-                        crate::eval::member::eval_object_member(&obj_rc, &key, None).ok()
+                        crate::eval::member::eval_object_member_value(&obj_rc, &unscopables_sym, None)
+                            .ok()
                     })();
                     match unscopables_val {
                         Some(Value::Object(u_obj)) => {

@@ -151,12 +151,14 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
                 }
             }
         }
-        ast::Statement::WithStatement(_) => {
+        ast::Statement::WithStatement(with_stmt) => {
             if strict {
                 return Err(JsError(
                     "SyntaxError: 'with' statements are not allowed in strict mode".to_string(),
                 ));
             }
+            check_no_fn_decl_in_stmt(&with_stmt.body)?;
+            walk_inner_statements_for_fn_params(&with_stmt.body, strict)?;
         }
         _ => {}
     }
@@ -273,6 +275,12 @@ fn check_no_fn_decl_in_stmt(stmt: &ast::Statement) -> Result<(), JsError> {
             return Err(JsError(
                 "SyntaxError: Function declaration not allowed in statement position".into(),
             ));
+        }
+        ast::Statement::BlockStatement(block) => {
+            for stmt in &block.body {
+                check_no_fn_decl_in_stmt(stmt)?;
+            }
+            Ok(())
         }
         // Check inside labeled statements (non-strict: Annex B.3.2 allows it at top level)
         ast::Statement::LabeledStatement(labeled) => check_no_fn_decl_in_stmt(&labeled.body),
@@ -2131,6 +2139,26 @@ mod tests {
         assert!(
             parse_script(source).is_err(),
             "parse_script should reject switch switch redeclaration"
+        );
+    }
+
+    #[test]
+    fn parse_script_rejects_function_declaration_in_with_body() {
+        use crate::parser::parse_script;
+        let source = "with ({}) function f() {}";
+        assert!(
+            parse_script(source).is_err(),
+            "parse_script should reject function declaration directly in with body"
+        );
+    }
+
+    #[test]
+    fn parse_script_rejects_function_declaration_in_with_block_body() {
+        use crate::parser::parse_script;
+        let source = "with ({}) { function f() {} }";
+        assert!(
+            parse_script(source).is_err(),
+            "parse_script should reject function declaration in with block body"
         );
     }
 }
