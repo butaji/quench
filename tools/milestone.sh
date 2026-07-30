@@ -7,6 +7,7 @@
 #   bash tools/milestone.sh --stage 32 --ssot           # run ssot-stage first
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
+#   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --ssot --commit --push
 
 set -euo pipefail
@@ -20,6 +21,7 @@ AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
 COMMIT_MESSAGE=""
+HISTORY=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -52,6 +54,10 @@ while [[ ${#} -gt 0 ]]; do
             AUTO_ADVANCE=1
             shift
             ;;
+        --history)
+            HISTORY="${2:-10}"
+            shift 2
+            ;;
         -h|--help)
             sed -n '1,140p' "$0"
             exit 0
@@ -82,10 +88,17 @@ log_status() {
     } >> "$log_file"
 }
 
+show_history() {
+    if [[ "$HISTORY" =~ ^[0-9]+$ ]] && [[ "$HISTORY" -gt 0 ]]; then
+        bash tools/milestone-timeline.sh "$HISTORY"
+    fi
+}
+
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
     bash tools/stage-status.sh
     echo "[milestone] Current stage is ${STAGE}."
     log_status "status-only" "displayed status only"
+    show_history
     exit 0
 fi
 
@@ -123,6 +136,7 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
         fi
     fi
     bash tools/stage-status.sh
+    show_history
     exit 0
 fi
 
@@ -153,10 +167,12 @@ if bash tools/fix-stage.sh; then
     fi
     log_status "test-run" "passed"
     bash tools/stage-status.sh
+    show_history
 
     exit 0
 else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
+    show_history
     log_status "test-run" "failed"
     exit 1
 fi
