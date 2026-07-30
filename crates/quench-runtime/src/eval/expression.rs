@@ -229,7 +229,12 @@ pub fn eval_expression(
             let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
                 (left.as_ref(), right.as_ref())
             {
-                crate::eval::class::eval_class_expr(class, env, Some(name))?
+                let inferred_name = if class.name.is_none() {
+                    Some(name.as_str())
+                } else {
+                    None
+                };
+                crate::eval::class::eval_class_expr(class, env, inferred_name)?
             } else {
                 eval_expression(right, env, in_arrow_function)?
             };
@@ -257,7 +262,12 @@ pub fn eval_expression(
             let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
                 (left.as_ref(), right.as_ref())
             {
-                eval_class_expr(class, env, Some(name))?
+                let inferred_name = if class.name.is_none() {
+                    Some(name.as_str())
+                } else {
+                    None
+                };
+                eval_class_expr(class, env, inferred_name)?
             } else {
                 eval_expression(right, env, in_arrow_function)?
             };

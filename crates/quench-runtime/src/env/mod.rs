@@ -201,6 +201,15 @@ impl Environment {
         self.parent.as_ref()?.borrow().binding_scope(name)
     }
 
+    pub fn var_binding_scope(&self, name: &str) -> Option<Rc<RefCell<Scope>>> {
+        for scope in self.scopes.iter().rev() {
+            if scope.borrow().get_kind(name) == Some(VarKind::Var) {
+                return Some(Rc::clone(scope));
+            }
+        }
+        self.parent.as_ref()?.borrow().var_binding_scope(name)
+    }
+
     pub fn get(&self, name: &str) -> Option<Value> {
         for scope_rc in self.scopes.iter().rev() {
             if let Some(value) = scope_rc.borrow().get(name) {

@@ -111,6 +111,14 @@ mod var_declarations {
             eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").writable").unwrap();
         assert_eq!(writable, Value::Boolean(false));
     }
+
+    #[test]
+    fn var_decl_named_class_keeps_explicit_name() {
+        assert_eq!(
+            eval("var xCls = class xCls {}; xCls.name").unwrap(),
+            Value::String("xCls".into())
+        );
+    }
 }
 
 mod class_static_properties {

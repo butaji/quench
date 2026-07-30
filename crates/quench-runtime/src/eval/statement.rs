@@ -888,13 +888,18 @@ fn eval_var_decl(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
-    let already_declared = env.borrow().current_scope().borrow().has(name);
+    let already_declared = env.borrow().get_kind(name).is_some();
     if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
     let mut value = if let Some(expr) = init {
         if let Expression::Class(class) = expr {
-            crate::eval::class::eval_class_expr(class, env, Some(name))?
+            let inferred_name = if class.name.is_none() {
+                Some(name)
+            } else {
+                None
+            };
+            crate::eval::class::eval_class_expr(class, env, inferred_name)?
         } else {
             eval_expression(expr, env, in_arrow_function)?
         }
@@ -923,16 +928,13 @@ fn eval_var_decl(
                     None
                 }
             })
-            .flatten()
-            .or_else(|| {
-                env.borrow()
-                    .get(name)
-                    .filter(|value| matches!(value, Value::Undefined))
-            });
+            .flatten();
 
         if let Some(existing_global) = existing_global {
-            if let Some(scope) = env.borrow().binding_scope(name) {
-                scope.borrow_mut().set(name.to_string(), existing_global, strict);
+            if let Some(scope) = env.borrow().var_binding_scope(name) {
+                scope
+                    .borrow_mut()
+                    .set(name.to_string(), existing_global.clone(), strict);
             }
             if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
                 set_on_global_this(env, name, existing_global);
@@ -942,7 +944,7 @@ fn eval_var_decl(
     }
 
     if existing_var && init.is_some() {
-        if let Some(scope) = env.borrow().binding_scope(name) {
+        if let Some(scope) = env.borrow().var_binding_scope(name) {
             scope
                 .borrow_mut()
                 .set(name.to_string(), value.clone(), strict);

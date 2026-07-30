@@ -248,6 +248,14 @@ fn test_named_function_expression_name_not_visible_outside() {
     );
 }
 
+#[test]
+fn test_named_class_expression_name_not_inferred_when_assigned_to_identifier() {
+    assert_eq!(
+        eval("let x; x = class explicit {}; x.name").unwrap(),
+        Value::String("explicit".into())
+    );
+}
+
 // ─── Assignment expression returns RHS ──────────────────────────────────────
 
 /// Per ES spec §12.15, an AssignmentExpression evaluates the assignment
