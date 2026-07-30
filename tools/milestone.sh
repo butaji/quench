@@ -132,6 +132,10 @@ while [[ ${#} -gt 0 ]]; do
                         ;;
                 esac
             done
+            if [[ "$STATUS_JSON" -eq 1 && "$STATUS_RAW" -eq 1 ]]; then
+                # Machine-readable output takes precedence over raw.
+                STATUS_RAW=0
+            fi
             ;;
         --status-json)
             STATUS_ONLY=1
@@ -295,11 +299,11 @@ if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
         STATUS_SCOPE="all"
             if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 ]]; then
-            if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
-                STATUS_SCOPE="current"
-            elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
+                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
+                    STATUS_SCOPE="current"
+                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
                 STATUS_SCOPE="next"
             elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
                 NEXT_ID="$(bash tools/stage-status.sh --next-id)"
@@ -319,7 +323,8 @@ PY
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
 
-            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
+            if [[ "$STATUS_JSON" -eq 1 ]]; then
+                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
 
@@ -353,8 +358,8 @@ print(
     )
 )
 PY
-            set -e
-            if [[ "$STATUS_RAW" -eq 1 && "$STATUS_JSON" -eq 0 ]]; then
+            fi
+            if [[ "$STATUS_RAW" -eq 1 ]]; then
                 STATUS_SCOPE="$STATUS_SCOPE" \
                 STATUS_RC="$STATUS_RC" \
                 CI_RC="$CI_RC" \
@@ -385,6 +390,7 @@ print(f"status={json.dumps(status)}")
 print(f"ci={json.dumps(ci)}")
 PY
             fi
+            set -e
         else
             if [[ "$QUIET" -eq 0 ]]; then
                 if [[ "$STATUS_CURRENT" -eq 1 ]]; then

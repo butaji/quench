@@ -123,6 +123,7 @@ bash tools/milestone.sh --status --ci --next --json
 bash tools/milestone.sh --status --ci --next-id
 # Raw combined readout
 bash tools/milestone.sh --status --ci --raw
+# `--json` takes precedence when both --json and --raw are provided.
 # Returned as JSON fields: `status_scope`, `status`, `status_rc`, `ci`, `ci_rc`, and `ok`.
 # CI readiness gate from milestone automation
 bash tools/milestone.sh --ci-gate
