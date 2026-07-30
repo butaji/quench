@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python3 - <<'PY'
+USE_JSON=0
+if [[ "${1:-}" == "--json" ]]; then
+    USE_JSON=1
+fi
+
+python3 - "$USE_JSON" <<'PY'
 import json
 import sys
 
 try:
+    use_json = int(sys.argv[1])
     with open('tasks/index.json') as f:
         data = json.load(f)
 except (OSError, json.JSONDecodeError) as exc:
@@ -18,8 +24,15 @@ if not current or current is None:
     print('__ERROR__:current_stage missing')
     raise SystemExit(1)
 
-print(f'{"ID":>4} {"Status":>8}  {"Tests":>6}  Path')
-print(f'{"——":>4} {"——————":>8}  {"─────":>6}  ────')
+if use_json:
+    print(json.dumps({
+        'current_stage': current,
+        'stages': stages,
+    }, sort_keys=True))
+    raise SystemExit(0)
+
+print(f"{'ID':>4} {'Status':>8}  {'Tests':>6}  Path")
+print(f"{'----':>4} {'--------':>8}  {'-----':>6}  ------")
 
 for s in stages:
     marker = '>>> ' if s.get('id') == current else '    '
