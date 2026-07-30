@@ -4,9 +4,10 @@
 
 Canonical language:
 - `SSOT` is the canonical short alias for the test-run workflow.
-- `test-run` and all legacy status helpers are compatibility entrypoints that delegate to `SSOT`.
-- `implementation-progress` is retained only for compatibility and forwards status to `SSOT`.
+- `test-run` is a compatibility alias for current stage status/run flows and delegates to `SSOT`.
+- `implementation-progress` is retained only for compatibility and forwards status/readiness checks to `SSOT`.
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
+- There is **no separate status model**: `SSOT` and test-run status are the same source of truth.
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
