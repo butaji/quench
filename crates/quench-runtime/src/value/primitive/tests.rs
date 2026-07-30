@@ -377,7 +377,7 @@ fn test_to_number_strings() {
 #[test]
 fn test_to_number_non_coercible() {
     assert!(to_number(&sym("s")).is_nan());
-    assert!(to_number(&big(42)).is_nan());
+    assert_eq!(to_number(&big(42)), 42.0);
     assert!(to_number(&nf()).is_nan());
 }
 

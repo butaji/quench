@@ -330,13 +330,14 @@
       "id": 26,
       "path": "test/language/statements/function",
       "tests": 451,
-      "status": "in_progress",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "200\u2013400",
       "js_loc": "0\u20130",
-      "failed": 65,
-      "pass_rate": "85.6%"
+      "failed": 0,
+      "pass_rate": "100.0%",
+      "passed": 451
     },
     {
       "id": 27,

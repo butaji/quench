@@ -156,6 +156,9 @@ pub fn register_object(ctx: &mut Context) {
     object_proto_rc
         .borrow_mut()
         .set_builtin_method("constructor", object_ctor.clone());
+    if let Some(Value::Object(global_obj)) = ctx.get_global("globalThis") {
+        global_obj.borrow_mut().prototype = Some(Rc::clone(&object_proto_rc));
+    }
     ctx.set_global("Object".to_string(), object_ctor);
 }
 

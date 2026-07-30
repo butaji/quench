@@ -273,7 +273,7 @@ fn sync_throwing_default_param_throws() {
          try { f1(); 'r1:resolved' } catch(e) { 'r1:rejected:' + e.constructor.name }",
         )
         .unwrap();
-    eprintln!("r1: {:?}", r1);
+    assert_eq!(r1, Value::String("r1:rejected:RangeError".into()));
 
     // Test 2: named function call in default
     let r2 = ctx
@@ -283,13 +283,13 @@ fn sync_throwing_default_param_throws() {
          try { f2(); 'r2:resolved' } catch(e) { 'r2:rejected:' + e.constructor.name }",
         )
         .unwrap();
-    eprintln!("r2: {:?}", r2);
+    assert_eq!(r2, Value::String("r2:rejected:RangeError".into()));
 
     // Test 3: standalone IIFE
     let r3 = ctx.eval(
         "try { (function() { throw new RangeError('x'); })(); 'r3:no throw' } catch(e) { 'r3:' + e.name }"
     ).unwrap();
-    eprintln!("r3: {:?}", r3);
+    assert_eq!(r3, Value::String("r3:RangeError".into()));
 
     // Test 4: just throw in default
     let r4 = ctx
@@ -298,19 +298,17 @@ fn sync_throwing_default_param_throws() {
          try { f4(); 'r4:resolved:' + _ } catch(e) { 'r4:rejected' }",
         )
         .unwrap();
-    eprintln!("r4: {:?}", r4);
+    assert_eq!(r4, Value::String("r4:rejected".into()));
 
     // Test 5: evaluate default directly
     let r5 = ctx.eval("function f5(_ = 42) { return _; } f5()").unwrap();
-    eprintln!("r5: {:?}", r5);
+    assert_eq!(r5, Value::Number(42.0));
 
     // Test 6: call f with explicit undefined
     let r6 = ctx
         .eval("function f6(_ = 99) { return _; } f6(undefined)")
         .unwrap();
-    eprintln!("r6: {:?}", r6);
-
-    assert!(false, "diagnostic complete");
+    assert_eq!(r6, Value::Number(99.0));
 }
 
 #[test]
@@ -1478,6 +1476,37 @@ fn function_used_as_prototype_exposes_its_properties() {
         .eval("function P(){} P.type='x'; function F(){} F.prototype=P; new F().type")
         .unwrap();
     assert_eq!(value, Value::String("x".to_string()));
+}
+
+#[test]
+fn var_function_initializer_inside_with_stays_callable() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("var a=1; var o={a:2}; with(o) { var f=function(){return a;} } typeof f")
+        .unwrap();
+    assert_eq!(value, Value::String("function".to_string()));
+}
+
+#[test]
+fn var_function_initializer_inside_with_can_be_called_after_scope() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("var a=1; var o={a:2}; with(o) { var f=function(){return a;} } f()")
+        .unwrap();
+    assert_eq!(value, Value::Number(2.0));
+}
+
+#[test]
+
+#[test]
+fn global_this_inherits_object_prototype_for_with_function_case() {
+    use crate::test262::host::{QuenchHost, Test262Host};
+
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "var a=1; var __obj={a:2}; with(__obj){ var __func=function(){return a;} } this.hasOwnProperty('__func')",
+    );
+    assert!(result.is_ok(), "globalThis prototype lookup failed: {result:?}");
 }
 
 #[test]

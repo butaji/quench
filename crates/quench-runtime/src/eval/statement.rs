@@ -777,7 +777,10 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
-    if init.is_some() && existing_var {
+    let preserve_hoisted_function = existing_var
+        && init.is_none()
+        && matches!(env.borrow().get(name), Some(Value::Function(_)));
+    if existing_var && !preserve_hoisted_function {
         env.borrow_mut().set(name, value.clone());
         if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
             set_on_global_this(env, name, value);
@@ -1084,10 +1087,12 @@ fn eval_for(
                 if loop_handles_break(&cf, &loop_labels) {
                     if head_lexical {
                         env.borrow_mut().pop_scope();
+                        env.borrow_mut().pop_scope();
                     }
                     return Ok(body_val);
                 }
                 if head_lexical {
+                    env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                 }
                 set_control_flow(cf);
@@ -1096,6 +1101,7 @@ fn eval_for(
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
                     if head_lexical {
+                        env.borrow_mut().pop_scope();
                         env.borrow_mut().pop_scope();
                     }
                     set_control_flow(cf);
@@ -1106,6 +1112,7 @@ fn eval_for(
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 if head_lexical {
                     env.borrow_mut().pop_scope();
+                    env.borrow_mut().pop_scope();
                 }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -1113,12 +1120,14 @@ fn eval_for(
             Some(ControlFlow::YieldDelegate(val)) => {
                 if head_lexical {
                     env.borrow_mut().pop_scope();
+                    env.borrow_mut().pop_scope();
                 }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::Throw(val)) => {
                 if head_lexical {
+                    env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                 }
                 set_thrown_value(val);

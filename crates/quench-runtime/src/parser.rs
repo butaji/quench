@@ -216,7 +216,12 @@ fn walk_body_stmts(stmts: &[oxc::ast::ast::Statement], strict: bool) -> Result<(
                 }
                 check_fn_strict_body(&func.params, &func.body, strict)?;
                 if let Some(body) = &func.body {
-                    walk_body_stmts(&body.statements, strict)?;
+                    let body_strict = strict
+                        || body
+                            .directives
+                            .iter()
+                            .any(|d| d.expression.value == "use strict");
+                    walk_body_stmts(&body.statements, body_strict)?;
                 }
             }
             oxc::ast::ast::Statement::ExpressionStatement(expr) => {
@@ -547,6 +552,14 @@ mod tests {
     fn test_parse_function() {
         let result = parse_script("function add(a, b) { return a + b; }");
         assert!(result.is_ok(), "Failed: {:?}", result);
+    }
+
+    #[test]
+    fn strict_nested_function_rejects_eval_assignment() {
+        let result = parse_script(
+            "function outer() { 'use strict'; function inner() { eval = 42; } }",
+        );
+        assert!(result.is_err(), "strict nested assignment was accepted");
     }
 
     #[test]
