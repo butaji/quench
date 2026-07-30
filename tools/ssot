@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical lightweight alias: SSOT == test-run.
+# Canonical lightweight alias: SSOT is the implementation status for the current
+# test-run stage and the canonical command to execute test-run milestones.
 # Usage:
-#   bash tools/ssot                         # run current stage test-run (default)
+#   bash tools/ssot                         # status snapshot for current test-run stage
 #   bash tools/ssot --run                   # run current stage test-run (explicit)
+#   bash tools/ssot --status                # status snapshot for current stage
 #   bash tools/ssot --run --commit           # run, then commit current milestone
 #   bash tools/ssot --run --commit --push    # run, commit, and push current milestone
 #   bash tools/ssot --run --json             # run current stage with JSON stage result

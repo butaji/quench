@@ -16,7 +16,7 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-SSOT is the stage `test-run` itself (`ssot` == `test run`):
+SSOT is the canonical `test-run` source of truth:
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
 
@@ -37,12 +37,12 @@ mode: every non-`raw` test runs sloppy, then with `"use strict";`.
 Fast milestone flow:
 
 ```bash
-bash tools/ssot                              # run current stage test-run (SSOT)
-bash tools/ssot --test                        # explicit run alias (SSOT)
+bash tools/ssot --status                     # show current SSOT status (test-run summary)
+bash tools/ssot                              # same as `--status` (SSOT status)
+bash tools/ssot --test                        # explicit run alias (SSOT for execution)
 bash tools/ssot --run --commit               # run + commit current milestone
 bash tools/ssot --run --commit --push         # run + commit + push current milestone
 bash tools/ssot --run --fast                  # run current stage fast path (skip preflight)
-bash tools/ssot --status                     # print current implementation/test-run status
 bash tools/ssot --next                       # print next pending stage id
 ```
 `tools/ssot` is the canonical short path: `--next` targets next pending stage, default targets current.
