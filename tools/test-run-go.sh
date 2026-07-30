@@ -13,6 +13,7 @@ JSON=0
 RUN=0
 READY=0
 NOPREFLIGHT=0
+DASHBOARD_DONE=0
 CURRENT_STAGE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -52,6 +53,7 @@ if [[ "$JSON" -eq 1 ]]; then
     DASH_ARGS=(--json)
     if [[ "$READY" -eq 1 || "$RUN" -eq 0 ]]; then
         bash tools/test-run-dashboard.sh "${DASH_ARGS[@]}"
+        DASHBOARD_DONE=1
         if [[ "$RUN" -eq 0 && "$READY" -eq 0 ]]; then
             bash tools/test-run-status-summary.sh --json
         fi
@@ -99,7 +101,9 @@ if [[ "$RUN" -eq 1 ]]; then
     exit 0
 fi
 
-bash tools/test-run-dashboard.sh
+if [[ "$DASHBOARD_DONE" -eq 0 ]]; then
+    bash tools/test-run-dashboard.sh
+fi
 if [[ "$READY" -eq 1 ]]; then
     bash tools/test-run-preflight.sh
 fi
