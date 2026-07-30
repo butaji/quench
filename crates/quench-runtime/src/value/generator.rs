@@ -215,6 +215,52 @@ impl GeneratorObject {
                 self.yields_to_replay,
                 &self.stored_resumes,
             );
+            if let Statement::Return(expr) = stmt {
+                let return_val = match expr {
+                    Some(e) => crate::eval::eval_expression(e, &call_env, false)?,
+                    None => Value::Undefined,
+                };
+                if let Some(yield_val) = crate::interpreter::take_generator_yield() {
+                    crate::value::generator_replay::commit_suspend(&mut self.stored_resumes);
+                    self.yields_to_replay = self.stored_resumes.len();
+                    self.pending_stmt = Some(i);
+                    self.yielded_value = yield_val;
+                    self.yield_index += 1;
+                    self.state = GeneratorState::Suspended;
+                    if let Some(s) = crate::eval::iteration::take_pending_for_of_suspend() {
+                        self.for_of_suspend = Some(s);
+                    }
+                    if let Some(s) =
+                        crate::eval::iteration::take_pending_yield_delegate_suspend()
+                    {
+                        self.yield_delegate_suspend = Some(s);
+                    }
+                    crate::value::generator_replay::set_resuming_pending_yield(false);
+                    crate::interpreter::set_current_eval_env(previous_eval_env);
+                    crate::interpreter::set_strict_mode(prev_strict);
+                    return Ok(IteratorResult {
+                        value: self.yielded_value.clone(),
+                        done: false,
+                    });
+                }
+                completion = return_val;
+                self.state = GeneratorState::Completed;
+                self.pending_stmt = None;
+                self.yields_to_replay = 0;
+                self.stored_resumes.clear();
+                self.for_of_suspend = None;
+                self.yield_delegate_suspend = None;
+                let _ = crate::eval::iteration::take_pending_for_of_suspend();
+                let _ = crate::eval::iteration::take_pending_yield_delegate_suspend();
+                self.call_env = None;
+                crate::value::generator_replay::set_resuming_pending_yield(false);
+                crate::interpreter::set_current_eval_env(previous_eval_env);
+                crate::interpreter::set_strict_mode(prev_strict);
+                return Ok(IteratorResult {
+                    value: completion,
+                    done: true,
+                });
+            }
             match crate::eval::eval_statement(stmt, &call_env, false, false) {
                 Ok(_val) => {
                     // Check yield FIRST. When generator.return() resumes a generator,

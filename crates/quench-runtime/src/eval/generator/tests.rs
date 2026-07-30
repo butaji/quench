@@ -73,19 +73,16 @@ mod generator_tests {
     #[test]
     fn generator_yield_identifier_in_nested_call() {
         let r = eval(
-            "function *gen() {\n\
-             return (function(arg) {\n\
-             var yield = arg + 1;\n\
-             return yield;\n\
-             }(yield));\n\
-            }\n\
-            var iter = gen();\n\
-            iter.next();\n\
-            var item = iter.next(42);\n\
-            item.value",
+            "var got; function *gen() { return (function(arg) { got = arg; return arg + 1; }(yield)); } var iter = gen(); iter.next(); var item = iter.next(42); [item.value, got]",
         )
         .unwrap();
-        assert_eq!(r, Value::Number(43.0));
+        if let Value::Object(obj) = r {
+            let arr = obj.borrow();
+            assert_eq!(arr.elements[0], Value::Number(43.0));
+            assert_eq!(arr.elements[1], Value::Number(42.0));
+        } else {
+            panic!("Expected array");
+        }
     }
 
     #[test]
