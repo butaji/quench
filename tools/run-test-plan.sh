@@ -11,6 +11,7 @@ set -euo pipefail
 #   bash tools/run-test-plan.sh --batch --run --json
 #   bash tools/run-test-plan.sh --status --json
 #   bash tools/run-test-plan.sh --status --json --raw
+#   bash tools/run-test-plan.sh --status-json
 #   bash tools/run-test-plan.sh --status --json --strict
 #   bash tools/run-test-plan.sh --json --build
 
@@ -96,6 +97,12 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --status)
             STATUS=1
+            shift
+            ;;
+        --status-json)
+            STATUS=1
+            JSON=1
+            RAW=0
             shift
             ;;
         --raw)
@@ -201,16 +208,13 @@ if [[ "$BUILD" -eq 1 ]]; then
 fi
 
 if [[ "$STATUS" -eq 1 ]]; then
+    FLAGS+=(--status)
     if [[ "$JSON" -eq 1 ]]; then
-        FLAGS+=(--status)
         if [[ "$RAW" -eq 0 ]]; then
             run_json_status "single" bash tools/run-next-pending.sh "${FLAGS[@]}"
             exit 0
         fi
-        bash tools/run-next-pending.sh "${FLAGS[@]}"
-        exit 0
     fi
-    FLAGS+=(--print)
     bash tools/run-next-pending.sh "${FLAGS[@]}"
     exit 0
 fi
