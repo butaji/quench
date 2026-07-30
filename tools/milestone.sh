@@ -12,6 +12,7 @@
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
+#   bash tools/milestone.sh --log /tmp/milestones.log --status
 
 set -euo pipefail
 
@@ -27,6 +28,7 @@ DRY_RUN=0
 AUTO_RERUN=0
 COMMIT_MESSAGE=""
 HISTORY=0
+LOG_FILE="${MILESTONE_LOG:-./.test262_milestones.log}"
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -83,6 +85,14 @@ while [[ ${#} -gt 0 ]]; do
             HISTORY="$2"
             shift 2
             ;;
+        --log)
+            if [[ "${2:-}" == "" ]]; then
+                echo "error: --log requires a file path" >&2
+                exit 1
+            fi
+            LOG_FILE="$2"
+            shift 2
+            ;;
         -h|--help)
             sed -n '1,140p' "$0"
             exit 0
@@ -101,7 +111,6 @@ export TEST262_QUICK=1
 log_status() {
     local outcome="$1"
     local note="$2"
-    local log_file="${MILESTONE_LOG:-./.test262_milestones.log}"
     {
         printf "[%s] stage=%s outcome=%s " \
             "$(date +'%Y-%m-%d %H:%M:%S%z')" \
@@ -110,12 +119,12 @@ log_status() {
         printf "branch=%s " "$(git branch --show-current)"
         printf "commit=%s " "$(git rev-parse --short HEAD)"
         printf "note=%s\n" "$note"
-    } >> "$log_file"
+    } >> "$LOG_FILE"
 }
 
 show_history() {
     if [[ "$HISTORY" =~ ^[0-9]+$ ]] && [[ "$HISTORY" -gt 0 ]]; then
-        bash tools/milestone-timeline.sh "$HISTORY"
+        bash tools/milestone-timeline.sh "$HISTORY" --log "$LOG_FILE"
     fi
 }
 
