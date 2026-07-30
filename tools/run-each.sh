@@ -1,18 +1,56 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Process-isolated test runner — runs each test in a subprocess to survive crashes.
-# Usage: TEST262_STAGE=16 ./tools/run-each.sh
+# Usage:
+#   bash tools/run-each.sh                  # uses TEST262_STAGE if set, else current_stage
+#   bash tools/run-each.sh --stage 16
 #
 # This is slower than the in-process digest runner but survives stack overflows.
 #
 # run-test exit codes: 0=pass, 1=fail (error type mismatch), 2=skip,
 # 3=negative wrongly passed (fail), 4=harness/read error (fail), 124=timeout.
 
-STAGE=${TEST262_STAGE:-16}
-STAGE_DIR=$(grep -A2 "\"id\": $STAGE," tasks/index.json | grep '"path"' | sed 's/.*"path": "\(.*\)",/\1/')
-TEST_DIR="tests/test262/$STAGE_DIR"
+set -euo pipefail
+cd "$(dirname "$0")/.."
 
-if [ ! -d "$TEST_DIR" ]; then
-    echo "Stage $STAGE directory not found: $TEST_DIR"
+STAGE="${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}"
+if [[ ${#} -gt 0 ]]; then
+    case "${1:-}" in
+        --stage)
+            STAGE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            sed -n '1,120p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "error: unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+if [[ "$#" -gt 0 ]]; then
+    echo "error: unexpected trailing arguments: $*" >&2
+    exit 1
+fi
+
+STAGE_DIR="$(python3 - "$STAGE" <<'PY'
+import json
+import sys
+
+stage = int(sys.argv[1])
+with open('tasks/index.json') as f:
+    data = json.load(f)
+for item in data['stages']:
+    if item.get('id') == stage:
+        print(item.get('path', ''))
+        break
+PY
+)"
+TEST_DIR="tests/test262/$STAGE_DIR"
+if [[ -z "$STAGE_DIR" || ! -d "$TEST_DIR" ]]; then
+    echo "error: stage $STAGE directory not found: $TEST_DIR" >&2
     exit 1
 fi
 
