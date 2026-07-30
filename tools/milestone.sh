@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 
 STAGE=""
 STATUS_ONLY=0
-RUN_SSOT=0
+RUN_TEST_RUN=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
@@ -62,11 +62,11 @@ while [[ ${#} -gt 0 ]]; do
             shift
             ;;
         --ssot)
-            RUN_SSOT=1
+            RUN_TEST_RUN=1
             shift
             ;;
         --test-run)
-            RUN_SSOT=1
+            RUN_TEST_RUN=1
             shift
             ;;
         --advance)
@@ -148,16 +148,16 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
     exit 0
 fi
 
-if [[ "$RUN_SSOT" -eq 1 ]]; then
+if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
     echo "[milestone] Running test-run check for stage ${STAGE}..."
     if bash tools/ssot-stage.sh "$STAGE"; then
         echo "[milestone] Test-run check complete for stage ${STAGE}."
-        log_status "ssot" "pass"
+        log_status "test-run" "pass"
     else
         if [[ "$AUTO_RERUN" -eq 1 ]]; then
             bash tools/milestone-rerun.sh --stage "$STAGE"
         fi
-        log_status "ssot" "fail"
+        log_status "test-run" "fail"
         echo "[milestone] Stage ${STAGE} test-run failed." >&2
         exit 1
     fi
@@ -178,10 +178,10 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
                 git push
                 echo "[milestone] Pushed test-run milestone commit."
             fi
-            log_status "ssot" "committed"
+            log_status "test-run" "committed"
         else
             echo "[milestone] No working-tree changes to commit."
-            log_status "ssot" "passed-no-changes"
+            log_status "test-run" "passed-no-changes"
         fi
     fi
     bash tools/stage-status.sh
