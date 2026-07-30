@@ -16,7 +16,7 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-`SSOT` is the short alias for the canonical `test-run` workflow (status and run are the same flow):
+`ssot` is the canonical shorthand for the `test-run` workflow (status and run are one flow):
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
 
@@ -34,12 +34,14 @@ ALL_STAGES=1      cargo test -p quench-runtime --test test262 test262_staged -- 
 On 100% the runner prints `ALL STAGES COMPLETE — Stage N: X/X`. Strict
 mode: every non-`raw` test runs sloppy, then with `"use strict";`.
 
-Fast milestone flow (SSOT alias of test-run):
+Fast milestone flow (`ssot`, the canonical flow):
 
 ```bash
-bash tools/ssot                               # show current SSOT status (test-run summary)
+bash tools/ssot                               # show current test-run status
 bash tools/ssot --status                     # same as above
 bash tools/ssot --run --fast                 # run current stage (fast)
+bash tools/ssot --ship                       # run current stage fast, commit milestone
+bash tools/ssot --ship --push                # run current stage fast, commit, push milestone
 bash tools/ssot --sprint                     # check blockers, then run fast current stage
 bash tools/ssot --sprint --commit            # run fast + commit current milestone
 bash tools/ssot --sprint --commit --push      # run fast + commit + push milestone

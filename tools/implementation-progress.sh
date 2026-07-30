@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Thin compatibility wrapper. Canonical implementation status command is:
-# `bash tools/ssot --status`.
-# This script is intentionally kept for compatibility.
+# Legacy compatibility wrapper.
+# Canonical status/run/commit flow is `bash tools/ssot`.
+# This script intentionally forwards status to keep older call sites working.
 
 NEXT=0
 JSON=0
