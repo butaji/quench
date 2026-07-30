@@ -2,6 +2,8 @@
 
 ## Quick Reference
 
+Implementation status is sourced only from stage test runs (`SSOT = test run`).
+
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
 cargo run --bin run-test -- [--strict] [--stack] [--show-script] tests/test262/.../test.js
@@ -38,6 +40,9 @@ TEST262_STAGE=N bash tools/fix-stage.sh
 
 # Check if current stage is 100% and advance
 TEST262_STAGE=N bash tools/advance-stage.sh
+
+# Canonical status command for active work (stage test run)
+bash tools/ssot-stage.sh [stage]
 ```
 
 ## Tool Reference

@@ -14,7 +14,11 @@ cargo build -p quench-runtime
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-## test262 Runner — 93 stages, no skips, no checkpoints
+## test262 Runner — 122 stages, no skips, no checkpoints
+
+SSOT for implementation progress is the stage test run itself:
+`TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
+If a stage is not 100% in the test runner output, it is not done.
 
 Stages live in `crates/quench-runtime/src/test262/runner.rs::STAGES` and
 mirror `tasks/index.json`. Each stage runs to **100% passing** before
