@@ -8,6 +8,7 @@
 #   bash tools/milestone-rerun.sh --log /tmp/rerun.log # save diagnostic output
 #   bash tools/milestone-rerun.sh -- --filter "some filter"
 #   bash tools/milestone-rerun.sh --json            # output JSON summary
+#   bash tools/milestone-rerun.sh --json --no-log     # output JSON summary only
 
 set -euo pipefail
 
@@ -16,6 +17,7 @@ TEST=""
 LOG_FILE="${MILESTONE_RERUN_LOG:-./.test262_milestone_rerun.log}"
 EXTRA_ARGS=()
 OUTPUT_JSON=0
+NO_LOG=0
 RERUN_ARGS_JSON="[]"
 
 emit_json() {
@@ -70,6 +72,10 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --json)
       OUTPUT_JSON=1
+      shift
+      ;;
+    --no-log)
+      NO_LOG=1
       shift
       ;;
     --)
@@ -146,9 +152,13 @@ if [[ "$TEST" != *.js ]]; then
   exit 1
 fi
 
-log_dir="$(dirname "$LOG_FILE")"
-if [[ ! -d "$log_dir" ]]; then
-    mkdir -p "$log_dir"
+if [[ "$NO_LOG" -eq 1 ]]; then
+    LOG_FILE=""
+else
+    log_dir="$(dirname "$LOG_FILE")"
+    if [[ ! -d "$log_dir" ]]; then
+        mkdir -p "$log_dir"
+    fi
 fi
 
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
@@ -161,11 +171,16 @@ PY
 fi
 
 RUN_STATUS=0
-{
-  echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
-  cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
-} | tee -a "$LOG_FILE"
-RUN_STATUS="${PIPESTATUS[0]}"
+if [[ "$OUTPUT_JSON" -eq 1 && "$NO_LOG" -eq 1 ]]; then
+    cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
+    RUN_STATUS=$?
+else
+    {
+        echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
+        cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
+    } | tee -a "$LOG_FILE"
+    RUN_STATUS="${PIPESTATUS[0]}"
+fi
 
 if [[ "$RUN_STATUS" -ne 0 ]]; then
     if [[ "$OUTPUT_JSON" -eq 1 ]]; then
@@ -179,5 +194,7 @@ fi
 if [[ "$OUTPUT_JSON" -eq 1 ]]; then
     emit_json "pass"
 else
-    echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
+    fi
 fi
