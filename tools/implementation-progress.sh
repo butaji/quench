@@ -40,10 +40,16 @@ if [[ "$RAW" -eq 1 ]]; then
     exit 0
 fi
 
-CURRENT_JSON="$(bash tools/stage-status.sh --json --current)"
+if ! CURRENT_JSON=$(bash tools/stage-status.sh --json --current); then
+    echo "error: failed to read current stage status" >&2
+    exit 1
+fi
 NEXT_JSON=''
 if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
-    NEXT_JSON="$(bash tools/stage-status.sh --json --next)"
+    if ! NEXT_JSON=$(bash tools/stage-status.sh --json --next); then
+        echo "error: failed to read next stage status" >&2
+        exit 1
+    fi
 fi
 
 python3 - "$CURRENT_JSON" "$NEXT_JSON" "$INCLUDE_NEXT" <<'PY'
@@ -68,4 +74,3 @@ if include_next:
 
 print(json.dumps(payload, sort_keys=True))
 PY
-
