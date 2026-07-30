@@ -296,19 +296,18 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
-if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+    if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
         STATUS_SCOPE="all"
-            if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 ]]; then
-                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
-                    STATUS_SCOPE="current"
-                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
-                STATUS_SCOPE="next"
-            elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-                NEXT_ID="$(bash tools/stage-status.sh --next-id)"
-                STATUS_PAYLOAD="$(python3 - "$NEXT_ID" <<'PY'
+        if [[ "$STATUS_CURRENT" -eq 1 ]]; then
+            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
+            STATUS_SCOPE="current"
+        elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+            STATUS_SCOPE="next"
+        elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
+            NEXT_ID="$(bash tools/stage-status.sh --next-id)"
+            STATUS_PAYLOAD="$(python3 - "$NEXT_ID" <<'PY'
 import json
 import sys
 
@@ -316,16 +315,27 @@ payload = {"next_id": sys.argv[1].strip()}
 print(json.dumps(payload))
 PY
 )"
-                STATUS_SCOPE="next-id"
-            else
-                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
-            fi
-            STATUS_RC=$?
+            STATUS_SCOPE="next-id"
+        else
+            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
+        fi
+        STATUS_RC=$?
+        if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 ]]; then
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
+        elif [[ "$QUIET" -eq 0 ]]; then
+            printf '%s\n' "$STATUS_PAYLOAD"
+            set +e
+            bash tools/test-run-ci-gate.sh
+            CI_RC=$?
+            set -e
+        else
+            CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
+            CI_RC=$?
+        fi
 
-            if [[ "$STATUS_JSON" -eq 1 ]]; then
-                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
+        if [[ "$STATUS_JSON" -eq 1 ]]; then
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
 
@@ -359,12 +369,12 @@ print(
     )
 )
 PY
-            fi
-            if [[ "$STATUS_RAW" -eq 1 ]]; then
-                STATUS_SCOPE="$STATUS_SCOPE" \
-                STATUS_RC="$STATUS_RC" \
-                CI_RC="$CI_RC" \
-                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
+        fi
+        if [[ "$STATUS_RAW" -eq 1 ]]; then
+            STATUS_SCOPE="$STATUS_SCOPE" \
+            STATUS_RC="$STATUS_RC" \
+            CI_RC="$CI_RC" \
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
 
@@ -390,49 +400,27 @@ print(
 print(f"status={json.dumps(status)}")
 print(f"ci={json.dumps(ci)}")
 PY
-            fi
-            set -e
-        else
-            if [[ "$QUIET" -eq 0 ]]; then
-                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-                    bash tools/stage-status.sh --current
-                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-                    if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-                        bash tools/stage-status.sh --next-id
-                    else
-                        bash tools/stage-status.sh --next
-                    fi
-                else
-                    bash tools/stage-status.sh
-                fi
-                set +e
-                bash tools/test-run-ci-gate.sh
-                CI_RC=$?
-                set -e
-            else
-                CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
-                CI_RC=$?
-            fi
-            STATUS_RC=0
-            set -e
         fi
-    elif [[ "$QUIET" -eq 0 ]]; then
-        if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
-            bash tools/stage-status.sh --json --current
-        elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
-            bash tools/stage-status.sh --json --next
-        elif [[ "$STATUS_JSON" -eq 1 ]]; then
-            bash tools/stage-status.sh --json
-        elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
-            bash tools/stage-status.sh --current
-        elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-            if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-                bash tools/stage-status.sh --next-id
+        set -e
+    else
+        if [[ "$QUIET" -eq 0 ]]; then
+            if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
+                bash tools/stage-status.sh --json --current
+            elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
+                bash tools/stage-status.sh --json --next
+            elif [[ "$STATUS_JSON" -eq 1 ]]; then
+                bash tools/stage-status.sh --json
+            elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
+                bash tools/stage-status.sh --current
+            elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+                if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
+                    bash tools/stage-status.sh --next-id
+                else
+                    bash tools/stage-status.sh --next
+                fi
             else
-                bash tools/stage-status.sh --next
+                bash tools/stage-status.sh
             fi
-        else
-            bash tools/stage-status.sh
         fi
     fi
     log_msg "[milestone] Current stage is ${STAGE}."
