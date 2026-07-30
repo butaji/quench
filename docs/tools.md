@@ -97,6 +97,10 @@ bash tools/test-run-go-next-ci.sh
 bash tools/test-run-go-next-ci.sh --json
 # Strict machine-readable envelope only.
 bash tools/test-run-go-next-ci.sh --json-only
+# Unified CI gate for both current + next stage readiness.
+bash tools/test-run-ci-gate.sh
+bash tools/test-run-ci-gate.sh --json
+bash tools/test-run-ci-gate.sh --skip-next --json
 # Single JSON readout with optional immediate run
 bash tools/test-run-go.sh --ready --json
 # Fast mode: skip preflight when reruns are intentionally unsafe
