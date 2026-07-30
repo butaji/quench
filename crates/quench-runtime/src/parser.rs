@@ -117,6 +117,20 @@ fn check_strict_fn_params(program: &oxc::ast::ast::Program) -> Result<(), JsErro
             match stmt {
                 oxc::ast::ast::Statement::FunctionDeclaration(func) => {
                     if let Some(body) = &func.body {
+                        let body_strict = strict
+                            || body
+                                .directives
+                                .iter()
+                                .any(|d| d.expression.value == "use strict");
+                        if body_strict
+                            && func.id.as_ref().is_some_and(|id| {
+                                id.name.as_str() == "eval" || id.name.as_str() == "arguments"
+                            })
+                        {
+                            return Err(JsError(
+                                "SyntaxError: Unexpected strict mode reserved word".into(),
+                            ));
+                        }
                         check_fn(&func.params, body, strict)?;
                     }
                 }
@@ -183,6 +197,23 @@ fn walk_body_stmts(stmts: &[oxc::ast::ast::Statement], strict: bool) -> Result<(
     for stmt in stmts {
         match stmt {
             oxc::ast::ast::Statement::FunctionDeclaration(func) => {
+                if (strict
+                    || func
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| {
+                            body.directives
+                                .iter()
+                                .any(|d| d.expression.value == "use strict")
+                        }))
+                    && func.id.as_ref().is_some_and(|id| {
+                        id.name.as_str() == "eval" || id.name.as_str() == "arguments"
+                    })
+                {
+                    return Err(JsError(
+                        "SyntaxError: Unexpected strict mode reserved word".into(),
+                    ));
+                }
                 check_fn_strict_body(&func.params, &func.body, strict)?;
                 if let Some(body) = &func.body {
                     walk_body_stmts(&body.statements, strict)?;

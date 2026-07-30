@@ -96,7 +96,8 @@ pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsErr
         return Ok(Value::Boolean(false));
     };
     let this_obj = match &this_val {
-        Value::Object(o) => o,
+        Value::Object(o) => Rc::clone(o),
+        Value::Function(f) => f.get_prototype(),
         _ => return Ok(Value::Boolean(false)),
     };
 
@@ -114,14 +115,14 @@ pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsErr
 
     match arg {
         Value::Object(v) => {
-            if chain_contains(this_obj, v) {
+            if chain_contains(&this_obj, v) {
                 return Ok(Value::Boolean(true));
             }
         }
         Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
             // Functions and constructors have Function.prototype as [[Prototype]].
             if let Some(fp) = crate::builtins::get_function_prototype() {
-                if Rc::ptr_eq(&fp, this_obj) || chain_contains(this_obj, &fp) {
+                if Rc::ptr_eq(&fp, &this_obj) || chain_contains(&this_obj, &fp) {
                     return Ok(Value::Boolean(true));
                 }
             }
@@ -131,7 +132,7 @@ pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsErr
             // is in the class's own [[Prototype]] chain.
             let own_proto = c.super_class_own_proto_cell.borrow().clone();
             if let Some(Value::Object(op)) = own_proto {
-                if Rc::ptr_eq(&op, this_obj) || chain_contains(this_obj, &op) {
+                if Rc::ptr_eq(&op, &this_obj) || chain_contains(&this_obj, &op) {
                     return Ok(Value::Boolean(true));
                 }
             }

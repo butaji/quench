@@ -166,6 +166,7 @@ impl Object {
                     "length".to_string(),
                     Value::Number(self.elements.len() as f64),
                 );
+                self.properties.shift_remove(key);
                 // For mapped arguments objects, also remove getter/setter so
                 // the property no longer delegates to the parameter binding.
                 self.getters.shift_remove(key);

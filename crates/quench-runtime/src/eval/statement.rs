@@ -777,7 +777,12 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
-    if init.is_some() || !existing_var {
+    if init.is_some() && existing_var {
+        env.borrow_mut().set(name, value.clone());
+        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
+            set_on_global_this(env, name, value);
+        }
+    } else if init.is_some() || !existing_var {
         env.borrow_mut().initialize_declared(name, value.clone());
         // For top-level var declarations, also set on globalThis
         if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
@@ -795,6 +800,9 @@ fn eval_func_decl(
     is_async: bool,
     is_generator: bool,
 ) -> Result<Value, JsError> {
+    if matches!(env.borrow().get(name), Some(Value::Function(_))) {
+        return Ok(Value::Undefined);
+    }
     let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
         params.to_vec(),
@@ -803,6 +811,8 @@ fn eval_func_decl(
         is_async,
         is_generator,
     );
+    func.strict = crate::interpreter::is_strict_mode()
+        || crate::interpreter::helpers::check_use_strict_directive(body);
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
     // ES2015+ strict mode: function declarations in blocks are block-scoped

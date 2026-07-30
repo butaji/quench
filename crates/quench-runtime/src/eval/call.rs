@@ -442,6 +442,7 @@ pub fn eval_new(
                 drop(obj);
                 let (_, js_err) =
                     create_js_error_with_type("object is not a constructor", "TypeError");
+                crate::interpreter::set_new_target(prev_new_target);
                 return Err(js_err);
             }
             if let Some(constructor) = obj.get("constructor") {
@@ -450,6 +451,7 @@ pub fn eval_new(
                 drop(obj);
                 let (_, js_err) =
                     create_js_error_with_type("object is not a constructor", "TypeError");
+                crate::interpreter::set_new_target(prev_new_target);
                 return Err(js_err);
             }
         }
@@ -467,11 +469,18 @@ pub fn eval_new(
         if !has_prototype && !is_bound && !nf.constructable {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
+            crate::interpreter::set_new_target(prev_new_target);
             return Err(js_err);
         }
     }
 
-    let prototype = get_constructor_prototype(&constructor_val)?;
+    let prototype = match get_constructor_prototype(&constructor_val) {
+        Ok(prototype) => prototype,
+        Err(error) => {
+            crate::interpreter::set_new_target(prev_new_target);
+            return Err(error);
+        }
+    };
     let new_obj = if let Some(proto) = prototype {
         Object::with_prototype(ObjectKind::Ordinary, proto)
     } else {
@@ -479,11 +488,17 @@ pub fn eval_new(
     };
 
     let new_obj_rc = Rc::new(RefCell::new(new_obj));
-    let result = call_value_with_this(
+    let result = match call_value_with_this(
         actual_constructor.clone(),
         args,
         Value::Object(Rc::clone(&new_obj_rc)),
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            crate::interpreter::set_new_target(prev_new_target);
+            return Err(error);
+        }
+    };
 
     // Per ES spec §10.2.2 [[Construct]]: if the constructor returns undefined,
     // set the [[Name]] property of the function as the "name" property on the

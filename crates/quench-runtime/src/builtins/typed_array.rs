@@ -2095,4 +2095,57 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
         );
         assert_eq!(result.unwrap(), Value::String("1,2,3,0,0".to_string()));
     }
+
+    #[test]
+    fn typed_array_shrink_past_offset_throws_for_length_tracking() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var buf = new ArrayBuffer(10, { maxByteLength: 20 }); \
+             var ta = new Uint8Array(buf, 2); \
+             var values = []; \
+             var threw = ''; \
+             try { \
+               for (var v of ta) { \
+                 values.push(v); \
+                 if (values.length === 2) buf.resize(1); \
+               } \
+             } catch (e) { threw = e.name; } \
+             values.join(',') + '|' + threw;",
+        );
+        assert_eq!(result.unwrap(), Value::String("0,0|TypeError".to_string()));
+    }
+
+    #[test]
+    fn typed_array_resizable_buffer_length_tracking_at_end_is_empty() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        crate::builtins::register_builtins(ctx);
+        let result = ctx.eval(
+            "var b = new ArrayBuffer(10, {maxByteLength: 20}); \
+             var t = new Uint8Array(b, 10); \
+             var values = []; for (var v of t) values.push(v); \
+             values.length;",
+        );
+        assert_eq!(result.unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn typed_array_resizable_buffer_for_of_runs_in_test_thread() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::QuenchHost;
+        use crate::test262::runner::{default_test262_dir, run_single_test};
+        use std::path::Path;
+
+        let test262_dir = default_test262_dir();
+        let harness = HarnessLoader::new(&test262_dir);
+        let path = Path::new(&test262_dir)
+            .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer.js");
+        let outcome = run_single_test(&mut QuenchHost::new(), &harness, &path);
+        assert!(
+            matches!(outcome, crate::test262::host::TestOutcome::Pass),
+            "unexpected test outcome: {outcome:?}"
+        );
+    }
 }

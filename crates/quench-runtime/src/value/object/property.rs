@@ -313,7 +313,7 @@ impl Object {
             let explicit_bl = crate::value::to_number(bl) as u64;
             explicit_bl > buf_bl.saturating_sub(offset as u64)
         } else {
-            (offset as u64) >= buf_bl
+            (offset as u64) > buf_bl
         }
     }
 }

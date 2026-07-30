@@ -61,16 +61,6 @@ pub fn register_error(ctx: &mut Context) {
 fn create_error_proto(name: &str) -> Object {
     let mut proto = Object::new(ObjectKind::Ordinary);
     proto.set("name", Value::String(name.to_string()));
-    proto.define_own_property(
-        "message",
-        &PropertyDescriptor {
-            value: Some(Value::String(String::new())),
-            writable: Some(true),
-            enumerable: Some(false),
-            configurable: Some(true),
-            ..Default::default()
-        },
-    );
     let default_name = name.to_string();
     proto.set(
         "toString",

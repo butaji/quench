@@ -254,7 +254,7 @@ impl ValueFunction {
         let mut proto = Object::new(ObjectKind::Ordinary);
         // Generator functions' .prototype has no own properties per ES spec.
         if !self.empty_prototype && !self.is_generator {
-            proto.set("constructor", self.constructor_value());
+            proto.set_builtin_method("constructor", self.constructor_value());
         }
         if let Some(obj_proto) = crate::builtins::get_object_prototype() {
             proto.prototype = Some(obj_proto);
@@ -324,9 +324,25 @@ impl ValueFunction {
             );
             return Err(err);
         }
+        if key == "prototype" {
+            let proto = match &value {
+                Value::Object(proto) => Some(Rc::clone(proto)),
+                Value::Function(proto) => Some(proto.get_prototype()),
+                _ => None,
+            };
+            if let Some(proto) = proto {
+                if let Some(cell) = self.proto_cell.upgrade() {
+                    *cell.borrow_mut() = Some(proto);
+                }
+            }
+        }
+        let property_value = value.clone();
         self.with_mut(|props| {
             props.insert(key.to_string(), value);
         });
+        if key != "name" && key != "length" && key != "prototype" {
+            self.get_prototype().borrow_mut().set(key, property_value);
+        }
         Ok(())
     }
 

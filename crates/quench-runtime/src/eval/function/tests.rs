@@ -1457,3 +1457,102 @@ fn constructor_prototype_isprototype_of_instance() {
         .unwrap();
     assert_eq!(v, Value::Boolean(true));
 }
+
+#[test]
+fn function_prototype_isprototype_of_constructed_instance() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("function P(){} function F(){} F.prototype=P; F.prototype === P")
+        .unwrap();
+    assert_eq!(value, Value::Boolean(true));
+    let value = ctx
+        .eval("var value=new F(); P.isPrototypeOf(value)")
+        .unwrap();
+    assert_eq!(value, Value::Boolean(true));
+}
+
+#[test]
+fn function_used_as_prototype_exposes_its_properties() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("function P(){} P.type='x'; function F(){} F.prototype=P; new F().type")
+        .unwrap();
+    assert_eq!(value, Value::String("x".to_string()));
+}
+
+#[test]
+fn failed_constructor_restores_new_target_for_following_calls() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "function F(){ missing(); } try { new F(); } catch (e) {} Symbol('after failure')",
+    );
+    assert!(matches!(result, Ok(Value::Symbol(_))), "unexpected result: {result:?}");
+}
+
+#[test]
+fn plain_object_call_does_not_use_constructor_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var value={constructor:function(){}}; value()");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().0.contains("not a function"));
+}
+
+#[test]
+fn deleting_mapped_arguments_index_removes_property() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f(value) { delete arguments[0]; return typeof arguments[0]; } f(1)",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("undefined".to_string()));
+}
+
+#[test]
+fn deleting_mapped_arguments_index_in_harness_host_removes_property() {
+    use crate::test262::host::{QuenchHost, Test262Host};
+
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "function f(value) { delete arguments[0]; if (arguments[0] !== undefined) throw new Error('not deleted'); } f(1);",
+    );
+    assert!(result.is_ok(), "arguments deletion failed: {result:?}");
+}
+
+#[test]
+fn deleting_strict_arguments_index_removes_property() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f(value) { 'use strict'; delete arguments[0]; return typeof arguments[0]; } f(1)")
+        .unwrap();
+    assert_eq!(v, Value::String("undefined".to_string()));
+}
+
+#[test]
+fn duplicate_function_declarations_use_last_hoisted_binding() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval(
+            "function f() { function g() { return 'first'; } var saved = g; function g() { return 'second'; } return saved() + ':' + g(); } f()",
+        )
+        .unwrap();
+    assert_eq!(v, Value::String("second:second".to_string()));
+}
+
+#[test]
+fn var_initializer_overwrites_hoisted_function_binding() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("(function () { if (typeof value !== 'function') return 'bad'; var value = 1; return value; function value() {} })()")
+        .unwrap();
+    assert_eq!(v, Value::Number(1.0));
+}
+
+#[test]
+fn function_prototype_constructor_is_not_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let v = ctx
+        .eval("function f() {} var keys = []; for (var key in f.prototype) keys.push(key); keys.join(',')")
+        .unwrap();
+    assert_eq!(v, Value::String("".to_string()));
+}

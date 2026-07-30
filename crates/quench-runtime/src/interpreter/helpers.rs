@@ -100,7 +100,7 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                     *is_async,
                     *is_generator,
                 );
-                func.strict = strict;
+                func.strict = strict || check_use_strict_directive(body);
                 // Set VarKind::Var so delete on function decls returns false
                 env.borrow_mut().declare_var(name.clone(), VarKind::Var);
                 env.borrow_mut().define(name.clone(), Value::Function(func));

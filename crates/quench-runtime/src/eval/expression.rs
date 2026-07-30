@@ -161,7 +161,8 @@ pub fn eval_expression(
                     *is_async,
                     *is_generator,
                 );
-                f.strict = crate::interpreter::is_strict_mode();
+                f.strict = crate::interpreter::is_strict_mode()
+                    || crate::interpreter::helpers::check_use_strict_directive(body);
                 f
             });
             // Per ES spec §12.4.1.3: a named FunctionExpression creates an

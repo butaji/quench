@@ -317,14 +317,14 @@
       "id": 25,
       "path": "test/language/statements/for-of",
       "tests": 751,
-      "status": "in_progress",
+      "status": "done",
       "difficulty": 4,
       "impl": "rust",
       "rust_loc": "300\u2013600",
       "js_loc": "0\u20130",
-      "failed": 2,
-      "pass_rate": "97.2%",
-      "passed": 749
+      "failed": 0,
+      "pass_rate": "100.0%",
+      "passed": 751
     },
     {
       "id": 26,

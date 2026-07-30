@@ -359,7 +359,11 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
                 Ok(None)
             }
         }
-        Value::Function(f) => Ok(Some(f.get_prototype())),
+        Value::Function(f) => match f.get_property("prototype") {
+            Some(Value::Object(proto)) => Ok(Some(proto)),
+            Some(Value::Function(proto)) => Ok(Some(proto.get_prototype())),
+            _ => Ok(Some(f.get_prototype())),
+        },
         Value::NativeConstructor(nc) => Ok(Some(Rc::clone(&nc.prototype))),
         Value::NativeFunction(nf) => {
             // Prototype is set by JS harness via Test262Error.prototype = ... (set_property).

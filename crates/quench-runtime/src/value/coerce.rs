@@ -249,7 +249,7 @@ fn to_number_complex(v: &Value) -> Result<f64, JsError> {
             crate::value::set_thrown_value(err_val);
             Err(err)
         }
-        Value::BigInt(bi) => Ok(crate::builtins::bigint::bigint_to_f64(bi)),
+        Value::BigInt(_) => Ok(f64::NAN),
         Value::Undefined | Value::Null | Value::Boolean(_) | Value::Number(_) | Value::String(_) => {
             unreachable!("simple cases handled by simple_number_value before to_number_complex")
         }
