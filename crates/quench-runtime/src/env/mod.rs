@@ -410,15 +410,10 @@ impl Environment {
         false
     }
 
-    pub fn set_in_object_env(
-        &mut self,
-        name: &str,
-        value: Value,
-        strict: bool,
-    ) -> Option<bool> {
+    pub fn set_in_object_env(&self, name: &str, value: Value, strict: bool) -> Option<bool> {
         for scope_rc in self.scopes.iter().rev() {
             if let Some(result) = scope_rc
-                .borrow_mut()
+                .borrow()
                 .set_object_property(name, value.clone(), strict)
             {
                 return Some(result);
@@ -429,7 +424,7 @@ impl Environment {
         }
         self.parent
             .as_ref()?
-            .borrow_mut()
+            .borrow()
             .set_in_object_env(name, value, strict)
     }
 
@@ -801,5 +796,48 @@ mod tests {
         env.push_scope();
         // Marker still set on the outer scope (static context)
         assert!(env.is_static_class_body());
+    }
+
+    #[test]
+    fn object_binding_has_missing_property_returns_false() {
+        let mut env = Environment::new();
+        let obj = Rc::new(RefCell::new(crate::value::Object::new(
+            crate::value::kind::ObjectKind::Ordinary,
+        )));
+        obj.borrow_mut().set("x", Value::Number(1.0));
+
+        let scope = env.current_scope();
+        {
+            let mut scope_ref = scope.borrow_mut();
+            scope_ref.set_object_binding(Rc::clone(&obj));
+            scope_ref.declare_with_var("x".to_string(), VarKind::Var);
+        }
+        assert_eq!(obj.borrow_mut().delete("x"), true);
+
+        assert_eq!(
+            scope.borrow().object_binding_has("x"),
+            Some(false),
+            "deleted with-scope property must be reported as absent"
+        );
+    }
+
+    #[test]
+    fn object_scope_declared_binding_missing_property_does_not_initialize_local_binding() {
+        let mut env = Environment::new();
+        let obj = Rc::new(RefCell::new(crate::value::Object::new(
+            crate::value::kind::ObjectKind::Ordinary,
+        )));
+        obj.borrow_mut().set("x", Value::Number(1.0));
+
+        let scope = env.current_scope();
+        {
+            let mut scope_ref = scope.borrow_mut();
+            scope_ref.set_object_binding(Rc::clone(&obj));
+            scope_ref.declare_with_var("x".to_string(), VarKind::Var);
+        }
+        assert_eq!(obj.borrow_mut().delete("x"), true);
+
+        assert!(!scope.borrow_mut().set("x".to_string(), Value::Number(2.0), false));
+        assert!(obj.borrow().get("x").is_none());
     }
 }

@@ -6,7 +6,7 @@
 
 use crate::builtins::object_static::{object_define_property, to_property_key};
 use crate::context::Context;
-use crate::value::{JsError, Object, ObjectKind, ObjData, Value};
+use crate::value::{to_object, JsError, Object, ObjectKind, ObjData, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -102,6 +102,34 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
+        "get",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args
+                    .first()
+                    .ok_or_else(|| JsError::from("Reflect.get requires target argument"))?;
+                let property_key = args
+                    .get(1)
+                    .ok_or_else(|| JsError::from("Reflect.get requires propertyKey argument"))?;
+                to_property_key(property_key)?;
+                let target = to_object(target)?;
+                Ok(match target {
+                    Value::Object(obj) => {
+                        crate::eval::member::eval_object_member_value(&obj, property_key, None)?
+                    }
+                    _ => {
+                        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                            "Reflect.get target must be an object",
+                            "TypeError",
+                        );
+                        crate::value::set_thrown_value(err_val);
+                        return Err(js_err);
+                    }
+                })
+            },
+        ))),
+    );
+    reflect.set(
         "has",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
@@ -113,6 +141,82 @@ pub fn register_reflect(ctx: &mut Context) {
                 })?;
                 let key = to_property_key(key_val)?;
                 Ok(Value::Boolean(reflect_has_property(target, &key)?))
+            },
+        ))),
+    );
+    reflect.set(
+        "set",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args
+                    .first()
+                    .ok_or_else(|| JsError::new("Reflect.set requires target argument"))?;
+                let key = to_property_key(
+                    args.get(1)
+                        .ok_or_else(|| JsError::new("Reflect.set requires propertyKey argument"))?,
+                )?;
+                let value = args
+                    .get(2)
+                    .ok_or_else(|| JsError::new("Reflect.set requires value argument"))?
+                    .clone();
+                let receiver = args.get(3).unwrap_or(target).clone();
+                let Value::Object(target_obj) = target else {
+                    return Err(JsError::new("Reflect.set target must be an object"));
+                };
+                if let Some((handler, proxy_target)) =
+                    crate::eval::object::proxy_handler_and_target(target_obj)
+                {
+                    return Ok(Value::Boolean(
+                        crate::eval::object::call_proxy_set_trap(
+                            &proxy_target,
+                            &handler,
+                            &receiver,
+                            &key,
+                            value,
+                        )?,
+                    ));
+                }
+                if let Value::Object(receiver_obj) = &receiver {
+                    if crate::eval::object::proxy_handler_and_target(receiver_obj).is_some() {
+                        crate::eval::object::call_proxy_get_own_property_descriptor(
+                            receiver_obj,
+                            &key,
+                        )?;
+                        return Ok(Value::Boolean(
+                            crate::eval::object::call_proxy_define_property(
+                                receiver_obj,
+                                &key,
+                                value,
+                            )?,
+                        ));
+                    }
+                }
+                target_obj.borrow_mut().set(&key, value);
+                Ok(Value::Boolean(true))
+            },
+        ))),
+    );
+    reflect.set(
+        "getOwnPropertyDescriptor",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args
+                    .first()
+                    .ok_or_else(|| JsError::new("Reflect.getOwnPropertyDescriptor requires target"))?;
+                let key = to_property_key(
+                    args.get(1)
+                        .ok_or_else(|| JsError::new("Reflect.getOwnPropertyDescriptor requires key"))?,
+                )?;
+                let Value::Object(target) = target else {
+                    return Err(JsError::new(
+                        "Reflect.getOwnPropertyDescriptor target must be an object",
+                    ));
+                };
+                Ok(target
+                    .borrow()
+                    .get_descriptor(&key)
+                    .map(|_| Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))))
+                    .unwrap_or(Value::Undefined))
             },
         ))),
     );
@@ -223,6 +327,45 @@ mod tests {
             "var o = {}; Reflect.defineProperty(o, 'x', {value: 42, writable: true, enumerable: true, configurable: true}); o.x",
         );
         assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn reflect_get_uses_get_trap_for_proxy() {
+        let result = eval_ok_with_builtins(
+            r#"
+var log = [];
+var proxy = new Proxy({x: 1, [Symbol.unscopables]: {}}, {
+  get(t, pk) {
+    log.push(String(pk));
+    return t[pk];
+  },
+});
+var x = Reflect.get(proxy, 'x');
+if (x !== 1) { throw new Error('expected 1'); }
+if (log[0] !== 'x') { throw new Error('expected x'); }
+if (Reflect.get(proxy, Symbol.unscopables) !== proxy[Symbol.unscopables]) { throw new Error('unscopables mismatch'); }
+"#,
+        );
+        assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn reflect_set_proxy_trap_can_forward_to_reflect() {
+        let result = eval_ok_with_builtins(
+            r#"
+var log = [];
+var target = {p: 0};
+var proxy = new Proxy(target, {
+  set(t, pk, v, r) {
+    log.push("set:" + String(pk));
+    return Reflect.set(t, pk, v, r);
+  },
+});
+with (proxy) { p = 1; }
+JSON.stringify([target.p, log]);
+"#,
+        );
+        assert_eq!(result, Value::String("[1,[\"set:p\"]]".to_string()));
     }
 
     #[test]

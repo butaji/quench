@@ -625,6 +625,27 @@ mod tests {
         assert!(err.contains("SyntaxError"), "unexpected error: {err}");
     }
 
+    struct StrictModeGuard(bool);
+    impl Drop for StrictModeGuard {
+        fn drop(&mut self) {
+            crate::interpreter::set_strict_mode(self.0);
+        }
+    }
+
+    #[test]
+    fn parse_strict_script_rejects_with_in_object_getter() {
+        let previous = crate::interpreter::is_strict_mode();
+        let _guard = StrictModeGuard(previous);
+        crate::interpreter::set_strict_mode(true);
+        let result = parse_script("var obj = { get(a) { with(a){} } };");
+        assert!(result.is_err(), "with in strict accessor body should fail parse");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("SyntaxError"),
+            "unexpected parse error: {err}"
+        );
+    }
+
     #[test]
     fn test_parse_typescript_complex() {
         // Test more complex TypeScript with JSX

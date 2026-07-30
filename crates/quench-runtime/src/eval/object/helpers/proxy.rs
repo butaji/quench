@@ -170,12 +170,11 @@ pub fn call_proxy_set_trap(
     prop_name: &str,
     value: Value,
 ) -> Result<bool, JsError> {
-    let trap_opt: Option<Value> = handler.borrow().get("set").or_else(|| {
-        handler
-            .borrow()
-            .get_own_value("set")
-            .or_else(|| handler.borrow().get_setter_func("set"))
-    });
+    let trap_opt: Option<Value> = handler
+        .borrow()
+        .get_own_value("set")
+        .or_else(|| handler.borrow().get("set"))
+        .or_else(|| handler.borrow().get_setter_func("set"));
     let Some(trap) = trap_opt else {
         return Ok(true);
     };
@@ -196,7 +195,12 @@ pub fn call_proxy_set_trap(
     };
     let trap_result = crate::eval::function::call_value_with_this(
         trap,
-        vec![target.clone(), Value::String(prop_name.to_string()), value],
+        vec![
+            target.clone(),
+            Value::String(prop_name.to_string()),
+            value,
+            this_val.clone(),
+        ],
         this_val.clone(),
     );
     match trap_result {
@@ -212,6 +216,52 @@ fn data_descriptor(value: Value) -> Rc<RefCell<Object>> {
     desc.set("enumerable", Value::Boolean(true));
     desc.set("configurable", Value::Boolean(true));
     Rc::new(RefCell::new(desc))
+}
+
+pub fn call_proxy_define_property(
+    proxy: &Rc<RefCell<Object>>,
+    key: &str,
+    value: Value,
+) -> Result<bool, JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(proxy) else {
+        proxy.borrow_mut().set(key, value);
+        return Ok(true);
+    };
+    let Some(trap) = handler.borrow().get("defineProperty") else {
+        let Value::Object(target) = target else {
+            return Ok(false);
+        };
+        target.borrow_mut().set(key, value);
+        return Ok(true);
+    };
+    let result = crate::eval::function::call_value_with_this(
+        trap,
+        vec![
+            target,
+            Value::String(key.to_string()),
+            Value::Object(data_descriptor(value)),
+        ],
+        Value::Object(Rc::clone(proxy)),
+    )?;
+    Ok(crate::value::to_bool(&result))
+}
+
+pub fn call_proxy_get_own_property_descriptor(
+    proxy: &Rc<RefCell<Object>>,
+    key: &str,
+) -> Result<(), JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(proxy) else {
+        return Ok(());
+    };
+    let Some(trap) = handler.borrow().get("getOwnPropertyDescriptor") else {
+        return Ok(());
+    };
+    crate::eval::function::call_value_with_this(
+        trap,
+        vec![target, Value::String(key.to_string())],
+        Value::Object(Rc::clone(proxy)),
+    )?;
+    Ok(())
 }
 
 /// ES CreateDataPropertyOrThrow — routes public field init through proxy defineProperty.

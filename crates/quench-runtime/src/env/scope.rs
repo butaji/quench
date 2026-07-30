@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::VarKind;
-use crate::eval::object::{proxy_get_property, proxy_has_property};
+use crate::eval::object::{
+    proxy_get_property, proxy_handler_and_target, proxy_has_property, call_proxy_set_trap,
+};
 use crate::value::error::set_thrown_value;
 use crate::value::get_thrown_value;
 use crate::value::{to_bool, Value};
@@ -212,10 +214,10 @@ impl Scope {
         self.is_static_class_body = true;
     }
 
-    pub fn set_object_property(&mut self, name: &str, value: Value, _strict: bool) -> Option<bool> {
-        let object = self.object_binding.as_ref()?;
+    pub fn set_object_property(&self, name: &str, value: Value, strict: bool) -> Option<bool> {
+        let object = self.object_binding.as_ref()?.clone();
         if !matches!(self.object_has_binding_property(name), Some(true)) {
-            return None;
+            return if strict { Some(false) } else { None };
         }
         if !self.load_with_unscopables() {
             return None;
@@ -223,24 +225,33 @@ impl Scope {
         if self.is_unscopable(name) {
             return None;
         }
-        if matches!(self.declarations.get(name), Some(VarState::DeclaredOnly)) {
-            self.declarations.remove(name);
-            self.bindings
-                .insert(name.to_string(), Rc::new(RefCell::new(value.clone())));
-            object.borrow_mut().set(name, value);
-            return Some(true);
+        if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
+            return Some(false);
         }
-        if !matches!(proxy_has_property(object, name).ok(), Some(true)) {
-            return None;
-        }
-        if let Some(flags) = object.borrow().get_descriptor(name) {
-            if !flags.writable {
+        let set_ok = if let Some((handler, target)) = proxy_handler_and_target(&object) {
+            if proxy_has_property(&object, name).ok() != Some(true) {
+                return if strict { Some(false) } else { None };
+            }
+            let success = match call_proxy_set_trap(
+                &target,
+                &handler,
+                &Value::Object(Rc::clone(&object)),
+                name,
+                value.clone(),
+            ) {
+                Ok(v) => v,
+                Err(_) => return Some(false),
+            };
+            if !success {
                 return Some(false);
             }
-        }
-        object.borrow_mut().set(name, value.clone());
-        if let Some(entry) = self.bindings.get(name) {
-            *entry.borrow_mut() = value;
+            true
+        } else {
+            object.borrow_mut().set(name, value.clone());
+            true
+        };
+        if !set_ok {
+            return Some(false);
         }
         Some(true)
     }

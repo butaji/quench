@@ -775,19 +775,6 @@ pub fn eval_statement(
             {
                 let current_scope = env.borrow_mut().current_scope();
                 current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
-                let with_scope_names = crate::eval::object::proxy_handler_and_target(&obj_rc)
-                    .and_then(|(_, target)| match target {
-                        crate::value::Value::Object(target_obj) => {
-                            Some(target_obj.borrow().own_property_names())
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| obj_rc.borrow().own_property_names());
-                for name in &with_scope_names {
-                    current_scope
-                        .borrow_mut()
-                        .declare_with_var(name.to_string(), VarKind::Var);
-                }
             }
             let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
             env.borrow_mut().current_scope().borrow_mut().clear_with_unscopables();
@@ -877,7 +864,10 @@ fn eval_var_decl(
             .rev()
             .any(|scope| {
                 let scope = scope.borrow();
-                scope.is_object_binding() && scope.has(name)
+                scope.is_object_binding()
+                    && scope
+                        .object_binding_has(name)
+                        .is_some_and(|present| present)
             })
     };
     if !existing_var && !already_declared {
@@ -940,7 +930,18 @@ fn eval_var_decl(
     if init.is_some() {
         if *kind == VarKind::Var {
             let target = if in_with_scoped_binding {
-                env.borrow().binding_scope(name)
+                env.borrow()
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find(|scope| {
+                        let scope = scope.borrow();
+                        scope.is_object_binding()
+                            && scope
+                                .object_binding_has(name)
+                                .is_some_and(|present| present)
+                    })
+                    .cloned()
             } else {
                 env.borrow().var_binding_scope(name)
             };

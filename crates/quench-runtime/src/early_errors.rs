@@ -25,6 +25,98 @@ pub fn check_early_errors(program: &ast::Program) -> Result<(), JsError> {
         // Also walk functions in statement position for parameter errors
         check_fn_params_in_stmt(stmt)?;
     }
+    check_nested_function_strict_errors(program, strict)?;
+    Ok(())
+}
+
+fn check_nested_function_strict_errors(
+    program: &ast::Program,
+    strict: bool,
+) -> Result<(), JsError> {
+    let mut checker = NestedStrictFnChecker {
+        strict,
+        error: None,
+    };
+    checker.visit_program(program);
+    match checker.error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+struct NestedStrictFnChecker {
+    strict: bool,
+    error: Option<JsError>,
+}
+
+impl<'a> Visit<'a> for NestedStrictFnChecker {
+    fn visit_function(&mut self, func: &ast::Function<'a>, _flags: oxc::syntax::scope::ScopeFlags) {
+        if self.error.is_some() {
+            return;
+        }
+        if let Some(body) = &func.body {
+            let body_is_strict = self.strict
+                || body
+                    .directives
+                    .iter()
+                    .any(|d| d.expression.value == "use strict");
+            if let Err(err) = check_strict_function_body(&func.params, body, body_is_strict) {
+                self.error = Some(err);
+                return;
+            }
+            let prev = self.strict;
+            self.strict = body_is_strict;
+            for stmt in &body.statements {
+                if let Err(err) = check_stmt(stmt, self.strict) {
+                    self.error = Some(err);
+                    return;
+                }
+            }
+            self.strict = prev;
+        }
+    }
+
+    fn visit_arrow_function_expression(
+        &mut self,
+        arrow: &ast::ArrowFunctionExpression<'a>,
+    ) {
+        if self.error.is_some() {
+            return;
+        }
+        let body_is_strict = self.strict
+            || arrow
+                .body
+                .directives
+                .iter()
+                .any(|d| d.expression.value == "use strict");
+        if let Err(err) = check_strict_function_body(&arrow.params, &arrow.body, body_is_strict) {
+            self.error = Some(err);
+            return;
+        }
+        let prev = self.strict;
+        self.strict = body_is_strict;
+        for stmt in &arrow.body.statements {
+            if let Err(err) = check_stmt(stmt, self.strict) {
+                self.error = Some(err);
+                return;
+            }
+        }
+        self.strict = prev;
+    }
+}
+
+fn check_strict_function_body(
+    params: &ast::FormalParameters,
+    body: &ast::FunctionBody,
+    strict: bool,
+) -> Result<(), JsError> {
+    if !strict {
+        return Ok(());
+    }
+    for stmt in &body.statements {
+        check_stmt(stmt, strict)?;
+    }
+    check_fn_params(params, body)?;
     Ok(())
 }
 

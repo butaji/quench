@@ -371,8 +371,8 @@ pub fn eval_expression(
             if let Expression::Identifier(name) = left.as_ref() {
                 let name = name.clone();
                 if let Some(result) = env
-                    .borrow_mut()
-                    .set_in_object_env(&name, right_val.clone(), false)
+                    .borrow()
+                    .set_in_object_env(&name, right_val.clone(), crate::interpreter::is_strict_mode())
                 {
                     if let Some(thrown) = crate::value::get_thrown_value() {
                         return Err(JsError(crate::value::to_js_string(&thrown)));
