@@ -303,20 +303,51 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
     if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
         STATUS_SCOPE="all"
+        ALL_STATUS_JSON="$(bash tools/stage-status.sh --json)"
+        STATUS_RC=$?
+
         if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
             STATUS_SCOPE="current"
         elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
             STATUS_SCOPE="next"
         elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-            NEXT_ID="$(bash tools/stage-status.sh --next-id)"
-            STATUS_PAYLOAD="$(printf '%s' "{\"next_id\":\"$NEXT_ID\"}")"
             STATUS_SCOPE="next-id"
-        else
-            STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
         fi
-        STATUS_RC=$?
+
+        STATUS_PAYLOAD="$(python3 - "$ALL_STATUS_JSON" "$STATUS_CURRENT" "$STATUS_NEXT" "$NEXT_ID_ONLY" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+mode_current = sys.argv[2] == "1"
+mode_next = sys.argv[3] == "1"
+mode_next_id = sys.argv[4] == "1"
+
+if mode_next_id:
+    current = payload.get('current_stage')
+    stages = payload.get('stages', [])
+    next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+    next_id = 0 if next_stage is None else next_stage.get('id', 0)
+    print(json.dumps({'next_id': str(next_id)}))
+    raise SystemExit(0)
+
+if mode_current:
+    current = payload.get('current_stage')
+    stages = payload.get('stages', [])
+    current_stage = next((s for s in stages if s.get('id') == current), {})
+    print(json.dumps({'current_stage': current, 'stage': current_stage}, sort_keys=True))
+    raise SystemExit(0)
+
+if mode_next:
+    current = payload.get('current_stage')
+    stages = payload.get('stages', [])
+    next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+    print(json.dumps({'current_stage': current, 'next_stage': next_stage.get('id') if next_stage is not None else None, 'stage': next_stage}, sort_keys=True))
+    raise SystemExit(0)
+
+print(json.dumps(payload, sort_keys=True))
+PY
+)"
         if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 || "$QUIET" -eq 1 ]]; then
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
