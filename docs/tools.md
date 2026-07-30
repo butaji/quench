@@ -70,6 +70,8 @@ bash tools/test-run-cycle.sh --json
 bash tools/test-run-cycle.sh --assert-ready --run
 # One-command preflight + run for current stage
 bash tools/test-run-go.sh --run
+# Run current stage with machine-readable preflight + run payloads
+bash tools/test-run-go.sh --run --json
 # Single JSON readout with optional immediate run
 bash tools/test-run-go.sh --ready --json
 # Fast mode: skip preflight when reruns are intentionally unsafe

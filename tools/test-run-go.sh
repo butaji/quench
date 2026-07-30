@@ -57,15 +57,37 @@ if [[ "$JSON" -eq 1 ]]; then
 fi
 
 if [[ "$RUN" -eq 1 && "$NOPREFLIGHT" -eq 0 ]]; then
-    bash tools/test-run-dashboard.sh --assert-ready || exit 1
-    bash tools/test-run-preflight.sh || exit 1
-    bash tools/test-run-status-summary.sh --blocker
+    if [[ "$JSON" -eq 1 ]]; then
+        PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
+        if ! python3 - <<'PY'
+import json
+import sys
+json.loads(sys.stdin.read())
+PY
+<<<"$PREFLIGHT_JSON"
+        then
+            echo "error: invalid preflight JSON payload" >&2
+            exit 1
+        fi
+        if ! bash tools/test-run-dashboard.sh --assert-ready >/dev/null; then
+            exit 1
+        fi
+        echo "$PREFLIGHT_JSON"
+    else
+        bash tools/test-run-dashboard.sh --assert-ready || exit 1
+        bash tools/test-run-preflight.sh || exit 1
+        bash tools/test-run-status-summary.sh --blocker
+    fi
 fi
 
 if [[ "$RUN" -eq 1 ]]; then
     STAGE="$(bash tools/current-stage.sh)"
     echo "[test-run-go] running stage ${STAGE}"
-    bash tools/test-run-stage.sh "$STAGE"
+    if [[ "$JSON" -eq 1 ]]; then
+        bash tools/test-run-stage.sh --json "$STAGE"
+    else
+        bash tools/test-run-stage.sh "$STAGE"
+    fi
     exit 0
 fi
 
