@@ -170,10 +170,12 @@ pub fn call_proxy_set_trap(
     prop_name: &str,
     value: Value,
 ) -> Result<bool, JsError> {
-    let trap_opt: Option<Value> = handler
-        .borrow()
-        .get_own_value("set")
-        .or_else(|| handler.borrow().get_setter_func("set"));
+    let trap_opt: Option<Value> = handler.borrow().get("set").or_else(|| {
+        handler
+            .borrow()
+            .get_own_value("set")
+            .or_else(|| handler.borrow().get_setter_func("set"))
+    });
     let Some(trap) = trap_opt else {
         return Ok(true);
     };
@@ -493,5 +495,59 @@ mod tests {
             result.unwrap(),
             Value::String("unscopables-get,typeerror".into())
         );
+    }
+
+    #[test]
+    fn with_plain_unscopables_blocks_name_and_falls_back_to_outer_binding() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var x = 7;
+            var env = { x: 1 };
+            env[Symbol.unscopables] = { x: true };
+            var inner;
+            with (env) {
+                inner = x;
+            }
+            '' + x + ',' + inner;
+        "#,
+        );
+        assert_eq!(result.unwrap(), Value::String("7,7".into()));
+    }
+
+    #[test]
+    fn with_plain_unscopables_allows_strict_assignment_to_outer_when_blocked() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var x = 1;
+            var env = { x: 0 };
+            env[Symbol.unscopables] = { x: true };
+            with (env) {
+                "use strict";
+                x = 123;
+            }
+            '' + x;
+        "#,
+        );
+        assert_eq!(result.unwrap(), Value::String("123".into()));
+    }
+
+    #[test]
+    fn with_proxy_var_initializer_sets_object_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval(
+            r#"
+            var o = { foo: 42 };
+            with (o) {
+              var foo = "set in with";
+            }
+            o.foo;
+        "#,
+        );
+        assert_eq!(result.unwrap(), Value::String("set in with".into()));
     }
 }
