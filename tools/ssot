@@ -1,16 +1,135 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical lightweight alias for implementation-status execution.
+# Canonical lightweight alias: SSOT == test-run.
 # Usage:
-#   bash tools/ssot                    # run current stage test-run
-#   bash tools/ssot --json             # run current stage test-run with JSON (via runner)
-#   bash tools/ssot --status           # print current implementation-status summary
+#   bash tools/ssot                           # run current stage test-run
+#   bash tools/ssot --run                     # run current stage test-run (default)
+#   bash tools/ssot --run --commit             # run and commit current milestone
+#   bash tools/ssot --run --commit --push       # run, commit, push current milestone
+#   bash tools/ssot --run --json               # run current stage test-run with JSON output
+#   bash tools/ssot --run --stage 37 --commit   # run explicit stage milestone
+#   bash tools/ssot --status                   # print current test-run summary
+#   bash tools/ssot --status --json            # print summary JSON
 
-if [[ ${#} -gt 0 && "${1:-}" == "--status" ]]; then
-  shift
-  bash tools/test-run-status-summary.sh "$@"
+RUN=0
+STATUS=0
+STAGE=""
+JSON=0
+COMMIT=0
+PUSH=0
+COMMIT_MESSAGE=""
+
+while [[ ${#} -gt 0 ]]; do
+  case "${1:-}" in
+    --status)
+      STATUS=1
+      shift
+      ;;
+    --run)
+      RUN=1
+      shift
+      ;;
+    --json)
+      JSON=1
+      shift
+      ;;
+    --stage)
+      STAGE="$2"
+      shift 2
+      ;;
+    --commit)
+      COMMIT=1
+      if [[ ${2:-} != --* && ${2:-} != "" ]]; then
+        COMMIT_MESSAGE="$2"
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    --push)
+      PUSH=1
+      shift
+      ;;
+    --help|-h)
+      sed -n '1,200p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "error: unexpected argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$STATUS" -eq 1 ]]; then
+  if [[ -n "$STAGE" ]]; then
+    echo "error: --stage is not supported with --status" >&2
+    exit 1
+  fi
+  if [[ "$COMMIT" -eq 1 || "$PUSH" -eq 1 ]]; then
+    echo "error: --commit/--push are not supported with --status" >&2
+    exit 1
+  fi
+  if [[ "$JSON" -eq 1 ]]; then
+    bash tools/test-run-status-summary.sh --json
+  else
+    bash tools/test-run-status-summary.sh
+  fi
   exit 0
 fi
 
-bash tools/test-run-stage.sh "$@"
+if [[ "$COMMIT" -eq 1 && "$RUN" -eq 0 && "$JSON" -eq 0 ]]; then
+  echo "error: --commit requires --run" >&2
+  exit 1
+fi
+
+if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
+  if [[ "$COMMIT" -eq 1 ]]; then
+    if [[ "$JSON" -eq 1 ]]; then
+      echo "error: --json is not supported with --commit in this command" >&2
+      exit 1
+    fi
+    STAGE_ARGS=()
+    if [[ -n "$STAGE" ]]; then
+      STAGE_ARGS+=(--stage "$STAGE")
+    fi
+    STAGE_ARGS+=(--test-run)
+    if [[ -n "$COMMIT_MESSAGE" ]]; then
+      STAGE_ARGS+=(--commit "$COMMIT_MESSAGE")
+    else
+      STAGE_ARGS+=(--commit)
+    fi
+    if [[ "$PUSH" -eq 1 ]]; then
+      STAGE_ARGS+=(--push)
+    fi
+    bash tools/milestone.sh "${STAGE_ARGS[@]}"
+  elif [[ "$RUN" -eq 1 ]]; then
+    if [[ -n "$STAGE" ]]; then
+      if [[ "$JSON" -eq 1 ]]; then
+        TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json
+      else
+        TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh
+      fi
+    else
+      if [[ "$JSON" -eq 1 ]]; then
+        bash tools/test-run-go.sh --run --json
+      else
+        bash tools/test-run-go.sh --run
+      fi
+    fi
+  else
+    STAGE_ARGS=(--stage "$STAGE")
+    if [[ "$JSON" -eq 1 ]]; then
+      STAGE_ARGS+=(--json)
+    fi
+    bash tools/test-run-stage.sh "${STAGE_ARGS[@]}"
+  fi
+  exit 0
+fi
+
+STAGE_ARGS=()
+if [[ "$JSON" -eq 1 ]]; then
+  STAGE_ARGS+=(--json)
+fi
+bash tools/test-run-stage.sh "${STAGE_ARGS[@]}"
