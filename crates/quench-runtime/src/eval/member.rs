@@ -12,7 +12,7 @@ mod string_member;
 
 pub use function_member::eval_function_member;
 pub use native_member::{eval_native_constructor_member, eval_native_function_member};
-pub use object_member::eval_object_member;
+pub use object_member::{eval_object_member, eval_object_member_value};
 pub use string_member::eval_string_member;
 
 use crate::env::Environment;

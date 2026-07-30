@@ -91,10 +91,10 @@ pub fn eval_object_member_value(
     prop_name: &Value,
     env: Option<&Rc<RefCell<Environment>>>,
 ) -> Result<Value, JsError> {
-    if let Value::String(s) = prop_name
-        && crate::value::is_private_name_key(s)
-    {
-        return eval_private_name_get(&private_field_object(o), s);
+    if let Value::String(s) = prop_name {
+        if crate::value::is_private_name_key(s) {
+            return eval_private_name_get(&private_field_object(o), s);
+        }
     }
     if let Some((handler, target)) = proxy_handler_and_target(o) {
         return proxy_get_property(o, &handler, &target, prop_name, env);
@@ -230,8 +230,10 @@ fn eval_object_member_inner_value(
         if let Some(e) = fallback_env {
             if let Some(Value::Object(global_rc)) = e.borrow().get("globalThis").as_ref() {
                 let global = global_rc.borrow();
-                if let Some(found) = global.get(prop_name) {
-                    return Ok(found.clone());
+                if let Value::String(s) = prop_name {
+                    if let Some(found) = global.get(s) {
+                        return Ok(found.clone());
+                    }
                 }
             }
         }
