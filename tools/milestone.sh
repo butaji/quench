@@ -4,7 +4,7 @@
 #   bash tools/milestone.sh                    # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
-#   bash tools/milestone.sh --stage 32 --test-run       # run stage test-run first (alias: --ssot)
+#   bash tools/milestone.sh --stage 32 --test-run       # run stage test-run first
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
@@ -13,7 +13,7 @@
 #   env MILESTONE_RERUN_JSON_OUT=/tmp/milestone-rerun.json bash tools/milestone.sh --rerun --rerun-json --stage 32
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
-#   bash tools/milestone.sh --rerun-json --rerun-json-out /tmp/milestone-rerun.json # env: MILESTONE_RERUN_JSON_OUT
+#   bash tools/milestone.sh --rerun-json --stage 32  # uses env: MILESTONE_RERUN_JSON_OUT
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
 #   bash tools/milestone.sh --quiet                    # suppress human-readable output

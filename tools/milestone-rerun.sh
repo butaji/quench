@@ -10,6 +10,8 @@
 #   bash tools/milestone-rerun.sh --json            # output JSON summary
 #   bash tools/milestone-rerun.sh --json --no-log     # output JSON summary only
 #   bash tools/milestone-rerun.sh --json --out /tmp/rerun.json
+#   env MILESTONE_RERUN_LOG=/tmp/rerun.log bash tools/milestone-rerun.sh --json
+#   env MILESTONE_RERUN_JSON_OUT=/tmp/rerun.json bash tools/milestone-rerun.sh --json
 
 set -euo pipefail
 
@@ -187,6 +189,10 @@ if [[ -n "$JSON_OUT" ]]; then
     if [[ ! -d "$out_dir" ]]; then
         mkdir -p "$out_dir"
     fi
+fi
+
+if [[ "$OUTPUT_JSON" -eq 1 && "$JSON_OUT" == "" ]]; then
+    JSON_OUT="${MILESTONE_RERUN_JSON_OUT:-.milestone-rerun-${STAGE}.json}"
 fi
 
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
