@@ -946,23 +946,20 @@ fn eval_var_decl(
         }
     }
 
-    if existing_var && init.is_some() {
-        if let Some(scope) = env.borrow().var_binding_scope(name) {
-            scope
-                .borrow_mut()
-                .set(name.to_string(), value.clone(), strict);
+    if init.is_some() {
+        if let Some(scope) = env.borrow().binding_or_decl_scope(name).or_else(|| {
+            if *kind == VarKind::Var {
+                env.borrow().var_binding_scope(name)
+            } else {
+                None
+            }
+        }) {
+            scope.borrow_mut().set(name.to_string(), value.clone(), strict);
         } else {
             env.borrow_mut().initialize_declared(name, value.clone());
         }
-        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-            set_on_global_this(env, name, value);
-        }
-    } else if init.is_some() || !existing_var {
+    } else if !existing_var {
         env.borrow_mut().initialize_declared(name, value.clone());
-        // For top-level var declarations, also set on globalThis
-        if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-            set_on_global_this(env, name, value);
-        }
     }
     Ok(Value::Undefined)
 }

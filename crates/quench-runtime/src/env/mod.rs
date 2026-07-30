@@ -252,6 +252,12 @@ impl Environment {
         None
     }
 
+    /// Resolve the innermost scope that currently owns a binding with this name,
+    /// considering both declarations and initialized bindings.
+    pub fn binding_or_decl_scope(&self, name: &str) -> Option<Rc<RefCell<Scope>>> {
+        self.binding_scope(name)
+    }
+
     fn get_global_this_property(&self, name: &str) -> Option<Value> {
         for scope_rc in self.scopes.iter() {
             let scope = scope_rc.borrow();

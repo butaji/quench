@@ -281,6 +281,9 @@ impl Scope {
                         }
                     }
                 }
+                if let Some(ref obj) = self.object_binding {
+                    obj.borrow_mut().set(&name, value.clone());
+                }
                 // Mutate the existing RefCell so all scopes sharing this binding see the update.
                 *e.get().borrow_mut() = value;
                 true
