@@ -377,6 +377,14 @@ JSON.stringify([target.p, log]);
     }
 
     #[test]
+    fn with_primitive_assignment_falls_through_to_outer_var() {
+        let result = eval_ok_with_builtins(
+            "var foo = 1; with (2) { foo = 42; } foo",
+        );
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
     fn reflect_has_own_property() {
         let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
         assert_eq!(result, Value::Boolean(true));

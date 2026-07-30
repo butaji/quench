@@ -253,6 +253,9 @@ impl Scope {
         if !set_ok {
             return Some(false);
         }
+        if let Some(binding) = self.bindings.get(name) {
+            *binding.borrow_mut() = value;
+        }
         Some(true)
     }
 
