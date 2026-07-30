@@ -50,6 +50,10 @@ bash tools/next-stage.sh
 bash tools/run-next-pending.sh
 # Run a unified plan selector for next stage or batch selection
 bash tools/run-test-plan.sh
+# Canonical SSOT status entrypoint (always machine-readable by default)
+bash tools/run-test-plan-status.sh
+# Raw legacy payload for older automation
+bash tools/run-test-plan-status.sh --raw
 # Run and persist a machine-readable plan execution record
 bash tools/run-test-plan-log.sh --status-json
 # Log only compact status summary (no command output replay)
