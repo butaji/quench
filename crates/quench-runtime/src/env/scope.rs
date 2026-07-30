@@ -327,10 +327,8 @@ impl Scope {
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
             if let Some(ref obj) = self.object_binding {
-                if let Some(true) = self.object_binding_has(name) {
-                    if self.object_has_binding_property(name) {
-                        return proxy_get_property(obj, name).ok();
-                    }
+                if self.object_binding_has(name) == Some(true) {
+                    return proxy_get_property(obj, name).ok();
                 }
                 return Some(Value::Undefined);
             }
