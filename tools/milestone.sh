@@ -11,6 +11,7 @@
 #   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
+#   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
 
@@ -26,6 +27,7 @@ AUTO_COMMIT=0
 AUTO_PUSH=0
 DRY_RUN=0
 AUTO_RERUN=0
+RERUN_JSON=0
 COMMIT_MESSAGE=""
 HISTORY=0
 LOG_FILE="${MILESTONE_LOG:-./.test262_milestones.log}"
@@ -55,6 +57,11 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --rerun)
             AUTO_RERUN=1
+            shift
+            ;;
+        --rerun-json)
+            AUTO_RERUN=1
+            RERUN_JSON=1
             shift
             ;;
         --status)
@@ -155,7 +162,11 @@ if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
         log_status "test-run" "pass"
     else
         if [[ "$AUTO_RERUN" -eq 1 ]]; then
-            bash tools/milestone-rerun.sh --stage "$STAGE"
+            if [[ "$RERUN_JSON" -eq 1 ]]; then
+                bash tools/milestone-rerun.sh --stage "$STAGE" --json
+            else
+                bash tools/milestone-rerun.sh --stage "$STAGE"
+            fi
         fi
         log_status "test-run" "fail"
         echo "[milestone] Stage ${STAGE} test-run failed." >&2
@@ -222,7 +233,11 @@ if bash tools/fix-stage.sh; then
 else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
     if [[ "$AUTO_RERUN" -eq 1 ]]; then
-        bash tools/milestone-rerun.sh --stage "$STAGE"
+        if [[ "$RERUN_JSON" -eq 1 ]]; then
+            bash tools/milestone-rerun.sh --stage "$STAGE" --json
+        else
+            bash tools/milestone-rerun.sh --stage "$STAGE"
+        fi
     fi
     show_history
     log_status "test-run" "failed"
