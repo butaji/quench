@@ -137,9 +137,9 @@ if [[ "$RUN_BUILD" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_JSON" -eq 1 ]]; then
-    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json --
+    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json
     exit $?
 fi
 
 echo "[run-next-pending] Stage ${STAGE}"
-TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --
+TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh
