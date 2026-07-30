@@ -113,6 +113,8 @@ bash tools/test-run-go.sh --run --no-preflight
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
 bash tools/milestone.sh --status --current
+# One-shot milestone status + CI gate readout (use --json for machine-readable)
+bash tools/milestone.sh --status --ci
 # CI readiness gate from milestone automation
 bash tools/milestone.sh --ci-gate
 bash tools/milestone.sh --ci-gate --ci-gate-json

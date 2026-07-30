@@ -9,6 +9,8 @@
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
+#   bash tools/milestone.sh --status --ci                  # include CI readiness gate
+#   bash tools/milestone.sh --status --ci --json            # include CI readiness gate as JSON
 #   bash tools/milestone.sh --status --current            # print current stage only
 #   bash tools/milestone.sh --status --next                # print next pending stage
 #   bash tools/milestone.sh --status --next-id             # print next pending stage id only
@@ -42,6 +44,7 @@ STATUS_JSON=0
 STATUS_CURRENT=0
 STATUS_NEXT=0
 NEXT_ID_ONLY=0
+STATUS_WITH_CI=0
 RUN_TEST_RUN=0
 RUN_TEST_RUN_PREFLIGHT=1
 AUTO_ADVANCE=0
@@ -100,6 +103,10 @@ while [[ ${#} -gt 0 ]]; do
                 case "${1:-}" in
                     --json)
                         STATUS_JSON=1
+                        shift
+                        ;;
+                    --ci)
+                        STATUS_WITH_CI=1
                         shift
                         ;;
                     --current)
@@ -279,8 +286,65 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
+    if [[ "$STATUS_WITH_CI" -eq 1 && ("$STATUS_CURRENT" -eq 1 || "$STATUS_NEXT" -eq 1 || "$NEXT_ID_ONLY" -eq 1) ]]; then
+        echo "error: --status --ci supports full status mode only (omit --current/--next/--next-id)" >&2
+        exit 1
+    fi
+
     if [[ "$QUIET" -eq 0 ]]; then
-        if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
+        if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+            if [[ "$STATUS_JSON" -eq 1 ]]; then
+                set +e
+                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
+                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
+                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+                else
+                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
+                fi
+                STATUS_RC=$?
+                CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
+                CI_RC=$?
+                set -e
+
+                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_RC" "$CI_RC" <<'PY'
+import json
+import sys
+
+status_payload = sys.argv[1]
+ci_payload = sys.argv[2]
+status_rc = int(sys.argv[3])
+ci_rc = int(sys.argv[4])
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+status = parse(status_payload)
+ci = parse(ci_payload)
+print(
+    json.dumps(
+        {
+            "status": status,
+            "ci": ci,
+            "ready": bool(ci.get("ci", {}).get("ready", False)),
+            "ok": status_rc == 0 and ci_rc == 0,
+        },
+        sort_keys=True,
+    )
+)
+PY
+            else
+                bash tools/stage-status.sh
+                set +e
+                bash tools/test-run-ci-gate.sh
+                CI_RC=$?
+                set -e
+            fi
+        elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
             bash tools/stage-status.sh --json --current
         elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
             bash tools/stage-status.sh --json --next
@@ -302,6 +366,9 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
     log_status "status-only" "displayed status only"
     if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 ]]; then
         show_history
+    fi
+    if [[ "$STATUS_WITH_CI" -eq 1 && "$CI_RC" -ne 0 ]]; then
+        exit 1
     fi
     exit 0
 fi
