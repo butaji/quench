@@ -6,11 +6,13 @@ set -euo pipefail
 #   bash tools/ship-milestone.sh                    # run next stage, commit
 #   bash tools/ship-milestone.sh --push              # run next stage, commit, push
 #   bash tools/ship-milestone.sh --message "..."      # custom commit message
+#   bash tools/ship-milestone.sh --unit "test-filter" # run unit test filter before stage run
 #   bash tools/ship-milestone.sh --json               # emit machine readable output
 
 PUSH=0
 JSON=0
 MESSAGE=""
+UNIT_FILTER=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -21,6 +23,14 @@ while [[ ${#} -gt 0 ]]; do
         --json)
             JSON=1
             shift
+            ;;
+        --unit)
+            if [[ "${2:-}" == "" || "${2:-}" == --* ]]; then
+                echo "error: --unit requires a test name filter argument" >&2
+                exit 1
+            fi
+            UNIT_FILTER="$2"
+            shift 2
             ;;
         --message)
             if [[ "${2:-}" == "" || "${2:-}" == --* ]]; then
@@ -52,6 +62,12 @@ else
 fi
 if [[ "$PUSH" -eq 1 ]]; then
     RUN_ARGS+=(--push)
+fi
+
+if [[ -n "$UNIT_FILTER" ]]; then
+    cargo test -p quench-runtime "$UNIT_FILTER" -- --exact
+    echo "[ship-milestone] unit preflight passed: $UNIT_FILTER"
+    echo
 fi
 
 if [[ "$JSON" -eq 1 ]]; then
