@@ -16,9 +16,15 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static SWITCH_SCOPE_ID: AtomicUsize = AtomicUsize::new(0);
+static CATCH_PARAM_ID: AtomicUsize = AtomicUsize::new(0);
 
 fn next_switch_scope_id() -> usize {
     SWITCH_SCOPE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_catch_param_name() -> String {
+    let id = CATCH_PARAM_ID.fetch_add(1, Ordering::Relaxed);
+    format!("__quench_catch_param_{id}")
 }
 
 /// Lower an if statement
@@ -186,17 +192,32 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
         .iter()
         .filter_map(lower_stmt)
         .collect::<Vec<_>>();
-    let catch_param = try_stmt.handler.as_ref().and_then(|catch| {
-        catch.param.as_ref().and_then(|pat| match &pat.pattern {
-            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
-            _ => None,
-        })
-    });
-    let handler = try_stmt.handler.as_ref().map(|catch| {
-        Box::new(Statement::Block(
-            catch.body.body.iter().filter_map(lower_stmt).collect(),
-        ))
-    });
+    let (catch_param, handler) = match try_stmt.handler.as_ref() {
+        Some(catch) => {
+            let mut handler_stmts = Vec::new();
+            let catch_param = match catch.param.as_ref() {
+                Some(param) => match &param.pattern {
+                    ast::BindingPattern::BindingIdentifier(ident) => {
+                        Some(ident.name.as_str().to_string())
+                    }
+                    _ => {
+                        let catch_param = next_catch_param_name();
+                        let pattern = lower_binding_elem(&param.pattern).ok()?;
+                        handler_stmts.push(Statement::PatternDeclaration {
+                            kind: VarKind::Let,
+                            pattern,
+                            init: Some(Expression::Identifier(catch_param.clone())),
+                        });
+                        Some(catch_param)
+                    }
+                },
+                None => None,
+            };
+            handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
+            (catch_param, Some(Box::new(Statement::Block(handler_stmts))))
+        }
+        None => (None, None),
+    };
     let finalizer = try_stmt.finalizer.as_ref().map(|fin| {
         Box::new(Statement::Block(
             fin.body.iter().filter_map(lower_stmt).collect(),

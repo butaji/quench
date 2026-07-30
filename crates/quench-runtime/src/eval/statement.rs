@@ -548,6 +548,25 @@ fn has_tail_call_in_statement(
         Statement::DoWhile { body, .. }
         | Statement::ForIn { body, .. }
         | Statement::For { body, .. } => has_tail_call_in_statement(body, env, in_arrow_function),
+        Statement::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } => {
+            if has_tail_call_in_statement(body, env, in_arrow_function)? {
+                return Ok(true);
+            }
+            if let Some(h) = handler {
+                if has_tail_call_in_statement(h, env, in_arrow_function)? {
+                    return Ok(true);
+                }
+            }
+            if let Some(f) = finalizer {
+                return has_tail_call_in_statement(f, env, in_arrow_function);
+            }
+            Ok(false)
+        }
         Statement::Return(Some(expr)) if is_tail_expr(expr) => try_handle_tail_call(
             &Some(expr.clone()),
             env,
@@ -1389,6 +1408,11 @@ fn eval_try(
                 if has_catch_param {
                     env.borrow_mut().pop_scope();
                 }
+                let catch_thrown = if catch_result.is_err() {
+                    take_thrown_value()
+                } else {
+                    None
+                };
 
                 // Run finally if present
                 if let Some(fin) = finalizer {
@@ -1406,12 +1430,28 @@ fn eval_try(
                             } else if let Some(cf) = pending_cf {
                                 set_control_flow(cf); // Restore original
                             }
-                            catch_result
+                            match catch_result {
+                                Ok(v) => Ok(v),
+                                Err(e) => {
+                                    if let Some(thrown) = catch_thrown {
+                                        set_thrown_value(thrown);
+                                    }
+                                    Err(e)
+                                }
+                            }
                         }
                         Err(e) => Err(e), // Finally threw
                     }
                 } else {
-                    catch_result
+                    match catch_result {
+                        Ok(v) => Ok(v),
+                        Err(e) => {
+                            if let Some(thrown) = catch_thrown {
+                                set_thrown_value(thrown);
+                            }
+                            Err(e)
+                        }
+                    }
                 }
             } else {
                 // No catch - run finally if present, then rethrow

@@ -126,6 +126,24 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
         ast::Statement::SwitchStatement(switch_stmt) => {
             check_for_switch_errors(switch_stmt)?;
         }
+        ast::Statement::TryStatement(try_stmt) => {
+            check_catch_parameter_lexical_conflict(try_stmt, strict)?;
+            for stmt in &try_stmt.block.body {
+                check_stmt(stmt, strict)?;
+                walk_inner_statements_for_fn_params(stmt, strict)?;
+            }
+            if let Some(handler) = &try_stmt.handler {
+                for stmt in &handler.body.body {
+                    check_stmt(stmt, strict)?;
+                    walk_inner_statements_for_fn_params(stmt, strict)?;
+                }
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                for stmt in &finalizer.body {
+                    check_stmt(stmt, strict)?;
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -695,6 +713,63 @@ fn check_body_for_function_decl(stmt: &ast::Statement) -> Result<(), JsError> {
         _ => {}
     }
     Ok(())
+}
+
+fn check_catch_parameter_lexical_conflict(
+    try_stmt: &ast::TryStatement,
+    _strict: bool,
+) -> Result<(), JsError> {
+    let Some(handler) = &try_stmt.handler else {
+        return Ok(());
+    };
+    let Some(param) = &handler.param else {
+        return Ok(());
+    };
+
+    let mut catch_param_names = std::collections::HashSet::new();
+    collect_binding_names(&param.pattern, &mut |name| {
+        catch_param_names.insert(name.to_string());
+    });
+
+    let mut lexical_names = std::collections::HashSet::new();
+    for stmt in &handler.body.body {
+        collect_catch_block_lexical_names(stmt, &mut lexical_names);
+    }
+
+    for name in catch_param_names {
+        if lexical_names.contains(&name) {
+            return Err(JsError(format!(
+                "SyntaxError: Catch parameter '{}' conflicts with lexical declaration",
+                name
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_catch_block_lexical_names(
+    stmt: &ast::Statement,
+    names: &mut std::collections::HashSet<String>,
+) {
+    match stmt {
+        ast::Statement::VariableDeclaration(var_decl) if !var_decl.kind.is_var() => {
+            for name in collect_bound_names(var_decl) {
+                names.insert(name);
+            }
+        }
+        ast::Statement::FunctionDeclaration(func) => {
+            if let Some(name) = &func.id {
+                names.insert(name.name.as_str().to_string());
+            }
+        }
+        ast::Statement::ClassDeclaration(class_decl) => {
+            if let Some(name) = &class_decl.id {
+                names.insert(name.name.as_str().to_string());
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Walk through nested LabeledStatements to check if any wraps a FunctionDeclaration.
@@ -1364,6 +1439,18 @@ mod tests {
         assert!(ret.diagnostics.is_empty());
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_ok(), "let y should not conflict: {:?}", result);
+    }
+
+    #[test]
+    fn catch_parameter_lexical_name_conflict_is_error() {
+        let s = "function f() {\n            try {} catch (e) {\n                function e() {}\n            }\n        }";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err(), "catch lexical conflict should be SyntaxError: {:?}", result);
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
     }
 
     #[test]

@@ -87,6 +87,56 @@ mod throw_statement {
     }
 }
 
+mod try_statement {
+    use super::*;
+
+    #[test]
+    fn catch_array_destructuring_default_unresolvable_reference_throws() {
+        let err = eval("try { throw []; } catch ([x = unresolvableReference]) {}");
+        assert!(err.is_err());
+        let message = format!("{err:?}");
+        assert!(message.contains("ReferenceError"));
+    }
+
+    #[test]
+    fn catch_object_destructuring_default_unresolvable_reference_throws() {
+        let err = eval("try { throw {}; } catch ({x = unresolvableReference}) {}");
+        assert!(err.is_err());
+        let message = format!("{err:?}");
+        assert!(message.contains("ReferenceError"));
+    }
+
+    #[test]
+    fn catch_throw_runs_finally() {
+        let value = eval(
+            "var count = { catch: 0, finally: 0 };\n\
+             var fn = function() {\n\
+               try {\n\
+                 throw 'try';\n\
+               } catch (e) {\n\
+                 count.catch += 1;\n\
+                 throw 'catch';\n\
+               } finally {\n\
+                 count.finally += 1;\n\
+                 'finally';\n\
+               }\n\
+             };\n\
+             try {\n\
+               fn();\n\
+             } catch (_) {}\n\
+             count.finally",
+        )
+        .unwrap();
+        assert_eq!(value, Value::Number(1.0));
+    }
+
+    #[test]
+    fn catch_array_destructuring_binds_values() {
+        let value = eval("var x = 0; try { throw [42]; } catch ([y]) { x = y; } x").unwrap();
+        assert_eq!(value, Value::Number(42.0));
+    }
+}
+
 mod break_continue {
     use super::*;
 
