@@ -63,12 +63,22 @@ if [[ "$RUN" -eq 1 && "$NOPREFLIGHT" -eq 0 ]]; then
             echo "error: invalid preflight JSON payload" >&2
             exit 1
         fi
-        if ! bash tools/test-run-dashboard.sh --assert-ready >/dev/null; then
+        PREPARED="$(python3 - "$PREFLIGHT_JSON" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+obj = payload.get("test_run_preflight", {}) if isinstance(payload, dict) else {}
+ok = bool(obj.get("ready_for_test_run") and (obj.get("failed", 0) == 0))
+print(0 if ok else 1)
+PY
+)"
+        if [[ "$PREPARED" -ne 0 ]]; then
+            echo "error: preflight not ready" >&2
             exit 1
         fi
         echo "$PREFLIGHT_JSON"
     else
-        bash tools/test-run-dashboard.sh --assert-ready || exit 1
         bash tools/test-run-preflight.sh || exit 1
         bash tools/test-run-status-summary.sh --blocker
     fi
