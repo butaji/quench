@@ -44,6 +44,8 @@ bash tools/implementation-progress.sh --ci
 bash tools/implementation-progress.sh --next
 # Include both next stage and CI gate in one output/exit code
 bash tools/implementation-progress.sh --next --ci
+# Add aggregate implementation summary fields (done/pending/progress)
+bash tools/implementation-progress.sh --summary
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
