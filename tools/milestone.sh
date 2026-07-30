@@ -11,6 +11,7 @@
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
 #   bash tools/milestone.sh --status --ci                  # include CI readiness gate
 #   bash tools/milestone.sh --status --ci --json            # include CI readiness gate as JSON
+#   bash tools/milestone.sh --status --ci --raw             # include CI readiness gate as compact raw output
 #   bash tools/milestone.sh --status --current            # print current stage only
 #   bash tools/milestone.sh --status --next                # print next pending stage
 #   bash tools/milestone.sh --status --next-id             # print next pending stage id only
@@ -436,7 +437,7 @@ PY
     fi
     log_msg "[milestone] Current stage is ${STAGE}."
     log_status "status-only" "displayed status only"
-    if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 ]]; then
+    if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 && "$STATUS_WITH_CI" -eq 0 ]]; then
         show_history
     fi
     if [[ "$STATUS_WITH_CI" -eq 1 && "$CI_RC" -ne 0 ]]; then
