@@ -115,6 +115,8 @@ bash tools/implementation-progress.sh --raw
 bash tools/milestone.sh --status --current
 # One-shot milestone status + CI gate readout (use --json for machine-readable)
 bash tools/milestone.sh --status --ci
+# Machine-readable combined readout
+bash tools/milestone.sh --status --ci --json
 # CI readiness gate from milestone automation
 bash tools/milestone.sh --ci-gate
 bash tools/milestone.sh --ci-gate --ci-gate-json

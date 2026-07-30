@@ -291,23 +291,21 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
         exit 1
     fi
 
-    if [[ "$QUIET" -eq 0 ]]; then
-        if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
-            if [[ "$STATUS_JSON" -eq 1 ]]; then
-                set +e
-                if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
-                elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
-                else
-                    STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
-                fi
-                STATUS_RC=$?
-                CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
-                CI_RC=$?
-                set -e
+    if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+        set +e
+        if [[ "$STATUS_JSON" -eq 1 ]]; then
+            if [[ "$STATUS_CURRENT" -eq 1 ]]; then
+                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
+            elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+            else
+                STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
+            fi
+            STATUS_RC=$?
+            CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
+            CI_RC=$?
 
-                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_RC" "$CI_RC" <<'PY'
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
 
@@ -331,20 +329,31 @@ print(
             "status": status,
             "ci": ci,
             "ready": bool(ci.get("ci", {}).get("ready", False)),
+            "status_rc": status_rc,
+            "ci_rc": ci_rc,
             "ok": status_rc == 0 and ci_rc == 0,
         },
         sort_keys=True,
     )
 )
 PY
-            else
+            set -e
+        else
+            if [[ "$QUIET" -eq 0 ]]; then
                 bash tools/stage-status.sh
                 set +e
                 bash tools/test-run-ci-gate.sh
                 CI_RC=$?
                 set -e
+            else
+                CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
+                CI_RC=$?
             fi
-        elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
+            STATUS_RC=0
+            set -e
+        fi
+    elif [[ "$QUIET" -eq 0 ]]; then
+        if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
             bash tools/stage-status.sh --json --current
         elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
             bash tools/stage-status.sh --json --next
