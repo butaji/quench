@@ -329,22 +329,68 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
         fi
 
         if [[ "$STATUS_JSON" -eq 1 ]]; then
-            python3 /tmp/milestone_status_json.py \
-                "$STATUS_PAYLOAD" \
-                "$CI_PAYLOAD" \
-                "$STATUS_SCOPE" \
-                "$STATUS_RC" \
-                "$CI_RC" \
-                0
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" 0 <<'PY'
+import json
+import sys
+
+status_payload = sys.argv[1]
+ci_payload = sys.argv[2]
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+status = parse(status_payload)
+ci = parse(ci_payload)
+print(
+    json.dumps(
+        {
+            "status_scope": status_scope,
+            "status": status,
+            "ci": ci,
+            "ready": bool(ci.get("ci", {}).get("ready", False)),
+            "status_rc": status_rc,
+            "ci_rc": ci_rc,
+            "ok": status_rc == 0 and ci_rc == 0,
+        },
+        sort_keys=True,
+    )
+)
+PY
         fi
         if [[ "$STATUS_RAW" -eq 1 ]]; then
-            python3 /tmp/milestone_status_json.py \
-                "$STATUS_PAYLOAD" \
-                "$CI_PAYLOAD" \
-                "$STATUS_SCOPE" \
-                "$STATUS_RC" \
-                "$CI_RC" \
-                1
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" 1 <<'PY'
+import json
+import sys
+
+status_payload = sys.argv[1]
+ci_payload = sys.argv[2]
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+status = parse(status_payload)
+ci = parse(ci_payload)
+ready = bool(ci.get("ci", {}).get("ready", False))
+print(
+    f"[milestone:{status_scope}] status_rc={status_rc} ci_rc={ci_rc} ready={ready} ok={status_rc == 0 and ci_rc == 0}"
+)
+print(f"status={json.dumps(status)}")
+print(f"ci={json.dumps(ci)}")
+PY
         fi
         set -e
     else
