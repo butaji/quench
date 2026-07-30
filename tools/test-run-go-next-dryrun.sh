@@ -77,30 +77,28 @@ fi
 if [[ "$RUN_CHECK" -eq 1 ]]; then
     if [[ "$MATCH" == "1" ]]; then
         PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
-        if ! python3 - "$PREFLIGHT_JSON" >/dev/null 2>&1 <<'PY'
+        PREFLIGHT_CAN_AUTO="$(python3 - "$PREFLIGHT_JSON" <<'PY'
 import json
 import sys
 
-json.loads(sys.argv[1])
+try:
+    payload = json.loads(sys.argv[1])
+    obj = payload.get("test_run_go_next", {})
+    print(1 if obj.get("can_auto_advance") else 0)
+    print(0)
+except Exception:
+    print(0)
+    print(1)
 PY
-        then
+        )"
+        read -r PREFLIGHT_CAN_AUTO PREFLIGHT_VALID <<<"$PREFLIGHT_CAN_AUTO"
+        if [[ "$PREFLIGHT_VALID" -ne "0" ]]; then
             echo "[test-run-go-next-dryrun] invalid preflight payload" >&2
             exit 1
         fi
-        if [[ "$ASSERT_READY" -eq 1 ]]; then
-            PREFLIGHT_CAN_AUTO="$(python3 - "$PREFLIGHT_JSON" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-obj = payload.get("test_run_go_next", {})
-print(1 if obj.get("can_auto_advance") else 0)
-PY
-)"
-            if [[ "$PREFLIGHT_CAN_AUTO" -eq 0 ]]; then
-                echo "[test-run-go-next-dryrun] stage is not auto-advance ready in preflight payload" >&2
-                exit 1
-            fi
+        if [[ "$ASSERT_READY" -eq 1 && "$PREFLIGHT_CAN_AUTO" -eq 0 ]]; then
+            echo "[test-run-go-next-dryrun] stage is not auto-advance ready in preflight payload" >&2
+            exit 1
         fi
     else
         echo "[test-run-go-next-dryrun] skipped preflight check (target is not current stage)" >&2
