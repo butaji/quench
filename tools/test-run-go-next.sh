@@ -5,12 +5,17 @@ set -euo pipefail
 # Usage:
 #   bash tools/test-run-go-next.sh
 #   bash tools/test-run-go-next.sh --run
-#   bash tools/test-run-go-next.sh --json
 #   bash tools/test-run-go-next.sh --run --json
+#   bash tools/test-run-go-next.sh --json
+#   bash tools/test-run-go-next.sh --print
+#   bash tools/test-run-go-next.sh --print-json
+#   bash tools/test-run-go-next.sh --status
 #   bash tools/test-run-go-next.sh --run --by-ratio --top 5
 
 RUN=0
 JSON=0
+PRINT_ONLY=0
+PRINT_JSON=0
 BY_RATIO=0
 TOP=1
 NOPREFLIGHT=0
@@ -23,6 +28,16 @@ while [[ ${#} -gt 0 ]]; do
             shift
             ;;
         --json)
+            JSON=1
+            shift
+            ;;
+        --print)
+            PRINT_ONLY=1
+            shift
+            ;;
+        --print-json|--status)
+            PRINT_ONLY=1
+            PRINT_JSON=1
             JSON=1
             shift
             ;;
@@ -51,7 +66,7 @@ while [[ ${#} -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            sed -n '1,160p' "$0"
+            sed -n '1,180p' "$0"
             exit 0
             ;;
         *)
@@ -102,7 +117,7 @@ fi
 STAGE_PATH="$(bash tools/stage-path.sh "$STAGE")"
 
 if [[ "$JSON" -eq 1 ]]; then
-    python3 - "$STAGE" "$SOURCE" "$STAGE_PATH" <<'PY'
+    PAYLOAD="$(python3 - "$STAGE" "$SOURCE" "$STAGE_PATH" <<'PY'
 import json
 import sys
 
@@ -115,15 +130,25 @@ payload = {
         "source": source,
         "stage": stage,
         "path": path,
-        "ready": False,
     }
 }
 print(json.dumps(payload, sort_keys=True))
 PY
+)"
+fi
+
+if [[ "$PRINT_ONLY" -eq 1 ]]; then
+    if [[ "$PRINT_JSON" -eq 1 ]]; then
+        printf '%s\n' "$PAYLOAD"
+    else
+        echo "$STAGE"
+    fi
+    exit 0
 fi
 
 if [[ "$RUN" -eq 0 ]]; then
     if [[ "$JSON" -eq 1 ]]; then
+        printf '%s\n' "$PAYLOAD"
         exit 0
     fi
     echo "stage=${STAGE}"
