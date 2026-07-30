@@ -68,6 +68,12 @@ bash tools/test-run-cycle.sh
 bash tools/test-run-cycle.sh --json
 # Assert ready and run current stage immediately
 bash tools/test-run-cycle.sh --assert-ready --run
+# One-command preflight + run for current stage
+bash tools/test-run-go.sh --run
+# Single JSON readout with optional immediate run
+bash tools/test-run-go.sh --ready --json
+# Fast mode: skip preflight when reruns are intentionally unsafe
+bash tools/test-run-go.sh --run --no-preflight
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
