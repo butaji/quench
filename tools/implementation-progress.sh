@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Single command status snapshot for test-run progress.
+# Single command status snapshot for ssot/test-run progress.
 # Usage:
 #   bash tools/implementation-progress.sh
 #   bash tools/implementation-progress.sh --next
@@ -175,9 +175,6 @@ if include_summary:
         "tests_pending": pending_tests,
         "progress_percent": 0.0 if total_tests == 0 else round((done_tests * 100.0) / total_tests, 4),
     }
-
-# Backward-compatible alias for older scripts.
-out["implementation"] = out["test_run"]
 
 print(json.dumps(out, sort_keys=True))
 
