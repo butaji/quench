@@ -9,6 +9,7 @@
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --ssot --commit --push
+#   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 
 set -euo pipefail
 
@@ -20,6 +21,7 @@ RUN_SSOT=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
 AUTO_PUSH=0
+DRY_RUN=0
 COMMIT_MESSAGE=""
 HISTORY=0
 
@@ -42,6 +44,10 @@ while [[ ${#} -gt 0 ]]; do
             AUTO_PUSH=1
             shift
             ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
         --status)
             STATUS_ONLY=1
             shift
@@ -55,7 +61,11 @@ while [[ ${#} -gt 0 ]]; do
             shift
             ;;
         --history)
-            HISTORY="${2:-10}"
+            if [[ "${2:-}" == "" ]]; then
+                echo "error: --history requires a numeric argument" >&2
+                exit 1
+            fi
+            HISTORY="$2"
             shift 2
             ;;
         -h|--help)
@@ -93,6 +103,14 @@ show_history() {
         bash tools/milestone-timeline.sh "$HISTORY"
     fi
 }
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+    AUTO_COMMIT=0
+    AUTO_PUSH=0
+    AUTO_ADVANCE=0
+    echo "[milestone] Dry-run mode: no commits/pushes or index updates will occur."
+    echo "[milestone] Stage: ${STAGE}."
+fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
     bash tools/stage-status.sh
