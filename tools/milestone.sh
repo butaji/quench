@@ -5,6 +5,7 @@
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
 #   bash tools/milestone.sh --stage 32 --test-run --preflight # preflight + stage test-run
+#   bash tools/milestone.sh --stage 32 --ssot            # compatibility alias for --test-run
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
@@ -23,6 +24,7 @@
 #   bash tools/milestone.sh --quiet                    # suppress human-readable output
 #   bash tools/milestone.sh --ci-gate                 # run CI readiness gate (current + next)
 #   bash tools/milestone.sh --ci-gate --ci-gate-json # machine-readable gate payload
+#   bash tools/milestone.sh --ci-gate --json          # machine-readable gate payload
 
 set -euo pipefail
 

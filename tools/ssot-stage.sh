@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compatibility wrapper retained for legacy callers.
 # Canonical term and command are "test-run".
-# This wrapper is deprecated and exists only for legacy callers.
+# This wrapper exists only for legacy callers.
 set -euo pipefail
 
 if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
