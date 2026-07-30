@@ -8,6 +8,7 @@ set -euo pipefail
 #   bash tools/implementation-progress.sh --raw
 #   bash tools/implementation-progress.sh --ci
 #   bash tools/implementation-progress.sh --summary
+#   bash tools/implementation-progress.sh --json
 RAW=0
 INCLUDE_NEXT=0
 CI=0
@@ -29,6 +30,9 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --summary)
             INCLUDE_SUMMARY=1
+            shift
+            ;;
+        --json)
             shift
             ;;
         -h|--help)

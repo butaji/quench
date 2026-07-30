@@ -50,6 +50,8 @@ bash tools/test-run-preflight.sh --json
 bash tools/implementation-progress.sh --ci
 # Include next pending stage in the same snapshot
 bash tools/implementation-progress.sh --next
+# Explicitly request JSON-style output key (no behavior change, compatibility)
+bash tools/implementation-progress.sh --json
 # Include both next stage and CI gate in one output/exit code
 bash tools/implementation-progress.sh --next --ci
 # Add aggregate test-run summary fields (done/pending/progress)
