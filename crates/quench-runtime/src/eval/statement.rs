@@ -547,6 +547,7 @@ fn has_tail_call_in_statement(
         }
         Statement::DoWhile { body, .. }
         | Statement::ForIn { body, .. }
+        | Statement::While { body, .. }
         | Statement::For { body, .. } => has_tail_call_in_statement(body, env, in_arrow_function),
         Statement::Try {
             body,

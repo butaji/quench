@@ -1058,6 +1058,25 @@ mod while_edge_cases {
     use super::*;
 
     #[test]
+    fn while_tail_call_body() {
+        let src =
+            "var callCount = 0;\n".to_owned()
+                + "function f(n) {\n"
+                + "  if (n === 0) {\n"
+                + "    callCount += 1;\n"
+                + "    return;\n"
+                + "  }\n"
+                + "  while (true) {\n"
+                + "    return f(n - 1);\n"
+                + "  }\n"
+                + "}\n"
+                + "f(1000);\n"
+                + "callCount";
+        let result = eval(src.as_str()).unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
     fn while_with_return() {
         assert_eq!(
             eval("function f() { while (true) { return 42; } return 0; } f()").unwrap(),
