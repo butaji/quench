@@ -121,21 +121,31 @@ if [[ -z "$STAGE" || "$STAGE" == "0" ]]; then
 fi
 
 STAGE_PATH="$(bash tools/stage-path.sh "$STAGE")"
+CURRENT_STAGE="$(bash tools/current-stage.sh)"
+CAN_AUTO_ADVANCE="false"
+if [[ "$STAGE" == "$CURRENT_STAGE" ]]; then
+    CAN_AUTO_ADVANCE="true"
+fi
 
 if [[ "$JSON" -eq 1 ]]; then
-    PAYLOAD="$(python3 - "$STAGE" "$SOURCE" "$STAGE_PATH" <<'PY'
+    PAYLOAD="$(python3 - "$STAGE" "$SOURCE" "$STAGE_PATH" "$CURRENT_STAGE" "$CAN_AUTO_ADVANCE" <<'PY'
 import json
 import sys
 
 stage = int(sys.argv[1])
 source = sys.argv[2]
 path = sys.argv[3]
+current = int(sys.argv[4])
+can_auto_advance = bool(sys.argv[5].lower() == "true")
 
 payload = {
     "test_run_go_next": {
         "source": source,
         "stage": stage,
         "path": path,
+        "current_stage": current,
+        "matches_current": stage == current,
+        "can_auto_advance": can_auto_advance,
     }
 }
 print(json.dumps(payload, sort_keys=True))
@@ -164,11 +174,10 @@ if [[ "$RUN" -eq 0 ]]; then
 fi
 
 if [[ "$NOPREFLIGHT" -eq 0 ]]; then
-    CURRENT="$(bash tools/current-stage.sh)"
-    if [[ "$STAGE" == "$CURRENT" ]]; then
+    if [[ "$STAGE" == "$CURRENT_STAGE" ]]; then
         bash tools/test-run-preflight.sh || exit 1
     else
-        echo "[test-run-go-next] preflight skipped (target ${STAGE} != current ${CURRENT})" >&2
+        echo "[test-run-go-next] preflight skipped (target ${STAGE} != current ${CURRENT_STAGE})" >&2
     fi
 fi
 
@@ -189,11 +198,10 @@ if [[ "$RUN_RC" -ne 0 ]]; then
 fi
 
 if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
-    CURRENT="$(bash tools/current-stage.sh)"
-    if [[ "$STAGE" == "$CURRENT" ]]; then
+    if [[ "$STAGE" == "$CURRENT_STAGE" ]]; then
         bash tools/advance-stage.sh
     elif [[ "$JSON" -eq 0 ]]; then
-        echo "[test-run-go-next] advance skipped (target ${STAGE} != current ${CURRENT})" >&2
+        echo "[test-run-go-next] advance skipped (target ${STAGE} != current ${CURRENT_STAGE})" >&2
     fi
 fi
 
