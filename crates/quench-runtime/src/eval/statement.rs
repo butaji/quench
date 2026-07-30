@@ -240,6 +240,14 @@ fn eval_function_body_impl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
+    {
+        let mut names = Vec::new();
+        collect_var_names_recursive(stmts, &mut names);
+        let mut env_mut = env.borrow_mut();
+        for name in names {
+            env_mut.declare_var(name, VarKind::Var);
+        }
+    }
     let last_idx = stmts.len().saturating_sub(1);
     let mut _last_val = Value::Undefined;
     for (i, stmt) in stmts.iter().enumerate() {
@@ -766,39 +774,36 @@ pub fn eval_statement(
             };
             env.borrow_mut().push_scope();
             {
-                let obj_borrowed = obj_rc.borrow();
-                let blocked: HashSet<String> = {
+                let with_scope_names = obj_rc.borrow().own_property_names();
                 // Check Symbol.unscopables (§13.11.7): properties blocked by
                 // unscopables are not added to the with-scope.
-                let unscopables_val = (|| {
-                    let unscopables_sym =
-                        crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")?;
-                    let key = match &unscopables_sym {
-                        crate::value::Value::Symbol(s) => s.property_key(),
-                        _ => return None,
-                    };
-                    // Symbol-keyed properties like @@unscopables are stored in
-                    // `self.properties` (via Object::set with the property_key string),
-                    // not in `symbol_properties`. Check both locations.
-                        obj_borrowed
-                            .properties
-                            .get(&key)
-                            .or_else(|| obj_borrowed.symbol_properties.get(&key))
-                            .cloned()
+                let blocked: HashSet<String> = {
+                    let unscopables_val = (|| -> Option<Value> {
+                        let unscopables_sym =
+                            crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")?;
+                        let key = match &unscopables_sym {
+                            crate::value::Value::Symbol(s) => s.property_key(),
+                            _ => return None,
+                        };
+                        crate::eval::member::eval_object_member(&obj_rc, &key, None).ok()
                     })();
-                    if let Some(Value::Object(u_obj)) = unscopables_val {
-                        let u = u_obj.borrow();
-                        u.properties
-                            .iter()
-                            .filter(|(_, v)| crate::value::to_bool(v))
-                            .map(|(k, _)| k.clone())
-                            .collect()
-                    } else {
-                        HashSet::new()
+                    match unscopables_val {
+                        Some(Value::Object(u_obj)) => {
+                            let u = u_obj.borrow();
+                            u.properties
+                                .iter()
+                                .filter(|(_, v)| crate::value::to_bool(v))
+                                .map(|(k, _)| k.clone())
+                                .collect()
+                        }
+                        _ => HashSet::new(),
                     }
                 };
-                let mut current_scope = env.borrow_mut().current_scope();
+                let current_scope = env.borrow_mut().current_scope();
                 current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
+                for name in with_scope_names {
+                    current_scope.borrow_mut().declare_with_var(name, VarKind::Var);
+                }
                 current_scope
                     .borrow_mut()
                     .set_with_unscopables(blocked);

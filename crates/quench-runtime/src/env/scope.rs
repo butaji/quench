@@ -151,6 +151,13 @@ impl Scope {
         if self.is_unscopable(name) {
             return None;
         }
+        if matches!(self.declarations.get(name), Some(VarState::DeclaredOnly)) {
+            self.declarations.remove(name);
+            self.bindings
+                .insert(name.to_string(), Rc::new(RefCell::new(value.clone())));
+            object.borrow_mut().set(name, value);
+            return Some(true);
+        }
         if !object.borrow().has(name) {
             return None;
         }
@@ -231,6 +238,14 @@ impl Scope {
                 self.declarations.insert(name, VarState::TDZ);
             }
         }
+    }
+
+    pub fn declare_with_var(&mut self, name: String, kind: VarKind) {
+        self.var_kinds.insert(name.clone(), kind);
+        if self.bindings.contains_key(&name) || self.declarations.contains_key(&name) {
+            return;
+        }
+        self.declarations.insert(name, VarState::DeclaredOnly);
     }
 
     pub fn is_declared_only(&self, name: &str) -> bool {

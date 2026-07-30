@@ -162,6 +162,49 @@ mod with_statement {
         );
         assert_eq!(result.unwrap(), Value::Undefined);
     }
+
+    #[test]
+    fn with_var_declarations_are_hoisted_to_function_scope() {
+        let result = eval(
+            "function f(){\n\
+             try {\n\
+             with ({}) { throw 0; var p4 = 'x4'; }\n\
+             } catch (e) {}\n\
+             return p4;\n\
+             }\n\
+             f();",
+        );
+        assert_eq!(result.unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn with_var_declarations_are_hoisted_to_global_scope() {
+        let result = eval(
+            "try {\n\
+             with ({}) { throw 0; var p4 = 'x4'; }\n\
+             } catch (e) {}\n\
+             p4;",
+        );
+        assert_eq!(result.unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn with_var_assignment_after_unscopables_side_effect_recreates_binding_as_configurable_property() {
+        let result = eval(
+            "var env = { binding: 0 };\n\
+             Object.defineProperty(env, Symbol.unscopables, {\n\
+               get() {\n\
+                 delete env.binding;\n\
+                 return {};\n\
+               }\n\
+             });\n\
+             with (env) {\n\
+               binding = 123;\n\
+             }\n\
+             Object.getOwnPropertyDescriptor(env, 'binding').configurable",
+        );
+        assert_eq!(result.unwrap(), Value::Boolean(true));
+    }
 }
 
 mod class_static_properties {
