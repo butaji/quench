@@ -25,6 +25,10 @@ while [[ ${#} -gt 0 ]]; do
       sed -n '1,200p' "$0"
       exit 0
       ;;
+    --)
+      shift
+      break
+      ;;
     *)
       echo "error: unknown argument: $1" >&2
       exit 1
@@ -32,11 +36,16 @@ while [[ ${#} -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$STAGE" ]]; then
+if [[ "$STAGE" == "" && "$TEST" == "" ]]; then
   STAGE="${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}" 
 fi
 
-if [[ -z "$TEST" ]]; then
+if [[ "$TEST" == "" ]]; then
+  if ! [[ "$STAGE" =~ ^[0-9]+$ ]]; then
+    echo "error: stage must be numeric when inferred automatically" >&2
+    exit 1
+  fi
+
   OUTFILE="$(mktemp)"
   if ! TEST262_STAGE="$STAGE" TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture > "$OUTFILE" 2>&1; then
     :
@@ -48,10 +57,10 @@ import re
 import sys
 text = pathlib.Path(sys.argv[1]).read_text(errors='ignore')
 patterns = [
-    re.compile(r'"sample_paths"\s*:\s*\[\s*"([^\"]+\.js)"', re.DOTALL),
-    re.compile(r'"path"\s*:\s*"([^\"]+\.js)"', re.DOTALL),
-    re.compile(r'"test"\s*:\s*"([^\"]+\.js)"', re.DOTALL),
-    re.compile(r'"file"\s*:\s*"([^\"]+\.js)"', re.DOTALL),
+    re.compile(r'"sample_paths"\s*:\s*\[\s*"([^"]+\.js)"', re.DOTALL),
+    re.compile(r'"path"\s*:\s*"([^"]+\.js)"', re.DOTALL),
+    re.compile(r'"test"\s*:\s*"([^"]+\.js)"', re.DOTALL),
+    re.compile(r'"file"\s*:\s*"([^"]+\.js)"', re.DOTALL),
     re.compile(r"FAILED [^\n]*tests/.+?\.js"),
 ]
 
@@ -79,8 +88,13 @@ PY
   rm -f "$OUTFILE"
 fi
 
-if [[ -z "$TEST" ]]; then
-  echo "no failing test found for stage $STAGE" >&2
+if [[ "$TEST" == "" ]]; then
+  echo "no failing test found for stage ${STAGE}" >&2
+  exit 1
+fi
+
+if [[ "$TEST" != *.js ]]; then
+  echo "invalid test path: $TEST" >&2
   exit 1
 fi
 
