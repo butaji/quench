@@ -55,6 +55,13 @@ pub fn eval_expression(
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
         Expression::Yield(expr) => {
+            if crate::interpreter::is_in_async_function() {
+                let value = match expr {
+                    Some(arg) => eval_expression(arg, env, in_arrow_function)?,
+                    None => Value::Undefined,
+                };
+                return Ok(crate::eval::r#await::eval_await_value(value));
+            }
             let value = match expr {
                 Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
                 None => {

@@ -42,13 +42,15 @@ pub(crate) fn call_value_impl(
 
     let result = match func {
         Value::Function(f) => {
-            if f.is_async && !f.is_generator {
-                // For async (non-generator) functions, ANY error (including parameter
-                // evaluation) must be caught and returned as a rejected Promise instead
-                // of propagating as an uncaught exception.
-                let inner = call_js_function_impl(f, args, this_val);
-                let proto = crate::builtins::promise::get_promise_proto();
-                match inner {
+        if f.is_async && !f.is_generator {
+            // For async (non-generator) functions, ANY error (including parameter
+            // evaluation) must be caught and returned as a rejected Promise instead
+            // of propagating as an uncaught exception.
+            crate::interpreter::enter_async_function();
+            let inner = call_js_function_impl(f, args, this_val);
+            crate::interpreter::leave_async_function();
+            let proto = crate::builtins::promise::get_promise_proto();
+            match inner {
                     Ok(val) => {
                         crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
                     }

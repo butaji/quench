@@ -1348,12 +1348,15 @@ fn eval_try(
 
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
                 match fin_result {
-                    Ok(_) => {
+                    Ok(fin_val) => {
                         // If finally has its own control flow (break/continue/return),
                         // it overrides the original. Per ES §14.15.4, finally's completion
                         // replaces the try's completion for [[Type]] break, continue, return.
                         if let Some(cf) = take_control_flow() {
                             set_control_flow(cf); // Propagate finally's control flow
+                        } else if crate::interpreter::is_in_async_function() {
+                            set_control_flow(ControlFlow::Return(fin_val.clone()));
+                            return Ok(fin_val);
                         } else if let Some(cf) = pending_cf {
                             set_control_flow(cf); // Restore original control flow
                         }
@@ -1392,11 +1395,14 @@ fn eval_try(
                     let pending_cf = take_control_flow();
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
-                        Ok(_) => {
+                        Ok(fin_val) => {
                             // Finally's control flow overrides the catch's.
                             let fin_cf = take_control_flow();
                             if let Some(cf) = fin_cf {
                                 set_control_flow(cf); // Propagate finally's control flow
+                            } else if crate::interpreter::is_in_async_function() {
+                                set_control_flow(ControlFlow::Return(fin_val.clone()));
+                                return Ok(fin_val);
                             } else if let Some(cf) = pending_cf {
                                 set_control_flow(cf); // Restore original
                             }
@@ -1413,11 +1419,15 @@ fn eval_try(
                     let _pending_cf = take_control_flow();
                     let fin_result = eval_statement(fin, env, false, in_arrow_function);
                     match fin_result {
-                        Ok(_) => {
+                        Ok(fin_val) => {
                             // If finally has control flow, it replaces the rethrow
                             if let Some(cf) = take_control_flow() {
                                 set_control_flow(cf);
                                 return Ok(Value::Undefined);
+                            }
+                            if crate::interpreter::is_in_async_function() {
+                                set_control_flow(ControlFlow::Return(fin_val.clone()));
+                                return Ok(fin_val);
                             }
                             // Finally completed normally - rethrow
                             let msg = to_js_string(&thrown_value);

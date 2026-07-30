@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod await_tests {
-    use crate::{Context, Value};
+use crate::{Context, Value};
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
         Context::new().unwrap().eval(src)
@@ -111,5 +111,72 @@ mod await_tests {
         )
         .unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_function_finally_await_reject_overrides_return() {
+        let mut ctx = Context::new().unwrap();
+        let _ = ctx.eval(
+            "var result;
+             var seen;
+             async function f() {
+               try {
+                 return 'early-return';
+               } finally {
+                 seen = await new Promise(function(resolve, reject) { reject('override'); });
+               }
+              }
+             var p = f();
+             p.then(function(v) { result = 'resolved:' + v; }, function(e) { result = 'rejected:' + e; });
+             ;",
+        )
+        .unwrap();
+        let f = ctx.eval("f").unwrap();
+        if let Value::Function(f) = f {
+            assert!(f.is_async);
+        } else {
+            panic!("f should be a function");
+        }
+        let seen = ctx.eval("typeof seen").unwrap();
+        assert_ne!(seen, Value::String("undefined".to_string()));
+        let p = ctx.eval("p").unwrap();
+        let seen = ctx.eval("seen").unwrap();
+        let p_state = if let Value::Object(p_obj) = p {
+            p_obj.borrow().promise_data.as_ref().map(|d| d.state.clone())
+        } else {
+            panic!("p should be a promise");
+        };
+        let seen_state = if let Value::Object(seen_obj) = seen {
+            seen_obj.borrow().promise_data.as_ref().map(|d| d.state.clone())
+        } else {
+            panic!("seen should be a promise");
+        };
+        assert_eq!(p_state, seen_state);
+        let same = ctx.eval("p === seen").unwrap();
+        assert_eq!(same, Value::Boolean(true));
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        let r = ctx.eval("result").unwrap();
+        assert_eq!(r, Value::String("rejected:override".to_string()));
+    }
+
+    #[test]
+    fn async_function_finally_await_reject_overrides_throw() {
+        let mut ctx = Context::new().unwrap();
+        let _ = ctx.eval(
+            "var result;
+             async function f() {
+               try {
+                 await new Promise(function(resolve, reject) { reject('early-reject'); });
+               } finally {
+                 await new Promise(function(resolve, reject) { reject('override'); });
+               }
+             }
+             var p = f();
+             p.then(function(v) { result = 'resolved:' + v; }, function(e) { result = 'rejected:' + e; });",
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        let r = ctx.eval("result").unwrap();
+        assert_eq!(r, Value::String("rejected:override".to_string()));
     }
 }
