@@ -29,14 +29,15 @@ MAX_FAILURES=0
 
 run_json_status() {
     local mode="$1"
-    local tmp
     local raw
+    local rc
     shift
 
-    tmp="$(mktemp)"
-    "$@" > "$tmp"
-    raw="$(cat "$tmp")"
-    rm -f "$tmp"
+    raw="$("$@" )"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        exit "$rc"
+    fi
 
     python3 - "$mode" "$raw" "$STRICT" <<'PY'
 import json
