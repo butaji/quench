@@ -60,6 +60,11 @@ bash tools/test-run-dashboard.sh
 bash tools/test-run-dashboard.sh --json
 # Assert ready-to-run gate (ready=true && blocked=false)
 bash tools/test-run-dashboard.sh --assert-ready
+# One-command cycle helper: summary + optional run of current stage
+bash tools/test-run-cycle.sh
+bash tools/test-run-cycle.sh --json
+# Assert ready and run current stage immediately
+bash tools/test-run-cycle.sh --assert-ready --run
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
