@@ -114,7 +114,7 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 if [[ "$STAGE" == "" && "$TEST" == "" ]]; then
-  STAGE="${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}" 
+  STAGE="$(bash tools/current-stage.sh)" 
 fi
 
 if [[ "$TEST" == "" ]]; then

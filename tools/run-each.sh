@@ -35,19 +35,7 @@ if [[ "$#" -gt 0 ]]; then
     exit 1
 fi
 
-STAGE_DIR="$(python3 - "$STAGE" <<'PY'
-import json
-import sys
-
-stage = int(sys.argv[1])
-with open('tasks/index.json') as f:
-    data = json.load(f)
-for item in data['stages']:
-    if item.get('id') == stage:
-        print(item.get('path', ''))
-        break
-PY
-)"
+STAGE_DIR="$(bash tools/stage-path.sh "$STAGE")"
 TEST_DIR="tests/test262/$STAGE_DIR"
 if [[ -z "$STAGE_DIR" || ! -d "$TEST_DIR" ]]; then
     echo "error: stage $STAGE directory not found: $TEST_DIR" >&2
