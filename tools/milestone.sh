@@ -150,7 +150,7 @@ fi
 
 if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
     echo "[milestone] Running test-run check for stage ${STAGE}..."
-    if bash tools/ssot-stage.sh "$STAGE"; then
+    if bash tools/test-run-stage.sh "$STAGE"; then
         echo "[milestone] Test-run check complete for stage ${STAGE}."
         log_status "test-run" "pass"
     else
