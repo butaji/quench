@@ -3,8 +3,8 @@
 ## Quick Reference
 
 Terminology is single-source:
-- `test run` is the canonical term for implementation-stage status.
-- `implementation status`, `progress`, and `snapshot` refer to `test run` data.
+- `test run` is the canonical term for stage status and milestone progress.
+- `progress` and `snapshot` refer to `test run` data.
 - `ssot` is the canonical shorthand for `test run` (`ssot` == `test run`).
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; use `TEST262_TEST_RUN_BUILD=1` for stage prebuild mode.
 
@@ -40,7 +40,7 @@ bash tools/digest-all.sh
 bash tools/stage-status.sh
 # Current stage only (minimal output)
 bash tools/stage-status.sh --current
-# Canonical single-command implementation progress snapshot
+# Canonical single-command test-run progress snapshot
 bash tools/implementation-progress.sh
 # Fast preflight guard before running stage test-run automation
 bash tools/test-run-preflight.sh
@@ -52,7 +52,7 @@ bash tools/implementation-progress.sh --ci
 bash tools/implementation-progress.sh --next
 # Include both next stage and CI gate in one output/exit code
 bash tools/implementation-progress.sh --next --ci
-# Add aggregate implementation summary fields (done/pending/progress)
+# Add aggregate test-run summary fields (done/pending/progress)
 bash tools/implementation-progress.sh --summary
 # Compact status summary for current stage test-run
 bash tools/test-run-status-summary.sh

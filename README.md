@@ -16,10 +16,9 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-Implementation status is the stage `test-run` itself (`ssot` is equivalent):
+SSOT is the stage `test-run` itself (`ssot` == `test run`):
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
-`ssot` and `test run` are the same path.
 
 Stages live in `crates/quench-runtime/src/test262/runner.rs::STAGES` and
 mirror `tasks/index.json`. Each stage runs to **100% passing** before

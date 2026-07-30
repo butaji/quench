@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Single command status snapshot for implementation progress.
+# Single command status snapshot for test-run progress.
 # Usage:
 #   bash tools/implementation-progress.sh
 #   bash tools/implementation-progress.sh --next
@@ -143,7 +143,7 @@ else:
         has_pending = any(s.get('status') != 'done' for s in all_stages)
 
 out = {
-    "implementation": {
+    "test_run": {
         "current": {
             "current_stage": current_stage_id,
             "stage": current_stage,
@@ -154,7 +154,7 @@ out = {
 }
 
 if include_next:
-    out["implementation"]["next"] = next_payload
+    out["test_run"]["next"] = next_payload
 
 if include_summary:
     stages = stats_payload.get('stages', []) if isinstance(stats_payload, dict) else []
@@ -163,7 +163,7 @@ if include_summary:
     total_tests = sum(s.get('tests', 0) for s in stages)
     done_tests = sum(s.get('tests', 0) for s in stages if s.get('status') == 'done')
     pending_tests = max(0, total_tests - done_tests)
-    out["implementation"]["summary"] = {
+    out["test_run"]["summary"] = {
         "stages_done": done_stages,
         "stages_total": total_stages,
         "tests_done": done_tests,
@@ -171,6 +171,9 @@ if include_summary:
         "tests_pending": pending_tests,
         "progress_percent": 0.0 if total_tests == 0 else round((done_tests * 100.0) / total_tests, 4),
     }
+
+# Backward-compatible alias for older scripts.
+out["implementation"] = out["test_run"]
 
 print(json.dumps(out, sort_keys=True))
 
