@@ -80,6 +80,7 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --ssot)
             RUN_TEST_RUN=1
+            echo "[milestone] warning: --ssot is deprecated; use --test-run" >&2
             shift
             ;;
         --test-run)
