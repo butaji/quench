@@ -36,37 +36,32 @@ if [[ "$JSON" -eq 1 ]]; then
     set -e
     DRYRUN_ERR="$(cat "$DRYRUN_ERRFILE")"
     rm -f "$DRYRUN_ERRFILE"
-    if [[ "$RC" -ne 0 ]]; then
-        python3 - "$DRYRUN_OUTPUT" "$DRYRUN_ERR" <<'PY'
+
+    python3 - "$DRYRUN_OUTPUT" "$DRYRUN_ERR" "$RC" <<'PY'
 import json
 import sys
 
 payload = sys.argv[1]
 error = sys.argv[2].strip()
-obj = {"ci": {"ready": False}, "payload": {}, "error": error}
+rc = int(sys.argv[3])
 
 try:
     payload_obj = json.loads(payload) if payload else {}
 except Exception:
     payload_obj = {}
-obj["payload"] = payload_obj if isinstance(payload_obj, dict) else {}
-print(json.dumps(obj))
-PY
-        exit $RC
-    fi
-    python3 - "$DRYRUN_OUTPUT" <<'PY'
-import json
-import sys
 
-payload = sys.argv[1]
-try:
-    payload_obj = json.loads(payload) if payload else {}
-except Exception:
+if not isinstance(payload_obj, dict):
     payload_obj = {}
 
-obj = {"ci": {"ready": True}, "payload": payload_obj if isinstance(payload_obj, dict) else {}}
+ready = rc == 0
+obj = {
+    "ci": {"ready": ready},
+    "payload": payload_obj,
+    "error": error if rc != 0 else None,
+}
 print(json.dumps(obj))
 PY
+    exit $RC
 else
     bash tools/test-run-go-next-dryrun.sh "${ARGS[@]}"
 fi
