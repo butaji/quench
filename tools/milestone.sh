@@ -47,7 +47,6 @@ NEXT_ID_ONLY=0
 STATUS_WITH_CI=0
 STATUS_RAW=0
 RUN_TEST_RUN=0
-SSOT_DEPRECATED=0
 RUN_TEST_RUN_PREFLIGHT=1
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
@@ -169,12 +168,6 @@ while [[ ${#} -gt 0 ]]; do
             CI_GATE_RUN=1
             shift
             ;;
-        --ssot)
-            RUN_TEST_RUN=1
-            SSOT_DEPRECATED=1
-            # Deprecated alias retained for compatibility; canonical command is --test-run.
-            shift
-            ;;
         --test-run)
             RUN_TEST_RUN=1
             shift
@@ -232,9 +225,6 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 STAGE="${STAGE:-$(bash tools/current-stage.sh)}"
-if [[ "$SSOT_DEPRECATED" -eq 1 ]]; then
-    echo "[milestone] Deprecated: --ssot is an alias for --test-run. Use --test-run." >&2
-fi
 RERUN_JSON_OUT="${MILESTONE_RERUN_JSON_OUT:-$RERUN_JSON_OUT}"
 if [[ "$RERUN_JSON" -eq 1 && "$RERUN_JSON_OUT" == "" ]]; then
     RERUN_JSON_OUT=".milestone-rerun-${STAGE}.json"
