@@ -45,28 +45,29 @@ if [[ -z "${RUN_PLAN_LOG}" ]]; then
 fi
 
 mkdir -p "$(dirname "${RUN_PLAN_LOG}")"
-TMP_OUTPUT="$(mktemp)"
 set +e
-bash tools/run-test-plan.sh "${ARGS[@]}" > "$TMP_OUTPUT" 2>&1
+PLAN_OUTPUT="$(bash tools/run-test-plan.sh "${ARGS[@]}" 2>&1)"
 EXIT_CODE=$?
 set -e
 
 if [[ "$SUMMARY_ONLY" -eq 0 ]]; then
-    cat "$TMP_OUTPUT"
+    printf '%s' "$PLAN_OUTPUT"
 fi
 
-python3 - "$RUN_PLAN_LOG" "$TMP_OUTPUT" "$EXIT_CODE" "$SUMMARY_ONLY" "$RAW_OUTPUT" <<'PY'
+PLAN_OUTPUT_B64="$(printf '%s' "$PLAN_OUTPUT" | base64 -w0)"
+
+python3 - "$RUN_PLAN_LOG" "$EXIT_CODE" "$SUMMARY_ONLY" "$RAW_OUTPUT" "$PLAN_OUTPUT_B64" <<'PY'
 import json
 import sys
+import base64
 from datetime import datetime
 from pathlib import Path
 
 log_path = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
 exit_code = int(sys.argv[3])
 summary_only = sys.argv[4] == "1"
 raw_output = sys.argv[5] == "1"
-out_text = output_path.read_text()
+out_text = base64.b64decode(sys.argv[6]).decode("utf-8", errors="replace")
 
 
 def extract_last_json_object(text: str):
@@ -137,8 +138,6 @@ entry = {
 with log_path.open("a") as f:
     f.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
-
-rm -f "$TMP_OUTPUT"
 
 if [[ "$EXIT_CODE" -ne 0 ]]; then
     exit "$EXIT_CODE"
