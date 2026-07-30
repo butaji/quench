@@ -483,6 +483,44 @@ impl ClassValue {
         value: Value,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<(), JsError> {
+        let eval_env = self.class_def_env_cell.borrow();
+        let env = eval_env
+            .as_ref()
+            .map(Rc::clone)
+            .unwrap_or_else(|| Rc::clone(env));
+        let has_declared_static = |field_name: &str,
+                                  methods: &Vec<ClassMethod>,
+                                  methods_env: &Rc<RefCell<Environment>>,
+                                  setters: &Vec<(PropertyKey, Param, Vec<crate::ast::Statement>)>,
+                                  getters: &Vec<(PropertyKey, Vec<crate::ast::Statement>)>,
+                                  fields: &Vec<(PropertyKey, crate::ast::Expression)>|
+         -> bool {
+            if methods
+                .iter()
+                .any(|(key, _, _, _, _)| {
+                    crate::eval::class::helpers::prop_key_to_string(key, methods_env, false)
+                        .is_ok_and(|k| !k.starts_with('#') && k == field_name)
+                })
+            {
+                return true;
+            }
+            if setters.iter().any(|(key, _, _)| {
+                crate::eval::class::helpers::prop_key_to_string(key, methods_env, false)
+                    .is_ok_and(|k| !k.starts_with('#') && k == field_name)
+            }) {
+                return true;
+            }
+            if getters.iter().any(|(key, _)| {
+                crate::eval::class::helpers::prop_key_to_string(key, methods_env, false)
+                    .is_ok_and(|k| !k.starts_with('#') && k == field_name)
+            }) {
+                return true;
+            }
+            fields.iter().any(|(key, _)| {
+                crate::eval::class::helpers::prop_key_to_string(key, methods_env, false)
+                    .is_ok_and(|k| !k.starts_with('#') && k == field_name)
+            })
+        };
         if crate::value::is_private_name_key(name) && !self.private_brand_matches(name) {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot write private member to an object whose class did not declare it",
@@ -490,13 +528,26 @@ impl ClassValue {
             );
             return Err(js_err);
         }
+        if matches!(name, "name" | "length" | "prototype")
+            && !has_declared_static(
+                name,
+                &self.static_methods,
+                &env,
+                &self.static_setters,
+                &self.static_getters,
+                &self.static_fields,
+            )
+        {
+            if crate::interpreter::is_strict_mode() {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    &format!("Cannot assign to read-only static class property '{}'.", name),
+                    "TypeError",
+                );
+                return Err(js_err);
+            }
+            return Ok(());
+        }
         // Check if there's a static setter
-        let eval_env = self.class_def_env_cell.borrow();
-        let env = eval_env
-            .as_ref()
-            .map(Rc::clone)
-            .unwrap_or_else(|| Rc::clone(env));
-
         for (i, (key, param, body)) in self.static_setters.iter().enumerate() {
             let key_str = if let Some(cached) = self.static_setter_key(i) {
                 cached

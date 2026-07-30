@@ -917,24 +917,27 @@ fn eval_var_decl(
     if !init.is_some() && *kind == VarKind::Var && env.borrow().get_parent().is_none() {
         let existing_global = env
             .borrow()
-            .get("globalThis")
-            .and_then(|global| {
-                let Value::Object(global_this) = global else {
-                    return None;
-                };
-                if global_this.borrow().has(name) {
-                    Some(global_this.borrow().get(name))
-                } else {
-                    None
-                }
-            })
-            .flatten();
+            .get_global_property(name)
+            .or_else(|| {
+                crate::context::get_global_from_context("globalThis").and_then(|global| {
+                    let Value::Object(global_obj) = global else {
+                        return None;
+                    };
+                    if global_obj.borrow().has(name) {
+                        global_obj.borrow().get(name)
+                    } else {
+                        None
+                    }
+                })
+            });
 
         if let Some(existing_global) = existing_global {
             if let Some(scope) = env.borrow().var_binding_scope(name) {
                 scope
                     .borrow_mut()
                     .set(name.to_string(), existing_global.clone(), strict);
+            } else {
+                env.borrow_mut().initialize_declared(name, existing_global.clone());
             }
             if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
                 set_on_global_this(env, name, existing_global);

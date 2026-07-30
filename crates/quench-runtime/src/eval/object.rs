@@ -648,7 +648,7 @@ pub(crate) fn assign_to_object(
             || env
                 .borrow()
                 .get("globalThis")
-                .is_some_and(|g| matches!(g, Value::Object(ref go) if Rc::ptr_eq(go, o)));
+                .is_some_and(|g| matches!(g, Value::Object(ref go) if Rc::ptr_eq(go, o)))
     };
     if is_global_this {
         // Mirror into the context's root environment when available;

@@ -267,6 +267,10 @@ impl Environment {
         None
     }
 
+    pub(crate) fn get_global_property(&self, name: &str) -> Option<Value> {
+        self.get_global_this_property(name)
+    }
+
     pub fn get_rc(&self, name: &str) -> Option<Rc<RefCell<Value>>> {
         self.get_shared(name)
     }

@@ -230,6 +230,11 @@ impl Scope {
 
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(VarState::DeclaredOnly) = self.declarations.get(name) {
+            if let Some(ref obj) = self.object_binding {
+                if obj.borrow().has(name) {
+                    return obj.borrow().get(name);
+                }
+            }
             return Some(Value::Undefined);
         }
         if matches!(self.declarations.get(name), Some(VarState::TDZ)) {

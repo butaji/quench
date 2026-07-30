@@ -895,4 +895,19 @@ verifyProperty(obj, prop, desc);
             result
         );
     }
+
+    #[test]
+    fn s12_2_a11_via_run_single_test() {
+        use crate::test262::harness::HarnessLoader;
+        use crate::test262::runner::{default_test262_dir, run_single_test};
+        let harness = HarnessLoader::new(&default_test262_dir());
+        let path = std::path::PathBuf::from(default_test262_dir())
+            .join("test/language/statements/variable/S12.2_A11.js");
+        let source = std::fs::read_to_string(&path).expect("read");
+        let mut host = QuenchHost::new();
+        let direct_result = host.run_script(&source);
+        assert_eq!(direct_result, Ok(()), "direct QuenchHost result: {:?}", direct_result);
+        let outcome = run_single_test(&harness, &path);
+        assert_eq!(outcome, TestOutcome::Pass, "S12.2_A11: {:?}", outcome);
+    }
 }

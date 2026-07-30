@@ -87,7 +87,7 @@ mod throw_statement {
     }
 }
 
-mod var_declarations {
+mod var_declarations_misc {
     use super::*;
 
     #[test]
@@ -99,6 +99,25 @@ mod var_declarations {
              if (obj.test262id !== true || test262id !== undefined) { throw new Error('binding mismatch'); }",
         );
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn var_decl_no_initializer_preserves_existing_global_property() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "this['__declared__var'] = 'baloon'; \
+             var __declared__var; \
+             __declared__var",
+        );
+        assert_eq!(result.unwrap(), Value::String("baloon".into()));
+
+        let result = ctx.eval(
+            "\"use strict\"; \
+             this['__declared__var'] = 'baloon'; \
+             var __declared__var; \
+             __declared__var",
+        );
+        assert_eq!(result.unwrap(), Value::String("baloon".into()));
     }
 
     #[test]
