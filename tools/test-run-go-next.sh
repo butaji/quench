@@ -11,6 +11,7 @@ set -euo pipefail
 #   bash tools/test-run-go-next.sh --print-json
 #   bash tools/test-run-go-next.sh --status
 #   bash tools/test-run-go-next.sh --run --by-ratio --top 5
+#   bash tools/test-run-go-next.sh --run --advance
 
 RUN=0
 JSON=0
@@ -19,6 +20,7 @@ PRINT_JSON=0
 BY_RATIO=0
 TOP=1
 NOPREFLIGHT=0
+AUTO_ADVANCE=0
 STAGE_OVERRIDE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -57,6 +59,10 @@ while [[ ${#} -gt 0 ]]; do
             NOPREFLIGHT=1
             shift
             ;;
+        --advance)
+            AUTO_ADVANCE=1
+            shift
+            ;;
         --stage)
             if [[ "${2:-}" == "" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
                 echo "error: --stage requires a numeric argument" >&2
@@ -66,7 +72,7 @@ while [[ ${#} -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            sed -n '1,180p' "$0"
+            sed -n '1,200p' "$0"
             exit 0
             ;;
         *)
@@ -166,9 +172,29 @@ if [[ "$NOPREFLIGHT" -eq 0 ]]; then
     fi
 fi
 
-echo "[test-run-go-next] running stage ${STAGE} (${SOURCE})"
+if [[ "$JSON" -eq 0 ]]; then
+    echo "[test-run-go-next] running stage ${STAGE} (${SOURCE})"
+fi
+
 if [[ "$JSON" -eq 1 ]]; then
     TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json --
+    RUN_RC=$?
 else
     TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --
+    RUN_RC=$?
 fi
+
+if [[ "$RUN_RC" -ne 0 ]]; then
+    exit "$RUN_RC"
+fi
+
+if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
+    CURRENT="$(bash tools/current-stage.sh)"
+    if [[ "$STAGE" == "$CURRENT" ]]; then
+        bash tools/advance-stage.sh
+    elif [[ "$JSON" -eq 0 ]]; then
+        echo "[test-run-go-next] advance skipped (target ${STAGE} != current ${CURRENT})" >&2
+    fi
+fi
+
+exit 0

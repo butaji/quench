@@ -76,6 +76,7 @@ bash tools/test-run-go.sh --run --json
 bash tools/test-run-go-next.sh
 bash tools/test-run-go-next.sh --run --json
 bash tools/test-run-go-next.sh --run --by-ratio --top 5
+bash tools/test-run-go-next.sh --run --advance
 bash tools/test-run-go-next.sh --print
 bash tools/test-run-go-next.sh --print-json
 # Single JSON readout with optional immediate run
