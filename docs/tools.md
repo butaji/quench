@@ -36,6 +36,12 @@ bash tools/digest-all.sh
 bash tools/stage-status.sh
 # Current stage only (minimal output)
 bash tools/stage-status.sh --current
+# Canonical single-command implementation progress snapshot
+bash tools/implementation-progress.sh
+# Include next pending stage in the same snapshot
+bash tools/implementation-progress.sh --next
+# Raw script output (human-readable)
+bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
 bash tools/milestone.sh --status --current
 # Next pending stage (actionable target)
