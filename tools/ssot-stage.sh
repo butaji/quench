@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Compatibility wrapper for `ssot` command names.
-# Canonical command remains `test-run-stage.sh`.
-# `ssot` is treated as a strict alias of test-run (including build pre-step env).
+# Compatibility wrapper for historical `ssot` command names.
+# Canonical command remains `test-run-stage.sh` (test-run).
+# `ssot` is treated as a strict alias of test-run-stage.
 set -euo pipefail
 
 case "${SSOT_BUILD_RUN_TEST:-}" in

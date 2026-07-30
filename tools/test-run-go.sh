@@ -8,6 +8,10 @@ set -euo pipefail
 #   bash tools/test-run-go.sh --run
 #   bash tools/test-run-go.sh --run --json
 #   bash tools/test-run-go.sh --run --no-preflight
+#   bash tools/test-run-go.sh --run --commit
+#   bash tools/test-run-go.sh --run --commit "chore: stage 34 progress"
+#   bash tools/test-run-go.sh --run --commit --push
+#   (SSOT and test-run are the same canonical flow for milestone runs.)
 
 JSON=0
 RUN=0
@@ -15,6 +19,9 @@ READY=0
 NOPREFLIGHT=0
 DASHBOARD_DONE=0
 CURRENT_STAGE=""
+AUTO_COMMIT=0
+AUTO_PUSH=0
+COMMIT_MESSAGE=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -32,6 +39,19 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --no-preflight)
             NOPREFLIGHT=1
+            shift
+            ;;
+        --commit)
+            AUTO_COMMIT=1
+            if [[ "${2:-}" != "" && "${2:-}" != --* ]]; then
+                COMMIT_MESSAGE="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --push)
+            AUTO_PUSH=1
             shift
             ;;
         -h|--help)
@@ -92,11 +112,33 @@ PY
 fi
 
 if [[ "$RUN" -eq 1 ]]; then
-    echo "[test-run-go] running stage ${CURRENT_STAGE}"
-    if [[ "$JSON" -eq 1 ]]; then
-        bash tools/test-run-stage.sh --json "$CURRENT_STAGE"
+    if [[ "$JSON" -eq 1 && "$AUTO_COMMIT" -eq 1 ]]; then
+        echo "error: --json is not supported with --commit in this command" >&2
+        exit 1
+    fi
+    if [[ "$AUTO_COMMIT" -eq 1 ]]; then
+        MILESTONE_ARGS=(--stage "$CURRENT_STAGE" --test-run)
+        if [[ "$AUTO_PUSH" -eq 1 ]]; then
+            MILESTONE_ARGS+=(--push)
+        fi
+        if [[ -n "$COMMIT_MESSAGE" ]]; then
+            MILESTONE_ARGS+=(--commit "$COMMIT_MESSAGE")
+        else
+            MILESTONE_ARGS+=(--commit)
+        fi
+        bash tools/milestone.sh "${MILESTONE_ARGS[@]}"
+        RUN_RC=$?
     else
-        bash tools/test-run-stage.sh "$CURRENT_STAGE"
+        echo "[test-run-go] running stage ${CURRENT_STAGE}"
+        if [[ "$JSON" -eq 1 ]]; then
+            bash tools/test-run-stage.sh --json "$CURRENT_STAGE"
+        else
+            bash tools/test-run-stage.sh "$CURRENT_STAGE"
+        fi
+        RUN_RC=$?
+    fi
+    if [[ "$RUN_RC" -ne 0 ]]; then
+        exit "$RUN_RC"
     fi
     exit 0
 fi
