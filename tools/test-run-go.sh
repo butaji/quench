@@ -13,6 +13,7 @@ JSON=0
 RUN=0
 READY=0
 NOPREFLIGHT=0
+CURRENT_STAGE=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -42,6 +43,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$RUN" -eq 1 ]]; then
+    CURRENT_STAGE="$(bash tools/current-stage.sh)"
+fi
 
 if [[ "$JSON" -eq 1 ]]; then
     DASH_ARGS=(--json)
@@ -85,12 +90,11 @@ PY
 fi
 
 if [[ "$RUN" -eq 1 ]]; then
-    STAGE="$(bash tools/current-stage.sh)"
-    echo "[test-run-go] running stage ${STAGE}"
+    echo "[test-run-go] running stage ${CURRENT_STAGE}"
     if [[ "$JSON" -eq 1 ]]; then
-        bash tools/test-run-stage.sh --json "$STAGE"
+        bash tools/test-run-stage.sh --json "$CURRENT_STAGE"
     else
-        bash tools/test-run-stage.sh "$STAGE"
+        bash tools/test-run-stage.sh "$CURRENT_STAGE"
     fi
     exit 0
 fi
