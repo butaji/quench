@@ -15,6 +15,11 @@ set -euo pipefail
 #   bash tools/ssot --next --run --commit    # run next and commit milestone
 #   bash tools/ssot --next --run --commit --push
 #                                         # run next, commit, and push milestone
+# Fast path:
+#   bash tools/ssot --run --fast               # run current stage without preflight
+#   bash tools/ssot --next --run --fast        # run next stage without preflight
+#   bash tools/ssot --next --run --fast --commit --push
+#                                          # fast milestone flow
 
 RUN=0
 STATUS=0
@@ -23,6 +28,7 @@ NEXT=0
 JSON=0
 COMMIT=0
 PUSH=0
+FAST=0
 COMMIT_MESSAGE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -41,6 +47,10 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --json)
       JSON=1
+      shift
+      ;;
+    --fast)
+      FAST=1
       shift
       ;;
     --stage)
@@ -128,6 +138,9 @@ if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
     bash tools/milestone.sh "${STAGE_ARGS[@]}"
   elif [[ "$NEXT" -eq 1 ]]; then
     GO_NEXT_ARGS=(--run)
+    if [[ "$FAST" -eq 1 ]]; then
+      GO_NEXT_ARGS+=(--no-preflight)
+    fi
     if [[ "$PUSH" -eq 1 ]]; then
       GO_NEXT_ARGS+=(--push)
     fi
@@ -146,9 +159,17 @@ if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
       fi
     else
       if [[ "$JSON" -eq 1 ]]; then
-        bash tools/test-run-go.sh --run --json
+        if [[ "$FAST" -eq 1 ]]; then
+          bash tools/test-run-go.sh --run --json --no-preflight
+        else
+          bash tools/test-run-go.sh --run --json
+        fi
       else
-        bash tools/test-run-go.sh --run
+        if [[ "$FAST" -eq 1 ]]; then
+          bash tools/test-run-go.sh --run --no-preflight
+        else
+          bash tools/test-run-go.sh --run
+        fi
       fi
     fi
   else

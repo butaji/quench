@@ -41,6 +41,7 @@ bash tools/ssot                              # run current stage test-run (SSOT)
 bash tools/ssot --test                        # explicit run alias (SSOT)
 bash tools/ssot --run --commit               # run + commit current milestone
 bash tools/ssot --run --commit --push         # run + commit + push current milestone
+bash tools/ssot --run --fast                  # run current stage fast path (skip preflight)
 bash tools/ssot --status                     # print current implementation/test-run status
 bash tools/ssot --next                       # print next pending stage id
 ```
