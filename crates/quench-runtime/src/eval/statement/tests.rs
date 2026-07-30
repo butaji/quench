@@ -224,6 +224,26 @@ mod with_statement {
         );
         assert_eq!(result.unwrap(), Value::Boolean(true));
     }
+
+    #[test]
+    fn with_proxy_binding_object_lookup_follows_proxy_get_for_call_expression() {
+        let result = eval(
+            "var log = [];\n\
+             var env = { Object };\n\
+             var proxy = new Proxy(env, {\n\
+              has(t, pk) { log.push('has:' + String(pk)); return Reflect.has(t, pk); },\n\
+              get(t, pk, r) { log.push('get:' + String(pk)); return Reflect.get(t, pk, r); },\n\
+             });\n\
+             with (proxy) { Object(); }\n\
+             log.join(',');",
+        );
+        assert_eq!(
+            result.unwrap(),
+            Value::String(
+                "has:Object,get:Symbol(Symbol.unscopables),has:Object,get:Object".to_string(),
+            ),
+        );
+    }
 }
 
 mod class_static_properties {
