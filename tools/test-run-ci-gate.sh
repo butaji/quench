@@ -306,46 +306,49 @@ if [[ "$CHECK_NEXT" -eq 1 ]]; then
         bash tools/test-run-go-next-ci.sh
     fi
 fi
-if [[ "$CHECK_CURRENT" -eq 1 && "$CHECK_NEXT" -eq 1 && "$RUN_CURRENT" -eq 1 ]]; then
-    READY_CURRENT="$(python3 - "$CURRENT_JSON" "$NEXT_JSON" <<'PY'
+
+if [[ "$RUN_CURRENT" -eq 1 ]]; then
+    READY_FOR_RUN="$(python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CHECK_CURRENT" "$CHECK_NEXT" "$CURRENT_RC" "$NEXT_RC" <<'PY'
 import json
 import sys
 
 current_json = sys.argv[1]
 next_json = sys.argv[2]
+check_current = sys.argv[3] == "1"
+check_next = sys.argv[4] == "1"
+current_rc = int(sys.argv[5])
+next_rc = int(sys.argv[6])
 
-try:
-    current = json.loads(current_json)
-    dashboard = current.get("test_run_dashboard", {})
-    current_ready = bool(dashboard.get("signals", {}).get("can_run", False))
-except Exception:
-    current_ready = False
+current_ready = False
+next_ready = False
 
-print("1" if current_ready else "0")
+if check_current and current_rc == 0:
+    try:
+        current_payload = json.loads(current_json)
+        dashboard = current_payload.get("test_run_dashboard", {})
+        current_ready = bool(dashboard.get("signals", {}).get("can_run", False))
+    except Exception:
+        current_ready = False
+
+if check_next and next_rc == 0:
+    try:
+        next_payload = json.loads(next_json)
+        next_ready = bool(next_payload.get("ci", {}).get("ready", False))
+    except Exception:
+        next_ready = False
+
+if check_current and check_next:
+    print("1" if (current_ready and next_ready) else "0")
+else:
+    print("1" if (current_ready or next_ready) else "0")
 PY
 )"
-    READY_NEXT="$(python3 - "$NEXT_JSON" <<'PY'
-import json
-import sys
-
-next_json = sys.argv[1]
-try:
-    next_payload = json.loads(next_json)
-    ready = bool(next_payload.get("ci", {}).get("ready", False))
-except Exception:
-    ready = False
-
-print("1" if ready else "0")
-PY
-)"
-    if [[ "$READY_CURRENT" != "1" || "$READY_NEXT" != "1" ]]; then
+    if [[ "$READY_FOR_RUN" != "1" ]]; then
         echo "error: readiness checks failed; aborting run" >&2
         exit 1
     fi
 fi
 
-if [[ "$RUN_CURRENT" -eq 1 ]]; then
-    bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)"
-fi
+[[ "$RUN_CURRENT" -eq 1 ]] && bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)"
 
 exit 0
