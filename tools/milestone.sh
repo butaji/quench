@@ -14,6 +14,7 @@
 #   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
+#   bash tools/milestone.sh --quiet                    # suppress human-readable output
 
 set -euo pipefail
 
@@ -28,6 +29,7 @@ AUTO_PUSH=0
 DRY_RUN=0
 AUTO_RERUN=0
 RERUN_JSON=0
+QUIET=0
 COMMIT_MESSAGE=""
 HISTORY=0
 LOG_FILE="${MILESTONE_LOG:-./.test262_milestones.log}"
@@ -62,6 +64,7 @@ while [[ ${#} -gt 0 ]]; do
         --rerun-json)
             AUTO_RERUN=1
             RERUN_JSON=1
+            QUIET=1
             shift
             ;;
         --status)
@@ -104,6 +107,10 @@ while [[ ${#} -gt 0 ]]; do
             LOG_FILE="$2"
             shift 2
             ;;
+        --quiet)
+            QUIET=1
+            shift
+            ;;
         -h|--help)
             sed -n '1,140p' "$0"
             exit 0
@@ -133,6 +140,13 @@ log_status() {
     } >> "$LOG_FILE"
 }
 
+log_msg() {
+    if [[ "$QUIET" -eq 1 ]]; then
+        return
+    fi
+    echo "$1"
+}
+
 show_history() {
     if [[ "$HISTORY" =~ ^[0-9]+$ ]] && [[ "$HISTORY" -gt 0 ]]; then
         bash tools/milestone-timeline.sh "$HISTORY" --log "$LOG_FILE"
@@ -143,22 +157,26 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     AUTO_COMMIT=0
     AUTO_PUSH=0
     AUTO_ADVANCE=0
-    echo "[milestone] Dry-run mode: no commits/pushes or index updates will occur."
-    echo "[milestone] Stage: ${STAGE}."
+    log_msg "[milestone] Dry-run mode: no commits/pushes or index updates will occur."
+    log_msg "[milestone] Stage: ${STAGE}."
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
-    bash tools/stage-status.sh
-    echo "[milestone] Current stage is ${STAGE}."
+    if [[ "$QUIET" -eq 0 ]]; then
+        bash tools/stage-status.sh
+    fi
+    log_msg "[milestone] Current stage is ${STAGE}."
     log_status "status-only" "displayed status only"
-    show_history
+    if [[ "$QUIET" -eq 0 ]]; then
+        show_history
+    fi
     exit 0
 fi
 
 if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
-    echo "[milestone] Running test-run check for stage ${STAGE}..."
+    log_msg "[milestone] Running test-run check for stage ${STAGE}..."
     if bash tools/test-run-stage.sh "$STAGE"; then
-        echo "[milestone] Test-run check complete for stage ${STAGE}."
+        log_msg "[milestone] Test-run check complete for stage ${STAGE}."
         log_status "test-run" "pass"
     else
         if [[ "$AUTO_RERUN" -eq 1 ]]; then
@@ -184,19 +202,21 @@ if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
             fi
             git add -A
             git commit -m "$COMMIT_MESSAGE"
-            echo "[milestone] Committed test-run milestone for stage ${STAGE}."
+            log_msg "[milestone] Committed test-run milestone for stage ${STAGE}."
             if [[ "$AUTO_PUSH" -eq 1 ]]; then
                 git push
-                echo "[milestone] Pushed test-run milestone commit."
+                log_msg "[milestone] Pushed test-run milestone commit."
             fi
             log_status "test-run" "committed"
         else
-            echo "[milestone] No working-tree changes to commit."
+            log_msg "[milestone] No working-tree changes to commit."
             log_status "test-run" "passed-no-changes"
         fi
     fi
-    bash tools/stage-status.sh
-    show_history
+    if [[ "$QUIET" -eq 0 ]]; then
+        bash tools/stage-status.sh
+        show_history
+    fi
     exit 0
 fi
 
@@ -204,7 +224,7 @@ if bash tools/fix-stage.sh; then
     if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
         bash tools/advance-stage.sh
     else
-        echo "[milestone] Stage $STAGE passed. Add --advance to auto-update index.json."
+        log_msg "[milestone] Stage $STAGE passed. Add --advance to auto-update index.json."
     fi
 
     if [[ "$AUTO_COMMIT" -eq 1 ]]; then
@@ -214,20 +234,22 @@ if bash tools/fix-stage.sh; then
             fi
             git add -A
             git commit -m "$COMMIT_MESSAGE"
-            echo "[milestone] Committed milestone for stage $STAGE."
+            log_msg "[milestone] Committed milestone for stage $STAGE."
             if [[ "$AUTO_PUSH" -eq 1 ]]; then
                 git push
-                echo "[milestone] Pushed milestone commit."
+                log_msg "[milestone] Pushed milestone commit."
             fi
             log_status "test-run" "committed"
         else
-            echo "[milestone] No working-tree changes to commit."
+            log_msg "[milestone] No working-tree changes to commit."
             log_status "test-run" "passed-no-changes"
         fi
     fi
     log_status "test-run" "passed"
-    bash tools/stage-status.sh
-    show_history
+    if [[ "$QUIET" -eq 0 ]]; then
+        bash tools/stage-status.sh
+        show_history
+    fi
 
     exit 0
 else
@@ -239,7 +261,9 @@ else
             bash tools/milestone-rerun.sh --stage "$STAGE"
         fi
     fi
-    show_history
+    if [[ "$QUIET" -eq 0 ]]; then
+        show_history
+    fi
     log_status "test-run" "failed"
     exit 1
 fi
