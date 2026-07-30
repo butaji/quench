@@ -50,7 +50,22 @@ if [[ "$PRINT_JSON" -eq 1 ]]; then
     printf '%s
 ' "$PAYLOAD"
 else
-    read -r STAGE STAGE_PATH SOURCE CURRENT MATCH AUTO <<<"$(python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); obj=p.get("test_run_go_next", {}); print(obj.get("stage", ""), obj.get("path", ""), obj.get("source", ""), obj.get("current_stage", ""), obj.get("matches_current", False), obj.get("can_auto_advance", False))' <<<"$PAYLOAD")"
+    read -r STAGE STAGE_PATH SOURCE CURRENT MATCH AUTO <<<"$(python3 - "$PAYLOAD" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+obj = payload.get("test_run_go_next", {})
+print(
+    obj.get("stage", ""),
+    obj.get("path", ""),
+    obj.get("source", ""),
+    obj.get("current_stage", ""),
+    obj.get("matches_current", False),
+    obj.get("can_auto_advance", False),
+)
+PY
+)"
     echo "stage=$STAGE"
     echo "path=$STAGE_PATH"
     echo "source=$SOURCE"
@@ -59,17 +74,42 @@ else
     echo "can_auto_advance=$AUTO"
 fi
 
-MATCHES_CURRENT="$(python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); o=p.get("test_run_go_next", {}); print("1" if o.get("matches_current") else "0")' <<<"$PAYLOAD")"
+MATCHES_CURRENT="$(python3 - "$PAYLOAD" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+obj = payload.get("test_run_go_next", {})
+print("1" if obj.get("matches_current") else "0")
+PY
+)"
 
 if [[ "$RUN_CHECK" -eq 1 ]]; then
     if [[ "$MATCHES_CURRENT" == "1" ]]; then
         PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
-        if ! python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$PREFLIGHT_JSON"; then
+        if [[ "$(python3 - "$PREFLIGHT_JSON" <<'PY'
+import json
+import sys
+
+try:
+    json.loads(sys.argv[1])
+    print(0)
+except Exception:
+    print(1)
+PY
+)" -eq 1 ]]; then
             exit 1
         fi
         if [[ "$ASSERT_READY" -eq 1 ]]; then
-            if ! python3 -c 'import json,sys; p=json.loads(sys.stdin.read()); \
-obj=p.get("test_run_go_next", {}); sys.exit(0 if obj.get("can_auto_advance") else 1)' <<<"$PREFLIGHT_JSON"; then
+            if [[ "$(python3 - "$PREFLIGHT_JSON" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+obj = payload.get("test_run_go_next", {})
+print(0 if obj.get("can_auto_advance") else 1)
+PY
+)" -eq 1 ]]; then
                 echo "[test-run-go-next-dryrun] stage is not auto-advance ready in preflight payload" >&2
                 exit 1
             fi
