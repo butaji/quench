@@ -3,6 +3,9 @@
 # Usage: bash tools/stage-status.sh
 # Usage: bash tools/stage-status.sh --current
 # Usage: bash tools/stage-status.sh --json --current
+# Usage: bash tools/stage-status.sh --current --json
+# Usage: bash tools/stage-status.sh --next
+# Usage: bash tools/stage-status.sh --json --next
 #
 # Shows pass rate for each stage based on index.json status,
 # plus quick-test for the current stage.
@@ -18,7 +21,7 @@ if [[ ${#} -gt 0 ]]; then
   STAGE_STATUS_ARGS=()
   while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
-        --json|--current)
+        --json|--current|--next)
             STAGE_STATUS_ARGS+=("${1}")
             shift
             ;;

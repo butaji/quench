@@ -3,6 +3,7 @@ set -euo pipefail
 
 USE_JSON=0
 CURRENT_ONLY=0
+NEXT_ONLY=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -12,6 +13,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --current)
             CURRENT_ONLY=1
+            shift
+            ;;
+        --next)
+            NEXT_ONLY=1
             shift
             ;;
         --help|-h)
@@ -25,13 +30,14 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-python3 - "$USE_JSON" "$CURRENT_ONLY" <<'PY'
+python3 - "$USE_JSON" "$CURRENT_ONLY" "$NEXT_ONLY" <<'PY'
 import json
 import sys
 
 try:
     use_json = int(sys.argv[1])
     current_only = int(sys.argv[2])
+    next_only = int(sys.argv[3])
     with open('tasks/index.json') as f:
         data = json.load(f)
 except (OSError, json.JSONDecodeError) as exc:
@@ -52,6 +58,14 @@ if use_json:
             'stage': current_stage,
         }, sort_keys=True))
         raise SystemExit(0)
+    if next_only:
+        next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+        print(json.dumps({
+            'current_stage': current,
+            'next_stage': next_stage.get('id') if next_stage is not None else None,
+            'stage': next_stage,
+        }, sort_keys=True))
+        raise SystemExit(0)
     print(json.dumps({
         'current_stage': current,
         'stages': stages,
@@ -68,6 +82,16 @@ if current_only:
     print(f"Status:     {stage.get('status', 'unknown')}")
     print(f"Tests:      {stage.get('tests', 0)}")
     print(f"Failed:     {stage.get('failed', 0)}")
+    raise SystemExit(0)
+if next_only:
+    next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
+    if next_stage is None:
+        print("No pending next stage found.")
+        raise SystemExit(0)
+    print(f"Next stage: {next_stage.get('id')}")
+    print(f"Path:      {next_stage.get('path', '')}")
+    print(f"Status:    {next_stage.get('status', 'unknown')}")
+    print(f"Tests:     {next_stage.get('tests', 0)}")
     raise SystemExit(0)
 
 print(f"{'ID':>4} {'Status':>8}  {'Tests':>6}  Path")

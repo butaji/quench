@@ -38,6 +38,9 @@ bash tools/stage-status.sh
 bash tools/stage-status.sh --current
 # Milestone workflow shortcut for current-stage status
 bash tools/milestone.sh --status --current
+# Next pending stage (actionable target)
+bash tools/stage-status.sh --next
+bash tools/milestone.sh --status --next
 
 # Diagnose current stage quickly (digest + first failure run-test)
 TEST262_STAGE=N bash tools/fix-stage.sh

@@ -9,6 +9,7 @@
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
 #   bash tools/milestone.sh --status --current            # print current stage only
+#   bash tools/milestone.sh --status --next                # print next pending stage
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
@@ -28,6 +29,7 @@ STAGE=""
 STATUS_ONLY=0
 STATUS_JSON=0
 STATUS_CURRENT=0
+STATUS_NEXT=0
 RUN_TEST_RUN=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
@@ -89,6 +91,10 @@ while [[ ${#} -gt 0 ]]; do
                         ;;
                     --current)
                         STATUS_CURRENT=1
+                        shift
+                        ;;
+                    --next)
+                        STATUS_NEXT=1
                         shift
                         ;;
                     *)
@@ -201,10 +207,14 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
     if [[ "$QUIET" -eq 0 ]]; then
         if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
             bash tools/stage-status.sh --json --current
+        elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
+            bash tools/stage-status.sh --json --next
         elif [[ "$STATUS_JSON" -eq 1 ]]; then
             bash tools/stage-status.sh --json
         elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
             bash tools/stage-status.sh --current
+        elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+            bash tools/stage-status.sh --next
         else
             bash tools/stage-status.sh
         fi
