@@ -5,6 +5,7 @@ set -euo pipefail
 # Usage:
 #   bash tools/run-test-plan-log.sh [run-test-plan args...]
 #   bash tools/run-test-plan-log.sh --log-file /tmp/plan.log --status --json
+#   bash tools/run-test-plan-log.sh --log-file /tmp/plan.log --status-json
 #   bash tools/run-test-plan-log.sh --status --json --raw
 #   bash tools/run-test-plan-log.sh --summary-only --status --json
 

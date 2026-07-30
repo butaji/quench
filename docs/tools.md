@@ -51,9 +51,11 @@ bash tools/run-next-pending.sh
 # Run a unified plan selector for next stage or batch selection
 bash tools/run-test-plan.sh
 # Run and persist a machine-readable plan execution record
-bash tools/run-test-plan-log.sh --status --json
+bash tools/run-test-plan-log.sh --status-json
 # Log only compact status summary (no command output replay)
 bash tools/run-test-plan-log.sh --status --json --summary-only
+# Log only compact status summary with normalized wrapper
+bash tools/run-test-plan-log.sh --status-json --summary-only
 # Include raw output snippet in logged summary
 bash tools/run-test-plan-log.sh --status --json --raw
 # Print resolved stage id without running
