@@ -43,6 +43,8 @@ TEST262_STAGE=N bash tools/advance-stage.sh
 
 # Canonical status command for active work (stage test run)
 bash tools/test-run-stage.sh [stage]
+# Machine-readable mode for automation
+bash tools/test-run-stage.sh --json [stage]
 ```
 
 ## Tool Reference

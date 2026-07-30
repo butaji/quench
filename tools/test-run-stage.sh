@@ -5,9 +5,11 @@ set -euo pipefail
 #   bash tools/test-run-stage.sh                  # run current stage test-run
 #   bash tools/test-run-stage.sh --stage 42        # explicit stage
 #   TEST262_TEST_RUN_BUILD=1 bash tools/test-run-stage.sh  # prebuild run-test before running
+#   bash tools/test-run-stage.sh --json            # emit machine-readable stage result
 
 STAGE="$(bash tools/current-stage.sh)"
 AUTO_HELP=0
+OUTPUT_JSON=0
 
 if [[ ${#} -gt 0 && ("${1:-}" == --help || "${1:-}" == -h) ]]; then
     AUTO_HELP=1
@@ -21,6 +23,10 @@ EXTRA_ARGS=()
 
 if [[ ${#} -gt 0 ]]; then
     case "${1:-}" in
+        --json)
+            OUTPUT_JSON=1
+            shift
+            ;;
         --stage)
             STAGE="$2"
             shift 2
@@ -52,12 +58,21 @@ if [[ -z "$STAGE" ]]; then
   echo "Canonical term: test-run" >&2
   echo "Or: TEST262_STAGE=<stage> $0" >&2
   echo "Or: $0 <stage>" >&2
-  exit 1
+    exit 1
+fi
+
+if [[ "$OUTPUT_JSON" -eq 1 ]]; then
+  EXTRA_ENV_ARGS=(TEST262_DIGEST=1 TEST262_QUICK=1 TEST262_JSON=1)
+else
+  EXTRA_ENV_ARGS=(TEST262_DIGEST=1 TEST262_QUICK=1)
 fi
 
 if [[ "${TEST262_TEST_RUN_BUILD:-0}" == "1" ]]; then
   cargo build --bin run-test --quiet
 fi
 
-echo "[test-run-stage] Stage $STAGE (digest)"
-TEST262_STAGE="$STAGE" TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]}"
+if [[ "$OUTPUT_JSON" -eq 0 ]]; then
+  echo "[test-run-stage] Stage $STAGE (digest)"
+fi
+
+TEST262_STAGE="$STAGE" "${EXTRA_ENV_ARGS[@]}" cargo test -p quench-runtime --test test262 test262_staged -- --nocapture "${EXTRA_ARGS[@]}"
