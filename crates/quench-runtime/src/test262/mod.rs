@@ -1,13 +1,13 @@
 //! test262 conformance harness for quench-runtime
 //!
 //! Run with:
-//!   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+//!   cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
 //!
 //! Run a single stage:
-//!   TEST262_STAGE=0 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+//!   TEST262_STAGE=0 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
 //!
 //! Run all stages:
-//!   ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+//!   ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
 
 pub mod harness;
 pub mod host;

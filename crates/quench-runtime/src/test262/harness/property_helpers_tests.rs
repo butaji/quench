@@ -1,6 +1,6 @@
 //! Tests for property_helpers (split out to satisfy the 500-line limit).
 
-use crate::test262::harness::try_inject_harness;
+use crate::test262::harness::{try_inject_harness, HarnessLoader};
 
 fn harness_ctx() -> crate::Context {
     let mut ctx = crate::Context::new().unwrap();
@@ -76,6 +76,65 @@ fn test_verify_property_basic_data_property() {
         "verifyProperty data property should pass: {:?}",
         result
     );
+}
+
+#[test]
+fn test_verify_property_function_constructor_descriptor_is_writable() {
+    let mut ctx = harness_ctx();
+    let result = ctx.eval(
+        "var desc = Object.getOwnPropertyDescriptor(Object.prototype, 'constructor'); \
+         verifyProperty(Object.prototype, 'constructor', { value: desc.value, writable: true, enumerable: false, configurable: true });",
+    );
+    assert!(
+        result.is_ok(),
+        "Object.prototype.constructor descriptor should be writable: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_loaded_property_helper_verifies_function_constructor_descriptor() {
+    let mut ctx = harness_ctx();
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/test262");
+    let loader = HarnessLoader::new(root.to_str().unwrap());
+    let script = loader
+        .build_script(
+            "var desc = Object.getOwnPropertyDescriptor(Object.prototype, 'constructor'); \
+             var getFunc = function () { return 100; }; \
+             var data = 'data'; \
+             var setFunc = function (value) { data = value; }; \
+             Object.defineProperty(Object.prototype, 'constructor', { get: getFunc, set: setFunc, configurable: true }); \
+             var fun = function () {}; \
+             assert.sameValue(typeof fun.prototype.constructor, 'function'); \
+             verifyProperty(fun.prototype, 'constructor', { writable: true, enumerable: false, configurable: true }); \
+             assert.sameValue(data, 'data', 'data');",
+            &["propertyHelper.js".to_string()],
+        )
+        .unwrap();
+    let result = ctx.eval(&script);
+    assert!(
+        result.is_ok(),
+        "loaded propertyHelper should verify constructor descriptor: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_function_prototype_constructor_remains_writable_after_object_accessor() {
+    let mut ctx = harness_ctx();
+    let result = ctx.eval(
+        "'use strict'; var getFunc = function () { return 100; }; \
+         var setFunc = function (value) {}; \
+         Object.defineProperty(Object.prototype, 'constructor', { get: getFunc, set: setFunc, configurable: true }); \
+         var fun = function () {}; \
+         Object.getOwnPropertyDescriptor(fun.prototype, 'constructor').writable",
+    );
+    assert_eq!(result.unwrap(), crate::Value::Boolean(true));
 }
 
 #[test]

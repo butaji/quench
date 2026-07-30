@@ -32,10 +32,18 @@ const INFRA_MARKERS: &[&str] = &[
 /// failures as "Parse error: …"; per spec any parse-phase rejection IS a
 /// SyntaxError, so map that onto the expected type.
 fn error_type_matches(phase: &str, typ: &str, msg: &str) -> bool {
-    if typ.is_empty() || msg.contains(typ) {
+    if typ.is_empty() {
         return true;
     }
-    phase == "parse" && typ == "SyntaxError" && msg.contains("Parse error")
+    if phase == "parse" && typ == "SyntaxError" && msg.contains("Parse error") {
+        return true;
+    }
+    let actual = msg
+        .trim_start_matches("JsError(\"")
+        .split_once(':')
+        .map(|(kind, _)| kind)
+        .unwrap_or_default();
+    actual == typ
 }
 
 /// Build a TestFailure with captured JS error diagnostics from the thread-local.
@@ -95,11 +103,7 @@ pub fn check_outcome(
     }
 }
 
-pub fn run_single_test(
-    _host: &mut dyn crate::test262::host::Test262Host,
-    harness: &HarnessLoader,
-    test_path: &Path,
-) -> TestOutcome {
+pub fn run_single_test(harness: &HarnessLoader, test_path: &Path) -> TestOutcome {
     let source = match std::fs::read_to_string(test_path) {
         Ok(s) => s,
         Err(e) => {
@@ -116,9 +120,6 @@ pub fn run_single_test(
             }
         }
     };
-    if let Some(reason) = crate::test262::skip::should_skip(&meta) {
-        return TestOutcome::Skip { reason };
-    }
     run_prepared(harness, test_path, &source, &meta)
 }
 
@@ -128,11 +129,6 @@ fn run_prepared(
     source: &str,
     meta: &Test262Metadata,
 ) -> TestOutcome {
-    if meta.flags.contains(&"CanBlockIsTrue".to_string()) {
-        return TestOutcome::Skip {
-            reason: "CanBlockIsTrue: host agent cannot block".into(),
-        };
-    }
     let is_module = meta.flags.contains(&"module".to_string());
     let is_raw = meta.flags.contains(&"raw".to_string());
     let script = match build_script(harness, source, meta, is_raw) {

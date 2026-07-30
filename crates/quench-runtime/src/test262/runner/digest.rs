@@ -48,16 +48,18 @@ pub fn run_stage_digest(
     };
 
     let mut passed = 0usize;
-    let mut skipped = 0usize;
+    let skipped = 0usize;
     let mut failures: Vec<(String, TestFailure)> = Vec::new();
-    let mut skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
+    let skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
 
     for (path, outcome) in outcomes {
         match outcome {
             TestOutcome::Pass => passed += 1,
             TestOutcome::Skip { reason } => {
-                skipped += 1;
-                *skip_reasons.entry(reason).or_default() += 1;
+                failures.push((
+                    path,
+                    TestFailure::from_message(format!("test was skipped: {}", reason)),
+                ));
             }
             TestOutcome::Fail { failure } => failures.push((path, failure)),
         }
@@ -192,8 +194,7 @@ fn one_test(harness: &HarnessLoader, path: &Path, isolated: bool) -> TestOutcome
     if isolated {
         return run_isolated(path);
     }
-    let mut host = crate::test262::host::QuenchHost::new();
-    run_single_test(&mut host, harness, path)
+    run_single_test(harness, path)
 }
 
 /// A failure group key plus per-test detail entries.

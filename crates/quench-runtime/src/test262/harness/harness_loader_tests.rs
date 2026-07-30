@@ -3,8 +3,7 @@
 //! These tests verify the harness wrapper:
 //! - strips frontmatter correctly
 //! - caches loaded files
-//! - overrides deepEqual.js and propertyHelper.js as documented
-//! - skips isConstructor.js
+//! - loads harness files without suppressing their implementations
 //! - does not crash on missing files
 //! - build_script correctly assembles harness + source
 
@@ -98,6 +97,13 @@ fn test_strip_js_function_preserves_after_newline_before_brace() {
     assert!(result.contains("var x = 2;"));
 }
 
+#[test]
+fn test_strip_js_function_ignores_braces_inside_strings() {
+    let source = "function target() { var s = '}'; return s; }\nafter();";
+    let result = super::strip_js_function(source, "target");
+    assert_eq!(result.trim(), "after();");
+}
+
 // =============================================================================
 // HarnessLoader.load
 // =============================================================================
@@ -147,41 +153,36 @@ fn test_harness_loader_load_returns_none_for_missing() {
 }
 
 #[test]
-fn test_harness_loader_load_returns_none_for_empty() {
-    // Create a temp empty file
-    let tmp = std::env::temp_dir().join("quench-empty-harness.js");
+fn test_harness_loader_load_preserves_empty_file_as_loaded() {
+    let root = std::env::temp_dir().join("quench-empty-harness");
+    let harness_dir = root.join("harness");
+    fs::create_dir_all(&harness_dir).unwrap();
+    let tmp = harness_dir.join("empty.js");
     fs::write(&tmp, "   \n\t\n  ").unwrap();
-    let loader = super::HarnessLoader::new(&std::env::temp_dir().to_string_lossy());
-    let result = loader.load("quench-empty-harness.js");
-    fs::remove_file(&tmp).ok();
-    assert!(result.is_none(), "whitespace-only file should return None");
+    let loader = super::HarnessLoader::new(&root.to_string_lossy());
+    let result = loader.load("empty.js");
+    fs::remove_dir_all(&root).ok();
+    assert_eq!(result, Some(String::new()));
 }
 
 #[test]
-fn test_harness_loader_load_deep_equal_returns_empty() {
-    // deepEqual.js override: should return empty (no-op)
+fn test_harness_loader_load_deep_equal_returns_source() {
     let loader = make_loader();
     let content = loader
         .load("deepEqual.js")
         .expect("deepEqual.js should exist");
-    assert!(
-        content.is_empty(),
-        "deepEqual.js override should return empty string, got: {:?}",
-        content
-    );
+    assert!(content.contains("assert.deepEqual"));
 }
 
 #[test]
-fn test_harness_loader_load_property_helper_strips_verify_property() {
-    // propertyHelper.js: verifyProperty is stripped during build_script (not load).
-    // Test via build_script which applies strip_js_function.
+fn test_harness_loader_load_property_helper_preserves_verify_property() {
     let loader = make_loader();
     let content = loader
         .build_script("// source", &["propertyHelper.js".to_string()])
         .expect("build_script with propertyHelper.js should work");
     assert!(
-        !content.contains("function verifyProperty("),
-        "verifyProperty should be stripped from built script"
+        content.contains("function verifyProperty(obj"),
+        "verifyProperty should be included in the built script"
     );
 }
 
@@ -291,16 +292,15 @@ fn test_harness_loader_build_script_includes_includes() {
 }
 
 #[test]
-fn test_harness_loader_build_script_skips_is_constructor() {
+fn test_harness_loader_build_script_includes_is_constructor() {
     let loader = make_loader();
     let source = "var x = 1;";
     let script = loader
         .build_script(source, &["isConstructor.js".to_string()])
         .expect("build_script should succeed even with isConstructor.js");
-    // isConstructor.js should NOT appear in the script
     assert!(
-        !script.contains("function isConstructor"),
-        "isConstructor.js should be skipped in build_script"
+        script.contains("function isConstructor(f)"),
+        "isConstructor.js should be included in build_script"
     );
 }
 
@@ -422,14 +422,14 @@ fn test_harness_loader_load_compar_array() {
 }
 
 #[test]
-fn test_harness_loader_build_script_strips_verify_property_from_property_helper() {
+fn test_harness_loader_build_script_preserves_verify_property_from_property_helper() {
     let loader = make_loader();
     let script = loader
         .build_script("// source", &["propertyHelper.js".to_string()])
         .expect("build_script with propertyHelper.js should work");
     assert!(
-        !script.contains("function verifyProperty("),
-        "verifyProperty should be stripped from built script"
+        script.contains("function verifyProperty(obj"),
+        "verifyProperty should be included in the built script"
     );
 }
 

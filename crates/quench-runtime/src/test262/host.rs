@@ -338,8 +338,7 @@ mod tests {
         let harness = HarnessLoader::new(&default_test262_dir());
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/class/subclass/class-definition-null-proto.js");
-        let mut host = QuenchHost::new();
-        let outcome = run_single_test(&mut host, &harness, &path);
+        let outcome = run_single_test(&harness, &path);
         assert_eq!(outcome, TestOutcome::Pass, "{:?}", outcome);
     }
 
@@ -370,8 +369,7 @@ mod tests {
         let harness = HarnessLoader::new(&default_test262_dir());
         let path = std::path::PathBuf::from(default_test262_dir())
             .join("test/language/statements/class/definition/fn-name-method.js");
-        let mut host = QuenchHost::new();
-        let outcome = run_single_test(&mut host, &harness, &path);
+        let outcome = run_single_test(&harness, &path);
         assert_eq!(outcome, TestOutcome::Pass, "fn-name-method: {:?}", outcome);
     }
 

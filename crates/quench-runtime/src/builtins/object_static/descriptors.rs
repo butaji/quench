@@ -360,9 +360,7 @@ pub fn get_function_property_descriptor(
     }
     if prop == "prototype" {
         let proto = Value::Object(f.get_prototype());
-        // Per ES §14.4.11, generator function .prototype is non-configurable.
-        // Per ES §9.2.4, regular function .prototype is configurable.
-        let configurable = !f.empty_prototype && !f.is_generator;
+        let configurable = false;
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(proto.clone()),

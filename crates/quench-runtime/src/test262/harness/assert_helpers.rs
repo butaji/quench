@@ -1086,9 +1086,9 @@ globalThis.$DONE = function () { doneCalls++; };
         assert!(result.is_ok(), "async test should pass, got: {:?}", result);
     }
 
-    /// Test: what happens when asyncTest({}) is called?
+    /// Test: asyncTest rejects a non-function callback.
     #[test]
-    fn test_async_test_with_non_function() {
+    fn test_async_test_rejects_non_function() {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let test262_dir = manifest_dir
             .parent()
@@ -1118,11 +1118,7 @@ var ret = asyncTest({});
 
         let mut host = crate::test262::QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(
-            result.is_ok(),
-            "asyncTest({{}}) should work, got: {:?}",
-            result
-        );
+        assert!(result.is_err(), "asyncTest({{}}) should fail: {:?}", result);
     }
 
     /// Test: asyncTest({}) inside an async function

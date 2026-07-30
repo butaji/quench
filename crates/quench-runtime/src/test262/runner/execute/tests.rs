@@ -1,5 +1,4 @@
 use super::*;
-use crate::test262::host::QuenchHost;
 use std::path::PathBuf;
 
 #[test]
@@ -86,6 +85,17 @@ fn check_outcome_parse_negative_requires_matching_type() {
 }
 
 #[test]
+fn check_outcome_does_not_match_error_type_in_user_message() {
+    let meta = neg_meta("runtime", "TypeError");
+    let outcome = check_outcome(
+        &meta,
+        Err("Error: message mentions TypeError but is not one".into()),
+        None,
+    );
+    assert!(matches!(outcome, TestOutcome::Fail { .. }));
+}
+
+#[test]
 fn check_outcome_infra_messages_never_pass_negative() {
     for msg in [
         "harness load failure: SyntaxError file missing",
@@ -154,7 +164,7 @@ fn async_script_done_with_error_fails() {
 }
 
 #[test]
-fn can_block_is_true_skips() {
+fn can_block_is_true_runs_instead_of_skipping() {
     let dir = std::env::temp_dir().join(format!("quench-cbit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("cbit.js");
@@ -164,11 +174,29 @@ fn can_block_is_true_skips() {
     )
     .unwrap();
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
-    let mut host = QuenchHost::new();
-    let outcome = run_single_test(&mut host, &harness, &path);
-    assert!(
-        matches!(outcome, TestOutcome::Skip { .. }),
-        "CanBlockIsTrue must skip: {:?}",
-        outcome
-    );
+    let outcome = run_single_test(&harness, &path);
+    assert_eq!(outcome, TestOutcome::Pass);
+}
+
+#[test]
+fn function_prototype_constructor_descriptor_survives_prototype_accessor() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/function/13.2-17-1.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    let outcome = run_single_test(&harness, &path);
+    assert_eq!(outcome, TestOutcome::Pass);
+}
+
+#[test]
+fn function_prototype_descriptor_is_not_configurable() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/function/13.2-18-1.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }

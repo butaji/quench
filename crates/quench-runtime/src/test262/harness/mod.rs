@@ -70,21 +70,7 @@ impl HarnessLoader {
             content
         };
         let trimmed = js_code.trim().to_string();
-        if trimmed.is_empty() {
-            return None;
-        }
-        // NOTE: deepEqual.js is suppressed because Quench's runtime is
-        // incomplete — the upstream file (identical to the local copy) is
-        // spec-correct and used by all major engines. It depends on
-        // Reflect.ownKeys, Symbol.toStringTag, Symbol.iterator, Array.isArray,
-        // Map, Set, all TypedArrays, Promise, and boxed primitives being
-        // fully wired up. Once those exist, delete this override and load the
-        // JS version. See docs/test-harness-overrides.md.
-        let patched = if name == "deepEqual.js" {
-            String::new() // empty = no-op, assert.deepEqual stays native
-        } else {
-            trimmed.clone()
-        };
+        let patched = trimmed.clone();
         self.cache
             .borrow_mut()
             .insert(name.to_string(), patched.clone());
@@ -98,29 +84,10 @@ impl HarnessLoader {
     pub fn build_script(&self, source: &str, includes: &[String]) -> Result<String, String> {
         let mut out = String::with_capacity(source.len() + 4096);
         for inc in includes {
-            // Skip isConstructor.js — the native isConstructor (installed by
-            // try_inject_harness) covers all edge cases. The upstream JS
-            // (identical to the local copy) actually uses Reflect.construct
-            // and is spec-correct — the old comment claiming it checked
-            // typeof f.prototype === 'function' was wrong. Keep the skip
-            // because the native version is simpler and already used by
-            // builtins code. Remove once builtins route through JS only.
-            // See docs/test-harness-overrides.md.
-            if inc == "isConstructor.js" {
-                continue;
-            }
-            // propertyHelper.js: strip the JS verifyProperty function so the native one
-            // (installed by try_inject_harness) handles Symbol-keyed accessor restoration.
-            // Also override nonIndexNumericPropertyName (used by isWritable for arrays)
-            // to a safe value that doesn't cause OOM from array.length = 4294967295.
             if inc == "propertyHelper.js" {
                 match self.load(inc) {
                     Some(h) => {
-                        // Strip `function verifyProperty(...)` block
-                        let stripped = strip_js_function(&h, "verifyProperty");
-                        // Patch nonIndexNumericPropertyName to a safe value to prevent OOM
-                        // when isWritable sets array.length to 4294967295.
-                        let safe = stripped.replace(
+                        let safe = h.replace(
                             "var nonIndexNumericPropertyName = Math.pow(2, 32) - 1;",
                             "var nonIndexNumericPropertyName = 999999;",
                         );
@@ -157,38 +124,108 @@ fn harness_dir() -> std::path::PathBuf {
 
 /// Strip a named `function name(...)` block from JS source by finding the
 /// opening line and counting braces to determine the closing brace.
+#[cfg(test)]
 fn strip_js_function(source: &str, name: &str) -> String {
+    let Some(start) = find_function_start(source, name) else {
+        return source.to_string();
+    };
+    let Some(open) = find_code_char(source.as_bytes(), start, b'{') else {
+        return source.to_string();
+    };
+    let Some(close) = find_function_end(source.as_bytes(), open) else {
+        return source.to_string();
+    };
+    format!("{}{}", &source[..start], &source[close + 1..])
+}
+
+#[cfg(test)]
+fn find_function_start(source: &str, name: &str) -> Option<usize> {
     let target = format!("function {}(", name);
-    let mut result = String::with_capacity(source.len());
-    let mut in_function = false;
-    let mut brace_depth: i32 = 0;
-    for line in source.lines() {
-        if !in_function {
-            if line.trim().starts_with(&target)
-                || line
-                    .trim()
-                    .starts_with(&format!("async function {}(", name))
-            {
-                in_function = true;
-                let opens: i32 = line.chars().filter(|&c| c == '{').count() as i32;
-                let closes: i32 = line.chars().filter(|&c| c == '}').count() as i32;
-                brace_depth = opens - closes;
-                if brace_depth == 0 {
-                    in_function = false;
-                }
-                continue;
-            }
-            result.push_str(line);
-            result.push('\n');
-        } else {
-            brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
-            brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
-            if brace_depth <= 0 {
-                in_function = false;
-            }
+    let async_target = format!("async function {}(", name);
+    let mut offset = 0;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with(&target) || trimmed.starts_with(&async_target) {
+            return Some(offset);
+        }
+        offset += line.len();
+    }
+    None
+}
+
+#[cfg(test)]
+fn find_code_char(bytes: &[u8], start: usize, wanted: u8) -> Option<usize> {
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => i = skip_string(bytes, i),
+            b'/' if bytes.get(i + 1) == Some(&b'/') => i = skip_line_comment(bytes, i),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => i = skip_block_comment(bytes, i),
+            c if c == wanted => return Some(i),
+            _ => i += 1,
         }
     }
-    result
+    None
+}
+
+#[cfg(test)]
+fn find_function_end(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => i = skip_string(bytes, i),
+            b'/' if bytes.get(i + 1) == Some(&b'/') => i = skip_line_comment(bytes, i),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => i = skip_block_comment(bytes, i),
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+fn skip_string(bytes: &[u8], start: usize) -> usize {
+    let quote = bytes[start];
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 2;
+        } else if bytes[i] == quote {
+            return i + 1;
+        } else {
+            i += 1;
+        }
+    }
+    bytes.len()
+}
+
+#[cfg(test)]
+fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
+    bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(bytes.len())
+}
+
+#[cfg(test)]
+fn skip_block_comment(bytes: &[u8], start: usize) -> usize {
+    bytes[start + 2..]
+        .windows(2)
+        .position(|pair| pair == b"*/")
+        .map(|offset| start + offset + 4)
+        .unwrap_or(bytes.len())
 }
 
 /// Inject Test262Error as a NativeConstructor before loading JS harness files.

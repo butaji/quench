@@ -1261,17 +1261,15 @@ results.join(',');
     #[test]
     fn typed_array_float32_resizable_harness_path_reproduces_nan_bug() {
         use crate::test262::harness::HarnessLoader;
-        use crate::test262::host::{QuenchHost, TestOutcome};
-        use crate::test262::runner::default_test262_dir;
-        use crate::test262::runner::run_single_test;
+        use crate::test262::host::TestOutcome;
+        use crate::test262::runner::{default_test262_dir, run_single_test};
 
         let test262_dir = default_test262_dir();
         let harness = HarnessLoader::new(&test262_dir);
         let test_path = std::path::PathBuf::from(&test262_dir)
             .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer-grow-before-end.js");
 
-        let mut host = QuenchHost::new();
-        let outcome = run_single_test(&mut host, &harness, &test_path);
+        let outcome = run_single_test(&harness, &test_path);
         // This should FAIL — NaN bug reproduces here
         assert_eq!(
             outcome,
@@ -1492,7 +1490,6 @@ results.join(',');
         use crate::test262::harness::HarnessLoader;
         use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
-        use crate::test262::runner::run_single_test;
         use std::fs;
 
         let test262_dir = default_test262_dir();
@@ -2204,7 +2201,6 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
     #[test]
     fn typed_array_resizable_buffer_for_of_runs_in_test_thread() {
         use crate::test262::harness::HarnessLoader;
-        use crate::test262::host::QuenchHost;
         use crate::test262::runner::{default_test262_dir, run_single_test};
         use std::path::Path;
 
@@ -2212,7 +2208,7 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
         let harness = HarnessLoader::new(&test262_dir);
         let path = Path::new(&test262_dir)
             .join("test/language/statements/for-of/typedarray-backed-by-resizable-buffer.js");
-        let outcome = run_single_test(&mut QuenchHost::new(), &harness, &path);
+        let outcome = run_single_test(&harness, &path);
         assert!(
             matches!(outcome, crate::test262::host::TestOutcome::Pass),
             "unexpected test outcome: {outcome:?}"

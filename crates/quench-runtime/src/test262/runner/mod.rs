@@ -8,7 +8,7 @@ mod flags;
 use std::path::PathBuf;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{Test262Host, TestFailure, TestOutcome};
+use crate::test262::host::{TestFailure, TestOutcome};
 
 pub use execute::run_single_test;
 pub use flags::default_stage;
@@ -177,7 +177,7 @@ impl Test262Runner {
         }
     }
 
-    pub fn run(&self, host: &mut dyn Test262Host) -> RunSummary {
+    pub fn run(&self) -> RunSummary {
         let flags = RunnerFlags::from_env();
         let mut total = RunSummary::default();
         let mut stage = flags.stage;
@@ -185,7 +185,7 @@ impl Test262Runner {
             let s = if flags.digest {
                 self.digest_stage(stage, stage_dir, &flags)
             } else {
-                self.run_stage(host, stage, stage_dir, &flags)
+                self.run_stage(stage, stage_dir, &flags)
             };
             total.passed += s.passed;
             total.failed += s.failed;
@@ -221,13 +221,7 @@ impl Test262Runner {
         digest::run_stage_digest(&self.harness, stage, stage_dir, &tests, flags).summary
     }
 
-    fn run_stage(
-        &self,
-        host: &mut dyn Test262Host,
-        stage: usize,
-        stage_dir: &str,
-        flags: &RunnerFlags,
-    ) -> RunSummary {
+    fn run_stage(&self, stage: usize, stage_dir: &str, flags: &RunnerFlags) -> RunSummary {
         let full_path = self.test262_dir.join(stage_dir);
         if !full_path.exists() {
             return missing_stage_summary(stage_dir, &full_path);
@@ -239,7 +233,7 @@ impl Test262Runner {
         }
         let mut summary = RunSummary::default();
         for (i, path) in tests.iter().enumerate() {
-            match run_single_test(host, &self.harness, path) {
+            match run_single_test(&self.harness, path) {
                 TestOutcome::Pass => {
                     summary.passed += 1;
                     if !flags.quick && summary.passed % 100 == 0 {
@@ -247,10 +241,12 @@ impl Test262Runner {
                     }
                 }
                 TestOutcome::Skip { reason } => {
-                    summary.skipped += 1;
-                    if !flags.quick && summary.skipped <= 3 {
-                        println!("  SKIP {} ({})", path.display(), reason);
-                    }
+                    summary.failed += 1;
+                    summary.first_failure = Some((
+                        path.display().to_string(),
+                        format!("test was skipped: {}", reason),
+                    ));
+                    break;
                 }
                 TestOutcome::Fail { failure } => {
                     summary.failed += 1;

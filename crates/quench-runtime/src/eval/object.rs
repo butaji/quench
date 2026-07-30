@@ -525,6 +525,26 @@ pub(crate) fn assign_to_object(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    if !crate::value::is_private_name_key(prop_name) {
+        let own_flags = { o.borrow().get_descriptor(prop_name) };
+        if let Some(flags) = own_flags {
+            if flags.value.is_some() {
+                if !flags.writable {
+                    if crate::interpreter::is_strict_mode() {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot assign to read only property",
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
+                    return Ok(());
+                }
+                o.borrow_mut().set(prop_name, value.clone());
+                return Ok(());
+            }
+        }
+    }
+
     // Walk prototype chain for inherited setters (ES §10.2.9 [[Set]]).
     let mut prototype: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
     let mut setter_clone: Option<SetterStorage> = None;

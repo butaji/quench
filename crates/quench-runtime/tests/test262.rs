@@ -1,7 +1,7 @@
 //! test262 conformance integration test
 //!
 //! Run with:
-//!   cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+//!   cargo test -p quench-runtime --test test262 test262_staged -- --nocapture
 
 use quench_runtime::test262::host::TestOutcome;
 use quench_runtime::test262::runner::execute::run_single_test;
@@ -214,14 +214,12 @@ fn test_runner_path_per_iteration_binding() {
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
     let test262_dir = repo_root.join("tests/test262");
     let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
-    let mut host = QuenchHost::new();
-
     let test_path = test262_dir.join(
         "test/language/statements/let/syntax/\
          let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js",
     );
 
-    let outcome = run_single_test(&mut host, &harness, &test_path);
+    let outcome = run_single_test(&harness, &test_path);
     match outcome {
         TestOutcome::Pass => {} // good
         TestOutcome::Fail { failure } => {
@@ -243,8 +241,6 @@ fn test_runner_path_multi_let_per_iteration() {
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
     let test262_dir = repo_root.join("tests/test262");
     let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
-    let mut host = QuenchHost::new();
-
     let tests = vec![
         "let-iteration-variable-is-freshly-allocated-for-each-iteration-single-let-binding.js",
         "let-iteration-variable-is-freshly-allocated-for-each-iteration-multi-let-binding.js",
@@ -255,7 +251,7 @@ fn test_runner_path_multi_let_per_iteration() {
         let test_path = test262_dir
             .join("test/language/statements/let/syntax")
             .join(name);
-        let outcome = run_single_test(&mut host, &harness, &test_path);
+        let outcome = run_single_test(&harness, &test_path);
         match outcome {
             TestOutcome::Pass => {}
             TestOutcome::Fail { failure } => {
@@ -271,7 +267,7 @@ fn test_runner_path_multi_let_per_iteration() {
     }
 }
 
-// ── Stage 30 staged runner ───────────────────────────────────────────────────
+// ── Staged runner ───────────────────────────────────────────────────────────
 
 #[test]
 fn test262_staged() {
@@ -303,8 +299,7 @@ fn test262_staged_impl() {
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let runner = Test262Runner::new(test262_dir);
-    let mut host = QuenchHost::new();
-    let summary = runner.run(&mut host);
+    let summary = runner.run();
     if summary.skipped > 0 && !digest {
         let mut reason_counts: std::collections::BTreeMap<&str, usize> =
             std::collections::BTreeMap::new();
