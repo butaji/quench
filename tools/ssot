@@ -23,6 +23,10 @@ set -euo pipefail
 #   bash tools/ssot --next --run --fast        # run next stage without preflight
 #   bash tools/ssot --next --run --fast --commit --push
 #                                          # fast milestone flow
+# Momentum path:
+#   bash tools/ssot --sprint                  # check blocker status, then run fast test-run
+#   bash tools/ssot --sprint --commit         # run current stage fast, commit if tests pass
+#   bash tools/ssot --sprint --commit --push    # run fast, commit, push current milestone
 
 RUN=0
 STATUS=0
@@ -32,6 +36,7 @@ JSON=0
 COMMIT=0
 PUSH=0
 FAST=0
+SPRINT=0
 COMMIT_MESSAGE=""
 
 while [[ ${#} -gt 0 ]]; do
@@ -54,6 +59,10 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --fast)
       FAST=1
+      shift
+      ;;
+    --sprint)
+      SPRINT=1
       shift
       ;;
     --stage)
@@ -114,9 +123,42 @@ if [[ "$PUSH" -eq 1 && "$COMMIT" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "$COMMIT" -eq 1 && "$RUN" -eq 0 && "$JSON" -eq 0 ]]; then
+if [[ "$SPRINT" -eq 0 && "$COMMIT" -eq 1 && "$RUN" -eq 0 && "$JSON" -eq 0 ]]; then
   echo "error: --commit requires --run" >&2
   exit 1
+fi
+
+if [[ "$SPRINT" -eq 1 ]]; then
+  if [[ "$STATUS" -eq 1 || "$NEXT" -eq 1 || -n "$STAGE" || "$JSON" -eq 1 || "$RUN" -eq 1 || "$PUSH" -eq 1 ]]; then
+    echo "error: --sprint is exclusive and implies fast run for current stage" >&2
+    exit 1
+  fi
+
+  SPRINT_STATUS="$(bash tools/test-run-status-summary.sh --json)"
+  IS_BLOCKED="$(python3 - "$SPRINT_STATUS" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+status = payload.get("test_run_status_summary", {}) if isinstance(payload, dict) else {}
+print(1 if status.get("is_blocked", False) else 0)
+PY
+)"
+
+  if [[ "$IS_BLOCKED" -eq 1 ]]; then
+    echo "sprint blocked: current stage has existing failures" >&2
+    bash tools/test-run-status-summary.sh
+    exit 1
+  fi
+
+  if [[ "$COMMIT" -eq 1 && "$PUSH" -eq 1 ]]; then
+    bash tools/ssot --run --fast --commit --push
+  elif [[ "$COMMIT" -eq 1 ]]; then
+    bash tools/ssot --run --fast --commit
+  else
+    bash tools/ssot --run --fast
+  fi
+  exit 0
 fi
 
 if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then

@@ -40,6 +40,9 @@ Fast milestone flow (SSOT == test-run):
 bash tools/ssot                               # show current SSOT status (test-run summary)
 bash tools/ssot --status                     # same as above
 bash tools/ssot --run --fast                 # run current stage (fast)
+bash tools/ssot --sprint                     # check blockers, then run fast current stage
+bash tools/ssot --sprint --commit            # run fast + commit current milestone
+bash tools/ssot --sprint --commit --push      # run fast + commit + push milestone
 bash tools/ssot --run --commit               # run + commit current stage milestone
 bash tools/ssot --run --commit --push         # run + commit + push current stage milestone
 bash tools/ssot --next                       # print next pending stage id
