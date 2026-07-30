@@ -11,10 +11,14 @@ set -euo pipefail
 #   bash tools/ssot --run --stage 37 --commit   # run explicit stage milestone
 #   bash tools/ssot --status                   # print current test-run summary
 #   bash tools/ssot --status --json            # print summary JSON
+#   bash tools/ssot --next                    # print next pending stage id
+#   bash tools/ssot --next --run              # run next pending stage
+#   bash tools/ssot --next --run --commit      # run, commit, push? next stage on success via --push
 
 RUN=0
 STATUS=0
 STAGE=""
+NEXT=0
 JSON=0
 COMMIT=0
 PUSH=0
@@ -24,6 +28,10 @@ while [[ ${#} -gt 0 ]]; do
   case "${1:-}" in
     --status)
       STATUS=1
+      shift
+      ;;
+    --next)
+      NEXT=1
       shift
       ;;
     --run)
@@ -63,6 +71,14 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 if [[ "$STATUS" -eq 1 ]]; then
+  if [[ "$NEXT" -eq 1 ]]; then
+    if [[ "$JSON" -eq 1 ]]; then
+      bash tools/test-run-go-next.sh --status --json
+    else
+      bash tools/test-run-go-next.sh --status
+    fi
+    exit 0
+  fi
   if [[ -n "$STAGE" ]]; then
     echo "error: --stage is not supported with --status" >&2
     exit 1
@@ -104,6 +120,17 @@ if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
       STAGE_ARGS+=(--push)
     fi
     bash tools/milestone.sh "${STAGE_ARGS[@]}"
+  elif [[ "$NEXT" -eq 1 ]]; then
+    GO_NEXT_ARGS=(--run)
+    if [[ "$PUSH" -eq 1 ]]; then
+      GO_NEXT_ARGS+=(--push)
+    fi
+    if [[ -n "$COMMIT_MESSAGE" ]]; then
+      GO_NEXT_ARGS+=(--commit "$COMMIT_MESSAGE")
+    elif [[ "$COMMIT" -eq 1 ]]; then
+      GO_NEXT_ARGS+=(--commit)
+    fi
+    bash tools/test-run-go-next.sh "${GO_NEXT_ARGS[@]}"
   elif [[ "$RUN" -eq 1 ]]; then
     if [[ -n "$STAGE" ]]; then
       if [[ "$JSON" -eq 1 ]]; then
@@ -125,6 +152,11 @@ if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
     fi
     bash tools/test-run-stage.sh "${STAGE_ARGS[@]}"
   fi
+  exit 0
+fi
+
+if [[ "$NEXT" -eq 1 ]]; then
+  bash tools/test-run-go-next.sh --print
   exit 0
 fi
 

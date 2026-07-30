@@ -6,6 +6,7 @@ Terminology is single-source:
 - `test run` is the canonical term for stage status and milestone progress.
 - `progress` and `snapshot` refer to `test run` data.
 - `ssot` is the canonical shorthand for `test run` (`ssot` == `test run`).
+- `ssot` handles current-stage and next-pending-stage entrypoints (`--next` for queue navigation).
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; use `TEST262_TEST_RUN_BUILD=1` for stage prebuild mode.
 
 ```bash
@@ -42,6 +43,13 @@ bash tools/stage-status.sh
 bash tools/stage-status.sh --current
 # Canonical single-command test-run progress snapshot
 bash tools/implementation-progress.sh
+# Canonical one-line workflow for SSOT/test-run
+bash tools/ssot
+bash tools/ssot --status
+bash tools/ssot --json
+bash tools/ssot --next
+bash tools/ssot --next --run
+bash tools/ssot --next --run --commit --push
 # Fast preflight guard before running stage test-run automation
 bash tools/test-run-preflight.sh
 # Preflight with machine-readable output

@@ -39,13 +39,11 @@ Fast milestone flow:
 ```bash
 bash tools/ssot                              # run current stage test-run
 bash tools/ssot --status                     # print current stage summary
-bash tools/milestone-go.sh                  # run next stage, advance, commit
-bash tools/ship-milestone.sh                # same, plus optional --push + --message
-bash tools/milestone-go.sh --push           # ...and push
-bash tools/milestone-go.sh --message "msg"  # custom commit message
+bash tools/ssot --next                      # print next pending stage
+bash tools/ssot --next --run --commit        # run next stage and commit on success
+bash tools/ship-milestone.sh                 # explicit current-stage milestone flow
 ```
-
-`tools/milestone-go.sh` is test-run-first: it only advances on successful test-run.
+`tools/ssot` is the canonical short path: `--next` targets next pending stage, default targets current.
 
 ## TypeScript / JSX
 
