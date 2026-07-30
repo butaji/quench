@@ -37,11 +37,12 @@ mode: every non-`raw` test runs sloppy, then with `"use strict";`.
 Fast milestone flow:
 
 ```bash
-bash tools/ssot                              # run current stage test-run
-bash tools/ssot --status                     # print current stage summary
-bash tools/ssot --next                      # print next pending stage
-bash tools/ssot --next --run --commit        # run next stage and commit on success
-bash tools/ship-milestone.sh                 # explicit current-stage milestone flow
+bash tools/ssot                              # run current stage test-run (SSOT)
+bash tools/ssot --test                        # explicit run alias (SSOT)
+bash tools/ssot --run --commit               # run + commit current milestone
+bash tools/ssot --run --commit --push         # run + commit + push current milestone
+bash tools/ssot --status                     # print current implementation/test-run status
+bash tools/ssot --next                       # print next pending stage id
 ```
 `tools/ssot` is the canonical short path: `--next` targets next pending stage, default targets current.
 

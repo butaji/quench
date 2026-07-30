@@ -5,6 +5,8 @@ set -euo pipefail
 # Usage:
 #   bash tools/ssot                           # run current stage test-run
 #   bash tools/ssot --run                     # run current stage test-run (default)
+#   bash tools/ssot --test                    # explicit alias for --run (SSOT test-run)
+#   bash tools/ssot --test-run                # explicit alias for --run
 #   bash tools/ssot --run --commit             # run and commit current milestone
 #   bash tools/ssot --run --commit --push       # run, commit, push current milestone
 #   bash tools/ssot --run --json               # run current stage test-run with JSON output
@@ -34,7 +36,7 @@ while [[ ${#} -gt 0 ]]; do
       NEXT=1
       shift
       ;;
-    --run)
+    --run|--test|--test-run)
       RUN=1
       shift
       ;;
