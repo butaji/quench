@@ -68,6 +68,19 @@ summary_only = sys.argv[4] == "1"
 raw_output = sys.argv[5] == "1"
 out_text = output_path.read_text()
 
+
+def extract_last_json_object(text: str):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        candidate = line
+        if not candidate.startswith("{") or not candidate.endswith("}"):
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    return None
+
 summary = {
     "raw_output": raw_output,
 }
@@ -76,13 +89,29 @@ payload = None
 try:
     payload = json.loads(out_text)
 except json.JSONDecodeError:
-    if raw_output and not summary_only:
-        if len(out_text) > 4096:
-            summary["raw"] = out_text[-4096:]
-            summary["raw_truncated"] = True
-        else:
-            summary["raw"] = out_text.strip()
-            summary["raw_truncated"] = False
+    payload = extract_last_json_object(out_text)
+    if payload is None:
+        if raw_output and not summary_only:
+            if len(out_text) > 4096:
+                summary["raw"] = out_text[-4096:]
+                summary["raw_truncated"] = True
+            else:
+                summary["raw"] = out_text.strip()
+                summary["raw_truncated"] = False
+    else:
+        run_test_plan = payload.get("run-test-plan") if isinstance(payload, dict) else None
+        if isinstance(run_test_plan, dict):
+            summary["mode"] = run_test_plan.get("mode")
+            status_payload = run_test_plan.get("status_payload", {})
+            if isinstance(status_payload, dict) and summary["mode"] == "single":
+                summary["stage"] = status_payload.get("stage")
+                summary["source"] = status_payload.get("source")
+            elif isinstance(status_payload, dict) and summary["mode"] == "batch":
+                batch = status_payload.get("run-pending-batch", {})
+                if isinstance(batch, dict):
+                    summary["count"] = batch.get("count")
+                    summary["top"] = batch.get("top")
+                    summary["stages"] = len(batch.get("stages", []) or [])
 else:
     run_test_plan = payload.get("run-test-plan") if isinstance(payload, dict) else None
     if isinstance(run_test_plan, dict):
