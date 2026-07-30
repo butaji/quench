@@ -50,6 +50,10 @@ bash tools/implementation-progress.sh --next
 bash tools/implementation-progress.sh --next --ci
 # Add aggregate implementation summary fields (done/pending/progress)
 bash tools/implementation-progress.sh --summary
+# Compact status summary for current stage test-run
+bash tools/test-run-status-summary.sh
+# Fail with non-zero exit code only when current stage has failures
+bash tools/test-run-status-summary.sh --blocker
 # Raw script output (human-readable)
 bash tools/implementation-progress.sh --raw
 # Milestone workflow shortcut for current-stage status
