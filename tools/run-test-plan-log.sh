@@ -5,8 +5,12 @@ set -euo pipefail
 # Usage:
 #   bash tools/run-test-plan-log.sh [run-test-plan args...]
 #   bash tools/run-test-plan-log.sh --log-file /tmp/plan.log --status --json
+#   bash tools/run-test-plan-log.sh --status --json --raw
+#   bash tools/run-test-plan-log.sh --summary-only --status --json
 
 RUN_PLAN_LOG="${RUN_TEST_PLAN_LOG:-./.test262_plan_runs.log}"
+SUMMARY_ONLY=0
+RAW_OUTPUT=0
 ARGS=("$@")
 
 while [[ ${#} -gt 0 ]]; do
@@ -15,8 +19,16 @@ while [[ ${#} -gt 0 ]]; do
             RUN_PLAN_LOG="$2"
             shift 2
             ;;
+        --summary-only)
+            SUMMARY_ONLY=1
+            shift
+            ;;
+        --raw)
+            RAW_OUTPUT=1
+            shift
+            ;;
         -h|--help)
-            sed -n '1,160p' "$0"
+            sed -n '1,200p' "$0"
             exit 0
             ;;
         *)
@@ -38,9 +50,11 @@ bash tools/run-test-plan.sh "${ARGS[@]}" > "$TMP_OUTPUT" 2>&1
 EXIT_CODE=$?
 set -e
 
-cat "$TMP_OUTPUT"
+if [[ "$SUMMARY_ONLY" -eq 0 ]]; then
+    cat "$TMP_OUTPUT"
+fi
 
-python3 - "$RUN_PLAN_LOG" "$TMP_OUTPUT" "$EXIT_CODE" <<'PY'
+python3 - "$RUN_PLAN_LOG" "$TMP_OUTPUT" "$EXIT_CODE" "$SUMMARY_ONLY" "$RAW_OUTPUT" <<'PY'
 import json
 import sys
 from datetime import datetime
@@ -49,13 +63,25 @@ from pathlib import Path
 log_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
 exit_code = int(sys.argv[3])
+summary_only = sys.argv[4] == "1"
+raw_output = sys.argv[5] == "1"
 out_text = output_path.read_text()
 
-summary = {}
+summary = {
+    "raw_output": raw_output,
+}
+
+payload = None
 try:
     payload = json.loads(out_text)
 except json.JSONDecodeError:
-    summary = {"raw_output": out_text.strip()}
+    if raw_output and not summary_only:
+        if len(out_text) > 4096:
+            summary["raw"] = out_text[-4096:]
+            summary["raw_truncated"] = True
+        else:
+            summary["raw"] = out_text.strip()
+            summary["raw_truncated"] = False
 else:
     run_test_plan = payload.get("run-test-plan") if isinstance(payload, dict) else None
     if isinstance(run_test_plan, dict):
