@@ -51,16 +51,6 @@ STAGE_DATA="$(bash tools/stage-status.sh --json --current)" || {
     exit 2
 }
 
-if [[ "$STAGE" == "" ]]; then
-    STAGE="$(python3 - "$STAGE_DATA" <<'PY'
-import json
-import sys
-payload = json.loads(sys.argv[1])
-print(payload.get('current_stage', ''))
-PY
-)"
-fi
-
 python3 - "$STAGE_DATA" "$STAGE" "$JSON" "$RAW" <<'PY'
 import json
 import sys
@@ -76,6 +66,13 @@ if not isinstance(payload, dict):
 
 info = payload.get('stage') if isinstance(payload, dict) else None
 current = str(payload.get('current_stage', ''))
+if not stage:
+    stage = current
+
+if not current:
+    print('error: stage payload missing current_stage', file=sys.stderr)
+    raise SystemExit(2)
+
 if not info:
     print('error: stage payload missing data', file=sys.stderr)
     raise SystemExit(2)
