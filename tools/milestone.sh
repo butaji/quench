@@ -289,55 +289,26 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
     exit 0
 fi
 
+
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
-    if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
-        set +e
-        STATUS_SCOPE="all"
-        ALL_STATUS_JSON="$(bash tools/stage-status.sh --json)"
+    STATUS_SCOPE="all"
+    if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
+        STATUS_SCOPE="next-id"
+    elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
+        STATUS_SCOPE="current"
+    elif [[ "$STATUS_NEXT" -eq 1 ]]; then
+        STATUS_SCOPE="next"
+    fi
+
+    if ! STATUS_JSON_TEXT="$(bash tools/stage-status.sh --json)"; then
         STATUS_RC=$?
+        STATUS_PAYLOAD="{}"
+    else
+        STATUS_RC=0
+        STATUS_PAYLOAD="$STATUS_JSON_TEXT"
+    fi
 
-        if [[ "$STATUS_CURRENT" -eq 1 ]]; then
-            STATUS_SCOPE="current"
-        elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-            STATUS_SCOPE="next"
-        elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-            STATUS_SCOPE="next-id"
-        fi
-
-        STATUS_PAYLOAD="$(python3 - "$ALL_STATUS_JSON" "$STATUS_CURRENT" "$STATUS_NEXT" "$NEXT_ID_ONLY" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-mode_current = sys.argv[2] == "1"
-mode_next = sys.argv[3] == "1"
-mode_next_id = sys.argv[4] == "1"
-
-if mode_next_id:
-    current = payload.get('current_stage')
-    stages = payload.get('stages', [])
-    next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
-    next_id = 0 if next_stage is None else next_stage.get('id', 0)
-    print(json.dumps({'next_id': str(next_id)}))
-    raise SystemExit(0)
-
-if mode_current:
-    current = payload.get('current_stage')
-    stages = payload.get('stages', [])
-    current_stage = next((s for s in stages if s.get('id') == current), {})
-    print(json.dumps({'current_stage': current, 'stage': current_stage}, sort_keys=True))
-    raise SystemExit(0)
-
-if mode_next:
-    current = payload.get('current_stage')
-    stages = payload.get('stages', [])
-    next_stage = next((s for s in stages if s.get('id', 0) > current and s.get('status') != 'done'), None)
-    print(json.dumps({'current_stage': current, 'next_stage': next_stage.get('id') if next_stage is not None else None, 'stage': next_stage}, sort_keys=True))
-    raise SystemExit(0)
-
-print(json.dumps(payload, sort_keys=True))
-PY
-)"
+    if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 || "$QUIET" -eq 1 ]]; then
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
@@ -347,18 +318,15 @@ PY
             bash tools/test-run-ci-gate.sh
             CI_RC=$?
             set -e
+            CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
         fi
+    fi
 
-        if [[ "$STATUS_JSON" -eq 1 ]]; then
-            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" 0 <<'PY'
+    if [[ "$STATUS_JSON" -eq 1 ]]; then
+        if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
-
-status_payload = sys.argv[1]
-ci_payload = sys.argv[2]
-status_scope = sys.argv[3]
-status_rc = int(sys.argv[4])
-ci_rc = int(sys.argv[5])
 
 
 def parse(payload):
@@ -367,15 +335,19 @@ def parse(payload):
     except Exception:
         return {}
 
-status = parse(status_payload)
-ci = parse(ci_payload)
+status_payload = parse(sys.argv[1])
+ci_payload = parse(sys.argv[2])
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
+
 print(
     json.dumps(
         {
             "status_scope": status_scope,
-            "status": status,
-            "ci": ci,
-            "ready": bool(ci.get("ci", {}).get("ready", False)),
+            "status": status_payload,
+            "ci": ci_payload,
+            "ready": bool(ci_payload.get("ci", {}).get("ready", False)),
             "status_rc": status_rc,
             "ci_rc": ci_rc,
             "ok": status_rc == 0 and ci_rc == 0,
@@ -384,17 +356,10 @@ print(
     )
 )
 PY
-        fi
-        if [[ "$STATUS_RAW" -eq 1 ]]; then
-            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" 1 <<'PY'
+        else
+            python3 - "$STATUS_PAYLOAD" "$STATUS_SCOPE" <<'PY'
 import json
 import sys
-
-status_payload = sys.argv[1]
-ci_payload = sys.argv[2]
-status_scope = sys.argv[3]
-status_rc = int(sys.argv[4])
-ci_rc = int(sys.argv[5])
 
 
 def parse(payload):
@@ -403,49 +368,141 @@ def parse(payload):
     except Exception:
         return {}
 
-status = parse(status_payload)
-ci = parse(ci_payload)
+payload = parse(sys.argv[1])
+status_scope = sys.argv[2]
+stages = payload.get('stages', []) if isinstance(payload, dict) else []
+current_stage = payload.get('current_stage') if isinstance(payload, dict) else None
+
+if status_scope == 'next-id':
+    next_stage = next((s for s in stages if isinstance(s, dict) and s.get('id', 0) > current_stage and s.get('status') != 'done'), None)
+    print(json.dumps({'next_id': None if next_stage is None else next_stage.get('id', 0)}))
+    raise SystemExit(0)
+
+if status_scope == 'current':
+    current = next((s for s in stages if isinstance(s, dict) and s.get('id') == current_stage), None)
+    print(json.dumps({'current_stage': current_stage, 'stage': current}, sort_keys=True))
+    raise SystemExit(0)
+
+if status_scope == 'next':
+    next_stage = next((s for s in stages if isinstance(s, dict) and s.get('id', 0) > current_stage and s.get('status') != 'done'), None)
+    print(json.dumps({'current_stage': current_stage, 'next_stage': next_stage.get('id') if next_stage is not None else None, 'stage': next_stage}, sort_keys=True))
+    raise SystemExit(0)
+
+print(json.dumps(payload, sort_keys=True))
+PY
+        fi
+    elif [[ "$STATUS_RAW" -eq 1 ]]; then
+        if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
+import json
+import sys
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+status = parse(sys.argv[1])
+ci = parse(sys.argv[2])
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
 ready = bool(ci.get("ci", {}).get("ready", False))
-print(
-    f"[milestone:{status_scope}] status_rc={status_rc} ci_rc={ci_rc} ready={ready} ok={status_rc == 0 and ci_rc == 0}"
-)
+
+print(f"[milestone:{status_scope}] status_rc={status_rc} ci_rc={ci_rc} ready={ready} ok={status_rc == 0 and ci_rc == 0}")
 print(f"status={json.dumps(status)}")
 print(f"ci={json.dumps(ci)}")
 PY
-        fi
-        set -e
-    else
-        if [[ "$QUIET" -eq 0 ]]; then
-            if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
-                bash tools/stage-status.sh --json --current
-            elif [[ "$STATUS_JSON" -eq 1 && "$STATUS_NEXT" -eq 1 ]]; then
-                bash tools/stage-status.sh --json --next
-            elif [[ "$STATUS_JSON" -eq 1 ]]; then
-                bash tools/stage-status.sh --json
-            elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
-                bash tools/stage-status.sh --current
-            elif [[ "$STATUS_NEXT" -eq 1 ]]; then
-                if [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
-                    bash tools/stage-status.sh --next-id
-                else
-                    bash tools/stage-status.sh --next
-                fi
-            else
-                bash tools/stage-status.sh
-            fi
+        else
+            python3 - "$STATUS_PAYLOAD" "$STATUS_SCOPE" <<'PY'
+import json
+import sys
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+payload = parse(sys.argv[1])
+stages = payload.get('stages', []) if isinstance(payload, dict) else []
+status_scope = sys.argv[2]
+current_stage = payload.get('current_stage') if isinstance(payload, dict) else None
+current_entry = next((s for s in stages if isinstance(s, dict) and s.get('id') == current_stage), {}) if isinstance(stages, list) else {}
+next_stage = payload.get('stage') if isinstance(payload, dict) else None
+
+
+def fmt(value):
+    return '' if value is None else str(value)
+
+if status_scope == 'next-id':
+    if isinstance(stages, list) and isinstance(current_stage, int):
+        candidate = next((s for s in stages if isinstance(s, dict) and s.get('id', 0) > current_stage and s.get('status') != 'done'), None)
+        next_id = candidate.get('id') if isinstance(candidate, dict) else None
+    else:
+        next_id = None
+    if not next_id:
+        print('No pending next stage found.')
+    else:
+        print(f"Next stage id: {fmt(next_id)}")
+    raise SystemExit(0)
+
+if status_scope == 'all' and isinstance(stages, list):
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        marker = '>>> ' if stage.get('id') == current_stage else '    '
+        print(f"{marker}{stage.get('id', ''):>3} {str(stage.get('status', 'unknown')):>8}  {stage.get('tests', 0):>6}  {stage.get('path', '')}")
+
+    total = sum(stage.get('tests', 0) for stage in stages if isinstance(stage, dict))
+    done_tests = sum(stage.get('tests', 0) for stage in stages if isinstance(stage, dict) and stage.get('status') == 'done')
+    done = sum(1 for stage in stages if isinstance(stage, dict) and stage.get('status') == 'done')
+    pending = len(stages) - done
+    print()
+    print(f"Done: {done}/{len(stages)} stages ({done_tests}/{total} tests)")
+    print(f"Pending: {pending} stages ({total - done_tests} tests)")
+    print(f"Current: Stage {fmt(current_stage)}")
+    print(f"Progress: {done_tests * 100 / total:.1f}%" if total else 'Progress: 0.0%')
+    raise SystemExit(0)
+
+if status_scope == 'all':
+    print('No stage data available.')
+    raise SystemExit(0)
+
+print(f"Current stage: {fmt(current_stage)}")
+print(f"Path:       {fmt(current_entry.get('path', ''))}")
+print(f"Status:     {fmt(current_entry.get('status', 'unknown'))}")
+print(f"Tests:      {fmt(current_entry.get('tests', 0))}")
+print(f"Failed:     {fmt(current_entry.get('failed', 0))}")
+
+if status_scope == 'next':
+    if isinstance(next_stage, dict) and next_stage.get('id') not in (None, 0, '0', ''):
+        print()
+        print(f"Next stage: {fmt(next_stage.get('id'))}")
+        print(f"Path:      {fmt(next_stage.get('path', ''))}")
+        print(f"Status:    {fmt(next_stage.get('status', 'unknown'))}")
+        print(f"Tests:     {fmt(next_stage.get('tests', 0))}")
+    else:
+        print("No pending next stage found.")
+PY
         fi
     fi
-    log_msg "[milestone] Current stage is ${STAGE}."
-    log_status "status-only" "displayed status only"
-    if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 && "$STATUS_WITH_CI" -eq 0 ]]; then
-        show_history
+
+    if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 ]]; then
+        log_msg "[milestone] Current stage is ${STAGE}."
+        log_status "status-only" "displayed status only"
+        if [[ "$STATUS_WITH_CI" -eq 0 ]]; then
+            show_history
+        fi
     fi
     if [[ "$STATUS_WITH_CI" -eq 1 && "$CI_RC" -ne 0 ]]; then
         exit 1
     fi
     exit 0
 fi
-
 if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
     if [[ "$RUN_TEST_RUN_PREFLIGHT" -eq 1 ]]; then
         bash tools/test-run-preflight.sh || exit 1
