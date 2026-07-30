@@ -286,13 +286,16 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
-    if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
+if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
+        STATUS_SCOPE="all"
         if [[ "$STATUS_JSON" -eq 1 ]]; then
             if [[ "$STATUS_CURRENT" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
+                STATUS_SCOPE="current"
             elif [[ "$STATUS_NEXT" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
+                STATUS_SCOPE="next"
             elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
                 NEXT_ID="$(bash tools/stage-status.sh --next-id)"
                 STATUS_PAYLOAD="$(python3 - "$NEXT_ID" <<'PY'
@@ -303,6 +306,7 @@ payload = {"next_id": sys.argv[1].strip()}
 print(json.dumps(payload))
 PY
 )"
+                STATUS_SCOPE="next-id"
             else
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
             fi
@@ -331,6 +335,7 @@ ci = parse(ci_payload)
 print(
     json.dumps(
         {
+            "status_scope": "$STATUS_SCOPE",
             "status": status,
             "ci": ci,
             "ready": bool(ci.get("ci", {}).get("ready", False)),
