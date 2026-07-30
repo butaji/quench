@@ -6,6 +6,8 @@ set -euo pipefail
 #   bash tools/run-pending-batch.sh                    # show top 3 pending by fail count
 #   bash tools/run-pending-batch.sh --top 5 --ratio
 #   bash tools/run-pending-batch.sh --top 3 --run
+#   bash tools/run-pending-batch.sh --run --stop-on-fail
+#   bash tools/run-pending-batch.sh --run --max-failures 2
 
 TOP=3
 RATIO=0
@@ -13,6 +15,8 @@ BUILD=0
 DRY_RUN=1
 JSON=0
 STATUS=0
+STOP_ON_FAIL=0
+MAX_FAILURES=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -44,6 +48,18 @@ while [[ ${#} -gt 0 ]]; do
             STATUS=1
             shift
             ;;
+        --stop-on-fail)
+            STOP_ON_FAIL=1
+            shift
+            ;;
+        --max-failures)
+            if [[ "${2:-}" == "" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "error: --max-failures requires a numeric argument" >&2
+                exit 1
+            fi
+            MAX_FAILURES="$2"
+            shift 2
+            ;;
         -h|--help)
             sed -n '1,120p' "$0"
             exit 0
@@ -67,7 +83,7 @@ if [[ "$BUILD" -eq 1 ]]; then
     export TEST262_TEST_RUN_BUILD=1
 fi
 
-PAYLOAD="$("${PAYLOAD_CMD[@]}")"
+PAYLOAD="$(${PAYLOAD_CMD[@]})"
 STAGES=$(python3 - "$PAYLOAD" <<'PY'
 import json
 import sys
@@ -92,10 +108,11 @@ if [[ "$STATUS" -eq 1 ]]; then
     export RATIO_BATCH="$RATIO"
     export DRY_RUN_BATCH="$DRY_RUN"
     export BUILD_BATCH="$BUILD"
+    export STOP_ON_FAIL_BATCH="$STOP_ON_FAIL"
+    export MAX_FAILURES_BATCH="$MAX_FAILURES"
     export PAYLOAD_BATCH="$PAYLOAD"
     python3 - <<PY
 import json
-import sys
 import os
 
 data = json.loads(os.environ["PAYLOAD_BATCH"])
@@ -105,6 +122,8 @@ payload = {
     "ratio": os.environ["RATIO_BATCH"] == "1",
     "run": os.environ["DRY_RUN_BATCH"] == "0",
     "build": os.environ["BUILD_BATCH"] == "1",
+    "stop_on_fail": os.environ["STOP_ON_FAIL_BATCH"] == "1",
+    "max_failures": int(os.environ["MAX_FAILURES_BATCH"]),
     "stages": data.get("stages", []),
 }
 print(json.dumps({"run-pending-batch": payload}, sort_keys=True))
@@ -123,16 +142,33 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 FAILED=0
+FAILED_STAGES=()
+FAIL_COUNT=0
 while IFS= read -r STAGE; do
     [[ -z "$STAGE" ]] && continue
     echo "[run-pending-batch] stage=${STAGE}"
     if ! TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --; then
         echo "[run-pending-batch] stage ${STAGE} failed" >&2
         FAILED=1
-    fi
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        FAILED_STAGES+=("${STAGE}")
 
+        if [[ "$STOP_ON_FAIL" -eq 1 ]]; then
+            echo "[run-pending-batch] stop-on-fail requested; aborting batch" >&2
+            break
+        fi
+
+        if [[ "$MAX_FAILURES" -gt 0 && "$FAIL_COUNT" -ge "$MAX_FAILURES" ]]; then
+            echo "[run-pending-batch] max-failures (${MAX_FAILURES}) reached; aborting batch" >&2
+            break
+        fi
+    fi
 done <<< "$STAGES"
 
 if [[ "$FAILED" -ne 0 ]]; then
+    printf '[run-pending-batch] failed=%s failed_stages=%s\n' "$FAIL_COUNT" "${FAILED_STAGES[*]}" >&2
+    if [[ "$MAX_FAILURES" -gt 0 ]]; then
+        echo "[run-pending-batch] max-failure budget remaining: $((MAX_FAILURES - FAIL_COUNT))" >&2
+    fi
     exit 1
 fi

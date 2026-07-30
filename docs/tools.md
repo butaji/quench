@@ -71,6 +71,10 @@ bash tools/run-pending-batch.sh --ratio --top 5
 bash tools/run-pending-batch.sh --ratio --top 5 --run
 # Machine-readable status object for batch plan
 bash tools/run-pending-batch.sh --ratio --top 5 --status
+# Stop immediately when first stage in batch fails
+bash tools/run-pending-batch.sh --ratio --run --stop-on-fail
+# Allow at most N failures before aborting (0 = unlimited, default)
+bash tools/run-pending-batch.sh --ratio --run --max-failures 2
 # Quick aggregate remaining-work summary
 bash tools/pending-stages.sh --summary
 bash tools/pending-stages.sh --summary --json
