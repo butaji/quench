@@ -11,9 +11,11 @@ use crate::interpreter::{
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
-    set_thrown_value, take_thrown_value, to_bool, to_js_string, JsError, Object, ObjectKind, Value,
+    set_thrown_value, take_thrown_value, to_bool, to_js_string, to_object, JsError, Object,
+    ObjectKind, Value,
 };
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 /// Returns true if expr is a Call expression eligible for tail-call optimization.
@@ -752,27 +754,20 @@ pub fn eval_statement(
         Statement::With { object, body } => {
             // `with (obj) { body }` — push a scope onto the env whose
             // identifier lookup defers to obj's properties. We model this by
-            // pushing a fresh scope and pre-populating its bindings with a
-            // snapshot of the object's own enumerable properties. A more
-            // faithful implementation would track the object and defer each
-            // get to it; this approximation is enough for the tests in
-            // scope (variable captures of with-scoped names).
+            // pushing a fresh scope and resolving names via that object at runtime.
             if crate::interpreter::is_strict_mode() {
                 return Err(JsError(
                     "SyntaxError: 'with' statements are not allowed in strict mode".to_string(),
                 ));
             }
-            let obj_val = eval_expression(object, env, in_arrow_function)?;
+            let obj_val = to_object(&eval_expression(object, env, in_arrow_function)?)?;
             let Value::Object(obj_rc) = obj_val else {
-                return eval_statement(body, env, _is_expr_body, in_arrow_function);
+                return Err(JsError("TypeError: cannot use with on non-object".to_string()));
             };
             env.borrow_mut().push_scope();
-            env.borrow()
-                .current_scope()
-                .borrow_mut()
-                .set_object_binding(Rc::clone(&obj_rc));
             {
                 let obj_borrowed = obj_rc.borrow();
+                let blocked: HashSet<String> = {
                 // Check Symbol.unscopables (§13.11.7): properties blocked by
                 // unscopables are not added to the with-scope.
                 let unscopables_val = (|| {
@@ -785,13 +780,12 @@ pub fn eval_statement(
                     // Symbol-keyed properties like @@unscopables are stored in
                     // `self.properties` (via Object::set with the property_key string),
                     // not in `symbol_properties`. Check both locations.
-                    obj_borrowed
-                        .properties
-                        .get(&key)
-                        .or_else(|| obj_borrowed.symbol_properties.get(&key))
-                        .cloned()
-                })();
-                let blocked: std::collections::HashSet<String> =
+                        obj_borrowed
+                            .properties
+                            .get(&key)
+                            .or_else(|| obj_borrowed.symbol_properties.get(&key))
+                            .cloned()
+                    })();
                     if let Some(Value::Object(u_obj)) = unscopables_val {
                         let u = u_obj.borrow();
                         u.properties
@@ -800,18 +794,17 @@ pub fn eval_statement(
                             .map(|(k, _)| k.clone())
                             .collect()
                     } else {
-                        std::collections::HashSet::new()
-                    };
-                for (key, value) in &obj_borrowed.properties {
-                    if !blocked.contains(key) {
-                        env.borrow_mut()
-                            .current_scope()
-                            .borrow_mut()
-                            .define(key.clone(), value.clone());
+                        HashSet::new()
                     }
-                }
+                };
+                let mut current_scope = env.borrow_mut().current_scope();
+                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
+                current_scope
+                    .borrow_mut()
+                    .set_with_unscopables(blocked);
             }
             let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
+            env.borrow_mut().current_scope().borrow_mut().clear_with_unscopables();
             env.borrow_mut().pop_scope();
             result
         }

@@ -146,6 +146,24 @@ mod var_declarations_misc {
     }
 }
 
+mod with_statement {
+    use super::*;
+
+    #[test]
+    fn with_object_non_object_throws_type_error() {
+        let result = eval("try { with(null) x = 2; } catch (e) { e.name }");
+        assert_eq!(result.unwrap(), Value::String("TypeError".to_string()));
+    }
+
+    #[test]
+    fn with_property_lookup_is_dynamic_and_delete_updates_object() {
+        let result = eval(
+            "var myObj = { p1: 'a' };\n            with(myObj) {\n              delete p1;\n            }\n            myObj.p1;",
+        );
+        assert_eq!(result.unwrap(), Value::Undefined);
+    }
+}
+
 mod class_static_properties {
     use super::*;
 

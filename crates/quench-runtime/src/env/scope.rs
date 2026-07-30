@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::VarKind;
@@ -35,6 +36,7 @@ pub struct Scope {
     /// Whether `this` has been initialized for this scope.
     this_initialized: bool,
     object_binding: Option<Rc<RefCell<crate::value::Object>>>,
+    with_unscopables: HashSet<String>,
     /// Marker for static class body scope.
     is_static_class_body: bool,
     /// When set, `set` operations skip this scope. Used for for-loop per-iteration
@@ -68,6 +70,7 @@ impl Clone for Scope {
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
+            with_unscopables: self.with_unscopables.clone(),
             is_static_class_body: self.is_static_class_body,
             per_iteration_scope: self.per_iteration_scope,
         }
@@ -83,6 +86,7 @@ impl Scope {
             this_value: None,
             this_initialized: false,
             object_binding: None,
+            with_unscopables: HashSet::new(),
             is_static_class_body: false,
             per_iteration_scope: false,
         }
@@ -104,10 +108,13 @@ impl Scope {
     }
 
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {
-        if !self.bindings.contains_key(name) {
+        if !self.is_object_binding() {
             return None;
         }
-        let result = self.object_binding.as_ref()?.borrow().has(name);
+        if self.is_unscopable(name) {
+            return Some(false);
+        }
+        let result = self.object_binding.as_ref().map(|o| o.borrow().has(name)).unwrap_or(false);
         Some(result)
     }
 
@@ -117,6 +124,18 @@ impl Scope {
 
     pub fn set_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
         self.object_binding = Some(object);
+    }
+
+    pub fn set_with_unscopables(&mut self, blocked: HashSet<String>) {
+        self.with_unscopables = blocked;
+    }
+
+    pub fn clear_with_unscopables(&mut self) {
+        self.with_unscopables.clear();
+    }
+
+    fn is_unscopable(&self, name: &str) -> bool {
+        self.with_unscopables.contains(name)
     }
 
     pub fn is_static_class_body(&self) -> bool {
@@ -129,7 +148,27 @@ impl Scope {
 
     pub fn set_object_property(&mut self, name: &str, value: Value, _strict: bool) -> Option<bool> {
         let object = self.object_binding.as_ref()?;
-        if !self.bindings.contains_key(name) {
+        if self.is_unscopable(name) {
+            return None;
+        }
+        if !object.borrow().has(name) {
+            return None;
+        }
+        if let Some(flags) = object.borrow().get_descriptor(name) {
+            if !flags.writable {
+                return Some(false);
+            }
+        }
+        object.borrow_mut().set(name, value.clone());
+        if let Some(entry) = self.bindings.get(name) {
+            *entry.borrow_mut() = value;
+        }
+        Some(true)
+    }
+
+    pub fn delete_object_property(&mut self, name: &str) -> Option<bool> {
+        let object = self.object_binding.as_ref()?;
+        if self.is_unscopable(name) {
             return None;
         }
         if !object.borrow().has(name) {
@@ -140,9 +179,7 @@ impl Scope {
                 return None;
             }
         }
-        object.borrow_mut().set(name, value.clone());
-        *self.bindings.get(name).unwrap().borrow_mut() = value;
-        Some(true)
+        Some(object.borrow_mut().delete(name))
     }
 
     pub fn is_tdz(&self, name: &str) -> bool {
@@ -240,7 +277,15 @@ impl Scope {
         if matches!(self.declarations.get(name), Some(VarState::TDZ)) {
             return None;
         }
-        self.bindings.get(name).map(|v| v.borrow().clone())
+        if let Some(value) = self.bindings.get(name) {
+            return Some(value.borrow().clone());
+        }
+        if let Some(object) = self.object_binding.as_ref() {
+            if !self.is_unscopable(name) && object.borrow().has(name) {
+                return object.borrow().get(name);
+            }
+        }
+        None
     }
 
     pub fn get_rc(&self, name: &str) -> Option<Rc<RefCell<Value>>> {

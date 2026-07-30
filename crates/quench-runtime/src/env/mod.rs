@@ -222,6 +222,18 @@ impl Environment {
         self.get_global_this_property(name)
     }
 
+    pub fn delete_from_object_env(&mut self, name: &str) -> Option<bool> {
+        for scope_rc in self.scopes.iter().rev() {
+            if let Some(deleted) = scope_rc.borrow_mut().delete_object_property(name) {
+                return Some(deleted);
+            }
+        }
+        if let Some(ref parent) = self.parent {
+            return parent.borrow_mut().delete_from_object_env(name);
+        }
+        None
+    }
+
     /// Get a binding by name, optionally skipping the topmost scope.
     pub fn get_with_options(&self, name: &str, skip_top: bool) -> Option<Value> {
         let scopes_iter: Box<dyn Iterator<Item = &_>> = if skip_top {
@@ -387,6 +399,26 @@ impl Environment {
             }
         }
         false
+    }
+
+    pub fn set_in_object_env(
+        &mut self,
+        name: &str,
+        value: Value,
+        strict: bool,
+    ) -> Option<bool> {
+        for scope_rc in self.scopes.iter().rev() {
+            if let Some(result) = scope_rc
+                .borrow_mut()
+                .set_object_property(name, value.clone(), strict)
+            {
+                return Some(result);
+            }
+        }
+        self.parent
+            .as_ref()?
+            .borrow_mut()
+            .set_in_object_env(name, value, strict)
     }
 
     pub fn define(&mut self, name: String, value: Value) {

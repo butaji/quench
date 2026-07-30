@@ -155,6 +155,9 @@ pub fn eval_delete(
             if matches!(kind, Some(VarKind::Var | VarKind::Let | VarKind::Const)) {
                 return Ok(Value::Boolean(false));
             }
+            if let Some(deleted) = env.borrow_mut().delete_from_object_env(name) {
+                return Ok(Value::Boolean(deleted));
+            }
             // Implicit global (no kind) — delete from scope chain and globalThis
             // Try deleting from globalThis if the binding exists there
             let global_this = env.borrow().get("globalThis");

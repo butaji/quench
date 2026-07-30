@@ -367,6 +367,21 @@ pub fn eval_expression(
             // No binding scope: identifier not found in env chain.
             if let Expression::Identifier(name) = left.as_ref() {
                 let name = name.clone();
+                if let Some(result) = env
+                    .borrow_mut()
+                    .set_in_object_env(&name, right_val.clone(), false)
+                {
+                    if !result {
+                        if crate::interpreter::is_strict_mode() {
+                            let (_, error) = crate::value::error::create_js_error_with_type(
+                                &format!("Cannot assign to read-only property '{}'", name),
+                                "TypeError",
+                            );
+                            return Err(error);
+                        }
+                    }
+                    return Ok(right_val);
+                }
                 if crate::interpreter::is_strict_mode() {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         &format!("{} is not defined", name),
