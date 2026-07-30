@@ -59,6 +59,7 @@ run_one() {
     else
         LAST_RUN_OUTPUT="$(cargo run --bin run-test -- "$1" 2>&1)"
     fi
+    LAST_RUN_RC=$?
     set -e
     return "$LAST_RUN_RC"
 }
@@ -78,8 +79,10 @@ while read -r test; do
     TOTAL=$((TOTAL + 1))
     REL="${test#$TEST_DIR/}"
 
+    set +e
     run_one "$test"
     EXIT_CODE=$?
+    set -e
 
     case $EXIT_CODE in
         0)
