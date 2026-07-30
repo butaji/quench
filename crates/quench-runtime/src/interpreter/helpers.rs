@@ -2,6 +2,7 @@
 //! All functions here are internal helpers; public API lives in the parent `interpreter.rs`.
 
 use crate::ast::*;
+use crate::context::CURRENT_CONTEXT;
 use crate::env::{Environment, Scope};
 use crate::value::{Value, ValueFunction};
 use std::cell::RefCell;
@@ -27,6 +28,10 @@ pub fn set_this_binding(env: &Rc<RefCell<Environment>>, this_value: Value) {
 
 /// Get the `this` binding from the environment chain
 pub fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
+    let context_global_this = CURRENT_CONTEXT.with(|cell| {
+        let ptr = *cell.borrow();
+        unsafe { ptr.map(|ctx| (*ctx).get_global("globalThis").unwrap_or(Value::Undefined)) }
+    });
     let mut current: Option<Rc<RefCell<Environment>>> = Some(Rc::clone(env));
     while let Some(e) = current {
         for scope_rc in e.borrow().scopes.iter().rev() {
@@ -35,8 +40,10 @@ pub fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
                 if !crate::interpreter::is_strict_mode()
                     && (this_val == Value::Undefined || this_val == Value::Null)
                 {
-                    let global_this = e.borrow().get("globalThis").unwrap_or(Value::Undefined);
-                    return global_this;
+                    return context_global_this
+                        .clone()
+                        .or_else(|| e.borrow().get("globalThis"))
+                        .unwrap_or(Value::Undefined);
                 }
                 return this_val;
             }
@@ -44,8 +51,10 @@ pub fn get_this_binding(env: &Rc<RefCell<Environment>>) -> Value {
         current = e.borrow().get_parent();
     }
     if !crate::interpreter::is_strict_mode() {
-        let global_this = env.borrow().get("globalThis").unwrap_or(Value::Undefined);
-        return global_this;
+        return context_global_this
+            .clone()
+            .or_else(|| env.borrow().get("globalThis"))
+            .unwrap_or(Value::Undefined);
     }
     Value::Undefined
 }

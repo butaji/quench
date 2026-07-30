@@ -270,6 +270,30 @@ mod break_continue {
             "continue to undefined label should throw SyntaxError"
         );
     }
+
+    #[test]
+    fn catch_binding_does_not_alias_outer_scope_this_target() {
+        let r = eval(
+            "var res1 = false;
+            var res2 = false;
+            var res3 = false;
+            (function() {
+              var x_12_14_13 = 'local';
+              function foo() { this.x_12_14_13 = 'instance'; }
+              try {
+                throw foo;
+              } catch (e) {
+                res1 = (x_12_14_13 === 'local');
+                e();
+                res2 = (x_12_14_13 === 'local');
+              }
+              res3 = (x_12_14_13 === 'local');
+            })();
+            res1 && res2 && res3"
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
 }
 
 mod block_statement {
