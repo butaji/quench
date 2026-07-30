@@ -48,6 +48,10 @@ bash tools/milestone.sh --status --next-id
 bash tools/next-stage.sh
 # List all pending stages (id-only output)
 bash tools/pending-stages.sh
+# List top 10 highest-failure pending stages (human table)
+bash tools/pending-stages.sh --top 10 --verbose
+# Top 10 pending stages as JSON
+bash tools/pending-stages.sh --top 10 --json
 bash tools/pending-stages.sh --json
 
 # Diagnose current stage quickly (digest + first failure run-test)
