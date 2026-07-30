@@ -5,8 +5,8 @@
 Terminology is single-source:
 - `test run` is the canonical term for implementation-stage status.
 - `implementation status`, `progress`, and `snapshot` refer to `test run` data.
-- `ssot-stage.sh` is a deprecated compatibility alias for `test-run-stage.sh` (`ssot` == `test run`).
-- `SSOT_BUILD_RUN_TEST` is deprecated; use `TEST262_TEST_RUN_BUILD=1` for stage prebuild mode.
+- `ssot-stage.sh` is a canonical alias for `test-run-stage.sh` (`ssot` == `test run`).
+- `SSOT_BUILD_RUN_TEST` is supported for compatibility; use `TEST262_TEST_RUN_BUILD=1` for stage prebuild mode.
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
