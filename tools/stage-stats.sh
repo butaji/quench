@@ -61,7 +61,7 @@ if use_json:
 if current_only:
     stage = next((s for s in stages if s.get('id') == current), None)
     if stage is None:
-        print(f"error: current stage {current} not found in tasks/index.json" >&2)
+        sys.stderr.write(f"error: current stage {current} not found in tasks/index.json\n")
         raise SystemExit(2)
     print(f"Current stage: {current}")
     print(f"Path:       {stage.get('path', '')}")

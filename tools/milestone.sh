@@ -8,6 +8,7 @@
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
+#   bash tools/milestone.sh --status --current            # print current stage only
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
@@ -26,6 +27,7 @@ cd "$(dirname "$0")/.."
 STAGE=""
 STATUS_ONLY=0
 STATUS_JSON=0
+STATUS_CURRENT=0
 RUN_TEST_RUN=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
@@ -78,12 +80,22 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --status)
             STATUS_ONLY=1
-            if [[ "${2:-}" == "--json" ]]; then
-                STATUS_JSON=1
-                shift 2
-            else
-                shift
-            fi
+            shift
+            while [[ ${#} -gt 0 ]]; do
+                case "${1:-}" in
+                    --json)
+                        STATUS_JSON=1
+                        shift
+                        ;;
+                    --current)
+                        STATUS_CURRENT=1
+                        shift
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            done
             ;;
         --status-json)
             STATUS_ONLY=1
@@ -187,8 +199,12 @@ fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
     if [[ "$QUIET" -eq 0 ]]; then
-        if [[ "$STATUS_JSON" -eq 1 ]]; then
+        if [[ "$STATUS_JSON" -eq 1 && "$STATUS_CURRENT" -eq 1 ]]; then
+            bash tools/stage-status.sh --json --current
+        elif [[ "$STATUS_JSON" -eq 1 ]]; then
             bash tools/stage-status.sh --json
+        elif [[ "$STATUS_CURRENT" -eq 1 ]]; then
+            bash tools/stage-status.sh --current
         else
             bash tools/stage-status.sh
         fi
