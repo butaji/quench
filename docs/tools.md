@@ -34,6 +34,8 @@ bash tools/digest-all.sh
 
 # Quick overview of all stages
 bash tools/stage-status.sh
+# Current stage only (minimal output)
+bash tools/stage-status.sh --current
 
 # Diagnose current stage quickly (digest + first failure run-test)
 TEST262_STAGE=N bash tools/fix-stage.sh

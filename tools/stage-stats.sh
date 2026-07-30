@@ -2,16 +2,36 @@
 set -euo pipefail
 
 USE_JSON=0
-if [[ "${1:-}" == "--json" ]]; then
-    USE_JSON=1
-fi
+CURRENT_ONLY=0
 
-python3 - "$USE_JSON" <<'PY'
+while [[ ${#} -gt 0 ]]; do
+    case "${1:-}" in
+        --json)
+            USE_JSON=1
+            shift
+            ;;
+        --current)
+            CURRENT_ONLY=1
+            shift
+            ;;
+        --help|-h)
+            sed -n '1,160p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "error: unexpected argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+python3 - "$USE_JSON" "$CURRENT_ONLY" <<'PY'
 import json
 import sys
 
 try:
     use_json = int(sys.argv[1])
+    current_only = int(sys.argv[2])
     with open('tasks/index.json') as f:
         data = json.load(f)
 except (OSError, json.JSONDecodeError) as exc:
@@ -25,10 +45,29 @@ if not current or current is None:
     raise SystemExit(1)
 
 if use_json:
+    if current_only:
+        current_stage = next((s for s in stages if s.get('id') == current), None)
+        print(json.dumps({
+            'current_stage': current,
+            'stage': current_stage,
+        }, sort_keys=True))
+        raise SystemExit(0)
     print(json.dumps({
         'current_stage': current,
         'stages': stages,
     }, sort_keys=True))
+    raise SystemExit(0)
+
+if current_only:
+    stage = next((s for s in stages if s.get('id') == current), None)
+    if stage is None:
+        print(f"error: current stage {current} not found in tasks/index.json" >&2)
+        raise SystemExit(2)
+    print(f"Current stage: {current}")
+    print(f"Path:       {stage.get('path', '')}")
+    print(f"Status:     {stage.get('status', 'unknown')}")
+    print(f"Tests:      {stage.get('tests', 0)}")
+    print(f"Failed:     {stage.get('failed', 0)}")
     raise SystemExit(0)
 
 print(f"{'ID':>4} {'Status':>8}  {'Tests':>6}  Path")
