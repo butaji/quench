@@ -27,9 +27,8 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     check_strict_fn_body(&ret.program)?;
     early_errors::check_early_errors(&ret.program)?;
     early_errors::check_break_continue_errors(&ret.program)?;
-    early_errors::check_super_outside_class(&ret.program)?;
     if !crate::interpreter::is_direct_eval() {
-        early_errors::check_private_names(&ret.program)?;
+        early_errors::check_super_outside_class(&ret.program)?;
     }
     // oxc_semantic-based early error detection
     {
@@ -200,14 +199,11 @@ fn walk_body_stmts(stmts: &[oxc::ast::ast::Statement], strict: bool) -> Result<(
         match stmt {
             oxc::ast::ast::Statement::FunctionDeclaration(func) => {
                 if (strict
-                    || func
-                        .body
-                        .as_ref()
-                        .is_some_and(|body| {
-                            body.directives
-                                .iter()
-                                .any(|d| d.expression.value == "use strict")
-                        }))
+                    || func.body.as_ref().is_some_and(|body| {
+                        body.directives
+                            .iter()
+                            .any(|d| d.expression.value == "use strict")
+                    }))
                     && func.id.as_ref().is_some_and(|id| {
                         id.name.as_str() == "eval" || id.name.as_str() == "arguments"
                     })
@@ -558,9 +554,8 @@ mod tests {
 
     #[test]
     fn strict_nested_function_rejects_eval_assignment() {
-        let result = parse_script(
-            "function outer() { 'use strict'; function inner() { eval = 42; } }",
-        );
+        let result =
+            parse_script("function outer() { 'use strict'; function inner() { eval = 42; } }");
         assert!(result.is_err(), "strict nested assignment was accepted");
     }
 

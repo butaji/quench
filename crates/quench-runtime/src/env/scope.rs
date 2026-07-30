@@ -94,6 +94,10 @@ impl Scope {
         self.per_iteration_scope = true;
     }
 
+    pub fn clear_per_iteration(&mut self) {
+        self.per_iteration_scope = false;
+    }
+
     /// Check if this scope is a per-iteration scope.
     pub fn is_per_iteration(&self) -> bool {
         self.per_iteration_scope

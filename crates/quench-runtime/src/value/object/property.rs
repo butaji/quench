@@ -84,10 +84,24 @@ impl Object {
             {
                 // Compute effective length; for resizable buffers this is
                 // computed dynamically from the buffer's current byteLength.
-                let effective_length = if buffer.borrow().get("maxByteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0) > 0 {
-                    let buf_bl = buffer.borrow().get("byteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                let effective_length = if buffer
+                    .borrow()
+                    .get("maxByteLength")
+                    .map(|v| crate::value::to_number(&v) as u64)
+                    .unwrap_or(0)
+                    > 0
+                {
+                    let buf_bl = buffer
+                        .borrow()
+                        .get("byteLength")
+                        .map(|v| crate::value::to_number(&v) as u64)
+                        .unwrap_or(0);
                     let bpe = crate::value::object::helpers::bytes_per_element(name);
-                    if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 }
+                    if offset as u64 >= buf_bl {
+                        0
+                    } else {
+                        (buf_bl - offset as u64) / bpe as u64
+                    }
                 } else {
                     length
                 };
@@ -185,9 +199,7 @@ impl Object {
         // For TypedArrays: check explicit own property first (set by constructor
         // for resizable buffers with explicit length). Otherwise, compute dynamically
         // from the buffer's current byteLength.
-        if matches!(self.data, ObjData::Idx { .. })
-            && (key == "length" || key == "byteLength")
-        {
+        if matches!(self.data, ObjData::Idx { .. }) && (key == "length" || key == "byteLength") {
             // Explicit own property (set by constructor for fixed-length resizable-buffer TAs)
             if let Some(v) = self.properties.get(key) {
                 return Some(v.clone());
@@ -195,15 +207,27 @@ impl Object {
             // Dynamic computation: derive from buffer's current byteLength.
             // For non-resizable buffers, buffer.byteLength is fixed so this is correct.
             // For length-tracking resizable buffers, this reflects the current size.
-            if let ObjData::Idx { ref buffer, offset, name, .. } = self.data {
-                let buf_bl = buffer.borrow().get("byteLength")
+            if let ObjData::Idx {
+                ref buffer,
+                offset,
+                name,
+                ..
+            } = self.data
+            {
+                let buf_bl = buffer
+                    .borrow()
+                    .get("byteLength")
                     .map(|v| crate::value::to_number(&v) as u64)
                     .unwrap_or(0);
                 if key == "byteLength" {
                     return Some(Value::Number(buf_bl as f64));
                 }
                 let bpe = crate::value::object::helpers::bytes_per_element(name);
-                let len = if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 };
+                let len = if offset as u64 >= buf_bl {
+                    0
+                } else {
+                    (buf_bl - offset as u64) / bpe as u64
+                };
                 return Some(Value::Number(len as f64));
             }
         }
@@ -224,10 +248,24 @@ impl Object {
                 let effective_length;
                 let is_rab;
                 let buf_bl;
-                if buffer.borrow().get("maxByteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0) > 0 {
-                    buf_bl = buffer.borrow().get("byteLength").map(|v| crate::value::to_number(&v) as u64).unwrap_or(0);
+                if buffer
+                    .borrow()
+                    .get("maxByteLength")
+                    .map(|v| crate::value::to_number(&v) as u64)
+                    .unwrap_or(0)
+                    > 0
+                {
+                    buf_bl = buffer
+                        .borrow()
+                        .get("byteLength")
+                        .map(|v| crate::value::to_number(&v) as u64)
+                        .unwrap_or(0);
                     let bpe = crate::value::object::helpers::bytes_per_element(name);
-                    effective_length = if offset as u64 >= buf_bl { 0 } else { (buf_bl - offset as u64) / bpe as u64 };
+                    effective_length = if offset as u64 >= buf_bl {
+                        0
+                    } else {
+                        (buf_bl - offset as u64) / bpe as u64
+                    };
                     is_rab = true;
                 } else {
                     effective_length = length;
@@ -295,17 +333,24 @@ impl Object {
     /// - For fixed-length TAs: explicit byteLength > buffer.byteLength - offset
     /// - For length-tracking TAs: offset >= buffer.byteLength
     pub(crate) fn typed_array_is_out_of_bounds(&self) -> bool {
-        let ObjData::Idx { ref buffer, offset, .. } = self.data else {
+        let ObjData::Idx {
+            ref buffer, offset, ..
+        } = self.data
+        else {
             return false;
         };
         let buf = buffer.borrow();
-        let is_resizable = buf.properties.get("maxByteLength")
+        let is_resizable = buf
+            .properties
+            .get("maxByteLength")
             .map(|v| crate::value::to_number(v) as u64 > 0)
             .unwrap_or(false);
         if !is_resizable {
             return false;
         }
-        let buf_bl = buf.properties.get("byteLength")
+        let buf_bl = buf
+            .properties
+            .get("byteLength")
             .map(|v| crate::value::to_number(v) as u64)
             .unwrap_or(0);
         // Fixed-length TA: has explicit byteLength own property

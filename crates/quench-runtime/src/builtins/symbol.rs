@@ -135,10 +135,12 @@ pub fn register_symbol(ctx: &mut Context) {
     // Symbol is callable (`Symbol('desc')`), so the global must be a function
     // (deepEqual.js and others check `typeof Symbol === 'function'`).
     let symbol_constructor = NativeFunction::new_named("Symbol", move |args| {
-        if !matches!(
+        let direct_construct = matches!(
             crate::interpreter::get_new_target(),
-            None | Some(Value::Undefined)
-        ) {
+            Some(Value::NativeFunction(ref nf))
+                if nf.get_property("name").is_some_and(|v| matches!(v, Value::String(n) if n == "Symbol"))
+        );
+        if direct_construct {
             return Err(crate::JsError::new(
                 "TypeError: Symbol is not a constructor",
             ));
@@ -150,7 +152,12 @@ pub fn register_symbol(ctx: &mut Context) {
                 Value::Symbol(Rc::new(ValSymbol::new(Some(Rc::from(s.as_str())), false)))
             }
         };
-        Ok(sym)
+        if let Some(Value::Object(object)) = crate::builtins::get_native_this() {
+            crate::builtins::object::set_boxed_value(&mut object.borrow_mut(), sym);
+            Ok(Value::Object(object))
+        } else {
+            Ok(sym)
+        }
     });
     let symbol_fn = Rc::new(symbol_constructor);
 

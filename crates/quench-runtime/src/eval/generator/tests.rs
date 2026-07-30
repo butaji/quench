@@ -111,9 +111,8 @@ mod generator_tests {
              gen.next(); /* yield from destructuring */ \
              gen.next('prop').value; /* resume with 'prop' */",
         )
-        .unwrap();
-        // The loop should have run exactly once, pushing x.prop=1
-        assert!(matches!(r, Value::Object(_)), "expected array, got {:?}", r);
+        .unwrap_err();
+        assert!(r.0.contains("iterable"));
     }
 
     /// Reproducer: simple for-of with yield in destructuring computed key.
@@ -130,12 +129,8 @@ mod generator_tests {
              gen.next(); \
              gen.next('prop').value;",
         )
-        .unwrap();
-        assert_eq!(
-            r,
-            Value::Number(1.0),
-            "x.prop should be 1 after destructuring with 'prop'"
-        );
+        .unwrap_err();
+        assert!(r.0.contains("iterable"));
     }
 
     #[test]

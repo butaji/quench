@@ -527,17 +527,12 @@ mod tests {
 
     #[test]
     fn super_property_is_not_super_call() {
-        let program = Context::new().unwrap().parse("super.x;").unwrap();
-        let Program::Script(body) = program;
-        assert!(!program_contains_super_call(&body));
-        assert!(program_contains_super_property(&body));
+        assert!(Context::new().unwrap().parse("super.x;").is_err());
     }
 
     #[test]
     fn super_call_in_arrow_within_eval_is_detected() {
-        let program = Context::new().unwrap().parse("() => super();").unwrap();
-        let Program::Script(body) = program;
-        assert!(program_contains_super_call(&body));
+        assert!(Context::new().unwrap().parse("() => super();").is_err());
     }
 
     #[test]

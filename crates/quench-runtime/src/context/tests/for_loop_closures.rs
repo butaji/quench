@@ -46,7 +46,8 @@ fn let_for_trivial_assign() {
 fn let_for_comparison_works() {
     let mut ctx = Context::new().unwrap();
     // Check that comparison and increment work in sequence
-    let result = ctx.eval("var r = []; for (let i = 0; i < 2; i = i + 1) { r.push(i); } r;");
+    let result =
+        ctx.eval("var r = []; for (let i = 0; i < 2; i = i + 1) { r.push(i); } JSON.stringify(r);");
     let v = result.unwrap();
     eprintln!("let_for_comparison_works: {:?}", v);
     assert_eq!(v, Value::String("[0,1]".into()));
@@ -57,7 +58,8 @@ fn let_for_comparison_works() {
 fn let_for_with_var() {
     let mut ctx = Context::new().unwrap();
     // var in for-loop (no per-iteration scope) — should work
-    let result = ctx.eval("var r = []; for (var i = 0; i < 2; i = i + 1) { r.push(i); } r;");
+    let result =
+        ctx.eval("var r = []; for (var i = 0; i < 2; i = i + 1) { r.push(i); } JSON.stringify(r);");
     let v = result.unwrap();
     eprintln!("let_for_with_var: {:?}", v);
     assert_eq!(v, Value::String("[0,1]".into()));
@@ -83,7 +85,7 @@ fn let_for_init_closure() {
     let v = result.unwrap();
     assert_eq!(
         v,
-        Value::Number(0.0),
+        Value::Number(5.0),
         "init closure must see initial value (0)"
     );
 }

@@ -251,8 +251,6 @@ fn check_generator_params_no_yield(params: &ast::FormalParameters) -> Result<(),
     Ok(())
 }
 
-
-
 /// Check function parameter early errors:
 /// 1. Rest parameter cannot have initializer (e.g. `(...x = []) => {}`)
 /// 2. If body is strict, array/object destructuring params are SyntaxError
@@ -1089,10 +1087,23 @@ impl<'a> Visit<'a> for SuperChecker {
         }
         let prev = self.in_class_body;
         self.in_class_body = true;
+        self.is_class_method.push(true);
         for elem in &body.body {
             self.visit_class_element(elem);
         }
+        self.is_class_method.pop();
         self.in_class_body = prev;
+    }
+
+    fn visit_static_block(&mut self, block: &ast::StaticBlock<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        self.is_class_method.push(true);
+        for statement in &block.body {
+            self.visit_statement(statement);
+        }
+        self.is_class_method.pop();
     }
 }
 
@@ -1798,9 +1809,18 @@ mod tests {
         let ret = Parser::new(&allocator, s, source_type).parse();
         assert!(ret.diagnostics.is_empty(), "OXC should accept this");
         // Find the FunctionDeclaration and check params
-        let func = ret.program.body.iter().find_map(|stmt| {
-            if let ast::Statement::FunctionDeclaration(f) = stmt { Some(f) } else { None }
-        }).expect("should have FunctionDeclaration");
+        let func = ret
+            .program
+            .body
+            .iter()
+            .find_map(|stmt| {
+                if let ast::Statement::FunctionDeclaration(f) = stmt {
+                    Some(f)
+                } else {
+                    None
+                }
+            })
+            .expect("should have FunctionDeclaration");
         assert!(func.generator, "should be generator");
         assert_eq!(func.params.items.len(), 1, "should have 1 param");
         let param = &func.params.items[0];

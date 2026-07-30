@@ -589,7 +589,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::Number(42.0),
+            r,
+            Value::Number(42.0),
             "Float32Array element write/read via ArrayBuffer should work"
         );
 
@@ -603,7 +604,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::Number(255.0),
+            r,
+            Value::Number(255.0),
             "Uint8Array element write/read via ArrayBuffer should work"
         );
 
@@ -617,7 +619,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::Number(-12345.0),
+            r,
+            Value::Number(-12345.0),
             "Int32Array element write/read via ArrayBuffer should work"
         );
 
@@ -631,7 +634,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::Number(99.0),
+            r,
+            Value::Number(99.0),
             "Float32Array from resizable ArrayBuffer should support element access"
         );
     }
@@ -688,7 +692,11 @@ mod tests {
                  ta.length;",
             )
             .unwrap();
-        assert_eq!(r, Value::Number(3.0), "explicit length should be 3, not buffer size");
+        assert_eq!(
+            r,
+            Value::Number(3.0),
+            "explicit length should be 3, not buffer size"
+        );
 
         // Float32Array: buffer=40 bytes (10 Float32 elements), explicit length=3
         let r = ctx
@@ -698,7 +706,11 @@ mod tests {
                  ta.length;",
             )
             .unwrap();
-        assert_eq!(r, Value::Number(3.0), "Float32Array explicit length should be 3");
+        assert_eq!(
+            r,
+            Value::Number(3.0),
+            "Float32Array explicit length should be 3"
+        );
     }
 
     #[test]
@@ -719,7 +731,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::String("10,20,30".to_string()),
+            r,
+            Value::String("10,20,30".to_string()),
             "iteration should yield exactly 3 elements"
         );
     }
@@ -740,7 +753,11 @@ mod tests {
                  ta.length;",
             )
             .unwrap();
-        assert_eq!(r, Value::Number(3.0), "offset TypedArray length should be 3");
+        assert_eq!(
+            r,
+            Value::Number(3.0),
+            "offset TypedArray length should be 3"
+        );
 
         let r = ctx
             .eval(
@@ -754,7 +771,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::String("2,3,4".to_string()),
+            r,
+            Value::String("2,3,4".to_string()),
             "offset TypedArray iteration should yield [2,3,4]"
         );
     }
@@ -831,7 +849,11 @@ mod tests {
                  ta.length;",
             )
             .unwrap();
-        assert_eq!(r, Value::Number(10.0), "length should track buffer byteLength=10");
+        assert_eq!(
+            r,
+            Value::Number(10.0),
+            "length should track buffer byteLength=10"
+        );
 
         // Step 5: check iteration
         let r = ctx
@@ -845,7 +867,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            r, Value::String("5,6,7,0,0,0,0,0,0,0".to_string()),
+            r,
+            Value::String("5,6,7,0,0,0,0,0,0,0".to_string()),
             "iteration should yield all 10 elements"
         );
     }
@@ -905,7 +928,11 @@ mod tests {
                  result.length;",
             )
             .unwrap();
-        assert_eq!(r, Value::Number(20.0), "Should iterate 20 elements after resize");
+        assert_eq!(
+            r,
+            Value::Number(20.0),
+            "Should iterate 20 elements after resize"
+        );
     }
 
     #[test]
@@ -972,7 +999,11 @@ mod tests {
             Ok(_) => println!("Direct access result: {:?}", result),
             Err(e) => println!("Direct access ERROR: {}", e),
         }
-        assert!(result.is_ok(), "Float32Array direct access through QuenchHost failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Float32Array direct access through QuenchHost failed: {:?}",
+            result
+        );
     }
 
     /// Debug test: Check if Float32Array iteration works through QuenchHost (without resize)
@@ -1006,7 +1037,11 @@ mod tests {
             Ok(_) => println!("Iteration (no resize) result: {:?}", result),
             Err(e) => println!("Iteration (no resize) ERROR: {}", e),
         }
-        assert!(result.is_ok(), "Float32Array iteration (no resize) through QuenchHost failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Float32Array iteration (no resize) through QuenchHost failed: {:?}",
+            result
+        );
     }
 
     /// Debug test: Check if Float32Array iteration works through QuenchHost (with resizable buffer, no resize call)
@@ -1040,7 +1075,11 @@ mod tests {
             Ok(_) => println!("Resizable (no resize) result: {:?}", result),
             Err(e) => println!("Resizable (no resize) ERROR: {}", e),
         }
-        assert!(result.is_ok(), "Float32Array resizable (no resize) through QuenchHost failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Float32Array resizable (no resize) through QuenchHost failed: {:?}",
+            result
+        );
     }
 
     /// Debug test: Run the EXACT JS code from the disk test file inline
@@ -1094,15 +1133,19 @@ for (let ctor of [Float32Array]) {
             Ok(_) => println!("EXACT disk test code (Float32Array only) PASSED"),
             Err(e) => println!("EXACT disk test code ERROR: {}", e),
         }
-        assert!(result.is_ok(), "EXACT disk test code inline failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "EXACT disk test code inline failed: {:?}",
+            result
+        );
     }
 
     /// Debug test: EXACT same as disk test but with ctors instead of [Float32Array], inline
     #[test]
     fn typed_array_float32_debug_exact_disk_all_ctors_inline() {
+        use crate::context::Context;
         use crate::test262::harness::HarnessLoader;
         use crate::test262::runner::default_test262_dir;
-        use crate::context::Context;
 
         let test262_dir = default_test262_dir();
         let harness = HarnessLoader::new(&test262_dir);
@@ -1143,7 +1186,10 @@ for (var ci = 0; ci < ctors.length; ci++) {
 }
 results.join(',');
                 "#,
-                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+                &[
+                    "compareArray.js".to_string(),
+                    "resizableArrayBufferUtils.js".to_string(),
+                ],
             )
             .unwrap();
 
@@ -1193,7 +1239,11 @@ results.join(',');
             Ok(_) => println!("Resize during iteration result: {:?}", result),
             Err(e) => println!("Resize during iteration ERROR: {}", e),
         }
-        assert!(result.is_ok(), "Float32Array resize during iteration through QuenchHost failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Float32Array resize during iteration through QuenchHost failed: {:?}",
+            result
+        );
     }
 
     /// Regression: Float32Array iteration through the full test262 harness path
@@ -1385,8 +1435,8 @@ results.join(',');
     /// Test the FULL QuenchHost path (like run_single_test) to see if NaN appears.
     #[test]
     fn typed_array_float32_quench_host_vs_direct_eval() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
 
         let test262_dir = default_test262_dir();
@@ -1432,19 +1482,15 @@ results.join(',');
         // Path 2: QuenchHost (like execute_script uses)
         let mut host = QuenchHost::new();
         let host_result = host.run_script(&script);
-        assert!(
-            host_result.is_ok(),
-            "QuenchHost failed: {:?}",
-            host_result
-        );
+        assert!(host_result.is_ok(), "QuenchHost failed: {:?}", host_result);
     }
 
     /// Test through run_single_test like the actual test262 runner does.
     /// This uses the actual test file from disk with full frontmatter parsing.
     #[test]
     fn typed_array_float32_run_single_test_path() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
         use crate::test262::runner::run_single_test;
         use std::fs;
@@ -1474,8 +1520,8 @@ results.join(',');
     /// Replicate the exact failing test scenario using harness files.
     #[test]
     fn typed_array_exact_failing_test() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
 
         let test262_dir = default_test262_dir();
@@ -1516,10 +1562,9 @@ for (var ci = 0; ci < ctors.length; ci++) {
 }
 'PASS';
 "#;
-        let script = harness.build_script(
-            test_source,
-            &["resizableArrayBufferUtils.js".to_string()],
-        ).unwrap();
+        let script = harness
+            .build_script(test_source, &["resizableArrayBufferUtils.js".to_string()])
+            .unwrap();
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
@@ -1533,8 +1578,8 @@ for (var ci = 0; ci < ctors.length; ci++) {
     /// This helps identify whether the issue is with writing or reading.
     #[test]
     fn typed_array_float32_debug_individual_values() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
         use std::fs;
 
@@ -1559,8 +1604,8 @@ for (var ci = 0; ci < ctors.length; ci++) {
     /// Debug test: test only Float32Array (index 6 in ctors) through the actual test file.
     #[test]
     fn typed_array_float32_only_float32array_through_quenchhost() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
 
         let test262_dir = default_test262_dir();
@@ -1598,14 +1643,18 @@ for (var ci = 0; ci < ctors.length; ci++) {
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(result.is_ok(), "Float32Array only through QuenchHost failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Float32Array only through QuenchHost failed: {:?}",
+            result
+        );
     }
 
     /// Debug test: test ALL ctors individually to find which one fails.
     #[test]
     fn typed_array_float32_all_ctors_individually() {
-        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::harness::HarnessLoader;
+        use crate::test262::host::{QuenchHost, Test262Host};
         use crate::test262::runner::default_test262_dir;
 
         let test262_dir = default_test262_dir();
@@ -1717,7 +1766,10 @@ for (var ci = 0; ci < ctors.length; ci++) {
              threw + ',' + r0.value + ',' + r1.value + ',' + r0.done + ',' + r1.done + ',' + r2desc;",
         );
         assert!(result.is_ok(), "eval failed: {:?}", result);
-        assert_eq!(result.unwrap(), Value::String("true,1,2,false,false,err:TypeError".to_string()));
+        assert_eq!(
+            result.unwrap(),
+            Value::String("true,1,2,false,false,err:TypeError".to_string())
+        );
     }
 
     #[test]
@@ -1775,7 +1827,10 @@ for (let ctor of ctors) {
 }
 failures.length === 0 ? 'ALL_PASS' : failures.join('|');
                 "#,
-                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+                &[
+                    "compareArray.js".to_string(),
+                    "resizableArrayBufferUtils.js".to_string(),
+                ],
             )
             .unwrap();
 
@@ -1929,7 +1984,11 @@ failures.length === 0;
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
-        assert!(result.is_ok(), "Exact test source equivalent failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Exact test source equivalent failed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1940,8 +1999,9 @@ failures.length === 0;
 
         let test262_dir = default_test262_dir();
         let harness = HarnessLoader::new(&test262_dir);
-        let script = harness.build_script(
-            r#"
+        let script = harness
+            .build_script(
+                r#"
 function CreateRab(buffer_byte_length, ctor) {
   const rab = CreateResizableArrayBuffer(buffer_byte_length, 2 * buffer_byte_length);
   let ta_write = new ctor(rab);
@@ -1971,8 +2031,12 @@ for (let ctor of [Uint8Array]) {
 }
 true;
             "#,
-            &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
-        ).unwrap();
+                &[
+                    "compareArray.js".to_string(),
+                    "resizableArrayBufferUtils.js".to_string(),
+                ],
+            )
+            .unwrap();
 
         let mut host = QuenchHost::new();
         let result = host.run_script(&script);
@@ -2024,7 +2088,10 @@ true;
              for (var v of ta) { values.push(v); if (values.length === 2) buf.resize(1); } \
              'iterated:' + values.join(',');",
         );
-        assert!(result.is_err(), "Float32Array shrink should throw TypeError");
+        assert!(
+            result.is_err(),
+            "Float32Array shrink should throw TypeError"
+        );
     }
 
     #[test]
@@ -2065,7 +2132,10 @@ for (let ctor of ctors) {
 }
 failures.length === 0 ? 'ALL_PASS' : failures.join('|');
                 "#,
-                &["compareArray.js".to_string(), "resizableArrayBufferUtils.js".to_string()],
+                &[
+                    "compareArray.js".to_string(),
+                    "resizableArrayBufferUtils.js".to_string(),
+                ],
             )
             .unwrap();
 

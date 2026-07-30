@@ -65,7 +65,9 @@ pub fn register_array_buffer(ctx: &mut Context) {
             .unwrap_or(0.0);
         Ok(Value::Boolean(max_bl > 0.0))
     })));
-    proto_rc.borrow_mut().set_getter_func("resizable", resizable_getter);
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("resizable", resizable_getter);
 
     // ArrayBuffer.prototype.maxByteLength getter
     let max_bl_getter = Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
@@ -76,9 +78,12 @@ pub fn register_array_buffer(ctx: &mut Context) {
             ));
         };
         let o = o.borrow();
-        Ok(o.get_own_value("maxByteLength").unwrap_or(Value::Number(0.0)))
+        Ok(o.get_own_value("maxByteLength")
+            .unwrap_or(Value::Number(0.0)))
     })));
-    proto_rc.borrow_mut().set_getter_func("maxByteLength", max_bl_getter);
+    proto_rc
+        .borrow_mut()
+        .set_getter_func("maxByteLength", max_bl_getter);
 
     // ArrayBuffer.prototype.resize(newByteLength)
     proto_rc.borrow_mut().set(
@@ -135,16 +140,26 @@ pub fn register_array_buffer(ctx: &mut Context) {
                     Value::Number(len),
                 );
                 // Read maxByteLength from options argument
-                let max_bl = args.get(1).and_then(|v| {
-                    if let Value::Object(o) = v {
-                        Some(o.borrow().get("maxByteLength").map(|v| to_number(&v)).unwrap_or(0.0))
-                    } else {
-                        None
-                    }
-                }).unwrap_or(0.0);
+                let max_bl = args
+                    .get(1)
+                    .and_then(|v| {
+                        if let Value::Object(o) = v {
+                            Some(
+                                o.borrow()
+                                    .get("maxByteLength")
+                                    .map(|v| to_number(&v))
+                                    .unwrap_or(0.0),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0.0);
                 this_obj.borrow_mut().set("byteLength", Value::Number(len));
                 if max_bl > 0.0 {
-                    this_obj.borrow_mut().set("maxByteLength", Value::Number(max_bl));
+                    this_obj
+                        .borrow_mut()
+                        .set("maxByteLength", Value::Number(max_bl));
                 }
                 let len_usize = len as usize;
                 this_obj.borrow_mut().elements =
@@ -262,7 +277,8 @@ mod tests {
 
     #[test]
     fn array_buffer_max_byte_length() {
-        let result = eval_ok("var ab = new ArrayBuffer(8, { maxByteLength: 16 }); ab.maxByteLength");
+        let result =
+            eval_ok("var ab = new ArrayBuffer(8, { maxByteLength: 16 }); ab.maxByteLength");
         assert_eq!(result.to_string(), "16");
     }
 

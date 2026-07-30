@@ -389,11 +389,10 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             if suspended_start {
                 g.state = GeneratorState::Completed;
                 g.call_env = None;
-                return Ok(IteratorResult {
-                    value: arg,
-                    done: true,
-                }
-                .to_object());
+                return Err(JsError(format!(
+                    "Generator threw: {}",
+                    crate::value::to_js_string(&arg)
+                )));
             }
             // If generator is suspended mid for-of, close the inner iterator
             // before resuming — same as generator_return_fn.

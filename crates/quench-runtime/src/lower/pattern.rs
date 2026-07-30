@@ -278,7 +278,12 @@ fn lower_assignment_target_maybe_default(
 fn lower_prop_name_key(key: &ast::PropertyKey) -> Option<PropertyKey> {
     match key {
         ast::PropertyKey::StaticIdentifier(i) => {
-            Some(PropertyKey::Ident(i.name.as_str().to_string()))
+            let name = i.name.as_str();
+            if matches!(name, "true" | "false" | "null") {
+                Some(PropertyKey::String(name.to_string()))
+            } else {
+                Some(PropertyKey::Ident(name.to_string()))
+            }
         }
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),

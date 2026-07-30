@@ -31,7 +31,9 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         set_thrown_value(err);
         return Err(js_err);
     }
-    if (f.strict || f.is_generator || f.is_async) && (prop_name == "arguments" || prop_name == "caller") {
+    if (f.strict || f.is_generator || f.is_async)
+        && (prop_name == "arguments" || prop_name == "caller")
+    {
         let (err, js_err) = create_js_error_with_type(
             "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
             "TypeError",

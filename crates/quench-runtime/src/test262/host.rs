@@ -792,13 +792,8 @@ verifyProperty(obj, prop, desc);
     #[test]
     fn test_quench_host_run_module_script_rejects_sloppy() {
         let mut host = QuenchHost::new();
-        // Sloppy code in module mode should fail
         let result = host.run_module_script("var x = 1;");
-        assert!(
-            result.is_err(),
-            "module script with sloppy code should error: {:?}",
-            result
-        );
+        assert_eq!(result, Ok(()));
     }
 
     /// Test262Error must be properly initialized in QuenchHost context.

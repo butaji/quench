@@ -1497,7 +1497,6 @@ fn var_function_initializer_inside_with_can_be_called_after_scope() {
 }
 
 #[test]
-
 #[test]
 fn global_this_inherits_object_prototype_for_with_function_case() {
     use crate::test262::host::{QuenchHost, Test262Host};
@@ -1506,16 +1505,21 @@ fn global_this_inherits_object_prototype_for_with_function_case() {
     let result = host.run_script(
         "var a=1; var __obj={a:2}; with(__obj){ var __func=function(){return a;} } this.hasOwnProperty('__func')",
     );
-    assert!(result.is_ok(), "globalThis prototype lookup failed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "globalThis prototype lookup failed: {result:?}"
+    );
 }
 
 #[test]
 fn failed_constructor_restores_new_target_for_following_calls() {
     let mut ctx = Context::new().unwrap();
-    let result = ctx.eval(
-        "function F(){ missing(); } try { new F(); } catch (e) {} Symbol('after failure')",
+    let result = ctx
+        .eval("function F(){ missing(); } try { new F(); } catch (e) {} Symbol('after failure')");
+    assert!(
+        matches!(result, Ok(Value::Symbol(_))),
+        "unexpected result: {result:?}"
     );
-    assert!(matches!(result, Ok(Value::Symbol(_))), "unexpected result: {result:?}");
 }
 
 #[test]
@@ -1530,9 +1534,7 @@ fn plain_object_call_does_not_use_constructor_property() {
 fn deleting_mapped_arguments_index_removes_property() {
     let mut ctx = Context::new().unwrap();
     let v = ctx
-        .eval(
-            "function f(value) { delete arguments[0]; return typeof arguments[0]; } f(1)",
-        )
+        .eval("function f(value) { delete arguments[0]; return typeof arguments[0]; } f(1)")
         .unwrap();
     assert_eq!(v, Value::String("undefined".to_string()));
 }

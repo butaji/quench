@@ -147,7 +147,16 @@ pub fn eval_class_member(
             Ok(Value::Object(proto))
         }
         _ => {
-            if matches!(prop_name, "call" | "apply" | "bind") {
+            let has_static_member = class.get_static_field(prop_name).is_some()
+                || class
+                    .static_methods
+                    .iter()
+                    .any(|(name, ..)| prop_key_matches(name, prop_name))
+                || class
+                    .static_getters
+                    .iter()
+                    .any(|(name, _)| prop_key_matches(name, prop_name));
+            if matches!(prop_name, "call" | "apply" | "bind") && !has_static_member {
                 return eval_callable_proto_method(
                     Value::Class(Box::new(class.clone())),
                     prop_name,

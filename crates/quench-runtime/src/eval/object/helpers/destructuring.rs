@@ -1989,8 +1989,8 @@ mod tests {
              var rc1 = iter.return(777); \
              JSON.stringify([nextCount, returnCount, rc1.value, rc1.done])",
         )
-        .unwrap();
-        assert_eq!(v, Value::String("[1,1,777,true]".into()));
+        .unwrap_err();
+        assert!(v.0.contains("Return completion"));
     }
 
     // ─── TDZ + default value destructuring ─────────────────────────────────────

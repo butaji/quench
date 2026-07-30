@@ -459,7 +459,7 @@ pub fn push_for_body_iteration_scope(env: &mut Environment, names: &[String]) {
 
     // Step 2: Push the new PI scope with set_except_top so body
     // assignments (x++, x = ...) update HEAD, not PI's independent storage.
-    env.push_scope_with_except_top();
+    env.push_scope();
 
     // Step 3: Fill PI scope with INDEPENDENT RefCells — each PI gets its own
     // storage so mutations to HEAD (from update expressions or later iterations)
@@ -468,7 +468,6 @@ pub fn push_for_body_iteration_scope(env: &mut Environment, names: &[String]) {
     // assignments like `y++` go to HEAD instead).
     if let Some(pi_rc) = env.get_scope_from_bottom(0) {
         let mut pi = pi_rc.borrow_mut();
-        pi.mark_per_iteration();
         for (name, value) in &head_values {
             pi.bindings_mut()
                 .insert(name.clone(), Rc::new(RefCell::new(value.clone())));

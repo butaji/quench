@@ -63,8 +63,7 @@ fn derived_constructor_returns_primitive_throws_typeerror() {
     );
 }
 
-/// A base class constructor that returns a primitive (non-undefined,
-/// non-object) should also throw TypeError.
+/// A base class constructor that returns a primitive ignores that result.
 #[test]
 fn base_constructor_returns_primitive_throws_typeerror() {
     let r = eval(
@@ -73,7 +72,7 @@ fn base_constructor_returns_primitive_throws_typeerror() {
          } \
          new Base()",
     );
-    assert!(r.is_err(), "constructor returning 42 should throw");
+    assert!(matches!(r, Ok(crate::Value::Object(_))));
 }
 
 #[test]

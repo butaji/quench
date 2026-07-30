@@ -325,7 +325,8 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         (Value::Generator(gen), Value::Function(ctor)) => {
             let ctor_proto = ctor.get_prototype();
             let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
-                Rc::ptr_eq(gen_proto, &ctor_proto) || has_prototype_in_chain(&gen_proto.borrow(), &ctor_proto)
+                Rc::ptr_eq(gen_proto, &ctor_proto)
+                    || has_prototype_in_chain(&gen_proto.borrow(), &ctor_proto)
             });
             Ok(Value::Boolean(result))
         }
@@ -339,7 +340,8 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         (Value::Generator(gen), Value::NativeFunction(nf)) => {
             if let Some(Value::Object(proto)) = nf.get_property("prototype") {
                 let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
-                    Rc::ptr_eq(gen_proto, &proto) || has_prototype_in_chain(&gen_proto.borrow(), &proto)
+                    Rc::ptr_eq(gen_proto, &proto)
+                        || has_prototype_in_chain(&gen_proto.borrow(), &proto)
                 });
                 Ok(Value::Boolean(result))
             } else {

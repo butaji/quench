@@ -1067,6 +1067,10 @@ fn eval_for(
         // expression, so updates go to HEAD directly.
         if head_lexical {
             push_for_body_iteration_scope(&mut env.borrow_mut(), &per_iter_names);
+            env.borrow()
+                .current_scope()
+                .borrow_mut()
+                .mark_per_iteration();
         }
         // Condition check (PI is on chain — closures see per-iteration values)
         if !eval_for_loop_condition(condition, env, in_arrow_function)? {
@@ -1132,13 +1136,30 @@ fn eval_for(
             }
             None => {}
         }
-        // Pop PI before update expression so the update writes to HEAD directly.
-        // For `const`, HEAD was downgraded to `let` at init time so writes succeed.
         if head_lexical {
             env.borrow_mut().pop_scope();
+            push_for_body_iteration_scope(&mut env.borrow_mut(), &per_iter_names);
+            env.borrow()
+                .current_scope()
+                .borrow_mut()
+                .clear_per_iteration();
         }
         if let Some(update) = update {
             let _ = eval_expression(update, env, in_arrow_function)?;
+        }
+        if head_lexical {
+            let pi = env.borrow().get_scope_from_bottom(0);
+            let head = env.borrow().get_scope_from_bottom(1);
+            if let (Some(pi), Some(head)) = (pi, head) {
+                for name in &per_iter_names {
+                    if let Some(value) = pi.borrow().get(name) {
+                        head.borrow_mut().set(name.clone(), value, false);
+                    }
+                }
+            }
+        }
+        if head_lexical {
+            env.borrow_mut().pop_scope();
         }
     }
     // Pop the for-head scope (HEAD). PI was already popped inside the loop.

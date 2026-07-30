@@ -141,8 +141,10 @@ pub(crate) fn call_value_impl(
                 return call_value_impl(f, args, this_val, force_strict);
             }
             if matches!(this_val, Value::Undefined) && !o.borrow().is_callable() {
-                let (_, error) =
-                    crate::value::error::create_js_error_with_type("Value is not a function", "TypeError");
+                let (_, error) = crate::value::error::create_js_error_with_type(
+                    "Value is not a function",
+                    "TypeError",
+                );
                 return Err(error);
             }
             call_object_as_constructor(o, args, this_val)
