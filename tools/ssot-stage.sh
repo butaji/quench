@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
+# SSOT = test-run stage execution.
 # Compatibility wrapper for historical `ssot` command names.
-# Canonical command remains `test-run-stage.sh` (test-run).
-# `ssot` is treated as a strict alias of test-run-stage.
+# This file is a strict alias for `test-run-stage.sh`.
 set -euo pipefail
 
 case "${SSOT_BUILD_RUN_TEST:-}" in

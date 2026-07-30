@@ -16,7 +16,7 @@ cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapt
 
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
-Implementation progress for a stage is the stage test run itself:
+Implementation status (SSOT) is the stage test run itself:
 `TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
 If a stage is not 100% in the test runner output, it is not done.
 
@@ -33,6 +33,16 @@ ALL_STAGES=1      cargo test -p quench-runtime --test test262 test262_staged -- 
 
 On 100% the runner prints `ALL STAGES COMPLETE — Stage N: X/X`. Strict
 mode: every non-`raw` test runs sloppy, then with `"use strict";`.
+
+Fast milestone flow:
+
+```bash
+bash tools/milestone-go.sh                  # run next stage, advance, commit
+bash tools/milestone-go.sh --push           # ...and push
+bash tools/milestone-go.sh --message "msg"  # custom commit message
+```
+
+`tools/milestone-go.sh` is SSOT-first: it only advances on successful test-run.
 
 ## TypeScript / JSX
 
