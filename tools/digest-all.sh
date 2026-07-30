@@ -55,7 +55,7 @@ while IFS= read -r stage; do
         CRASHED="$CRASHED $stage"
         PCT="CRASH"
     else
-        PCT=$(python3 -c "print(f'{(PASSED/$TOTAL*100):.0f}')" 2>/dev/null || echo "$((PASSED * 100 / TOTAL))")
+        PCT=$(( (PASSED * 100 + TOTAL / 2) / TOTAL ))
         TOTAL_PASSED=$((TOTAL_PASSED + PASSED))
         TOTAL_TESTS=$((TOTAL_TESTS + TOTAL))
     fi
