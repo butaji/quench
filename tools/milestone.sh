@@ -311,31 +311,21 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
             STATUS_SCOPE="next"
         elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
             NEXT_ID="$(bash tools/stage-status.sh --next-id)"
-            STATUS_PAYLOAD="$(python3 - "$NEXT_ID" <<'PY'
-import json
-import sys
-
-payload = {"next_id": sys.argv[1].strip()}
-print(json.dumps(payload))
-PY
-)"
+            STATUS_PAYLOAD="$(printf '%s' "{\"next_id\":\"$NEXT_ID\"}")"
             STATUS_SCOPE="next-id"
         else
             STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
         fi
         STATUS_RC=$?
-        if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 ]]; then
+        if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 || "$QUIET" -eq 1 ]]; then
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
-        elif [[ "$QUIET" -eq 0 ]]; then
+        else
             printf '%s\n' "$STATUS_PAYLOAD"
             set +e
             bash tools/test-run-ci-gate.sh
             CI_RC=$?
             set -e
-        else
-            CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
-            CI_RC=$?
         fi
 
         if [[ "$STATUS_JSON" -eq 1 ]]; then
