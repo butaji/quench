@@ -3,6 +3,8 @@
 # Usage:
 #   bash tools/milestone.sh                    # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --stage 32 --advance
+#   bash tools/milestone.sh --stage 32 --commit
+#   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 
 set -euo pipefail
 
@@ -10,12 +12,28 @@ cd "$(dirname "$0")/.."
 
 STAGE=""
 AUTO_ADVANCE=0
+AUTO_COMMIT=0
+AUTO_PUSH=0
+COMMIT_MESSAGE=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
         --stage)
             STAGE="$2"
             shift 2
+            ;;
+        --commit)
+            AUTO_COMMIT=1
+            if [[ ${2:-} != --* && ${2:-} != "" ]]; then
+                COMMIT_MESSAGE="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --push)
+            AUTO_PUSH=1
+            shift
             ;;
         --advance)
             AUTO_ADVANCE=1
@@ -41,6 +59,24 @@ if bash tools/fix-stage.sh; then
     else
         echo "[milestone] Stage $STAGE passed. Add --advance to auto-update index.json."
     fi
+
+    if [[ "$AUTO_COMMIT" -eq 1 ]]; then
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            if [[ -z "$COMMIT_MESSAGE" ]]; then
+                COMMIT_MESSAGE="chore: stage $STAGE test-run milestone"
+            fi
+            git add -A
+            git commit -m "$COMMIT_MESSAGE"
+            echo "[milestone] Committed milestone for stage $STAGE."
+            if [[ "$AUTO_PUSH" -eq 1 ]]; then
+                git push
+                echo "[milestone] Pushed milestone commit."
+            fi
+        else
+            echo "[milestone] No working-tree changes to commit."
+        fi
+    fi
+
     exit 0
 else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2

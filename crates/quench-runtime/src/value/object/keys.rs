@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::value::object::helpers::{as_array_index, ObjData};
+use crate::value::object::helpers::as_array_index;
 
 /// Get all property keys (own properties only, including getters/setters).
 pub fn own_keys(obj: &crate::value::Object) -> Vec<String> {
@@ -30,11 +30,7 @@ pub fn enumerable_own_keys(obj: &crate::value::Object) -> Vec<String> {
 
 /// For-in enumeration: own keys then prototype chain, skipping shadowed names.
 pub fn enumerate_for_in_keys(target: &Rc<RefCell<crate::value::Object>>) -> Vec<String> {
-    let target_borrow = target.borrow();
-    if let ObjData::Idx { length, .. } = target_borrow.data {
-        return (0..length as usize).map(|i| i.to_string()).collect();
-    }
-    let target_obj = target_borrow;
+    let target_obj = target.borrow();
     let mut keys = Vec::new();
     let mut collected = HashSet::new();
     let mut current: Option<Rc<RefCell<crate::value::Object>>> = Some(Rc::clone(target));
@@ -42,6 +38,9 @@ pub fn enumerate_for_in_keys(target: &Rc<RefCell<crate::value::Object>>) -> Vec<
     while let Some(cur_rc) = current {
         let cur = cur_rc.borrow();
         for key in enumerable_own_keys(&cur) {
+            if key == "length" && target_obj.kind == crate::value::kind::ObjectKind::Array {
+                continue;
+            }
             if collected.contains(&key) {
                 continue;
             }
@@ -153,5 +152,16 @@ mod tests {
         o.prototype = Some(Rc::clone(&proto_rc));
         let keys = enumerate_for_in_keys(&Rc::new(RefCell::new(o)));
         assert_eq!(keys, vec!["p1", "p4"]);
+    }
+
+    #[test]
+    fn array_for_in_does_not_include_length() {
+        let mut o = Object::new(ObjectKind::Array);
+        o.set("0", Value::Number(1.0));
+        o.set("length", Value::Number(3.0));
+        o.set("1", Value::Number(2.0));
+        o.set("2", Value::Number(3.0));
+        let keys = enumerate_for_in_keys(&Rc::new(RefCell::new(o)));
+        assert_eq!(keys, vec!["0", "1", "2"]);
     }
 }

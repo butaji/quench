@@ -175,6 +175,19 @@ fn test_delete_operator() {
 }
 
 #[test]
+fn test_delete_catch_binding_is_not_configurable() {
+    assert_eq!(
+        eval(
+            "var callCount = 0; \
+             try { throw 'catchme'; } catch (e) { e; delete e; } \
+             true"
+        )
+        .unwrap(),
+        Value::Boolean(false)
+    );
+}
+
+#[test]
 fn test_instanceof_and_in() {
     assert_eq!(eval("[] instanceof Array").unwrap(), Value::Boolean(true));
     assert_eq!(

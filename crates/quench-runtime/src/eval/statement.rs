@@ -1370,14 +1370,15 @@ fn eval_try(
             let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
             let thrown_for_catch = thrown_value.clone();
 
-            let has_catch_param = param.is_some();
-            if has_catch_param {
-                // Per ES §13.15.7: catch parameter creates a new lexical scope
-                // so it doesn't shadow outer bindings.
-                let name = param.as_ref().unwrap().clone();
-                env.borrow_mut().push_scope();
-                env.borrow_mut().define(name, thrown_for_catch);
-            }
+    let has_catch_param = param.is_some();
+    if has_catch_param {
+        // Per ES §13.15.7: catch parameter creates a new lexical scope
+        // so it doesn't shadow outer bindings.
+        let name = param.as_ref().unwrap().clone();
+        env.borrow_mut().push_scope();
+        env.borrow_mut().declare_var(name.clone(), VarKind::Let);
+        env.borrow_mut().initialize_declared(name.as_str(), thrown_for_catch);
+    }
 
             if let Some(h) = handler {
                 // Run catch block
