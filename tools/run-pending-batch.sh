@@ -84,14 +84,6 @@ if [[ "$BUILD" -eq 1 ]]; then
 fi
 
 PAYLOAD="$(${PAYLOAD_CMD[@]})"
-STAGES=$(python3 - "$PAYLOAD" <<'PY'
-import json
-import sys
-
-data = json.loads(sys.argv[1])
-print("\n".join(str(s.get('id', '')) for s in data.get('stages', [])))
-PY
-)
 
 if [[ "$STATUS" -eq 1 ]]; then
     export TOP
@@ -128,6 +120,15 @@ else:
 PY
     exit 0
 fi
+
+STAGES=$(python3 - "$PAYLOAD" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+print("\n".join(str(s.get('id', '')) for s in data.get('stages', [])))
+PY
+)
 
 if [[ -z "$STAGES" ]]; then
     echo "No pending stages found for requested batch."
