@@ -233,7 +233,7 @@ done
 
 STAGE="${STAGE:-$(bash tools/current-stage.sh)}"
 if [[ "$SSOT_DEPRECATED" -eq 1 ]]; then
-    log_msg "[milestone] Deprecated: --ssot is an alias for --test-run. Use --test-run."
+    echo "[milestone] Deprecated: --ssot is an alias for --test-run. Use --test-run." >&2
 fi
 RERUN_JSON_OUT="${MILESTONE_RERUN_JSON_OUT:-$RERUN_JSON_OUT}"
 if [[ "$RERUN_JSON" -eq 1 && "$RERUN_JSON_OUT" == "" ]]; then
