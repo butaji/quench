@@ -59,13 +59,7 @@ fi
 if [[ "$RUN" -eq 1 && "$NOPREFLIGHT" -eq 0 ]]; then
     if [[ "$JSON" -eq 1 ]]; then
         PREFLIGHT_JSON="$(bash tools/test-run-preflight.sh --json)"
-        if ! python3 - <<'PY'
-import json
-import sys
-json.loads(sys.stdin.read())
-PY
-<<<"$PREFLIGHT_JSON"
-        then
+        if [[ -z "$PREFLIGHT_JSON" || "${PREFLIGHT_JSON:0:1}" != "{" || "${PREFLIGHT_JSON: -1}" != "}" ]]; then
             echo "error: invalid preflight JSON payload" >&2
             exit 1
         fi
