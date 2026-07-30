@@ -18,6 +18,13 @@ LOG_FILE="${MILESTONE_RERUN_LOG:-./.test262_milestone_rerun.log}"
 EXTRA_ARGS=()
 OUTPUT_JSON=0
 NO_LOG=0
+QUIET=0
+
+log_msg() {
+  if [[ "$QUIET" -eq 0 ]]; then
+    echo "$1"
+  fi
+}
 RERUN_ARGS_JSON="[]"
 
 emit_json() {
@@ -76,6 +83,10 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --no-log)
       NO_LOG=1
+      shift
+      ;;
+    --quiet)
+      QUIET=1
       shift
       ;;
     --)
@@ -176,7 +187,9 @@ if [[ "$OUTPUT_JSON" -eq 1 && "$NO_LOG" -eq 1 ]]; then
     RUN_STATUS=$?
 else
     {
-        echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
+        if [[ "$QUIET" -eq 0 ]]; then
+          echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
+        fi
         cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
     } | tee -a "$LOG_FILE"
     RUN_STATUS="${PIPESTATUS[0]}"
@@ -186,7 +199,7 @@ if [[ "$RUN_STATUS" -ne 0 ]]; then
     if [[ "$OUTPUT_JSON" -eq 1 ]]; then
         emit_json "fail"
     else
-        echo "[milestone-rerun] Diagnostics failed for ${TEST}."
+        log_msg "[milestone-rerun] Diagnostics failed for ${TEST}."
     fi
     exit 1
 fi
@@ -195,6 +208,6 @@ if [[ "$OUTPUT_JSON" -eq 1 ]]; then
     emit_json "pass"
 else
     if [[ -n "$LOG_FILE" ]]; then
-        echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
+        log_msg "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
     fi
 fi
