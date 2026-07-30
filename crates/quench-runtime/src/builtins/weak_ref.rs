@@ -18,7 +18,9 @@ pub fn register_weak_ref(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(this_obj) = this_val else {
-                return Ok(Value::Undefined);
+                return Err(crate::JsError::new(
+                    "TypeError: WeakRef.prototype.deref called on non-object",
+                ));
             };
             let target = this_obj
                 .borrow()

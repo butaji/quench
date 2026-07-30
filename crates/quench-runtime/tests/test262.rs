@@ -274,7 +274,6 @@ fn test_runner_path_multi_let_per_iteration() {
 // ── Stage 30 staged runner ───────────────────────────────────────────────────
 
 #[test]
-#[ignore = "staged test262 runner"]
 fn test262_staged() {
     // Spawn on a thread with a larger stack to avoid stack overflows
     // during deep parsing (default Rust test threads have ~2MB stack).
@@ -341,12 +340,14 @@ fn current_stage_label() -> String {
 }
 
 #[test]
-#[ignore = "run with --ignored"]
 fn test262_one() {
-    let test_path = std::env::var("TEST262_FILE").expect("TEST262_FILE env var required");
-    let path = std::path::Path::new(&test_path);
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let path = std::env::var("TEST262_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            repo_root.join("tests/test262/test/language/statements/function/S13.2.1_A6_T3.js")
+        });
     let test262_dir = std::env::var("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo_root.join("tests/test262"));
@@ -362,9 +363,9 @@ fn test262_one() {
     let start = std::time::Instant::now();
     let result = host.run_script(&script);
     let elapsed = start.elapsed();
-    println!("Time: {:?}", elapsed);
+    let _ = elapsed;
     match result {
-        Ok(()) => println!("PASS"),
+        Ok(()) => {}
         Err(e) => panic!("FAIL: {}", e),
     }
 }

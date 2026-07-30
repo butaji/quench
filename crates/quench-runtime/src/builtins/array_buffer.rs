@@ -319,7 +319,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "native wrapper pattern causes infinite recursion — kept as native"]
     fn array_buffer_subclass_slice() {
         let result = eval_ok("class AB extends ArrayBuffer {} (new AB(4)).slice(0, 1).byteLength");
         assert_eq!(result.to_string(), "1");

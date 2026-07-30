@@ -773,7 +773,6 @@ mod tests {
     /// Reproduce the EXACT test262 runner execution path for the failing test.
     /// This uses HarnessLoader::build_script just like run_single_test does.
     #[test]
-    #[ignore = "TODO: investigate JS verifyProperty + restore + Symbol key getter invocation"]
     fn diagnostic_verify_property_restore_accessor_symbol_runner_path() {
         // This test is ignored because the JS verifyProperty from propertyHelper.js
         // has a subtle issue when restoring Symbol-keyed accessor properties.

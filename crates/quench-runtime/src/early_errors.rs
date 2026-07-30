@@ -10,6 +10,7 @@
 use crate::value::JsError;
 use oxc::ast::ast::{self, ForStatementLeft};
 use oxc::ast_visit::Visit;
+use std::collections::HashSet;
 
 /// Check all early errors on the OXC program before lowering.
 /// Called from `parser.rs` after parsing.
@@ -1112,7 +1113,10 @@ impl<'a> Visit<'a> for SuperChecker {
 /// Since we don't have class fields yet, any private name reference is
 /// a SyntaxError.
 pub fn check_private_names(program: &ast::Program) -> Result<(), JsError> {
-    let mut checker = PrivateNameChecker { error: None };
+    let mut checker = PrivateNameChecker {
+        error: None,
+        declared: Vec::new(),
+    };
     checker.visit_program(program);
     match checker.error {
         Some(err) => Err(err),
@@ -1122,16 +1126,43 @@ pub fn check_private_names(program: &ast::Program) -> Result<(), JsError> {
 
 struct PrivateNameChecker {
     error: Option<JsError>,
+    declared: Vec<HashSet<String>>,
 }
 
 impl<'a> Visit<'a> for PrivateNameChecker {
-    fn visit_private_field_expression(&mut self, _expr: &ast::PrivateFieldExpression<'a>) {
+    fn visit_private_field_expression(&mut self, expr: &ast::PrivateFieldExpression<'a>) {
         if self.error.is_some() {
             return;
         }
-        self.error = Some(JsError(
-            "SyntaxError: Private field '#...' must be declared in an enclosing class".into(),
-        ));
+        let name = expr.field.name.as_str();
+        if !self.declared.iter().rev().any(|names| names.contains(name)) {
+            self.error = Some(JsError(format!(
+                "SyntaxError: Private field '#{}' must be declared in an enclosing class",
+                name
+            )));
+        }
+    }
+
+    fn visit_class_body(&mut self, body: &ast::ClassBody<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        let mut names = HashSet::new();
+        for element in &body.body {
+            let key = match element {
+                ast::ClassElement::MethodDefinition(method) => Some(&method.key),
+                ast::ClassElement::PropertyDefinition(property) => Some(&property.key),
+                ast::ClassElement::AccessorProperty(property) => Some(&property.key),
+                ast::ClassElement::StaticBlock(_) => None,
+                ast::ClassElement::TSIndexSignature(_) => None,
+            };
+            if let Some(ast::PropertyKey::PrivateIdentifier(identifier)) = key {
+                names.insert(identifier.name.to_string());
+            }
+        }
+        self.declared.push(names);
+        oxc::ast_visit::walk::walk_class_body(self, body);
+        self.declared.pop();
     }
 }
 

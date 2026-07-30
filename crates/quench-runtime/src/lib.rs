@@ -13,11 +13,11 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust
 //! use quench_runtime::Context;
 //!
-//! let mut ctx = Context::new()?;
-//! let result = ctx.eval("1 + 2")?;
+//! let mut ctx = Context::new().unwrap();
+//! let result = ctx.eval("1 + 2").unwrap();
 //! assert_eq!(result, quench_runtime::Value::Number(3.0));
 //! ```
 
@@ -25,8 +25,11 @@
 /// Sets the thrown_value thread-local for catch blocks.
 ///
 /// # Examples
-/// ```ignore
-/// return throw!("TypeError", "value is not a function");
+/// ```
+/// use quench_runtime::throw;
+/// fn example() -> Result<quench_runtime::Value, quench_runtime::JsError> {
+///     throw!("TypeError", "value is not a function")
+/// }
 /// ```
 #[macro_export]
 macro_rules! throw {
