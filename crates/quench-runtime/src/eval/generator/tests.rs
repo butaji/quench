@@ -80,6 +80,18 @@ mod generator_tests {
     }
 
     #[test]
+    fn generator_restricted_properties_assigning_caller_throws_type_error() {
+        let err = eval("function* generator() {} generator.caller = {};").unwrap_err();
+        assert!(err.0.contains("TypeError"));
+    }
+
+    #[test]
+    fn generator_restricted_properties_accessing_caller_throws_type_error() {
+        let err = eval("function* generator() {}; generator.caller;").unwrap_err();
+        assert!(err.0.contains("TypeError"));
+    }
+
+    #[test]
     fn generator_body_not_executed_on_creation() {
         let r = eval(
             "var executed = false; \

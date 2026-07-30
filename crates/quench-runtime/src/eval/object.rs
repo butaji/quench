@@ -697,20 +697,12 @@ fn assign_to_function(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
-    if (f.is_arrow || f.strict) && (prop_name == "caller" || prop_name == "arguments") {
+    if (f.is_arrow || f.strict || f.is_generator || f.is_method)
+        && (prop_name == "caller" || prop_name == "arguments")
+    {
         let msg =
-            "'caller' and 'arguments' are restricted properties and cannot be set on this function"
-                .to_string();
+            "'caller' and 'arguments' are restricted properties and cannot be set on this function".to_string();
         let (err, js_err) = crate::value::create_js_error_with_type(&msg, "TypeError");
-        crate::value::set_thrown_value(err);
-        return Err(js_err);
-    }
-    // ES spec §16.1: class methods have restricted 'caller' and 'arguments'.
-    if f.is_method && (prop_name == "caller" || prop_name == "arguments") {
-        let (err, js_err) = crate::value::create_js_error_with_type(
-            "'caller' and 'arguments' are restricted properties and cannot be set on this function",
-            "TypeError",
-        );
         crate::value::set_thrown_value(err);
         return Err(js_err);
     }
