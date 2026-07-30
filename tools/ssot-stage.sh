@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Usage:
-#   bash tools/ssot-stage.sh                  # run current stage test-run (legacy name retained)
+#   bash tools/ssot-stage.sh                  # run current stage test-run (legacy name retained; prefer tools/test-run-stage.sh)
 #   bash tools/ssot-stage.sh --stage 42        # explicit stage
 #   TEST262_TEST_RUN_BUILD=1 bash tools/ssot-stage.sh  # prebuild run-test before running
 
