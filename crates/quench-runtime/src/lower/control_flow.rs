@@ -213,12 +213,19 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
 /// Check if a list of lowered statements ends with an unconditional
 /// control-flow exit (break, return, throw) that prevents fall-through.
 fn ends_with_break_or_return(stmts: &[Statement]) -> bool {
-    stmts.last().is_some_and(|s| {
-        matches!(
-            s,
+    let mut can_fall_through = true;
+    for stmt in stmts {
+        if !can_fall_through {
+            continue;
+        }
+        if matches!(
+            stmt,
             Statement::Break(_) | Statement::Return(_) | Statement::Throw(_)
-        )
-    })
+        ) {
+            can_fall_through = false;
+        }
+    }
+    !can_fall_through
 }
 
 /// Lower a switch statement into nested if-else chains

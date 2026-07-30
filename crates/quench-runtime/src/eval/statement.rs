@@ -262,20 +262,23 @@ fn eval_function_body_impl(
             return Ok(val);
         }
 
-        // Check for tail-call return inside a block or do-while at the last position.
+            // Check for tail-call return inside a block or do-while at the last position.
             if is_last_stmt {
+                if acc_stack_len() > 0 && has_tail_call_in_statement(stmt, env, in_arrow_function)? {
+                    break;
+                }
                 if let Statement::Block(inner_stmts) = stmt {
                     if acc_stack_len() > 0
                         && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
                             .is_some()
-                {
-                    // Tail call was set; break to let trampoline run.
-                    break;
-                }
-            } else if let Statement::DoWhile { body, .. } = stmt {
-                if acc_stack_len() > 0
-                    && handle_tail_call_in_block(
-                        std::slice::from_ref(body.as_ref()),
+                    {
+                        // Tail call was set; break to let trampoline run.
+                        break;
+                    }
+                } else if let Statement::DoWhile { body, .. } = stmt {
+                    if acc_stack_len() > 0
+                        && handle_tail_call_in_block(
+                            std::slice::from_ref(body.as_ref()),
                         env,
                         in_arrow_function,
                         true,
@@ -424,44 +427,60 @@ fn handle_tail_call_in_block(
         return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
     }
 
-    // Last statement is the switch lowering loop wrapper.
-    if let Statement::For {
-        init: Some(ForInit::VarDeclaration {
-            kind: VarKind::Var,
-            name: loop_name,
-            init: Some(Expression::Number(0.0)),
-            ..
-        }),
-        condition: Some(cond),
-        update: Some(upd),
-        body,
-    } = last_stmt
-    {
-        let is_loop_var = loop_name == "__quench_switch__";
-        let is_condition = matches!(
-            cond.as_ref(),
-            Expression::Binary {
-                op: BinaryOp::Lt,
-                left: l,
-                right: r
-            } if matches!(l.as_ref(), Expression::Identifier(id) if id == "__quench_switch__")
-                && matches!(r.as_ref(), Expression::Number(v) if *v == 1.0)
-        );
-        let is_update = matches!(
-            upd.as_ref(),
-            Expression::Update {
-                op: UpdateOp::Increment,
-                argument: arg,
-                prefix: false
-            } if matches!(arg.as_ref(), Expression::Identifier(id) if id == "__quench_switch__")
-        );
+        // Last statement can be the switch lowering loop wrapper used to convert
+        // switch statements into a single-iteration loop plus a conditional chain.
+        if let Statement::For {
+            init: Some(ForInit::VarDeclaration {
+                kind: VarKind::Var,
+                name: loop_name,
+                init: Some(Expression::Number(0.0)),
+                ..
+            }),
+            condition: Some(cond),
+            update: Some(upd),
+            body,
+        } = last_stmt
+        {
+            let is_switch_wrapper = {
+                match (
+                    cond.as_ref(),
+                    upd.as_ref(),
+                    loop_name.as_str(),
+                ) {
+                    (
+                        Expression::Binary {
+                            op: BinaryOp::Lt,
+                            left,
+                            right,
+                        },
+                        Expression::Update {
+                            op: UpdateOp::Increment,
+                            argument,
+                            prefix: false,
+                        },
+                        loop_name,
+                    ) => {
+                        let left_var = match left.as_ref() {
+                            Expression::Identifier(id) => id.as_str(),
+                            _ => "",
+                        };
+                        let right_is_one = matches!(right.as_ref(), Expression::Number(v) if *v == 1.0);
+                        let update_var = match argument.as_ref() {
+                            Expression::Identifier(id) => id.as_str(),
+                            _ => "",
+                        };
+                        right_is_one && left_var == loop_name && update_var == loop_name
+                    }
+                    _ => false,
+                }
+            };
 
-        if is_loop_var && is_condition && is_update {
-            if handle_tail_call_in_block(
-                std::slice::from_ref(body.as_ref()),
-                env,
-                in_arrow_function,
-                true,
+            if is_switch_wrapper {
+                if handle_tail_call_in_block(
+                    std::slice::from_ref(body.as_ref()),
+                    env,
+                    in_arrow_function,
+                    true,
             )?
             .is_some()
             {
@@ -501,6 +520,42 @@ fn handle_tail_call_in_block(
     // No tail-call found; caller will evaluate the block normally.
     env.borrow_mut().pop_scope();
     Ok(None)
+}
+
+fn has_tail_call_in_statement(
+    stmt: &Statement,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<bool, JsError> {
+    match stmt {
+        Statement::Block(stmts) | Statement::SequenceDecls(stmts) => {
+            if let Some(last) = stmts.last() {
+                has_tail_call_in_statement(last, env, in_arrow_function)
+            } else {
+                Ok(false)
+            }
+        }
+        Statement::If { consequent, alternate, .. } => {
+            if has_tail_call_in_statement(consequent, env, in_arrow_function)? {
+                return Ok(true);
+            }
+            if let Some(alt) = alternate {
+                has_tail_call_in_statement(alt, env, in_arrow_function)
+            } else {
+                Ok(false)
+            }
+        }
+        Statement::DoWhile { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::For { body, .. } => has_tail_call_in_statement(body, env, in_arrow_function),
+        Statement::Return(Some(expr)) if is_tail_expr(expr) => try_handle_tail_call(
+            &Some(expr.clone()),
+            env,
+            in_arrow_function,
+        ),
+        Statement::Return(None) => Ok(false),
+        _ => Ok(false),
+    }
 }
 
 /// Evaluate a single statement
@@ -563,12 +618,7 @@ pub fn eval_statement(
         ),
         Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
         Statement::SequenceDecls(stmts) => {
-            // Evaluate var declarations in sequence without creating a new scope
-            let mut result = Value::Undefined;
-            for stmt in stmts {
-                result = eval_statement(stmt, env, false, in_arrow_function)?;
-            }
-            Ok(result)
+            eval_statements(stmts, env, false, in_arrow_function)
         }
         Statement::Return(expr) => {
             let val = match expr {
@@ -766,8 +816,10 @@ pub fn eval_statement(
 /// Helper to set a property on globalThis if we're at the top level.
 /// Helper to set a property on globalThis if we're at the top level.
 pub(crate) fn set_on_global_this(env: &Rc<RefCell<Environment>>, name: &str, value: Value) {
-    // Only set on globalThis if this is the top-level environment
-    let is_top_level = env.borrow().get_parent().is_none();
+    let is_top_level = {
+        let env_ref = env.borrow();
+        env_ref.get_parent().is_none()
+    };
     if is_top_level {
         // Get globalThis outside the mutable borrow to avoid conflict
         let global_this = env.borrow().get("globalThis");
@@ -800,7 +852,8 @@ fn eval_pattern_decl(
     }
     if *kind == VarKind::Var {
         for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
-            if let Some(bound) = env.borrow().get(&name) {
+            let bound = env.borrow().get(&name);
+            if let Some(bound) = bound {
                 set_on_global_this(env, &name, bound);
             }
         }
@@ -858,6 +911,12 @@ fn eval_func_decl(
     if matches!(env.borrow().get(name), Some(Value::Function(_))) {
         return Ok(Value::Undefined);
     }
+    let scope_depth = env.borrow().scopes.len();
+    let in_block = scope_depth > 1;
+    let is_top_level = {
+        let env_ref = env.borrow();
+        env_ref.get_parent().is_none()
+    };
     let existing_kind = env.borrow().get_kind(name);
     let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
@@ -879,13 +938,15 @@ fn eval_func_decl(
             }
             crate::ast::VarKind::Var => {
                 env_mut.initialize_declared(name, value.clone());
-                if env_mut.get_parent().is_none() {
+                drop(env_mut);
+                if is_top_level && !in_block {
                     set_on_global_this(env, name, value);
                 }
                 return Ok(Value::Undefined);
             }
         }
-        if env_mut.get_parent().is_none() {
+        drop(env_mut);
+        if is_top_level && !in_block {
             set_on_global_this(env, name, value);
         }
         return Ok(Value::Undefined);
@@ -893,8 +954,6 @@ fn eval_func_decl(
     // ES2015+ strict mode: function declarations in blocks are block-scoped.
     // In sloppy mode, function declarations without prior lexical predeclaration
     // still default to var semantics for compatibility.
-    let scope_depth = env.borrow().scopes.len();
-    let in_block = scope_depth > 1;
     let kind = if crate::interpreter::is_strict_mode() && in_block {
         VarKind::Let
     } else {
@@ -903,7 +962,7 @@ fn eval_func_decl(
     env.borrow_mut().declare_var(name.to_owned(), kind);
     env.borrow_mut().define(name.to_owned(), value.clone());
     // Top-level function declarations are globals (same as var).
-    if env.borrow().get_parent().is_none() {
+    if is_top_level && !in_block {
         set_on_global_this(env, name, value);
     }
     Ok(Value::Undefined)

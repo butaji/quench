@@ -27,7 +27,10 @@ trap 'rm -f "$OUTFILE"' EXIT
 if ! TEST262_STAGE=$STAGE TEST262_DIGEST=1 TEST262_QUICK=1 cargo test -p quench-runtime --test test262 test262_staged -- --nocapture > "$OUTFILE" 2>&1; then
     echo "[fix-stage] Stage $STAGE failed. Extracting first failing test..."
 
-    readarray -t FAILS < <(python3 - "$OUTFILE" <<'PY'
+    FAILS=()
+    while IFS= read -r path; do
+        [ -n "$path" ] && FAILS+=("$path")
+    done < <(python3 - "$OUTFILE" <<'PY'
 import pathlib
 import re
 import sys
