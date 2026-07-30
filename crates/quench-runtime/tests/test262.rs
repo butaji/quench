@@ -64,6 +64,13 @@ fn test_assert_throws_basic() {
 }
 
 #[test]
+fn test_switch_scope_lex_async_function_throws_reference_error() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script("switch (0) { default: async function x() {} } x;");
+    assert!(result.is_err(), "switch default async function declaration should not be visible: {:?}", result);
+}
+
+#[test]
 fn test_for_in_with_defined_property() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

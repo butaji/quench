@@ -12,6 +12,7 @@ use crate::ast::{
     BinaryOp, BindingElement, Expression, ForInit, ForInitDecl, PropertyKey, Statement, VarKind,
 };
 use oxc::ast::ast;
+use std::collections::HashSet;
 
 /// Lower an if statement
 pub fn lower_if_stmt(if_stmt: &ast::IfStatement) -> Option<Statement> {
@@ -216,22 +217,24 @@ fn ends_with_break_or_return(stmts: &[Statement]) -> bool {
 /// Lower a switch statement into nested if-else chains
 pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     let discriminant = lower_expr(&switch.discriminant).ok()?;
-
-    // Compute effective bodies with fall-through.
-    // Each case's effective body is its own body concatenated with all
-    // subsequent case bodies until one ends with break/return/throw.
-    // Process in FORWARD order, computing fall-through target indices.
-    let case_count = switch.cases.len();
+    let disc_name = "__quench_switch_discriminant".to_string();
     let own_bodies: Vec<Vec<Statement>> = switch
         .cases
         .iter()
-        .map(|case| case.consequent.iter().filter_map(lower_stmt).collect())
+        .map(|case| {
+            case.consequent
+                .iter()
+                .filter_map(lower_stmt)
+                .map(desugar_switch_case_stmt)
+                .collect()
+        })
         .collect();
 
     // Compute effective bodies: walk backwards, accumulating bodies
     // of cases that don't end with break/return. Effective body for
     // case[i] = own[i] + (own[i+1] + own[i+2] + ... until break).
     // Prepend own[i] before accumulated suffix to maintain source order.
+    let case_count = switch.cases.len();
     let mut effective_bodies: Vec<Vec<Statement>> = Vec::with_capacity(case_count);
     let mut suffix: Vec<Statement> = Vec::new(); // accumulated suffix for fall-through
     for i in (0..case_count).rev() {
@@ -276,7 +279,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
         current = Some(Statement::If {
             condition: Box::new(Expression::Binary {
                 op: BinaryOp::StrictEq,
-                left: Box::new(discriminant.clone()),
+                left: Box::new(Expression::Identifier(disc_name.clone())),
                 right: Box::new(test_expr),
             }),
             consequent: Box::new(Statement::Block(case_body)),
@@ -284,11 +287,12 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
         });
     }
     let chain = current.unwrap_or(Statement::Empty);
+
     // The if-else chain cannot contain a `break` meant for the switch: it
     // would escape to the enclosing function or loop. Wrap the chain in a
     // one-shot counter loop, which consumes Break (and Continue) and always
     // terminates. `return` inside a case body still propagates.
-    Some(Statement::For {
+    let for_stmt = Statement::For {
         init: Some(ForInit::VarDeclaration {
             kind: VarKind::Var,
             name: "__quench_switch__".to_string(),
@@ -305,7 +309,208 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
             prefix: false,
         })),
         body: Box::new(chain),
-    })
+    };
+
+    let mut switch_scope_stmts = Vec::new();
+    for decl_name in collect_switch_case_decls(&own_bodies) {
+        // Switch CaseBlockDeclarationInstantiation performs predecl of
+        // lexical declarations (including function declarations) before
+        // evaluating selector expressions.
+        switch_scope_stmts.push(Statement::VarDeclaration {
+            kind: VarKind::Let,
+            name: decl_name,
+            init: None,
+        });
+    }
+
+    switch_scope_stmts.push(Statement::VarDeclaration {
+        kind: VarKind::Var,
+        name: disc_name,
+        init: Some(discriminant),
+    });
+    switch_scope_stmts.push(for_stmt);
+
+    Some(Statement::Block(switch_scope_stmts))
+}
+
+fn collect_switch_case_decls(case_bodies: &[Vec<Statement>]) -> Vec<String> {
+    let mut names = HashSet::new();
+    let mut out = Vec::new();
+
+    fn collect_from_stmt(stmt: &Statement, names: &mut HashSet<String>, out: &mut Vec<String>) {
+        match stmt {
+            Statement::VarDeclaration { kind, name, .. } => {
+                if *kind != VarKind::Var && names.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            }
+            Statement::PatternDeclaration {
+                kind,
+                pattern,
+                ..
+            } => {
+                if *kind != VarKind::Var {
+                    collect_pattern_names(pattern, names, out);
+                }
+            }
+            Statement::FunctionDeclaration { name, .. }
+            | Statement::ClassDeclaration { name, .. } => {
+                if names.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            }
+            Statement::Block(stmts) => {
+                for inner in stmts {
+                    collect_from_stmt(inner, names, out);
+                }
+            }
+            Statement::If {
+                consequent,
+                alternate,
+                ..
+            } => {
+                collect_from_stmt(consequent, names, out);
+                if let Some(alt) = alternate {
+                    collect_from_stmt(alt, names, out);
+                }
+            }
+            Statement::While { body, .. } => {
+                collect_from_stmt(body, names, out);
+            }
+            Statement::DoWhile { body, .. } => {
+                collect_from_stmt(body, names, out);
+            }
+            Statement::For { body, .. } => {
+                collect_from_stmt(body, names, out);
+            }
+            Statement::ForIn { body, .. } => {
+                collect_from_stmt(body, names, out);
+            }
+            Statement::Try {
+                body,
+                handler,
+                finalizer,
+                ..
+            } => {
+                collect_from_stmt(body, names, out);
+                if let Some(handler) = handler {
+                    collect_from_stmt(handler, names, out);
+                }
+                if let Some(finalizer) = finalizer {
+                    collect_from_stmt(finalizer, names, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_pattern_names(
+        pattern: &BindingElement,
+        names: &mut HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        match pattern {
+            BindingElement::Identifier(name) => {
+                if names.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            }
+            BindingElement::ArrayPattern(patterns) => {
+                for inner in patterns {
+                    collect_pattern_names(inner, names, out);
+                }
+            }
+            BindingElement::ObjectPattern(props) => {
+                for (_, value) in props {
+                    collect_pattern_names(value, names, out);
+                }
+            }
+            BindingElement::Default(inner, _) => {
+                collect_pattern_names(inner, names, out);
+            }
+            BindingElement::Rest(inner) => {
+                collect_pattern_names(inner, names, out);
+            }
+            BindingElement::AssignmentTarget(_) => {}
+        }
+    }
+
+    for case in case_bodies {
+        for stmt in case {
+            collect_from_stmt(stmt, &mut names, &mut out);
+        }
+    }
+    out
+}
+
+fn desugar_switch_case_stmt(stmt: Statement) -> Statement {
+    match stmt {
+        Statement::FunctionDeclaration {
+            name,
+            params,
+            body,
+            is_async,
+            is_generator,
+        } => Statement::VarDeclaration {
+            kind: VarKind::Let,
+            name,
+            init: Some(Expression::FunctionExpression {
+                name: None,
+                params,
+                body,
+                is_async,
+                is_generator,
+            }),
+        },
+        Statement::Block(stmts) => {
+            Statement::Block(stmts.into_iter().map(desugar_switch_case_stmt).collect())
+        }
+        Statement::If {
+            condition,
+            consequent,
+            alternate,
+        } => Statement::If {
+            condition,
+            consequent: Box::new(desugar_switch_case_stmt(*consequent)),
+            alternate: alternate.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
+        },
+        Statement::While { condition, body } => Statement::While {
+            condition,
+            body: Box::new(desugar_switch_case_stmt(*body)),
+        },
+        Statement::DoWhile {
+            body,
+            condition,
+            labels,
+        } => Statement::DoWhile {
+            body: Box::new(desugar_switch_case_stmt(*body)),
+            condition,
+            labels,
+        },
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        } => Statement::For {
+            init,
+            condition,
+            update,
+            body: Box::new(desugar_switch_case_stmt(*body)),
+        },
+        Statement::Try {
+            body,
+            param,
+            handler,
+            finalizer,
+        } => Statement::Try {
+            body: Box::new(desugar_switch_case_stmt(*body)),
+            param,
+            handler: handler.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
+            finalizer: finalizer.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
+        },
+        other => other,
+    }
 }
 
 /// Lower a for loop init (variable declaration or expression)
