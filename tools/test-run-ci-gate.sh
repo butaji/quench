@@ -307,7 +307,7 @@ if [[ "$JSON" -eq 1 ]]; then
     exit 0
 fi
 
-if [[ "$CHECK_CURRENT" -eq 1 ]]; then
+if [[ "$CHECK_CURRENT" -eq 1 && "$COMBINED_READY" != "1" ]]; then
     bash tools/test-run-dashboard.sh --assert-ready
 fi
 
