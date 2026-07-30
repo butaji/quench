@@ -132,6 +132,9 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
         echo "[milestone] SSOT check complete for stage ${STAGE}."
         log_status "ssot" "pass"
     else
+        if [[ "$AUTO_RERUN" -eq 1 ]]; then
+            bash tools/milestone-rerun.sh --stage "$STAGE"
+        fi
         log_status "ssot" "fail"
         echo "[milestone] Stage ${STAGE} failed SSOT." >&2
         exit 1
