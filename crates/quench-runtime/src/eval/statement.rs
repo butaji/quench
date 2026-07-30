@@ -777,10 +777,7 @@ fn eval_var_decl(
             let _ = f.set_property("name", Value::String(name.to_string()));
         }
     }
-    let preserve_hoisted_function = existing_var
-        && init.is_none()
-        && matches!(env.borrow().get(name), Some(Value::Function(_)));
-    if existing_var && !preserve_hoisted_function {
+    if existing_var && init.is_some() {
         env.borrow_mut().set(name, value.clone());
         if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
             set_on_global_this(env, name, value);
