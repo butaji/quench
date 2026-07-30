@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
-  echo "[ssot-stage] warning: SSOT_BUILD_RUN_TEST is deprecated; use TEST262_TEST_RUN_BUILD=1" >&2
+  echo "[legacy test-run-stage] warning: SSOT_BUILD_RUN_TEST is deprecated; use TEST262_TEST_RUN_BUILD=1" >&2
   export TEST262_TEST_RUN_BUILD=1
 fi
 

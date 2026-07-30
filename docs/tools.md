@@ -3,8 +3,8 @@
 ## Quick Reference
 
 Terminology is single-source:
-- `SSOT` means the stage `test-run` status stream.
-- `implementation status`, `progress`, and `snapshot` refer to `test-run` data.
+- `test run` is the canonical term for implementation-stage status.
+- `implementation status`, `progress`, and `snapshot` refer to `test run` data.
 - `ssot-stage.sh` is a legacy alias for `test-run-stage.sh`.
 
 ```bash
