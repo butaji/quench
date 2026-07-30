@@ -51,15 +51,15 @@ pub fn register_typed_arrays(ctx: &mut Context) {
     // Set up prototype properties
     typed_array_proto_rc
         .borrow_mut()
-        .set("constructor", Value::Undefined);
-    typed_array_proto_rc.borrow_mut().set(
+        .set_builtin_method("constructor", Value::Undefined);
+    typed_array_proto_rc.borrow_mut().set_builtin_method(
         "Symbol.toStringTag",
         Value::String("TypedArray".to_string()),
     );
     // length, byteLength, byteOffset are NOT set on typed_array_proto.
     // TypedArray instances use ObjData::Idx to provide these values dynamically.
     // Register fill method
-    typed_array_proto_rc.borrow_mut().set(
+    typed_array_proto_rc.borrow_mut().set_builtin_method(
         "fill",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_fill))),
     );
@@ -124,9 +124,9 @@ fn make_typed_array_constructor(
 ) -> Value {
     // Create prototype object for this specific TypedArray type
     let mut proto = Object::new(ObjectKind::Ordinary);
-    proto.set("constructor", Value::Undefined);
-    proto.set("Symbol.toStringTag", Value::String(name.to_string()));
-    proto.set("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
+    proto.set_builtin_method("constructor", Value::Undefined);
+    proto.set_builtin_method("Symbol.toStringTag", Value::String(name.to_string()));
+    proto.set_builtin_method("BYTES_PER_ELEMENT", Value::Number(bytes as f64));
     // length, byteLength, byteOffset omitted: per-type proto inherits from typed_array_proto
     // which has no own properties here, so TypedArray instances return dynamic values
     // from ObjData::Idx via the prototype chain.
@@ -331,8 +331,8 @@ fn construct_typed_array(
     };
 
     // Set standard TypedArray properties
-    object.set("byteOffset", Value::Number(byte_offset as f64));
-    object.set("buffer", Value::Object(Rc::clone(&buffer)));
+    object.set_builtin_method("byteOffset", Value::Number(byte_offset as f64));
+    object.set_builtin_method("buffer", Value::Object(Rc::clone(&buffer)));
     // For resizable buffers: only set explicit length/byteLength as own properties when
     // an explicit length was provided (args.len() > 2). Otherwise, the dynamic getter
     // in get_own computes them from the buffer's current byteLength (length-tracking).
@@ -343,8 +343,8 @@ fn construct_typed_array(
         .unwrap_or(0);
     if max_bl > 0 && args.len() > 2 {
         // Explicit length: own property overrides dynamic getter
-        object.set("length", Value::Number(length as f64));
-        object.set("byteLength", Value::Number(byte_length as f64));
+        object.set_builtin_method("length", Value::Number(length as f64));
+        object.set_builtin_method("byteLength", Value::Number(byte_length as f64));
     }
 
     drop(object);

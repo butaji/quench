@@ -4,7 +4,14 @@
 //! as microtasks using Promise.resolve() semantics.
 
 use crate::builtins::promise::create_resolved_promise;
-use crate::value::Value;
+use crate::value::{Object, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+thread_local! {
+    static LAST_PENDING_AWAIT: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
+}
 
 /// Evaluator for await expressions within an async function context.
 /// Takes the already-evaluated argument value and returns it wrapped in
@@ -14,10 +21,26 @@ pub fn eval_await_value(arg_value: Value) -> Value {
     // - If value is already a Promise, use it
     // - Otherwise, wrap in Promise.resolve(value)
     if is_promise(&arg_value) {
+        if let Value::Object(object) = &arg_value {
+            let pending = object
+                .borrow()
+                .promise_data
+                .as_ref()
+                .is_some_and(|data| data.state == crate::value::object::PromiseState::Pending);
+            if pending {
+                LAST_PENDING_AWAIT.with(|cell| *cell.borrow_mut() = Some(Rc::clone(object)));
+            } else {
+                let _ = crate::builtins::promise::execute_pending_microtasks();
+            }
+        }
         arg_value
     } else {
         Value::Object(create_resolved_promise(arg_value))
     }
+}
+
+pub(crate) fn take_last_pending_await() -> Option<Rc<RefCell<Object>>> {
+    LAST_PENDING_AWAIT.with(|cell| cell.borrow_mut().take())
 }
 
 /// Check if a value is a Promise (has Promise [[Prototype]] chain)

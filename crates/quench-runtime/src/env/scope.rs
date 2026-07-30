@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::ast::VarKind;
 use crate::eval::object::{
-    proxy_get_property, proxy_handler_and_target, proxy_has_property, call_proxy_set_trap,
+    call_proxy_set_trap, proxy_get_property, proxy_handler_and_target, proxy_has_property,
 };
 use crate::value::error::set_thrown_value;
 use crate::value::get_thrown_value;
@@ -41,6 +41,7 @@ pub struct Scope {
     /// Whether `this` has been initialized for this scope.
     this_initialized: bool,
     object_binding: Option<Rc<RefCell<crate::value::Object>>>,
+    with_environment: bool,
     with_unscopables: RefCell<HashSet<String>>,
     with_unscopables_loaded: Cell<bool>,
     /// Marker for static class body scope.
@@ -76,6 +77,7 @@ impl Clone for Scope {
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
+            with_environment: self.with_environment,
             with_unscopables: self.with_unscopables.clone(),
             with_unscopables_loaded: Cell::new(self.with_unscopables_loaded.get()),
             is_static_class_body: self.is_static_class_body,
@@ -93,6 +95,7 @@ impl Scope {
             this_value: None,
             this_initialized: false,
             object_binding: None,
+            with_environment: false,
             with_unscopables: RefCell::new(HashSet::new()),
             with_unscopables_loaded: Cell::new(false),
             is_static_class_body: false,
@@ -113,16 +116,16 @@ impl Scope {
             let unscopables_val = if let Some(symbol) =
                 crate::builtins::symbol::get_well_known_symbol_no_ctx("unscopables")
             {
-                match crate::eval::member::eval_object_member_value(obj, &symbol.into(), None) {
+                match crate::eval::member::eval_object_member_value(obj, &symbol, None) {
                     Ok(v) => Some(v),
-                        Err(err) => {
-                            if get_thrown_value().is_none() {
-                                set_thrown_value(
-                                    crate::value::create_js_error_with_type(&err.0, "TypeError").0,
-                                );
-                            }
-                            return false;
+                    Err(err) => {
+                        if get_thrown_value().is_none() {
+                            set_thrown_value(
+                                crate::value::create_js_error_with_type(&err.0, "TypeError").0,
+                            );
                         }
+                        return false;
+                    }
                 }
             } else {
                 None
@@ -141,8 +144,11 @@ impl Scope {
                             Err(err) => {
                                 if get_thrown_value().is_none() {
                                     set_thrown_value(
-                                        crate::value::create_js_error_with_type(&err.0, "TypeError")
-                                            .0,
+                                        crate::value::create_js_error_with_type(
+                                            &err.0,
+                                            "TypeError",
+                                        )
+                                        .0,
                                     );
                                 }
                                 return false;
@@ -199,13 +205,16 @@ impl Scope {
         }
         let has_binding = self.object_has_binding_property(name)?;
         if !has_binding {
-            return Some(false);
+            if self.was_deleted_during_unscopables(name) {
+                return Some(false);
+            }
+            return if self.has(name) { Some(false) } else { None };
+        }
+        if !self.with_environment {
+            return Some(true);
         }
         if !self.load_with_unscopables() {
             return None;
-        }
-        if self.is_unscopable(name) {
-            return Some(false);
         }
         Some(!self.is_unscopable(name))
     }
@@ -214,8 +223,19 @@ impl Scope {
         self.object_binding.is_some()
     }
 
+    pub fn is_global_object_binding(&self) -> bool {
+        self.object_binding
+            .as_ref()
+            .is_some_and(|object| object.borrow().kind == crate::value::ObjectKind::Global)
+    }
+
     pub fn set_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
         self.object_binding = Some(object);
+    }
+
+    pub fn set_with_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
+        self.object_binding = Some(object);
+        self.with_environment = true;
     }
 
     pub fn set_with_unscopables(&mut self, blocked: HashSet<String>) {
@@ -531,8 +551,10 @@ impl Scope {
                         }
                     }
                 }
-                if let Some(ref obj) = self.object_binding {
-                    obj.borrow_mut().set(&name, value.clone());
+                if matches!(self.var_kinds.get(&name), Some(VarKind::Var)) {
+                    if let Some(ref obj) = self.object_binding {
+                        obj.borrow_mut().set(&name, value.clone());
+                    }
                 }
                 // Mutate the existing RefCell so all scopes sharing this binding see the update.
                 *e.get().borrow_mut() = value;
@@ -635,8 +657,8 @@ impl Default for Scope {
 mod tests {
     use super::*;
     use crate::ast::VarKind;
-    use crate::Context;
     use crate::value::Value;
+    use crate::Context;
 
     #[test]
     fn test_scope_new_is_empty() {
@@ -691,7 +713,7 @@ mod tests {
                },
              });
              with (proxy) { Object; }
-             log.join(',');"#
+             log.join(',');"#,
         );
         let err = result.expect_err("expected proxy has trap throw");
         assert!(err.to_string().contains("has-throw"));
@@ -728,9 +750,9 @@ mod tests {
             .unwrap();
         let log = result.to_string();
         assert!(log.contains("get:Symbol(Symbol.unscopables)"));
-            assert!(log.contains("has:log"));
-            assert!(log.contains("get:Object"));
-            assert!(log.contains("with-id:function"));
+        assert!(log.contains("has:log"));
+        assert!(log.contains("get:Object"));
+        assert!(log.contains("with-id:function"));
     }
 
     #[test]
@@ -739,17 +761,33 @@ mod tests {
         let err = ctx
             .eval(
                 "var log = []; \
-                 var base = {}; \
+                 var base = { Object: 1 }; \
                  Object.defineProperty(base, Symbol.unscopables, { \
                    get() { log.push('get-unscopables'); throw new Error('unscopables-threw'); } \
                  }); \
                  with (new Proxy(base, { \
                    has(t, p) { log.push('has:' + String(p)); return p in t; }, \
                    get(t, p) { log.push('get:' + String(p)); return t[p]; }, \
-                 }) { Object; }",
+                 })) { Object; }",
             )
             .unwrap_err();
         assert!(err.to_string().contains("unscopables-threw"));
+    }
+
+    #[test]
+    fn global_object_with_scope_blocks_unscopable_binding() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "globalThis.v = 1; \
+             globalThis[Symbol.unscopables] = { v: true };",
+        )
+        .unwrap();
+        let Value::Object(global) = ctx.get_global("globalThis").unwrap() else {
+            panic!();
+        };
+        let mut scope = Scope::new();
+        scope.set_with_object_binding(global);
+        assert_eq!(scope.object_binding_has("v"), Some(false));
     }
 
     #[test]

@@ -220,17 +220,11 @@ fn eval_object_member_inner_value(
             }
         }
         _ => {
-            return eval_object_member_inner(
-                o,
-                &crate::value::to_js_string(prop_name),
-                env,
-            );
+            return eval_object_member_inner(o, &crate::value::to_js_string(prop_name), env);
         }
     }
     let obj = o.borrow();
-    if obj.kind == ObjectKind::Date
-        && matches!(prop_name, Value::String(s) if s == "prototype")
-    {
+    if obj.kind == ObjectKind::Date && matches!(prop_name, Value::String(s) if s == "prototype") {
         let mut proto = Object::new(ObjectKind::Ordinary);
         proto.set("constructor", Value::Object(Rc::clone(o)));
         return Ok(Value::Object(Rc::new(RefCell::new(proto))));
@@ -323,14 +317,14 @@ mod tests {
             .eval(
                 "var log = []; \
                  var unscopables = Symbol.unscopables; \
-                 var env = new Proxy({}, { \
+                 var env = new Proxy({ x: 1 }, { \
                    get(_t, p) { \
                      log.push(p); \
                      if (p === unscopables) { return {}; } \
                      return 0; \
                    } \
                  }); \
-                 with (env) {} \
+                 with (env) { x; } \
                  log[0] === unscopables",
             )
             .unwrap();

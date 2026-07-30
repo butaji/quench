@@ -472,6 +472,25 @@ pub fn take_iterator_step(
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
+    take_iterator_step_with_args(iterator, index, env, vec![], false)
+}
+
+pub fn take_iterator_step_with_value(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+    value: Value,
+) -> Result<(Value, bool), JsError> {
+    take_iterator_step_with_args(iterator, index, env, vec![value], true)
+}
+
+fn take_iterator_step_with_args(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+    args: Vec<Value>,
+    read_done_value: bool,
+) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
         let value = {
             let borrowed = iterator.borrow();
@@ -488,21 +507,25 @@ pub fn take_iterator_step(
         return Ok((value.unwrap_or(Value::Undefined), false));
     }
     let next_fn = cached_iterator_next_method(iterator, env)?;
-    if matches!(next_fn, Value::Undefined) {
-        return Ok((Value::Undefined, true));
+    if !next_fn.is_callable() {
+        let (value, error) =
+            crate::value::create_js_error_with_type("iterator.next is not callable", "TypeError");
+        crate::value::set_thrown_value(value);
+        return Err(error);
     }
     let iter_this = Value::Object(Rc::clone(iterator));
     let result = match next_fn {
         Value::Object(obj) => crate::eval::function::call_value_with_this(
             Value::Object(Rc::clone(&obj)),
-            vec![],
+            args.clone(),
             iter_this.clone(),
         )?,
-        other => crate::eval::function::call_value_with_this(other, vec![], iter_this)?,
+        other => crate::eval::function::call_value_with_this(other, args, iter_this)?,
     };
     if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
+    let result = await_async_iterator_result(result)?;
     let Value::Object(result_obj) = result else {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "Iterator result interface is not an object",
@@ -512,10 +535,45 @@ pub fn take_iterator_step(
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
     if crate::value::to_bool(&done) {
-        return Ok((Value::Undefined, true));
+        let value = if read_done_value {
+            crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?
+        } else {
+            Value::Undefined
+        };
+        return Ok((value, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
+    *index += 1;
     Ok((value, false))
+}
+
+pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsError> {
+    if !crate::interpreter::is_in_async_generator() {
+        return Ok(result);
+    }
+    let promise = crate::builtins::promise::promise_resolve_impl_static(
+        vec![result],
+        crate::builtins::promise::get_promise_proto(),
+    )?;
+    let Value::Object(promise) = promise else {
+        return Ok(Value::Undefined);
+    };
+    let mut data = promise.borrow().promise_data.clone();
+    if data
+        .as_ref()
+        .is_some_and(|data| data.state == crate::value::object::PromiseState::Pending)
+    {
+        crate::builtins::promise::execute_pending_microtasks()?;
+        data = promise.borrow().promise_data.clone();
+    }
+    match data.map(|data| (data.state, data.result)) {
+        Some((crate::value::object::PromiseState::Fulfilled, value)) => Ok(value),
+        Some((crate::value::object::PromiseState::Rejected, reason)) => {
+            crate::value::set_thrown_value(reason);
+            Err(JsError("Async iterator result rejected".to_string()))
+        }
+        _ => Ok(Value::Undefined),
+    }
 }
 
 /// Call iterator.return, returning an error if it throws or returns a non-Object.

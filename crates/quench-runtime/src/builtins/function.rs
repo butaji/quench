@@ -430,7 +430,11 @@ pub fn register_function(ctx: &mut Context) {
     // Create %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
     let async_generator_proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     if let Some(obj_proto) = crate::builtins::get_object_prototype() {
-        async_generator_proto_rc.borrow_mut().prototype = Some(obj_proto);
+        let async_iterator_proto = Rc::new(RefCell::new(Object::with_prototype(
+            ObjectKind::Ordinary,
+            obj_proto,
+        )));
+        async_generator_proto_rc.borrow_mut().prototype = Some(async_iterator_proto);
     }
     ASYNC_GENERATOR_PROTOTYPE.with(|gp| {
         *gp.borrow_mut() = Some(Rc::clone(&async_generator_proto_rc));
@@ -811,16 +815,21 @@ mod tests {
     fn test_function_constructor_strict_with_statement_throws() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("var f = Function(\"'use strict'; with ({}) {}\")");
-        assert!(result.is_err(), "strict with in Function constructor body must throw");
+        assert!(
+            result.is_err(),
+            "strict with in Function constructor body must throw"
+        );
     }
 
     #[test]
     fn test_function_constructor_strict_with_in_nested_function_throws() {
         let mut ctx = Context::new().unwrap();
-        let result = ctx.eval(
-            "Function(\"'use strict'; var f1 = function () { var o = {}; with (o) {}; }\");",
+        let result = ctx
+            .eval("Function(\"'use strict'; var f1 = function () { var o = {}; with (o) {}; }\");");
+        assert!(
+            result.is_err(),
+            "strict with in nested function expression must throw"
         );
-        assert!(result.is_err(), "strict with in nested function expression must throw");
     }
 
     #[test]

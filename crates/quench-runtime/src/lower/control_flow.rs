@@ -67,6 +67,14 @@ pub fn lower_do_while_stmt(do_while: &ast::DoWhileStatement) -> Option<Statement
 
 /// Lower a for statement
 pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
+    if let Some(ast::ForStatementInit::VariableDeclaration(decl)) = &for_stmt.init {
+        if matches!(
+            decl.kind,
+            ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing
+        ) {
+            return lower_using_for_stmt(for_stmt, decl);
+        }
+    }
     let init = for_stmt.init.as_ref().and_then(lower_for_init);
     let condition = for_stmt
         .test
@@ -84,6 +92,60 @@ pub fn lower_for_stmt(for_stmt: &ast::ForStatement) -> Option<Statement> {
         condition,
         update,
         body,
+    })
+}
+
+fn lower_using_for_stmt(
+    for_stmt: &ast::ForStatement,
+    decl: &ast::VariableDeclaration,
+) -> Option<Statement> {
+    let is_async = decl.kind == ast::VariableDeclarationKind::AwaitUsing;
+    let mut body = Vec::new();
+    let mut resources = Vec::new();
+    for item in &decl.declarations {
+        let ast::BindingPattern::BindingIdentifier(id) = &item.id else {
+            return None;
+        };
+        let name = id.name.as_str().to_string();
+        body.push(Statement::VarDeclaration {
+            kind: VarKind::Let,
+            name: name.clone(),
+            init: item.init.as_ref().and_then(|expr| lower_expr(expr).ok()),
+        });
+        body.push(Statement::RegisterDispose {
+            name: name.clone(),
+            is_async,
+        });
+        resources.push(name);
+    }
+    body.push(lower_for_without_init(for_stmt)?);
+    let finalizer = resources
+        .into_iter()
+        .rev()
+        .map(|name| Statement::Dispose { name, is_async })
+        .collect();
+    Some(Statement::Block(vec![Statement::Try {
+        body: Box::new(Statement::SequenceDecls(body)),
+        param: None,
+        handler: None,
+        finalizer: Some(Box::new(Statement::SequenceDecls(finalizer))),
+    }]))
+}
+
+fn lower_for_without_init(for_stmt: &ast::ForStatement) -> Option<Statement> {
+    Some(Statement::For {
+        init: None,
+        condition: for_stmt
+            .test
+            .as_ref()
+            .and_then(|expr| lower_expr(expr).ok())
+            .map(Box::new),
+        update: for_stmt
+            .update
+            .as_ref()
+            .and_then(|expr| lower_expr(expr).ok())
+            .map(Box::new),
+        body: Box::new(lower_stmt(&for_stmt.body).unwrap_or(Statement::Empty)),
     })
 }
 
@@ -140,6 +202,14 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
 pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement> {
     let iterable = lower_expr(&for_of_stmt.right).ok()?;
     let body = Box::new(lower_stmt(&for_of_stmt.body).unwrap_or(Statement::Empty));
+    let dispose_async = match &for_of_stmt.left {
+        ast::ForStatementLeft::VariableDeclaration(decl) => match decl.kind {
+            ast::VariableDeclarationKind::Using => Some(false),
+            ast::VariableDeclarationKind::AwaitUsing => Some(true),
+            _ => None,
+        },
+        _ => None,
+    };
 
     let (var_decl_stmt, loop_binding) =
         if let ast::ForStatementLeft::VariableDeclaration(ref decl) = &for_of_stmt.left {
@@ -175,6 +245,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
         iterable: Box::new(iterable),
         body,
         loop_binding,
+        dispose_async,
     }));
 
     if let Some(var_stmt) = var_decl_stmt {
@@ -186,12 +257,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
 
 /// Lower a try-catch-finally statement
 pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
-    let body = try_stmt
-        .block
-        .body
-        .iter()
-        .filter_map(lower_stmt)
-        .collect::<Vec<_>>();
+    let body = crate::lower::stmt::lower_statement_list(&try_stmt.block.body);
     let (catch_param, handler) = match try_stmt.handler.as_ref() {
         Some(catch) => {
             let mut handler_stmts = Vec::new();
@@ -209,12 +275,7 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
                             init: Some(Expression::Identifier(catch_param.clone())),
                         });
                         let nested_body = Statement::Block(
-                            catch
-                                .body
-                                .body
-                                .iter()
-                                .filter_map(lower_stmt)
-                                .collect(),
+                            catch.body.body.iter().filter_map(lower_stmt).collect(),
                         );
                         handler_stmts.push(nested_body);
                         Some(catch_param)
@@ -224,9 +285,11 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
             };
             if catch_param.is_some() && handler_stmts.is_empty() {
                 handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
-            } else if catch.param.as_ref().is_none_or(|p| {
-                matches!(&p.pattern, ast::BindingPattern::BindingIdentifier(_))
-            }) {
+            } else if catch
+                .param
+                .as_ref()
+                .is_none_or(|p| matches!(&p.pattern, ast::BindingPattern::BindingIdentifier(_)))
+            {
                 handler_stmts.extend(catch.body.body.iter().filter_map(lower_stmt));
             }
             (catch_param, Some(Box::new(Statement::Block(handler_stmts))))
@@ -239,7 +302,7 @@ pub fn lower_try_stmt(try_stmt: &ast::TryStatement) -> Option<Statement> {
         ))
     });
     Some(Statement::Try {
-        body: Box::new(Statement::Block(body)),
+        body: Box::new(body),
         param: catch_param,
         handler,
         finalizer,
@@ -273,12 +336,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     let own_bodies: Vec<Vec<Statement>> = switch
         .cases
         .iter()
-        .map(|case| {
-            case.consequent
-                .iter()
-                .filter_map(lower_stmt)
-                .collect()
-        })
+        .map(|case| case.consequent.iter().filter_map(lower_stmt).collect())
         .collect();
 
     // Compute effective bodies: walk backwards, accumulating bodies
@@ -344,7 +402,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     // one-shot counter loop, which consumes Break (and Continue) and always
     // terminates. `return` inside a case body still propagates.
     let for_stmt = Statement::For {
-            init: Some(ForInit::VarDeclaration {
+        init: Some(ForInit::VarDeclaration {
             kind: VarKind::Var,
             name: loop_name.clone(),
             init: Some(Expression::Number(0.0)),
@@ -396,11 +454,7 @@ fn collect_switch_case_decls(case_bodies: &[Vec<Statement>]) -> Vec<String> {
                     out.push(name.clone());
                 }
             }
-            Statement::PatternDeclaration {
-                kind,
-                pattern,
-                ..
-            } => {
+            Statement::PatternDeclaration { kind, pattern, .. } => {
                 if *kind != VarKind::Var {
                     collect_pattern_names(pattern, names, out);
                 }
@@ -505,7 +559,7 @@ pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    return None;
+                    VarKind::Let
                 }
             };
             if decl.declarations.len() > 1 {

@@ -88,7 +88,10 @@ mod generator_tests {
              [String(a.value === undefined), String(a.done), b.value[0], b.value[1], b.value[2], c.value[0], c.value[1], c.value[2], String(b.done), String(c.done)].join('|');",
         )
         .unwrap();
-        assert_eq!(r, Value::String("true|false|a|b|c|a|b|c|false|false".to_string()));
+        assert_eq!(
+            r,
+            Value::String("true|false|a|b|c|a|b|c|false|false".to_string())
+        );
     }
 
     #[test]

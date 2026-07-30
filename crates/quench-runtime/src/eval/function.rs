@@ -42,15 +42,15 @@ pub(crate) fn call_value_impl(
 
     let result = match func {
         Value::Function(f) => {
-        if f.is_async && !f.is_generator {
-            // For async (non-generator) functions, ANY error (including parameter
-            // evaluation) must be caught and returned as a rejected Promise instead
-            // of propagating as an uncaught exception.
-            crate::interpreter::enter_async_function();
-            let inner = call_js_function_impl(f, args, this_val);
-            crate::interpreter::leave_async_function();
-            let proto = crate::builtins::promise::get_promise_proto();
-            match inner {
+            if f.is_async && !f.is_generator {
+                // For async (non-generator) functions, ANY error (including parameter
+                // evaluation) must be caught and returned as a rejected Promise instead
+                // of propagating as an uncaught exception.
+                crate::interpreter::enter_async_function();
+                let inner = call_js_function_impl(f, args, this_val);
+                crate::interpreter::leave_async_function();
+                let proto = crate::builtins::promise::get_promise_proto();
+                match inner {
                     Ok(val) => {
                         crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
                     }
@@ -64,14 +64,22 @@ pub(crate) fn call_value_impl(
                     }
                 }
             } else if f.is_async && f.is_generator {
-                // Async generator: evaluate params eagerly at call time (ES §15.8.1).
-                // Errors in default param evaluation must throw synchronously before
-                // the generator object is returned.
-                // We evaluate params in a throwaway environment just to catch errors.
-                let eval_env = Environment::with_parent(Rc::clone(&f.closure));
-                let eval_env_rc = Rc::new(RefCell::new(eval_env));
-                bind_params(&f, &f.params, &args, &eval_env_rc)?;
-
+                let call_env = Environment::with_parent(Rc::clone(&f.closure));
+                call_env
+                    .current_scope()
+                    .borrow_mut()
+                    .set_this(this_val.clone());
+                let call_env_rc = Rc::new(RefCell::new(call_env));
+                let args_obj =
+                    crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+                call_env_rc
+                    .borrow_mut()
+                    .define("arguments".to_string(), args_obj);
+                bind_params(&f, &f.params, &args, &call_env_rc)?;
+                let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
+                body_env_rc.borrow_mut().push_scope();
+                predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
+                predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
                 let mut gen_obj = crate::value::GeneratorObject::new(
                     f.body.clone(),
                     f.params.clone(),
@@ -79,8 +87,7 @@ pub(crate) fn call_value_impl(
                     f.strict,
                 );
                 gen_obj.is_async = true;
-                // Store evaluated args so they can be bound when generator starts
-                gen_obj.args = Some(args);
+                gen_obj.call_env = Some(body_env_rc);
                 // Set the instance's [[Prototype]] to the function's .prototype (or
                 // %GeneratorPrototype% as fallback when .prototype is not an object).
                 gen_obj.prototype = f

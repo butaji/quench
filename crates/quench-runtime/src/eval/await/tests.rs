@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod await_tests {
-use crate::{Context, Value};
+    use crate::{Context, Value};
 
     fn eval(src: &str) -> Result<Value, crate::value::JsError> {
         Context::new().unwrap().eval(src)
@@ -142,12 +142,20 @@ use crate::{Context, Value};
         let p = ctx.eval("p").unwrap();
         let seen = ctx.eval("seen").unwrap();
         let p_state = if let Value::Object(p_obj) = p {
-            p_obj.borrow().promise_data.as_ref().map(|d| d.state.clone())
+            p_obj
+                .borrow()
+                .promise_data
+                .as_ref()
+                .map(|d| d.state.clone())
         } else {
             panic!("p should be a promise");
         };
         let seen_state = if let Value::Object(seen_obj) = seen {
-            seen_obj.borrow().promise_data.as_ref().map(|d| d.state.clone())
+            seen_obj
+                .borrow()
+                .promise_data
+                .as_ref()
+                .map(|d| d.state.clone())
         } else {
             panic!("seen should be a promise");
         };

@@ -356,6 +356,7 @@ pub fn collect_let_const_recursive(stmts: &[Statement], decls: &mut Vec<(String,
                 }
             }
             Statement::SequenceDecls(inner) => collect_let_const_recursive(inner, decls),
+            Statement::Try { .. } => {}
             _ => {}
         }
     }

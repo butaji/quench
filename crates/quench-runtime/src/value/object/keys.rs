@@ -81,6 +81,8 @@ fn array_indices(obj: &crate::value::Object) -> Vec<String> {
             .filter(|i| !obj.holes.contains(i))
             .map(|i| i.to_string())
             .collect()
+    } else if let crate::value::ObjData::Idx { length, .. } = obj.data {
+        (0..length).map(|i| i.to_string()).collect()
     } else {
         let mut numeric: Vec<(usize, String)> = obj
             .properties

@@ -176,3 +176,12 @@ fn test_symbol_subclassing() {
         .unwrap();
     assert!(matches!(value, Value::Object(_)));
 }
+
+#[test]
+fn symbol_disposal_well_known_symbols_exist() {
+    let mut ctx = create_test_context();
+    let result = ctx
+        .eval("typeof Symbol.dispose === 'symbol' && typeof Symbol.asyncDispose === 'symbol'")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}

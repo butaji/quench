@@ -55,13 +55,6 @@ pub fn eval_expression(
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
         Expression::Yield(expr) => {
-            if crate::interpreter::is_in_async_function() {
-                let value = match expr {
-                    Some(arg) => eval_expression(arg, env, in_arrow_function)?,
-                    None => Value::Undefined,
-                };
-                return Ok(crate::eval::r#await::eval_await_value(value));
-            }
             let value = match expr {
                 Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
                 None => {
@@ -99,12 +92,26 @@ pub fn eval_expression(
                 return Ok(Value::Undefined);
             }
             if crate::value::generator_replay::is_resuming_pending_yield() {
+                if let Some(cf) = crate::interpreter::take_control_flow() {
+                    match cf {
+                        crate::interpreter::ControlFlow::Return(val) => {
+                            crate::interpreter::set_control_flow(
+                                crate::interpreter::ControlFlow::Return(val),
+                            );
+                            return Ok(crate::interpreter::take_generator_resume_value());
+                        }
+                        crate::interpreter::ControlFlow::Throw(val) => {
+                            crate::value::set_thrown_value(val);
+                            return Err(crate::value::JsError("Generator threw".to_string()));
+                        }
+                        other => crate::interpreter::set_control_flow(other),
+                    }
+                }
                 if let Some(replayed) = crate::value::generator_replay::try_replay_yield() {
                     return Ok(replayed);
                 }
             }
             let resume_val = crate::interpreter::take_generator_resume_value();
-
             // When generator.return() or generator.throw() resumes the generator,
             // ControlFlow::Return or ControlFlow::Throw is pending. Check this
             // BEFORE the replay path so throw/return are not masked by replayed
@@ -318,6 +325,15 @@ pub fn eval_expression(
                 }
             }
             if let (Expression::Identifier(name), Some(scope)) = (left.as_ref(), identifier_scope) {
+                if crate::interpreter::is_strict_mode()
+                    && matches!(name.as_str(), "NaN" | "undefined" | "Infinity")
+                {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("Cannot assign to '{}' in strict mode", name),
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
                 // Per ES spec §12.4.5.1, `let` and `const` at global scope do NOT
                 // create properties on the global object. The object_binding_has
                 // check below is meant for `var` bindings whose global property was
@@ -342,6 +358,11 @@ pub fn eval_expression(
                     crate::interpreter::is_strict_mode(),
                 ) == Some(true)
                 {
+                    if scope.borrow().is_global_object_binding() {
+                        if let Some(global) = crate::context::get_current_env() {
+                            global.borrow_mut().set(name, right_val.clone());
+                        }
+                    }
                     return Ok(right_val);
                 }
                 if let Some(thrown) = crate::value::get_thrown_value() {
@@ -372,10 +393,11 @@ pub fn eval_expression(
             // No binding scope: identifier not found in env chain.
             if let Expression::Identifier(name) = left.as_ref() {
                 let name = name.clone();
-                if let Some(result) = env
-                    .borrow()
-                    .set_in_object_env(&name, right_val.clone(), crate::interpreter::is_strict_mode())
-                {
+                if let Some(result) = env.borrow().set_in_object_env(
+                    &name,
+                    right_val.clone(),
+                    crate::interpreter::is_strict_mode(),
+                ) {
                     if let Some(thrown) = crate::value::get_thrown_value() {
                         return Err(JsError(crate::value::to_js_string(&thrown)));
                     }
@@ -412,49 +434,13 @@ pub fn eval_expression(
             } else {
                 None
             };
-            let scope = ident_name.as_ref().and_then(|name| {
-                let env_ref = env.borrow();
-                env_ref
-                    .live_scopes_snapshot()
-                    .into_iter()
-                    .rev()
-                    .find(|scope| scope.borrow().is_object_binding())
-                    .or_else(|| env_ref.binding_scope(name))
-            });
             drop(env.borrow());
             // Evaluate right side after borrow is dropped.
             let right_val = eval_expression(right, env, in_arrow_function)?;
             let result = eval_binary_op(op.to_binary(), &left_val, &right_val)?;
             // Identifier with known scope: update binding directly (avoids nested borrow).
-            if let (Some(name), Some(scope)) = (ident_name, scope) {
-                let kind = scope.borrow().get_kind(&name);
-                if scope.borrow().is_object_binding()
-                    && scope
-                        .borrow()
-                        .set_object_property_after_get(&name, result.clone())
-                        == Some(true)
-                {
-                    return Ok(result);
-                }
-                if kind == Some(crate::ast::VarKind::Var) {
-                    // For var: try set_object_property first (for global var → global object).
-                    if scope
-                        .borrow_mut()
-                        .set_object_property(&name, result.clone(), false)
-                        == Some(true)
-                    {
-                        return Ok(result);
-                    }
-                    // Var not on global object: initialize declared binding.
-                    scope
-                        .borrow_mut()
-                        .initialize_declared(&name, result.clone());
-                    return Ok(result);
-                }
-                // let/const: set() includes TDZ check.
-                scope
-                    .borrow_mut()
-                    .set(name, result.clone(), crate::interpreter::is_strict_mode());
+            if ident_name.is_some() {
+                crate::eval::object::assign_to(left, &result, env)?;
                 return Ok(result);
             }
             // Member expression or other: re-evaluate left (borrow now dropped).
@@ -510,11 +496,13 @@ pub fn eval_expression(
             iterable,
             body,
             loop_binding,
+            dispose_async,
         } => eval_for_of(
             variable,
             iterable,
             body,
             *loop_binding,
+            *dispose_async,
             env,
             in_arrow_function,
         ),

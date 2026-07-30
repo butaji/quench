@@ -377,6 +377,15 @@ impl Environment {
             if scope.is_tdz(name) {
                 return false;
             }
+            if matches!(scope.get_kind(name), Some(VarKind::Let | VarKind::Const))
+                && scope.set(
+                    name.to_string(),
+                    value.clone(),
+                    crate::interpreter::is_strict_mode(),
+                )
+            {
+                return true;
+            }
             if let Some(success) =
                 scope.set_object_property(name, value.clone(), crate::interpreter::is_strict_mode())
             {
@@ -500,6 +509,12 @@ impl Environment {
             return parent.borrow().get_kind(name);
         }
         None
+    }
+
+    pub fn current_kind(&self, name: &str) -> Option<VarKind> {
+        self.scopes
+            .last()
+            .and_then(|scope| scope.borrow().get_kind(name))
     }
 
     pub fn has(&self, name: &str) -> bool {
@@ -842,7 +857,9 @@ mod tests {
         }
         assert_eq!(obj.borrow_mut().delete("x"), true);
 
-        assert!(!scope.borrow_mut().set("x".to_string(), Value::Number(2.0), false));
+        assert!(!scope
+            .borrow_mut()
+            .set("x".to_string(), Value::Number(2.0), false));
         assert!(obj.borrow().get("x").is_none());
     }
 }

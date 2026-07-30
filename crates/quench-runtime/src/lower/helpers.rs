@@ -41,7 +41,25 @@ pub fn lower_fn_body(body: &ast::FunctionBody) -> Vec<crate::ast::Statement> {
             )))
         })
         .collect();
-    stmts.extend(body.statements.iter().filter_map(super::stmt::lower_stmt));
+    let has_using = body.statements.iter().any(|statement| {
+        matches!(
+            statement,
+            ast::Statement::VariableDeclaration(declaration)
+                if matches!(
+                    declaration.kind,
+                    ast::VariableDeclarationKind::Using
+                        | ast::VariableDeclarationKind::AwaitUsing
+                )
+        )
+    });
+    if has_using {
+        match super::stmt::lower_statement_list(&body.statements) {
+            crate::ast::Statement::Block(body) => stmts.extend(body),
+            statement => stmts.push(statement),
+        }
+    } else {
+        stmts.extend(body.statements.iter().filter_map(super::stmt::lower_stmt));
+    }
     stmts
 }
 

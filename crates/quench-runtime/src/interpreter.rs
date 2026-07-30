@@ -296,6 +296,7 @@ thread_local! {
 
 thread_local! {
     static ASYNC_FUNCTION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ASYNC_GENERATOR_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn set_new_target(target: Option<Value>) {
@@ -316,6 +317,18 @@ pub(crate) fn leave_async_function() {
 
 pub(crate) fn is_in_async_function() -> bool {
     ASYNC_FUNCTION_DEPTH.with(|cell| cell.get() > 0)
+}
+
+pub(crate) fn enter_async_generator() {
+    ASYNC_GENERATOR_DEPTH.with(|cell| cell.set(cell.get().saturating_add(1)));
+}
+
+pub(crate) fn leave_async_generator() {
+    ASYNC_GENERATOR_DEPTH.with(|cell| cell.set(cell.get().saturating_sub(1)));
+}
+
+pub(crate) fn is_in_async_generator() -> bool {
+    ASYNC_GENERATOR_DEPTH.with(|cell| cell.get() > 0)
 }
 
 pub fn is_strict_mode() -> bool {

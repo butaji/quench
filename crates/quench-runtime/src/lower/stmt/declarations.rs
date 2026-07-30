@@ -3,7 +3,7 @@
 use crate::ast::{Class, ClassMember, Expression, Param, PropertyKey, Statement, VarKind};
 use oxc::ast::ast;
 
-use super::lower_stmt;
+use super::{lower_statement_list, lower_stmt};
 use crate::lower::expr::lower_expr;
 
 /// Lower a declaration (function, var, const, let, class)
@@ -63,9 +63,8 @@ pub fn lower_var_decl_impl(
         ast::VariableDeclarationKind::Var => VarKind::Var,
         ast::VariableDeclarationKind::Let => VarKind::Let,
         ast::VariableDeclarationKind::Const => VarKind::Const,
-        // Using/AwaitUsing not supported
         ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-            return None;
+            VarKind::Let
         }
     };
     let mut decls = Vec::new();
@@ -151,7 +150,10 @@ pub fn lower_fn_decl(func_decl: &ast::Function) -> Option<Statement> {
         .body
         .as_ref()
         .map(|b| {
-            let mut stmts: Vec<Statement> = b.statements.iter().filter_map(lower_stmt).collect();
+            let mut stmts = match lower_statement_list(&b.statements) {
+                Statement::Block(stmts) => stmts,
+                statement => vec![statement],
+            };
             // Add directives (e.g. "use strict") before statements so
             // eval-time check_use_strict can find them.
             // Insert in reverse order so the first directive ends up at index 0.

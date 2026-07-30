@@ -56,6 +56,82 @@ mod tests {
         assert!(matches!(prog, Program::Script(_)));
     }
 
+    #[test]
+    fn lower_await_using_preserves_binding_declaration() {
+        let stmt = match parse_and_lower_module("await using resource = null;") {
+            Program::Script(stmts) => stmts.into_iter().next().unwrap(),
+        };
+        assert!(matches!(
+            stmt,
+            Statement::VarDeclaration {
+                kind: crate::ast::VarKind::Let,
+                name,
+                init: Some(Expression::Null),
+            } if name == "resource"
+        ));
+    }
+
+    #[test]
+    fn lower_module_await_using_preserves_binding_declaration() {
+        let stmt = match parse_and_lower_module("await using resource = null;") {
+            Program::Script(mut stmts) => stmts.remove(0),
+        };
+        assert!(matches!(
+            stmt,
+            Statement::VarDeclaration {
+                kind: crate::ast::VarKind::Let,
+                name,
+                init: Some(Expression::Null),
+            } if name == "resource"
+        ));
+    }
+
+    #[test]
+    fn lower_script_rejects_await_using_declaration() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let parsed = Parser::new(&allocator, "await using resource = null;", source_type).parse();
+        assert!(lower_script(&parsed.program).is_err());
+    }
+
+    #[test]
+    fn lower_for_await_using_wraps_loop_with_disposal() {
+        let stmt = first_stmt("for (await using resource = null; false; ) {}");
+        let Statement::Block(block) = stmt else {
+            panic!("expected block");
+        };
+        let Statement::Try {
+            body, finalizer, ..
+        } = &block[0]
+        else {
+            panic!("expected try");
+        };
+        let Statement::SequenceDecls(body) = body.as_ref() else {
+            panic!("expected sequence");
+        };
+        assert!(matches!(
+            &body[0],
+            Statement::VarDeclaration {
+                name,
+                init: Some(Expression::Null),
+                ..
+            } if name == "resource"
+        ));
+        assert!(matches!(
+            &body[1],
+            Statement::RegisterDispose {
+                name,
+                is_async: true
+            } if name == "resource"
+        ));
+        assert!(matches!(&body[2], Statement::For { init: None, .. }));
+        assert!(matches!(
+            finalizer.as_deref(),
+            Some(Statement::SequenceDecls(items))
+                if matches!(&items[0], Statement::Dispose { name, is_async: true } if name == "resource")
+        ));
+    }
+
     // ===== Binary Operators =====
 
     #[test]
@@ -434,8 +510,14 @@ mod tests {
     #[test]
     fn test_lower_switch_stmt() {
         let stmt = first_stmt("switch (x) { case 1: break; }");
-        // Switch is lowered to a For loop
-        assert!(matches!(stmt, Statement::For { .. }));
+        let has_for = match stmt {
+            Statement::SequenceDecls(stmts) => stmts.iter().any(|stmt| {
+                matches!(stmt, Statement::Block(body) if body.iter().any(|stmt| matches!(stmt, Statement::For { .. })))
+            }),
+            Statement::For { .. } => true,
+            _ => false,
+        };
+        assert!(has_for);
     }
 
     #[test]

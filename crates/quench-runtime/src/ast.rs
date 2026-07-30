@@ -44,7 +44,10 @@ pub enum Statement {
         is_generator: bool,
     },
     /// Class declaration
-    ClassDeclaration { name: String, class: Class },
+    ClassDeclaration {
+        name: String,
+        class: Class,
+    },
     /// If statement
     If {
         condition: Box<Expression>,
@@ -76,13 +79,25 @@ pub enum Statement {
     /// Continue statement
     Continue(Option<String>),
     /// Labeled statement — `label: body`
-    Labeled { label: String, body: Box<Statement> },
+    Labeled {
+        label: String,
+        body: Box<Statement>,
+    },
     /// Try statement with optional catch and finally
     Try {
         body: Box<Statement>,
         param: Option<String>,
         handler: Option<Box<Statement>>,
         finalizer: Option<Box<Statement>>,
+    },
+    /// Dispose a resource binding at scope exit.
+    Dispose {
+        name: String,
+        is_async: bool,
+    },
+    RegisterDispose {
+        name: String,
+        is_async: bool,
     },
     /// Throw statement
     Throw(Box<Expression>),
@@ -302,6 +317,7 @@ pub enum Expression {
         body: Box<Statement>,
         /// Per-iteration lexical binding for `for (let/const x of ...)`.
         loop_binding: Option<VarKind>,
+        dispose_async: Option<bool>,
     },
     /// For-in loop: for (x in object) { ... }
     ForIn {

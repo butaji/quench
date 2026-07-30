@@ -75,6 +75,7 @@ impl Context {
     /// Evaluate a JavaScript source string using the recursive interpreter.
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
+        let _ = crate::value::error::take_thrown_value();
 
         // Set thread-local for eval function to access this context
         let ctx_ptr: *mut Context = self;

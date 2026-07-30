@@ -179,8 +179,7 @@ fn test_delete_catch_binding_is_not_configurable() {
     assert_eq!(
         eval(
             "var callCount = 0; \
-             try { throw 'catchme'; } catch (e) { e; delete e; } \
-             true"
+             try { throw 'catchme'; } catch (e) { delete e; }"
         )
         .unwrap(),
         Value::Boolean(false)

@@ -15,9 +15,9 @@ pub const TEST_TIMEOUT_SECS: u64 = 15;
 /// Async prelude: `$DONE` records invocations and rethrows error arguments.
 /// The count is verified after the microtask drain by `async_done_probe`.
 pub const ASYNC_DONE_PRELUDE: &str = "var $DONE = function(error) { \
-if (error !== undefined && error !== null) throw error; \
 globalThis.__test262DoneCount = (globalThis.__test262DoneCount|0) + 1; \
 if (globalThis.__test262DoneCount > 1) throw new Test262Error('$DONE called twice'); \
+if (error !== undefined && error !== null) { globalThis.__test262DoneError = error; throw error; } \
 };\n";
 
 /// Infrastructure failure markers — never evidence of expected test behavior.
@@ -264,6 +264,11 @@ fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
 
 /// Verify the async $DONE count recorded by `ASYNC_DONE_PRELUDE` is exactly 1.
 fn async_done_probe(ctx: &mut crate::Context) -> Result<(), String> {
+    if let Ok(error) = ctx.eval("globalThis.__test262DoneError") {
+        if !matches!(error, crate::Value::Undefined) {
+            return Err(crate::value::to_js_string(&error));
+        }
+    }
     match ctx.eval("globalThis.__test262DoneCount|0") {
         Ok(crate::Value::Number(1.0)) => Ok(()),
         Ok(v) => Err(format!(
@@ -433,11 +438,15 @@ fn run_test_binary() -> std::path::PathBuf {
         .parent()
         .and_then(|p| p.parent())
         .unwrap_or(&manifest);
+    preferred_run_test_binary(&ws.join("target"))
+        .unwrap_or_else(|| std::path::PathBuf::from("target/debug/run-test"))
+}
+
+fn preferred_run_test_binary(target: &Path) -> Option<std::path::PathBuf> {
     first_existing(&[
-        ws.join("target/release/run-test"),
-        ws.join("target/debug/run-test"),
+        target.join("debug/run-test"),
+        target.join("release/run-test"),
     ])
-    .unwrap_or_else(|| std::path::PathBuf::from("target/debug/run-test"))
 }
 
 fn first_existing(candidates: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {

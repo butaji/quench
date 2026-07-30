@@ -14,8 +14,13 @@ use crate::value::{
     set_thrown_value, take_thrown_value, to_bool, to_js_string, to_object, JsError, Object,
     ObjectKind, Value,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+
+thread_local! {
+    static ASYNC_DISPOSAL_BOUNDARY: Cell<bool> = const { Cell::new(false) };
+    static ASYNC_DISPOSAL_EVALUATED: Cell<bool> = const { Cell::new(false) };
+}
 
 /// Returns true if expr is a Call expression eligible for tail-call optimization.
 /// Direct `eval()` calls are excluded — they must not be tail-called.
@@ -271,23 +276,23 @@ fn eval_function_body_impl(
             return Ok(val);
         }
 
-            // Check for tail-call return inside a block or do-while at the last position.
-            if is_last_stmt {
-                if acc_stack_len() > 0 && has_tail_call_in_statement(stmt, env, in_arrow_function)? {
+        // Check for tail-call return inside a block or do-while at the last position.
+        if is_last_stmt {
+            if acc_stack_len() > 0 && has_tail_call_in_statement(stmt, env, in_arrow_function)? {
+                break;
+            }
+            if let Statement::Block(inner_stmts) = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
+                        .is_some()
+                {
+                    // Tail call was set; break to let trampoline run.
                     break;
                 }
-                if let Statement::Block(inner_stmts) = stmt {
-                    if acc_stack_len() > 0
-                        && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
-                            .is_some()
-                    {
-                        // Tail call was set; break to let trampoline run.
-                        break;
-                    }
-                } else if let Statement::DoWhile { body, .. } = stmt {
-                    if acc_stack_len() > 0
-                        && handle_tail_call_in_block(
-                            std::slice::from_ref(body.as_ref()),
+            } else if let Statement::DoWhile { body, .. } = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(
+                        std::slice::from_ref(body.as_ref()),
                         env,
                         in_arrow_function,
                         true,
@@ -296,27 +301,26 @@ fn eval_function_body_impl(
                 {
                     break;
                 }
-                } else if let Statement::For { body, .. } = stmt {
-                    if acc_stack_len() > 0
-                        && handle_tail_call_in_block(
-                            std::slice::from_ref(body.as_ref()),
-                            env,
-                            in_arrow_function,
-                            true,
-                        )?
-                        .is_some()
-                    {
-                        break;
-                    }
-                } else if let Statement::SequenceDecls(stmts) = stmt {
-                    if acc_stack_len() > 0
-                        && handle_tail_call_in_block(stmts, env, in_arrow_function, true)?
-                            .is_some()
-                    {
-                        break;
-                    }
+            } else if let Statement::For { body, .. } = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(
+                        std::slice::from_ref(body.as_ref()),
+                        env,
+                        in_arrow_function,
+                        true,
+                    )?
+                    .is_some()
+                {
+                    break;
+                }
+            } else if let Statement::SequenceDecls(stmts) = stmt {
+                if acc_stack_len() > 0
+                    && handle_tail_call_in_block(stmts, env, in_arrow_function, true)?.is_some()
+                {
+                    break;
                 }
             }
+        }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
         // Per ES §8.3.2, empty completions (var/let/const/function declarations,
@@ -325,6 +329,13 @@ fn eval_function_body_impl(
         let is_empty = is_empty_completion(stmt);
         if !is_empty {
             _last_val = stmt_val;
+        }
+        if take_async_disposal_boundary() && !is_last_stmt {
+            let tail = &stmts[i + 1..];
+            if !matches!(tail.first(), Some(Statement::Return(_))) {
+                queue_async_function_tail(tail, env, in_arrow_function)?;
+                return Ok(Value::Undefined);
+            }
         }
         // For the last statement, DON'T check ControlFlow::Return here.
         // Let the final return statement be reached and evaluated properly.
@@ -366,6 +377,28 @@ fn eval_function_body_impl(
     }
     // No explicit return — return undefined per ES spec
     Ok(Value::Undefined)
+}
+
+fn queue_async_function_tail(
+    tail: &[Statement],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<(), JsError> {
+    let tail = tail.to_vec();
+    let env = Rc::clone(env);
+    let callback = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        eval_statements(&tail, &env, false, in_arrow_function)
+    })));
+    crate::builtins::promise::queue_microtask_impl(callback);
+    Ok(())
+}
+
+fn take_async_disposal_boundary() -> bool {
+    ASYNC_DISPOSAL_BOUNDARY.with(|boundary| boundary.replace(false))
+}
+
+fn take_async_disposal_evaluated() -> bool {
+    ASYNC_DISPOSAL_EVALUATED.with(|evaluated| evaluated.replace(false))
 }
 
 /// Handle a tail-call return expression when eligible. Returns true if a tail-call
@@ -436,60 +469,57 @@ fn handle_tail_call_in_block(
         return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
     }
 
-        // Last statement can be the switch lowering loop wrapper used to convert
-        // switch statements into a single-iteration loop plus a conditional chain.
-        if let Statement::For {
-            init: Some(ForInit::VarDeclaration {
+    // Last statement can be the switch lowering loop wrapper used to convert
+    // switch statements into a single-iteration loop plus a conditional chain.
+    if let Statement::For {
+        init:
+            Some(ForInit::VarDeclaration {
                 kind: VarKind::Var,
                 name: loop_name,
                 init: Some(Expression::Number(0.0)),
                 ..
             }),
-            condition: Some(cond),
-            update: Some(upd),
-            body,
-        } = last_stmt
-        {
-            let is_switch_wrapper = {
-                match (
-                    cond.as_ref(),
-                    upd.as_ref(),
-                    loop_name.as_str(),
-                ) {
-                    (
-                        Expression::Binary {
-                            op: BinaryOp::Lt,
-                            left,
-                            right,
-                        },
-                        Expression::Update {
-                            op: UpdateOp::Increment,
-                            argument,
-                            prefix: false,
-                        },
-                        loop_name,
-                    ) => {
-                        let left_var = match left.as_ref() {
-                            Expression::Identifier(id) => id.as_str(),
-                            _ => "",
-                        };
-                        let right_is_one = matches!(right.as_ref(), Expression::Number(v) if *v == 1.0);
-                        let update_var = match argument.as_ref() {
-                            Expression::Identifier(id) => id.as_str(),
-                            _ => "",
-                        };
-                        right_is_one && left_var == loop_name && update_var == loop_name
-                    }
-                    _ => false,
+        condition: Some(cond),
+        update: Some(upd),
+        body,
+    } = last_stmt
+    {
+        let is_switch_wrapper = {
+            match (cond.as_ref(), upd.as_ref(), loop_name.as_str()) {
+                (
+                    Expression::Binary {
+                        op: BinaryOp::Lt,
+                        left,
+                        right,
+                    },
+                    Expression::Update {
+                        op: UpdateOp::Increment,
+                        argument,
+                        prefix: false,
+                    },
+                    loop_name,
+                ) => {
+                    let left_var = match left.as_ref() {
+                        Expression::Identifier(id) => id.as_str(),
+                        _ => "",
+                    };
+                    let right_is_one = matches!(right.as_ref(), Expression::Number(v) if *v == 1.0);
+                    let update_var = match argument.as_ref() {
+                        Expression::Identifier(id) => id.as_str(),
+                        _ => "",
+                    };
+                    right_is_one && left_var == loop_name && update_var == loop_name
                 }
-            };
+                _ => false,
+            }
+        };
 
-            if is_switch_wrapper {
-                if handle_tail_call_in_block(
-                    std::slice::from_ref(body.as_ref()),
-                    env,
-                    in_arrow_function,
-                    true,
+        if is_switch_wrapper {
+            if handle_tail_call_in_block(
+                std::slice::from_ref(body.as_ref()),
+                env,
+                in_arrow_function,
+                true,
             )?
             .is_some()
             {
@@ -544,7 +574,11 @@ fn has_tail_call_in_statement(
                 Ok(false)
             }
         }
-        Statement::If { consequent, alternate, .. } => {
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
             if has_tail_call_in_statement(consequent, env, in_arrow_function)? {
                 return Ok(true);
             }
@@ -577,11 +611,9 @@ fn has_tail_call_in_statement(
             }
             Ok(false)
         }
-        Statement::Return(Some(expr)) if is_tail_expr(expr) => try_handle_tail_call(
-            &Some(expr.clone()),
-            env,
-            in_arrow_function,
-        ),
+        Statement::Return(Some(expr)) if is_tail_expr(expr) => {
+            try_handle_tail_call(&Some(expr.clone()), env, in_arrow_function)
+        }
         Statement::Return(None) => Ok(false),
         _ => Ok(false),
     }
@@ -646,9 +678,7 @@ pub fn eval_statement(
             vec![],
         ),
         Statement::Block(stmts) => eval_block(stmts, env, in_arrow_function),
-        Statement::SequenceDecls(stmts) => {
-            eval_statements(stmts, env, false, in_arrow_function)
-        }
+        Statement::SequenceDecls(stmts) => eval_statements(stmts, env, false, in_arrow_function),
         Statement::Return(expr) => {
             let val = match expr {
                 Some(e) => eval_expression(e, env, in_arrow_function)?,
@@ -714,6 +744,16 @@ pub fn eval_statement(
                 return result;
             }
             let result = eval_statement(body, env, false, in_arrow_function);
+            if let Some(control) = take_control_flow() {
+                let consumed = match &control {
+                    ControlFlow::Break(None) => true,
+                    ControlFlow::Break(Some(target)) => target == label,
+                    _ => false,
+                };
+                if !consumed {
+                    set_control_flow(control);
+                }
+            }
             pop_label_scope();
             result
         }
@@ -751,6 +791,10 @@ pub fn eval_statement(
             handler,
             finalizer,
         } => eval_try(body, param, handler, finalizer, env, in_arrow_function),
+        Statement::Dispose { name, is_async } => eval_dispose(name, *is_async, env),
+        Statement::RegisterDispose { name, is_async } => {
+            eval_register_dispose(name, *is_async, env)
+        }
         Statement::Throw(expr) => {
             let value = eval_expression(expr, env, in_arrow_function)?;
             let msg = to_js_string(&value);
@@ -769,15 +813,21 @@ pub fn eval_statement(
             }
             let obj_val = to_object(&eval_expression(object, env, in_arrow_function)?)?;
             let Value::Object(obj_rc) = obj_val else {
-                return Err(JsError("TypeError: cannot use with on non-object".to_string()));
+                return Err(JsError(
+                    "TypeError: cannot use with on non-object".to_string(),
+                ));
             };
             env.borrow_mut().push_scope();
             {
-                let current_scope = env.borrow_mut().current_scope();
-                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
+                let current_scope = env.borrow().current_scope();
+                let mut scope = current_scope.borrow_mut();
+                scope.set_with_object_binding(Rc::clone(&obj_rc));
             }
             let result = eval_statement(body, env, _is_expr_body, in_arrow_function);
-            env.borrow_mut().current_scope().borrow_mut().clear_with_unscopables();
+            env.borrow_mut()
+                .current_scope()
+                .borrow_mut()
+                .clear_with_unscopables();
             env.borrow_mut().pop_scope();
             result
         }
@@ -796,6 +846,137 @@ pub fn eval_statement(
             object,
             body,
         } => eval_for_in_stmt(variable, object, body, env, in_arrow_function),
+    }
+}
+
+pub(crate) fn eval_dispose(
+    name: &str,
+    is_async: bool,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let resource = env.borrow().get(name).unwrap_or(Value::Undefined);
+    if matches!(resource, Value::Null | Value::Undefined) {
+        return Ok(Value::Undefined);
+    }
+    let cache_name = dispose_cache_name(name);
+    let method = match env.borrow().get(&cache_name) {
+        Some(method) => method,
+        None => resolve_dispose_method(&resource, is_async, env)?,
+    };
+    let result = crate::eval::function::call_value_with_this(method, Vec::new(), resource)?;
+    if is_async {
+        Ok(crate::eval::r#await::eval_await_value(result))
+    } else {
+        Ok(result)
+    }
+}
+
+pub(crate) fn eval_register_dispose(
+    name: &str,
+    is_async: bool,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    if is_async {
+        ASYNC_DISPOSAL_EVALUATED.with(|evaluated| evaluated.set(true));
+    }
+    let resource = env.borrow().get(name).unwrap_or(Value::Undefined);
+    let method = if matches!(resource, Value::Null | Value::Undefined) {
+        Value::Undefined
+    } else {
+        resolve_dispose_method(&resource, is_async, env)?
+    };
+    env.borrow_mut().define(dispose_cache_name(name), method);
+    Ok(Value::Undefined)
+}
+
+fn dispose_cache_name(name: &str) -> String {
+    format!("\0dispose:{}", name)
+}
+
+fn resolve_dispose_method(
+    resource: &Value,
+    is_async: bool,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let key_name = if is_async { "asyncDispose" } else { "dispose" };
+    let symbol = env
+        .borrow()
+        .get("Symbol")
+        .ok_or_else(|| JsError::new("ReferenceError: Symbol is not defined"))?;
+    let key = match symbol {
+        Value::NativeFunction(function) => function
+            .get_property(key_name)
+            .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
+        Value::Function(function) => function
+            .get_property(key_name)
+            .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
+        _ => return Err(JsError::new("TypeError: Symbol is not callable")),
+    };
+    let mut method = get_resource_dispose_property(resource, &key, env)?;
+    if is_async && matches!(method, Value::Undefined | Value::Null) {
+        let fallback = match env.borrow().get("Symbol") {
+            Some(Value::NativeFunction(function)) => function
+                .get_property("dispose")
+                .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
+            Some(Value::Function(function)) => function
+                .get_property("dispose")
+                .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
+            _ => return Err(JsError::new("TypeError: Symbol is not callable")),
+        };
+        method = get_resource_dispose_property(resource, &fallback, env)?;
+    }
+    if matches!(method, Value::Undefined | Value::Null) {
+        return Err(JsError::new("TypeError: object is not disposable"));
+    }
+    Ok(method)
+}
+
+fn get_resource_dispose_property(
+    resource: &Value,
+    key: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match resource {
+        Value::Object(object) => get_dispose_property(object, key, env),
+        Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_) => {
+            let name = match key {
+                Value::Symbol(symbol) => symbol.property_key(),
+                _ => crate::value::to_js_string(key),
+            };
+            crate::eval::member::eval_member_access(resource, &name, env)
+        }
+        Value::Class(_) => {
+            let name = match key {
+                Value::Symbol(symbol) => symbol.property_key(),
+                _ => crate::value::to_js_string(key),
+            };
+            let value = crate::eval::member::eval_member_access(resource, &name, env)?;
+            if !matches!(value, Value::Undefined) {
+                return Ok(value);
+            }
+            let prototype = crate::builtins::function::get_function_prototype()
+                .ok_or_else(|| JsError::new("TypeError: object is not disposable"))?;
+            crate::eval::member::eval_object_member(&prototype, &name, Some(env))
+        }
+        _ => Err(JsError::new("TypeError: object is not disposable")),
+    }
+}
+
+fn get_dispose_property(
+    object: &Rc<RefCell<Object>>,
+    key: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let key_name = match key {
+        Value::Symbol(symbol) => symbol.property_key(),
+        _ => crate::value::to_js_string(key),
+    };
+    let has_getter = object.borrow().get_getter(&key_name).is_some();
+    let value = crate::eval::member::eval_object_member_value(object, key, Some(env))?;
+    if matches!(value, Value::Undefined) && !has_getter {
+        crate::eval::member::eval_object_member(object, &key_name, Some(env))
+    } else {
+        Ok(value)
     }
 }
 
@@ -855,19 +1036,14 @@ fn eval_var_decl(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
-    let already_declared = env.borrow().get_kind(name).is_some();
-    let in_with_scoped_binding = env
-        .borrow()
-        .scopes
-        .iter()
-        .rev()
-        .any(|scope| {
-            let scope = scope.borrow();
-            scope.is_object_binding()
-                && scope
-                    .object_binding_has(name)
-                    .is_some_and(|present| present)
-        });
+    let already_declared = env.borrow().current_kind(name).is_some();
+    let in_with_scoped_binding = env.borrow().scopes.iter().rev().any(|scope| {
+        let scope = scope.borrow();
+        scope.is_object_binding()
+            && scope
+                .object_binding_has(name)
+                .is_some_and(|present| present)
+    });
     if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
@@ -894,21 +1070,18 @@ fn eval_var_decl(
     }
     let strict = crate::interpreter::is_strict_mode();
     if !init.is_some() && *kind == VarKind::Var && env.borrow().get_parent().is_none() {
-        let existing_global = env
-            .borrow()
-            .get_global_property(name)
-            .or_else(|| {
-                crate::context::get_global_from_context("globalThis").and_then(|global| {
-                    let Value::Object(global_obj) = global else {
-                        return None;
-                    };
-                    if global_obj.borrow().has(name) {
-                        global_obj.borrow().get(name)
-                    } else {
-                        None
-                    }
-                })
-            });
+        let existing_global = env.borrow().get_global_property(name).or_else(|| {
+            crate::context::get_global_from_context("globalThis").and_then(|global| {
+                let Value::Object(global_obj) = global else {
+                    return None;
+                };
+                if global_obj.borrow().has(name) {
+                    global_obj.borrow().get(name)
+                } else {
+                    None
+                }
+            })
+        });
 
         if let Some(existing_global) = existing_global {
             if let Some(scope) = env.borrow().var_binding_scope(name) {
@@ -916,7 +1089,8 @@ fn eval_var_decl(
                     .borrow_mut()
                     .set(name.to_string(), existing_global.clone(), strict);
             } else {
-                env.borrow_mut().initialize_declared(name, existing_global.clone());
+                env.borrow_mut()
+                    .initialize_declared(name, existing_global.clone());
             }
             if *kind == VarKind::Var && env.borrow().get_parent().is_none() {
                 set_on_global_this(env, name, existing_global);
@@ -941,12 +1115,15 @@ fn eval_var_decl(
                     })
                     .cloned()
             } else {
-                env.borrow().var_binding_scope(name)
+                None
             };
             if let Some(scope) = target {
-                scope.borrow_mut().set(name.to_string(), value.clone(), strict);
+                let mut scope = scope.borrow_mut();
+                if !scope.set(name.to_string(), value.clone(), strict) {
+                    scope.define(name.to_string(), value.clone());
+                }
             } else {
-                env.borrow_mut().initialize_declared(name, value.clone());
+                env.borrow_mut().set(name, value.clone());
             }
         } else {
             env.borrow_mut().initialize_declared(name, value.clone());
@@ -1400,34 +1577,52 @@ fn eval_try(
             }
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
+                if crate::interpreter::is_in_async_function()
+                    && defer_disposal_until_pending_await(fin, env, in_arrow_function)
+                {
+                    return Ok(try_val);
+                }
                 // Suspend pending control flow while finally runs.
                 let pending_cf = take_control_flow();
 
-                    let fin_result = eval_statement(fin, env, false, in_arrow_function);
-                    match fin_result {
-                        Ok(fin_val) => {
-                            // If finally has its own control flow (break/continue/return),
-                            // it overrides the original. Per ES §14.15.4, finally's completion
-                            // replaces the try's completion for [[Type]] break, continue, return.
-                            if let Some(cf) = take_control_flow() {
-                                let cf = cf.clone();
-                                set_control_flow(cf.clone()); // Propagate finally's control flow
-                                return match cf {
-                                    ControlFlow::Return(value) => Ok(value),
-                                    ControlFlow::Break(_) | ControlFlow::Continue(_) => Ok(fin_val),
-                                    ControlFlow::Yield(value) => Ok(value),
-                                    ControlFlow::YieldDelegate(value) => Ok(value),
-                                    ControlFlow::Throw(value) => {
-                                        set_thrown_value(value.clone());
-                                        let msg = to_js_string(&value);
-                                        return Err(JsError(msg));
-                                    }
-                                };
-                            } else if crate::interpreter::is_in_async_function() {
+                let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                if fin_result.is_ok()
+                    && crate::interpreter::is_in_async_function()
+                    && finalizer_has_async_dispose(fin)
+                    && take_async_disposal_evaluated()
+                {
+                    ASYNC_DISPOSAL_BOUNDARY.with(|boundary| boundary.set(true));
+                }
+                match fin_result {
+                    Ok(fin_val) => {
+                        // If finally has its own control flow (break/continue/return),
+                        // it overrides the original. Per ES §14.15.4, finally's completion
+                        // replaces the try's completion for [[Type]] break, continue, return.
+                        if let Some(cf) = take_control_flow() {
+                            let cf = cf.clone();
+                            set_control_flow(cf.clone()); // Propagate finally's control flow
+                            return match cf {
+                                ControlFlow::Return(value) => Ok(value),
+                                ControlFlow::Break(_) | ControlFlow::Continue(_) => Ok(fin_val),
+                                ControlFlow::Yield(value) => Ok(value),
+                                ControlFlow::YieldDelegate(value) => Ok(value),
+                                ControlFlow::Throw(value) => {
+                                    set_thrown_value(value.clone());
+                                    let msg = to_js_string(&value);
+                                    return Err(JsError(msg));
+                                }
+                            };
+                        } else if crate::interpreter::is_in_async_function() {
+                            if let Some(reason) = rejected_promise_reason(&fin_val) {
+                                let _ = reason;
                                 set_control_flow(ControlFlow::Return(fin_val.clone()));
                                 return Ok(fin_val);
-                            } else if let Some(cf) = pending_cf {
-                                set_control_flow(cf); // Restore original control flow
+                            }
+                            if let Some(cf) = pending_cf {
+                                set_control_flow(cf);
+                            }
+                        } else if let Some(cf) = pending_cf {
+                            set_control_flow(cf); // Restore original control flow
                         }
                         Ok(try_val)
                     }
@@ -1442,15 +1637,16 @@ fn eval_try(
             let thrown_value = take_thrown_value().unwrap_or(Value::Undefined);
             let thrown_for_catch = thrown_value.clone();
 
-    let has_catch_param = param.is_some();
-    if has_catch_param {
-        // Per ES §13.15.7: catch parameter creates a new lexical scope
-        // so it doesn't shadow outer bindings.
-        let name = param.as_ref().unwrap().clone();
-        env.borrow_mut().push_scope();
-        env.borrow_mut().declare_var(name.clone(), VarKind::Let);
-        env.borrow_mut().initialize_declared(name.as_str(), thrown_for_catch);
-    }
+            let has_catch_param = param.is_some();
+            if has_catch_param {
+                // Per ES §13.15.7: catch parameter creates a new lexical scope
+                // so it doesn't shadow outer bindings.
+                let name = param.as_ref().unwrap().clone();
+                env.borrow_mut().push_scope();
+                env.borrow_mut().declare_var(name.clone(), VarKind::Let);
+                env.borrow_mut()
+                    .initialize_declared(name.as_str(), thrown_for_catch);
+            }
 
             if let Some(h) = handler {
                 // Run catch block
@@ -1518,26 +1714,8 @@ fn eval_try(
             } else {
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
-                    let _pending_cf = take_control_flow();
-                    let fin_result = eval_statement(fin, env, false, in_arrow_function);
-                    match fin_result {
-                        Ok(fin_val) => {
-                            // If finally has control flow, it replaces the rethrow
-                            if let Some(cf) = take_control_flow() {
-                                set_control_flow(cf);
-                                return Ok(Value::Undefined);
-                            }
-                            if crate::interpreter::is_in_async_function() {
-                                set_control_flow(ControlFlow::Return(fin_val.clone()));
-                                return Ok(fin_val);
-                            }
-                            // Finally completed normally - rethrow
-                            let msg = to_js_string(&thrown_value);
-                            set_thrown_value(thrown_value);
-                            Err(JsError(msg))
-                        }
-                        Err(e) => Err(e), // Finally threw - propagate that instead
-                    }
+                    take_control_flow();
+                    eval_disposal_finalizer(fin, thrown_value, env, in_arrow_function)
                 } else {
                     // No finally, no catch - rethrow
                     let msg = to_js_string(&thrown_value);
@@ -1547,6 +1725,99 @@ fn eval_try(
             }
         }
     }
+}
+
+fn finalizer_has_async_dispose(finalizer: &Statement) -> bool {
+    match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements
+            .iter()
+            .any(|statement| matches!(statement, Statement::Dispose { is_async: true, .. })),
+        Statement::Dispose { is_async, .. } => *is_async,
+        _ => false,
+    }
+}
+
+fn defer_disposal_until_pending_await(
+    finalizer: &Statement,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> bool {
+    let statements = match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements,
+        _ => return false,
+    };
+    if !statements
+        .iter()
+        .all(|statement| matches!(statement, Statement::Dispose { .. }))
+    {
+        return false;
+    }
+    let Some(promise) = crate::eval::r#await::take_last_pending_await() else {
+        return false;
+    };
+    take_async_disposal_evaluated();
+    let finalizer = finalizer.clone();
+    let env = Rc::clone(env);
+    let callback = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        eval_statement(&finalizer, &env, false, in_arrow_function)
+    })));
+    let target = crate::builtins::promise::create_resolved_promise(Value::Undefined);
+    let reaction =
+        crate::builtins::promise::create_callback_promise(callback.clone(), callback, target);
+    crate::builtins::promise::queue_callback_on_promise(&promise, reaction);
+    true
+}
+
+fn eval_disposal_finalizer(
+    finalizer: &Statement,
+    mut completion: Value,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
+    let statements = match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => {
+            statements.as_slice()
+        }
+        statement => std::slice::from_ref(statement),
+    };
+    for statement in statements {
+        let result = eval_statement(statement, env, false, in_arrow_function);
+        let error = match result {
+            Ok(value) => rejected_promise_reason(&value),
+            Err(_) => take_thrown_value(),
+        };
+        if let Some(error) = error {
+            completion = create_suppressed_error(error, completion, env)?;
+        }
+    }
+    let message = to_js_string(&completion);
+    set_thrown_value(completion);
+    Err(JsError(message))
+}
+
+fn create_suppressed_error(
+    error: Value,
+    suppressed: Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    let constructor = env
+        .borrow()
+        .get("SuppressedError")
+        .ok_or_else(|| JsError::new("ReferenceError: SuppressedError is not defined"))?;
+    crate::eval::function::call_value_with_this(
+        constructor,
+        vec![error, suppressed],
+        Value::Undefined,
+    )
+}
+
+fn rejected_promise_reason(value: &Value) -> Option<Value> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    let object = object.borrow();
+    let data = object.promise_data.as_ref()?;
+    (data.state == crate::value::object::PromiseState::Rejected).then(|| data.result.clone())
 }
 
 /// Evaluate an ES module import statement

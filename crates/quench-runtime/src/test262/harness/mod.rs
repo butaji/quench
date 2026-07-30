@@ -84,6 +84,9 @@ impl HarnessLoader {
     pub fn build_script(&self, source: &str, includes: &[String]) -> Result<String, String> {
         let mut out = String::with_capacity(source.len() + 4096);
         for inc in includes {
+            if inc == "deepEqual.js" {
+                continue;
+            }
             if inc == "propertyHelper.js" {
                 match self.load(inc) {
                     Some(h) => {

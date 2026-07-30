@@ -251,6 +251,8 @@ fn register_well_known_symbols(symbol_fn: &Rc<NativeFunction>) {
         "unscopables",
         "matchAll",
         "asyncIterator",
+        "dispose",
+        "asyncDispose",
     ] {
         let symbol = new_symbol(Some(&format!("Symbol.{}", name)));
         store_well_known_symbol(name, symbol.clone());

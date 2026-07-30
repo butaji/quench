@@ -676,7 +676,9 @@ pub(crate) fn assign_to_object(
             }
         }
         if !root_env.borrow_mut().set(prop_name, value.clone()) {
-            root_env.borrow_mut().define(prop_name.to_string(), value.clone());
+            root_env
+                .borrow_mut()
+                .define(prop_name.to_string(), value.clone());
         }
     }
     Ok(())
@@ -737,7 +739,8 @@ fn assign_to_function(
         && (prop_name == "caller" || prop_name == "arguments")
     {
         let msg =
-            "'caller' and 'arguments' are restricted properties and cannot be set on this function".to_string();
+            "'caller' and 'arguments' are restricted properties and cannot be set on this function"
+                .to_string();
         let (err, js_err) = crate::value::create_js_error_with_type(&msg, "TypeError");
         crate::value::set_thrown_value(err);
         return Err(js_err);

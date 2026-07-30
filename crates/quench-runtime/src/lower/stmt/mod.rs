@@ -9,7 +9,7 @@ pub use destructuring::*;
 pub use exports::*;
 
 // Re-export for use by other modules
-use crate::ast::{Expression, PropertyKey, Statement};
+use crate::ast::{Expression, PropertyKey, Statement, VarKind};
 use crate::lower::control_flow::{
     lower_do_while_stmt, lower_for_in_stmt, lower_for_of_stmt, lower_for_stmt, lower_if_stmt,
     lower_switch, lower_try_stmt, lower_while_stmt,
@@ -76,6 +76,16 @@ pub fn lower_script(script: &ast::Program) -> Result<crate::ast::Program, LowerE
 /// Lower a statement, propagating an error for truly unsupported statements
 fn lower_stmt_checked(stmt: &ast::Statement) -> Result<Option<Statement>, LowerError> {
     match stmt {
+        ast::Statement::VariableDeclaration(decl)
+            if matches!(
+                decl.kind,
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing
+            ) =>
+        {
+            Err(LowerError::new(
+                "SyntaxError: using declarations are not allowed in scripts",
+            ))
+        }
         ast::Statement::WithStatement(with_stmt) => {
             let object = lower_expr(&with_stmt.object)
                 .map_err(|e| LowerError::new(format!("with object: {}", e)))?;
@@ -94,10 +104,7 @@ fn lower_stmt_checked(stmt: &ast::Statement) -> Result<Option<Statement>, LowerE
 pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
     match stmt {
         ast::Statement::EmptyStatement(_) => Some(Statement::Empty),
-        ast::Statement::BlockStatement(block) => {
-            let stmts: Vec<Statement> = block.body.iter().filter_map(lower_stmt).collect();
-            Some(Statement::Block(stmts))
-        }
+        ast::Statement::BlockStatement(block) => Some(lower_statement_list(&block.body)),
         ast::Statement::BreakStatement(b) => Some(Statement::Break(
             b.label.as_ref().map(|l| l.name.as_str().to_string()),
         )),
@@ -146,6 +153,63 @@ pub fn lower_stmt(stmt: &ast::Statement) -> Option<Statement> {
         ast::Statement::ExportAllDeclaration(export) => lower_export_all_decl(export),
         _ => None,
     }
+}
+
+pub(crate) fn lower_statement_list(body: &[ast::Statement]) -> Statement {
+    let mut statements = Vec::new();
+    let mut resources = Vec::new();
+    for stmt in body {
+        if let ast::Statement::VariableDeclaration(decl) = stmt {
+            if matches!(
+                decl.kind,
+                ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing
+            ) {
+                let is_async = decl.kind == ast::VariableDeclarationKind::AwaitUsing;
+                let identifiers = decl
+                    .declarations
+                    .iter()
+                    .all(|binding| matches!(binding.id, ast::BindingPattern::BindingIdentifier(_)));
+                if identifiers {
+                    for binding in &decl.declarations {
+                        let ast::BindingPattern::BindingIdentifier(id) = &binding.id else {
+                            unreachable!()
+                        };
+                        let name = id.name.as_str().to_string();
+                        statements.push(Statement::VarDeclaration {
+                            kind: VarKind::Let,
+                            name: name.clone(),
+                            init: binding.init.as_ref().and_then(|expr| lower_expr(expr).ok()),
+                        });
+                        statements.push(Statement::RegisterDispose {
+                            name: name.clone(),
+                            is_async,
+                        });
+                        resources.push((name, is_async));
+                    }
+                } else if let Some(lowered) = lower_var_decl(decl) {
+                    statements.push(lowered);
+                }
+                continue;
+            }
+        }
+        if let Some(lowered) = lower_stmt(stmt) {
+            statements.push(lowered);
+        }
+    }
+    if resources.is_empty() {
+        return Statement::Block(statements);
+    }
+    let finalizer = resources
+        .into_iter()
+        .rev()
+        .map(|(name, is_async)| Statement::Dispose { name, is_async })
+        .collect();
+    Statement::Block(vec![Statement::Try {
+        body: Box::new(Statement::SequenceDecls(statements)),
+        param: None,
+        handler: None,
+        finalizer: Some(Box::new(Statement::SequenceDecls(finalizer))),
+    }])
 }
 
 fn lower_import_decl(import: &ast::ImportDeclaration) -> Option<Statement> {

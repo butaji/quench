@@ -96,7 +96,7 @@ mod var_declarations_misc {
         let result = ctx.eval(
             "var obj = { test262id: 1 }; \
              with (obj) { var test262id = delete obj.test262id; } \
-             if (obj.test262id !== true || test262id !== undefined) { throw new Error('binding mismatch'); }",
+             if (obj.test262id !== undefined || test262id !== true) { throw new Error('binding mismatch'); }",
         );
         assert!(result.is_ok(), "{result:?}");
     }
@@ -122,12 +122,13 @@ mod var_declarations_misc {
 
     #[test]
     fn var_decl_assignment_class_name_is_inferred_on_assignment() {
-        let value = eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").value")
-            .unwrap();
+        let value =
+            eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").value").unwrap();
         assert_eq!(value, Value::String("cls".to_string()));
 
         let writable =
-            eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").writable").unwrap();
+            eval("cls = class {}; Object.getOwnPropertyDescriptor(cls, \"name\").writable")
+                .unwrap();
         assert_eq!(writable, Value::Boolean(false));
     }
 
@@ -141,7 +142,8 @@ mod var_declarations_misc {
 
     #[test]
     fn const_init_reads_previous_const_binding_without_tdz() {
-        let result = eval("const first = [1, 2, 3];\nconst second = first.concat(4);\nsecond.length");
+        let result =
+            eval("const first = [1, 2, 3];\nconst second = first.concat(4);\nsecond.length");
         assert_eq!(result.unwrap(), Value::Number(4.0));
     }
 }
@@ -189,7 +191,8 @@ mod with_statement {
     }
 
     #[test]
-    fn with_var_assignment_after_unscopables_side_effect_recreates_binding_as_configurable_property() {
+    fn with_var_assignment_after_unscopables_side_effect_recreates_binding_as_configurable_property(
+    ) {
         let result = eval(
             "var env = { binding: 0 };\n\
              Object.defineProperty(env, Symbol.unscopables, {\n\
@@ -479,7 +482,7 @@ mod break_continue {
               }
               res3 = (x_12_14_13 === 'local');
             })();
-            res1 && res2 && res3"
+            res1 && res2 && res3",
         )
         .unwrap();
         assert_eq!(r, Value::Boolean(true));
@@ -513,28 +516,26 @@ mod switch_statement {
 
     #[test]
     fn switch_scope_lex_open_case_uses_outer_lexical_for_discriminant() {
-        let src =
-            "let x = 'outside';\nvar probeExpr, probeSelector, probeStmt;\n".to_owned()
-                + "switch (probeExpr = function() { return x; }, null) {\n"
-                + "  case probeSelector = function() { return x; }, null:\n"
-                + "    probeStmt = function() { return x; };\n"
-                + "    let x = 'inside';\n"
-                + "}\n"
-                + "probeExpr() + '|' + probeSelector() + '|' + probeStmt();";
+        let src = "let x = 'outside';\nvar probeExpr, probeSelector, probeStmt;\n".to_owned()
+            + "switch (probeExpr = function() { return x; }, null) {\n"
+            + "  case probeSelector = function() { return x; }, null:\n"
+            + "    probeStmt = function() { return x; };\n"
+            + "    let x = 'inside';\n"
+            + "}\n"
+            + "probeExpr() + '|' + probeSelector() + '|' + probeStmt();";
         let r = eval(&src).unwrap();
         assert_eq!(r, Value::String("outside|inside|inside".into()));
     }
 
     #[test]
     fn switch_scope_lex_open_default_uses_outer_lexical_for_discriminant() {
-        let src =
-            "let x = 'outside';\nvar probeExpr, probeStmt;\n".to_owned()
-                + "switch (probeExpr = function() { return x; }) {\n"
-                + "  default:\n"
-                + "    probeStmt = function() { return x; };\n"
-                + "    let x = 'inside';\n"
-                + "}\n"
-                + "probeExpr() + '|' + probeStmt();";
+        let src = "let x = 'outside';\nvar probeExpr, probeStmt;\n".to_owned()
+            + "switch (probeExpr = function() { return x; }) {\n"
+            + "  default:\n"
+            + "    probeStmt = function() { return x; };\n"
+            + "    let x = 'inside';\n"
+            + "}\n"
+            + "probeExpr() + '|' + probeStmt();";
         let r = eval(&src).unwrap();
         assert_eq!(r, Value::String("outside|inside".into()));
     }
@@ -542,14 +543,14 @@ mod switch_statement {
     #[test]
     fn switch_tail_call_can_run_many_iterations() {
         let src = "var callCount = 0;\n".to_owned()
-                + "(function f(n) {\n"
-                + "  if (n === 0) {\n"
-                + "    callCount += 1;\n"
-                + "    return;\n"
-                + "  }\n"
-                + "  switch(0) { case 0: return f(n - 1); }\n"
-                + "})(1000);\n"
-                + "callCount;";
+            + "(function f(n) {\n"
+            + "  if (n === 0) {\n"
+            + "    callCount += 1;\n"
+            + "    return;\n"
+            + "  }\n"
+            + "  switch(0) { case 0: return f(n - 1); }\n"
+            + "})(1000);\n"
+            + "callCount;";
         let r = eval(&src).unwrap();
         assert_eq!(r, Value::Number(1.0));
     }
@@ -1174,19 +1175,18 @@ mod while_edge_cases {
 
     #[test]
     fn while_tail_call_body() {
-        let src =
-            "var callCount = 0;\n".to_owned()
-                + "function f(n) {\n"
-                + "  if (n === 0) {\n"
-                + "    callCount += 1;\n"
-                + "    return;\n"
-                + "  }\n"
-                + "  while (true) {\n"
-                + "    return f(n - 1);\n"
-                + "  }\n"
-                + "}\n"
-                + "f(1000);\n"
-                + "callCount";
+        let src = "var callCount = 0;\n".to_owned()
+            + "function f(n) {\n"
+            + "  if (n === 0) {\n"
+            + "    callCount += 1;\n"
+            + "    return;\n"
+            + "  }\n"
+            + "  while (true) {\n"
+            + "    return f(n - 1);\n"
+            + "  }\n"
+            + "}\n"
+            + "f(1000);\n"
+            + "callCount";
         let result = eval(src.as_str()).unwrap();
         assert_eq!(result, Value::Number(1.0));
     }

@@ -28,6 +28,20 @@ pub fn settle_resolve(promise_rc: &Rc<RefCell<Object>>, value: Value) {
             enqueue_promise_reactions(thenable);
             return;
         }
+        let then = crate::eval::member::eval_object_member(thenable, "then", None);
+        match then {
+            Ok(then) if matches!(then, Value::Function(_) | Value::NativeFunction(_)) => {
+                queue_thenable_job(promise_rc, thenable, then);
+                return;
+            }
+            Err(error) => {
+                let reason = crate::value::take_thrown_value()
+                    .unwrap_or_else(|| Value::String(error.to_string()));
+                settle_reject(promise_rc, reason);
+                return;
+            }
+            _ => {}
+        }
     }
 
     {
@@ -38,6 +52,37 @@ pub fn settle_resolve(promise_rc: &Rc<RefCell<Object>>, value: Value) {
         }
     }
     enqueue_promise_reactions(promise_rc);
+}
+
+fn queue_thenable_job(promise: &Rc<RefCell<Object>>, thenable: &Rc<RefCell<Object>>, then: Value) {
+    let resolve_target = Rc::clone(promise);
+    let reject_target = Rc::clone(promise);
+    let this_value = Value::Object(Rc::clone(thenable));
+    let job = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        let resolve = resolving_function(Rc::clone(&resolve_target), false);
+        let reject = resolving_function(Rc::clone(&reject_target), true);
+        if let Err(error) =
+            call_value_with_this(then.clone(), vec![resolve, reject], this_value.clone())
+        {
+            let reason = crate::value::take_thrown_value()
+                .unwrap_or_else(|| Value::String(error.to_string()));
+            settle_reject(&resolve_target, reason);
+        }
+        Ok(Value::Undefined)
+    })));
+    super::microtask::queue_microtask_impl(job);
+}
+
+fn resolving_function(target: Rc<RefCell<Object>>, reject: bool) -> Value {
+    Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        if reject {
+            settle_reject(&target, value);
+        } else {
+            settle_resolve(&target, value);
+        }
+        Ok(Value::Undefined)
+    })))
 }
 
 /// Settle a promise as rejected and enqueue its reactions as microtasks.

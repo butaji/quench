@@ -9,18 +9,16 @@ fn in_process_and_isolated_share_one_timeout() {
 }
 
 #[test]
-fn first_existing_picks_release_before_debug() {
+fn first_existing_picks_debug_before_stale_release() {
     let dir = std::env::temp_dir().join(format!("quench-binpick-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let release = dir.join("release");
-    let debug = dir.join("debug");
+    std::fs::create_dir_all(dir.join("debug")).unwrap();
+    std::fs::create_dir_all(dir.join("release")).unwrap();
+    let release = dir.join("release/run-test");
+    let debug = dir.join("debug/run-test");
     std::fs::write(&debug, "").unwrap();
-    assert_eq!(
-        first_existing(&[release.clone(), debug.clone()]),
-        Some(debug.clone())
-    );
+    assert_eq!(preferred_run_test_binary(&dir), Some(debug.clone()));
     std::fs::write(&release, "").unwrap();
-    assert_eq!(first_existing(&[release, debug]), Some(dir.join("release")));
+    assert_eq!(preferred_run_test_binary(&dir), Some(debug));
     assert_eq!(first_existing(&[dir.join("nope")]), None);
 }
 
@@ -160,7 +158,8 @@ fn async_script_done_with_error_fails() {
         "{}Promise.resolve().then(function() {{ $DONE(new Error('boom')); }});",
         ASYNC_DONE_PRELUDE
     );
-    assert!(run_async_script(&script, false).is_err());
+    let error = run_async_script(&script, false).unwrap_err();
+    assert!(error.contains("boom"), "unexpected error: {}", error);
 }
 
 #[test]

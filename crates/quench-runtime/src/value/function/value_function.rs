@@ -697,6 +697,8 @@ fn generate_source_text(f: &ValueFunction) -> String {
                 format!("with ({}) {}", expr_to_string(object), stmt_to_string(body))
             }
             Statement::Empty => String::new(),
+            Statement::Dispose { .. } => String::new(),
+            Statement::RegisterDispose { .. } => String::new(),
             Statement::SequenceDecls(_) => String::new(),
             Statement::Export(_) => String::new(),
             Statement::Import { .. } => String::new(),

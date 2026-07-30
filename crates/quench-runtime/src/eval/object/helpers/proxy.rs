@@ -1,9 +1,9 @@
 //! Proxy helper functions.
 
+use crate::value::object::get_getter;
 use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::value::object::get_getter;
 
 /// If `obj` is a Proxy exotic object, return `(handler, target)`.
 pub fn proxy_handler_and_target(
@@ -31,10 +31,7 @@ pub fn private_field_object(
     Rc::clone(obj)
 }
 
-pub fn proxy_has_property(
-    obj: &Rc<RefCell<Object>>,
-    prop_name: &str,
-) -> Result<bool, JsError> {
+pub fn proxy_has_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<bool, JsError> {
     let Some((handler, target)) = proxy_handler_and_target(obj) else {
         return Ok(obj.borrow().has(prop_name));
     };
@@ -79,10 +76,7 @@ pub fn proxy_has_property(
     .map(|v| crate::value::to_bool(&v))
 }
 
-pub fn proxy_get_property(
-    obj: &Rc<RefCell<Object>>,
-    prop_name: &str,
-) -> Result<Value, JsError> {
+pub fn proxy_get_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
     let Some((handler, target)) = proxy_handler_and_target(obj) else {
         return Ok(obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
     };
@@ -97,7 +91,10 @@ pub fn proxy_get_property(
         let Value::Object(target_obj) = target else {
             return Ok(Value::Undefined);
         };
-        return Ok(target_obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
+        return Ok(target_obj
+            .borrow()
+            .get(prop_name)
+            .unwrap_or(Value::Undefined));
     };
     let trap = match trap_val {
         Value::Object(f) => Value::Object(f),
@@ -108,7 +105,10 @@ pub fn proxy_get_property(
             let Value::Object(target_obj) = target else {
                 return Ok(Value::Undefined);
             };
-            return Ok(target_obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
+            return Ok(target_obj
+                .borrow()
+                .get(prop_name)
+                .unwrap_or(Value::Undefined));
         }
         _ => {
             let (err_val, js_err) = crate::value::error::create_js_error_with_type(
@@ -145,20 +145,13 @@ pub fn find_proxy_in_prototype_chain(
     Rc<RefCell<crate::value::Object>>,
     Value,
 )> {
-    let mut current = obj
-        .borrow()
-        .prototype
-        .as_ref()
-        .and_then(|p| p.borrow().prototype.clone());
+    let mut current = obj.borrow().prototype.clone();
     loop {
         let proto_rc = current?;
-        let proto = proto_rc.borrow();
-        if let Some(Value::Object(handler)) = proto.properties.get("__quench_proxy_handler") {
-            if let Some(target) = proto.properties.get("__quench_proxy_target") {
-                return Some((proto_rc.clone(), handler.clone(), target.clone()));
-            }
+        if let Some((handler, target)) = proxy_handler_and_target(&proto_rc) {
+            return Some((proto_rc, handler, target));
         }
-        current = proto.prototype.clone();
+        current = proto_rc.borrow().prototype.clone();
     }
 }
 

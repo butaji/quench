@@ -175,6 +175,15 @@ fn test_harness_loader_load_deep_equal_returns_source() {
 }
 
 #[test]
+fn test_harness_loader_keeps_native_deep_equal_override() {
+    let loader = make_loader();
+    let content = loader
+        .build_script("// source", &["deepEqual.js".to_string()])
+        .unwrap();
+    assert_eq!(content, "// source");
+}
+
+#[test]
 fn test_harness_loader_load_property_helper_preserves_verify_property() {
     let loader = make_loader();
     let content = loader

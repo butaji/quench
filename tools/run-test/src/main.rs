@@ -23,17 +23,9 @@ use std::process::ExitCode;
 use quench_runtime::test262::harness::try_inject_harness;
 use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
 use quench_runtime::test262::metadata::Test262Metadata;
+use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
 use quench_runtime::test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
-
-/// Async prelude: $DONE records invocations on globalThis and rethrows error
-/// arguments; the count is verified after eval (microtasks drained by then).
-/// Must match runner/execute.rs ASYNC_DONE_PRELUDE.
-const ASYNC_DONE_PRELUDE: &str = "var $DONE = function(error) { \
-if (error !== undefined && error !== null) throw error; \
-globalThis.__test262DoneCount = (globalThis.__test262DoneCount|0) + 1; \
-if (globalThis.__test262DoneCount > 1) throw new Test262Error('$DONE called twice'); \
-};\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -382,8 +374,17 @@ fn judge_negative(
 
 /// Verify an async test called $DONE exactly once. None = ok, Some(1) = fail.
 fn async_done_verdict(ctx: &mut Context, label: &str) -> Option<i32> {
-    // Clear any stale thrown_value that could interfere with the probe eval.
     quench_runtime::value::take_thrown_value();
+    if let Ok(error) = ctx.eval("globalThis.__test262DoneError") {
+        if !matches!(error, Value::Undefined) {
+            println!(
+                "  {}: FAILED (async $DONE error: {})",
+                label,
+                quench_runtime::value::to_js_string(&error)
+            );
+            return Some(1);
+        }
+    }
     match ctx.eval("globalThis.__test262DoneCount|0") {
         Ok(Value::Number(1.0)) => None,
         other => {

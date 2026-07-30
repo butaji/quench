@@ -620,7 +620,10 @@ mod tests {
     #[test]
     fn parse_strict_with_statement_is_syntax_error() {
         let result = parse_script("\"use strict\"; with ({}) {};");
-        assert!(result.is_err(), "with statement in strict mode must be syntax error");
+        assert!(
+            result.is_err(),
+            "with statement in strict mode must be syntax error"
+        );
         let err = result.unwrap_err().to_string();
         assert!(err.contains("SyntaxError"), "unexpected error: {err}");
     }
@@ -638,12 +641,12 @@ mod tests {
         let _guard = StrictModeGuard(previous);
         crate::interpreter::set_strict_mode(true);
         let result = parse_script("var obj = { get(a) { with(a){} } };");
-        assert!(result.is_err(), "with in strict accessor body should fail parse");
-        let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("SyntaxError"),
-            "unexpected parse error: {err}"
+            result.is_err(),
+            "with in strict accessor body should fail parse"
         );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("SyntaxError"), "unexpected parse error: {err}");
     }
 
     #[test]

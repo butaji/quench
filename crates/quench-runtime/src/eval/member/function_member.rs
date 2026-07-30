@@ -54,7 +54,7 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
             // Check for accessor properties (like caller/arguments) on the
             // prototype that may throw TypeError.
             if prop_name == "caller" || prop_name == "arguments" {
-                if let Some(func_proto) = crate::builtins::get_function_prototype() {
+                if let Some(func_proto) = function_prototype(f) {
                     if let Some(getter) = func_proto.borrow().getters.get(prop_name) {
                         if let Some(getter_fn) = &getter.func {
                             return crate::eval::function::call_value_impl(
@@ -67,7 +67,7 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
                     }
                 }
             }
-            if let Some(func_proto) = crate::builtins::get_function_prototype() {
+            if let Some(func_proto) = function_prototype(f) {
                 Ok(func_proto
                     .borrow()
                     .get(prop_name)
@@ -77,6 +77,20 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
             }
         }
     }
+}
+
+fn function_prototype(f: &ValueFunction) -> Option<Rc<RefCell<Object>>> {
+    f.instance_proto().or_else(|| {
+        if f.is_async && f.is_generator {
+            crate::builtins::function::get_async_generator_function_prototype()
+        } else if f.is_generator {
+            crate::builtins::function::get_generator_function_prototype()
+        } else if f.is_async {
+            crate::builtins::function::get_async_function_prototype()
+        } else {
+            crate::builtins::get_function_prototype()
+        }
+    })
 }
 
 fn eval_function_length(f: &ValueFunction) -> Result<Value, JsError> {

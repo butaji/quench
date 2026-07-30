@@ -114,6 +114,7 @@ struct ForOfStep<'a> {
     item: &'a Value,
     body: &'a Statement,
     loop_binding: Option<VarKind>,
+    dispose_async: Option<bool>,
     env: &'a Rc<RefCell<Environment>>,
     in_arrow_function: bool,
     resume: ForOfResume,
@@ -124,6 +125,7 @@ struct ForOfIteratorRun<'a> {
     variable: &'a Expression,
     body: &'a Statement,
     loop_binding: Option<VarKind>,
+    dispose_async: Option<bool>,
     env: &'a Rc<RefCell<Environment>>,
     in_arrow_function: bool,
     index: usize,
@@ -172,9 +174,18 @@ pub fn eval_yield_delegate(
         return continue_yield_delegate(state, env);
     }
     let iterable = eval_expression(expr, env, in_arrow_function)?;
-    let iterator = match iterable {
-        Value::Generator(gen) => crate::value::generator::generator_as_iterator_object(gen),
-        Value::Object(o) => obtain_iterator(&o)?,
+    let (iterator, await_values) = match iterable {
+        Value::Generator(gen) => {
+            let await_values = !gen.borrow().is_async;
+            (
+                crate::value::generator::generator_as_iterator_object(gen),
+                await_values,
+            )
+        }
+        Value::Object(o) if crate::interpreter::is_in_async_generator() => {
+            obtain_async_iterator(&o, env)?
+        }
+        Value::Object(o) => (obtain_iterator(&o)?, false),
         _ => {
             return Err(JsError(
                 "TypeError: delegated iterable is not iterable".to_string(),
@@ -182,23 +193,80 @@ pub fn eval_yield_delegate(
         }
     };
     continue_yield_delegate(
-        crate::value::generator::YieldDelegateSuspend { iterator, index: 0 },
+        crate::value::generator::YieldDelegateSuspend {
+            iterator,
+            index: 0,
+            await_values,
+            abrupt_error: None,
+            completion: None,
+        },
         env,
     )
+}
+
+fn obtain_async_iterator(
+    object: &Rc<RefCell<Object>>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(Rc<RefCell<Object>>, bool), JsError> {
+    let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("asyncIterator")
+    else {
+        return obtain_iterator(object).map(|iterator| (iterator, true));
+    };
+    let method =
+        crate::eval::member::eval_object_member(object, &symbol.property_key(), Some(env))?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        return obtain_iterator(object).map(|iterator| (iterator, true));
+    }
+    if !method.is_callable() {
+        return Err(iterator_type_error("iterator method is not callable"));
+    }
+    let iterator = crate::eval::function::call_value_with_this(
+        method,
+        vec![],
+        Value::Object(Rc::clone(object)),
+    )?;
+    match iterator {
+        Value::Object(iterator) => Ok((iterator, false)),
+        _ => Err(iterator_type_error("iterator is not an object")),
+    }
+}
+
+fn iterator_type_error(message: &str) -> JsError {
+    let (value, error) = crate::value::create_js_error_with_type(message, "TypeError");
+    crate::value::set_thrown_value(value);
+    error
 }
 
 fn continue_yield_delegate(
     mut state: crate::value::generator::YieldDelegateSuspend,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let (value, done) = take_iterator_step(&state.iterator, &mut state.index, env)?;
+    if let Some((error, value)) = state.abrupt_error.take() {
+        crate::value::set_thrown_value(value);
+        return Err(error);
+    }
+    if let Some(value) = state.completion.take() {
+        return Ok(value);
+    }
+    let resume_val = crate::interpreter::take_generator_resume_value();
+    let next_value = if state.index == 0 {
+        Value::Undefined
+    } else {
+        resume_val.clone()
+    };
+    let (value, done) = crate::eval::object::take_iterator_step_with_value(
+        &state.iterator,
+        &mut state.index,
+        env,
+        next_value,
+    )?;
     if done {
-        return Ok(crate::interpreter::take_generator_resume_value());
+        return Ok(value);
     }
     if crate::interpreter::peek_generator_yield() {
         return Ok(Value::Undefined);
     }
-    let resume_val = crate::interpreter::take_generator_resume_value();
     crate::interpreter::set_generator_yield(value);
     crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
     stage_yield_delegate_suspend(state);
@@ -252,6 +320,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
             item: &item,
             body: run.body,
             loop_binding: run.loop_binding,
+            dispose_async: run.dispose_async,
             env: run.env,
             in_arrow_function: run.in_arrow_function,
             resume,
@@ -299,6 +368,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     variable: run.variable.clone(),
                     body: run.body.clone(),
                     loop_binding: run.loop_binding,
+                    dispose_async: run.dispose_async,
                     per_iteration,
                     in_arrow_function: run.in_arrow_function,
                     pending: run.pending.clone(),
@@ -329,6 +399,7 @@ fn run_for_of_iteration(
         item,
         body,
         loop_binding,
+        dispose_async,
         env,
         in_arrow_function,
         resume,
@@ -356,6 +427,9 @@ fn run_for_of_iteration(
             } else {
                 assign_to(variable, item, env)?;
             }
+            if let (Some(is_async), Expression::Identifier(name)) = (dispose_async, variable) {
+                crate::eval::statement::eval_register_dispose(name, is_async, env)?;
+            }
             if crate::interpreter::peek_generator_yield() {
                 suspend_init = true;
                 return Ok(Value::Undefined);
@@ -366,7 +440,11 @@ fn run_for_of_iteration(
                 return eval_for_of_body_tail(&tail, resume_mid_delegate, env, in_arrow_function);
             }
         }
-        eval_statement(body, env, false, in_arrow_function)
+        let result = eval_statement(body, env, false, in_arrow_function);
+        if let (Some(is_async), Expression::Identifier(name)) = (dispose_async, variable) {
+            crate::eval::statement::eval_dispose(name, is_async, env)?;
+        }
+        result
     })();
     let yielding = crate::interpreter::peek_generator_yield();
     if per_iteration && !yielding {
@@ -454,6 +532,7 @@ pub fn eval_for_of(
     iterable: &Expression,
     body: &Statement,
     loop_binding: Option<crate::ast::VarKind>,
+    dispose_async: Option<bool>,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -463,6 +542,7 @@ pub fn eval_for_of(
             variable: &suspend.variable,
             body: &suspend.body,
             loop_binding: suspend.loop_binding,
+            dispose_async: suspend.dispose_async,
             env,
             in_arrow_function: suspend.in_arrow_function,
             index: suspend.index,
@@ -499,6 +579,7 @@ pub fn eval_for_of(
         variable,
         body,
         loop_binding,
+        dispose_async,
         env,
         in_arrow_function,
         index: 0,

@@ -1587,3 +1587,336 @@ fn function_prototype_constructor_is_not_enumerable() {
         .unwrap();
     assert_eq!(v, Value::String("".to_string()));
 }
+
+#[test]
+fn await_using_disposes_async_resource_on_block_exit() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var resource = { disposed: false, [Symbol.asyncDispose]: async function() { this.disposed = true; } };")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("typeof resource[Symbol.asyncDispose]").unwrap(),
+        Value::String("function".into())
+    );
+    ctx.eval(
+        "async function f() { { await using _ = resource; } return resource.disposed; } \
+         result = f();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_preserves_async_function_completion() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var resource = { [Symbol.asyncDispose]: async function() {} }; \
+         async function f() { { await using _ = resource; } return 7; } \
+         f().then(function(value) { result = value; });",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Number(7.0));
+}
+
+#[test]
+fn await_using_null_async_function_resolves_promise() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result = 'pending'; async function f() { await using _ = null; result = 'done'; } \
+         f().then(function() { result = result + ':then'; });",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("done:then".into())
+    );
+}
+
+#[test]
+fn await_using_async_dispose_async_function_resolves_promise() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result = 'pending'; var resource = { [Symbol.asyncDispose]: async function() {} }; async function f() { await using _ = resource; result = 'done'; } f().then(function() { result = result + ':then'; });",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("done:then".into())
+    );
+}
+
+#[test]
+fn await_using_reads_dispose_method_before_following_statement() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "var events = [];
+             var resource = {
+               get [Symbol.asyncDispose]() {
+                 events.push('method');
+                 return async function() {};
+               }
+             };
+             async function f() {
+               { await using _ = resource; events.push('body'); }
+             }
+             f();
+             events.join(',');",
+        )
+        .unwrap();
+    assert_eq!(result, Value::String("method,body".into()));
+}
+
+#[test]
+fn await_using_for_initializer_disposes_after_loop() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var resource = {
+           disposed: false,
+           async [Symbol.asyncDispose]() { this.disposed = true; }
+         };
+         async function f() {
+           var i = 0;
+           for (await using _ = resource; i < 1; i++) {}
+         }
+         f();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_for_of_disposes_before_iterator_advances() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var disposedAfterYield = false;
+         var outcome = 'pending';
+         var resource = {
+           disposed: false,
+           [Symbol.dispose]() { this.disposed = true; }
+         };
+         function* resources() {
+           yield resource;
+           disposedAfterYield = resource.disposed;
+         }
+         async function f() {
+           for (await using _ of resources()) {}
+         }
+         f().then(function() { outcome = 'done'; }, function(error) {
+           outcome = String(error);
+         });",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("outcome").unwrap(), Value::String("done".into()));
+    assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+    assert_eq!(
+        ctx.eval("disposedAfterYield").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn await_using_disposes_if_later_initializer_throws() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var disposed = false;
+         var thenable = false;
+         async function outer() {
+           var resource = {
+             disposed: false,
+             [Symbol.dispose]() { this.disposed = true; }
+           };
+           function getResource() { throw new Error(); }
+           var promise = (async function() {
+             await using first = resource, second = getResource();
+           })();
+           thenable = typeof promise.then === 'function';
+           await promise.then(function() {}, function() {});
+           disposed = resource.disposed;
+         }
+         outer();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("thenable").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_disposes_callable_resource_through_function_prototype() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var disposed = false;
+         Function.prototype[Symbol.dispose] = function() { disposed = true; };
+         (async function() { await using resource = function() {}; })();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_disposes_class_resource_through_function_prototype() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var disposed = false;
+         Function.prototype[Symbol.dispose] = function() { disposed = true; };
+         (async function() { await using resource = class {}; })();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_combines_body_and_disposal_errors() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var outcome = false;
+             (async function() {
+               var first = new Error('first');
+               var second = new Error('second');
+               var body = new Error('body');
+               try {
+                 await using _1 = { [Symbol.dispose]() { throw first; } };
+                 await using _2 = { [Symbol.dispose]() { throw second; } };
+                 throw body;
+               } catch (error) {
+                 outcome = error.error === first
+                   && error.suppressed.error === second
+                   && error.suppressed.suppressed === body;
+               }
+             })();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("outcome").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_disposes_after_last_pending_await_settles() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var resource = {
+           disposed: false,
+           [Symbol.dispose]() { this.disposed = true; }
+         };
+         var releaseFirst;
+         var first = new Promise(function(resolve) { releaseFirst = resolve; });
+         var releaseSecond;
+         var second = new Promise(function(resolve) { releaseSecond = resolve; });
+         async function f() {
+           await using _ = resource;
+           await first;
+           await second;
+         }
+         f();",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("resource.disposed").unwrap(),
+        Value::Boolean(false)
+    );
+    ctx.eval("releaseFirst()").unwrap();
+    assert_eq!(
+        ctx.eval("resource.disposed").unwrap(),
+        Value::Boolean(false)
+    );
+    ctx.eval("releaseSecond()").unwrap();
+    assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_block_resumes_following_statements_in_microtask() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var sameMicrotask = true;
+         var inside = false;
+         var after = true;
+         async function f() {
+           {
+             await using _ = null;
+             inside = sameMicrotask;
+           }
+           after = sameMicrotask;
+         }
+         var promise = f();
+         sameMicrotask = false;
+         (async function() { await promise; })();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("inside").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("after").unwrap(), Value::Boolean(false));
+}
+
+#[test]
+fn unevaluated_await_using_block_stays_in_same_microtask() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var sameMicrotask = true;
+         var after = false;
+         async function f() {
+           outer: {
+             break outer;
+             await using _ = null;
+           }
+           after = sameMicrotask;
+         }
+         var promise = f();
+         sameMicrotask = false;
+         (async function() { await promise; })();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("after").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_sync_fallback_async_dispose_resolves_promise() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result = 'pending'; var resource = { get [Symbol.asyncDispose]() { return null; }, [Symbol.dispose]: function() {} }; async function f() { { await using _ = resource; } result = 'done'; } f().then(function() { result = result + ':then'; });",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("done:then".into())
+    );
+}
+
+#[test]
+fn skipped_await_using_after_break_preserves_async_completion() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result = 'pending'; async function f() { var running = true; outer: { if (running) break outer; await using _ = null; } result = 'done'; } \
+         f().then(function() { result = result + ':then'; });",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("done:then".into())
+    );
+}
+
+#[test]
+fn symbol_dispose_getter_returns_method() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("var o = { get [Symbol.dispose]() { return function() {}; } }; typeof o[Symbol.dispose]")
+        .unwrap();
+    assert_eq!(value, Value::String("function".into()));
+}
+
+#[test]
+fn symbol_dispose_method_syntax_returns_method() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("var o = { [Symbol.asyncDispose]() { this.done = true; } }; typeof o[Symbol.asyncDispose]")
+        .unwrap();
+    assert_eq!(value, Value::String("function".into()));
+}
+
+#[test]
+fn await_using_disposes_method_syntax_resource() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var resource = { disposed: false, [Symbol.asyncDispose]() { this.disposed = true; } }; \
+         async function f() { { await using value = resource; } } f();",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+}

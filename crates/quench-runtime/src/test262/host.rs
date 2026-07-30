@@ -906,7 +906,12 @@ verifyProperty(obj, prop, desc);
         let source = std::fs::read_to_string(&path).expect("read");
         let mut host = QuenchHost::new();
         let direct_result = host.run_script(&source);
-        assert_eq!(direct_result, Ok(()), "direct QuenchHost result: {:?}", direct_result);
+        assert_eq!(
+            direct_result,
+            Ok(()),
+            "direct QuenchHost result: {:?}",
+            direct_result
+        );
         let outcome = run_single_test(&harness, &path);
         assert_eq!(outcome, TestOutcome::Pass, "S12.2_A11: {:?}", outcome);
     }

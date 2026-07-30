@@ -49,6 +49,7 @@ pub fn register_error(ctx: &mut Context) {
     register_eval_error(ctx, &error_proto_rc);
     register_uri_error(ctx, &error_proto_rc);
     register_aggregate_error(ctx, &error_proto_rc);
+    register_suppressed_error(ctx, &error_proto_rc);
 }
 
 fn create_error_proto(name: &str) -> Object {
@@ -169,6 +170,30 @@ fn register_uri_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
     let proto_rc = Rc::new(RefCell::new(proto));
     proto_rc.borrow_mut().prototype = Some(Rc::clone(parent_proto));
     register_error_constructor(ctx, "URIError", &proto_rc);
+}
+
+fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {
+    let mut proto = create_error_proto("SuppressedError");
+    proto.prototype = Some(Rc::clone(parent_proto));
+    let proto = Rc::new(RefCell::new(proto));
+    let constructor_proto = Rc::clone(&proto);
+    let constructor = NativeConstructor::new(
+        move |args| {
+            let mut object =
+                Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&constructor_proto));
+            object.set("error", args.first().cloned().unwrap_or(Value::Undefined));
+            object.set(
+                "suppressed",
+                args.get(1).cloned().unwrap_or(Value::Undefined),
+            );
+            Ok(Value::Object(Rc::new(RefCell::new(object))))
+        },
+        Rc::clone(&proto),
+    );
+    constructor.set_name("SuppressedError");
+    let constructor = Value::NativeConstructor(Rc::new(constructor));
+    proto.borrow_mut().set("constructor", constructor.clone());
+    ctx.set_global("SuppressedError".to_string(), constructor);
 }
 
 fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>>) {

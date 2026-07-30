@@ -76,10 +76,7 @@ impl<'a> Visit<'a> for NestedStrictFnChecker {
         }
     }
 
-    fn visit_arrow_function_expression(
-        &mut self,
-        arrow: &ast::ArrowFunctionExpression<'a>,
-    ) {
+    fn visit_arrow_function_expression(&mut self, arrow: &ast::ArrowFunctionExpression<'a>) {
         if self.error.is_some() {
             return;
         }
@@ -1580,7 +1577,11 @@ mod tests {
         let ret = Parser::new(&allocator, s, source_type).parse();
         assert!(ret.diagnostics.is_empty());
         let result = check_early_errors(&ret.program);
-        assert!(result.is_err(), "catch lexical conflict should be SyntaxError: {:?}", result);
+        assert!(
+            result.is_err(),
+            "catch lexical conflict should be SyntaxError: {:?}",
+            result
+        );
         assert!(result.unwrap_err().0.contains("SyntaxError"));
     }
 
@@ -2150,11 +2151,19 @@ mod tests {
     fn switch_redeclaration_function_decl_is_error() {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
-        let ret = Parser::new(&allocator, "switch(0){case 0: async function f() {} default: function f() {} }", source_type).parse();
+        let ret = Parser::new(
+            &allocator,
+            "switch(0){case 0: async function f() {} default: function f() {} }",
+            source_type,
+        )
+        .parse();
         assert!(ret.diagnostics.is_empty());
         let program = ret.program;
         let result = check_early_errors(&program);
-        assert!(result.is_err(), "switch function redeclaration should be syntax error");
+        assert!(
+            result.is_err(),
+            "switch function redeclaration should be syntax error"
+        );
         assert!(result.unwrap_err().0.contains("SyntaxError"));
     }
 
@@ -2162,11 +2171,19 @@ mod tests {
     fn switch_redeclaration_class_decl_is_error() {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
-        let ret = Parser::new(&allocator, "switch(0){case 0: class C {} default: class C {} }", source_type).parse();
+        let ret = Parser::new(
+            &allocator,
+            "switch(0){case 0: class C {} default: class C {} }",
+            source_type,
+        )
+        .parse();
         assert!(ret.diagnostics.is_empty());
         let program = ret.program;
         let result = check_early_errors(&program);
-        assert!(result.is_err(), "switch class redeclaration should be syntax error");
+        assert!(
+            result.is_err(),
+            "switch class redeclaration should be syntax error"
+        );
         assert!(result.unwrap_err().0.contains("SyntaxError"));
     }
 
@@ -2182,7 +2199,10 @@ mod tests {
         .parse();
         assert!(ret.diagnostics.is_empty());
         let program = ret.program;
-        assert!(check_early_errors(&program).is_ok(), "unique switch lexical decls should be ok");
+        assert!(
+            check_early_errors(&program).is_ok(),
+            "unique switch lexical decls should be ok"
+        );
     }
 
     #[test]

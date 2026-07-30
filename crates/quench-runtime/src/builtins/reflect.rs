@@ -6,7 +6,7 @@
 
 use crate::builtins::object_static::{object_define_property, to_property_key};
 use crate::context::Context;
-use crate::value::{to_object, JsError, Object, ObjectKind, ObjData, Value};
+use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,8 +14,7 @@ fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
     match target {
         Value::Object(o) => {
             if crate::eval::object::proxy_handler_and_target(o).is_some() {
-                return crate::eval::object::proxy_has_property(o, key)
-                    .or_else(|_| Ok(false));
+                return crate::eval::object::proxy_has_property(o, key).or_else(|_| Ok(false));
             }
             Ok(o.borrow().has(key))
         }
@@ -151,10 +150,10 @@ pub fn register_reflect(ctx: &mut Context) {
                 let target = args
                     .first()
                     .ok_or_else(|| JsError::new("Reflect.set requires target argument"))?;
-                let key = to_property_key(
-                    args.get(1)
-                        .ok_or_else(|| JsError::new("Reflect.set requires propertyKey argument"))?,
-                )?;
+                let key =
+                    to_property_key(args.get(1).ok_or_else(|| {
+                        JsError::new("Reflect.set requires propertyKey argument")
+                    })?)?;
                 let value = args
                     .get(2)
                     .ok_or_else(|| JsError::new("Reflect.set requires value argument"))?
@@ -166,15 +165,13 @@ pub fn register_reflect(ctx: &mut Context) {
                 if let Some((handler, proxy_target)) =
                     crate::eval::object::proxy_handler_and_target(target_obj)
                 {
-                    return Ok(Value::Boolean(
-                        crate::eval::object::call_proxy_set_trap(
-                            &proxy_target,
-                            &handler,
-                            &receiver,
-                            &key,
-                            value,
-                        )?,
-                    ));
+                    return Ok(Value::Boolean(crate::eval::object::call_proxy_set_trap(
+                        &proxy_target,
+                        &handler,
+                        &receiver,
+                        &key,
+                        value,
+                    )?));
                 }
                 if let Value::Object(receiver_obj) = &receiver {
                     if crate::eval::object::proxy_handler_and_target(receiver_obj).is_some() {
@@ -200,13 +197,12 @@ pub fn register_reflect(ctx: &mut Context) {
         "getOwnPropertyDescriptor",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
-                let target = args
-                    .first()
-                    .ok_or_else(|| JsError::new("Reflect.getOwnPropertyDescriptor requires target"))?;
-                let key = to_property_key(
-                    args.get(1)
-                        .ok_or_else(|| JsError::new("Reflect.getOwnPropertyDescriptor requires key"))?,
-                )?;
+                let target = args.first().ok_or_else(|| {
+                    JsError::new("Reflect.getOwnPropertyDescriptor requires target")
+                })?;
+                let key = to_property_key(args.get(1).ok_or_else(|| {
+                    JsError::new("Reflect.getOwnPropertyDescriptor requires key")
+                })?)?;
                 let Value::Object(target) = target else {
                     return Err(JsError::new(
                         "Reflect.getOwnPropertyDescriptor target must be an object",
@@ -215,7 +211,9 @@ pub fn register_reflect(ctx: &mut Context) {
                 Ok(target
                     .borrow()
                     .get_descriptor(&key)
-                    .map(|_| Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))))
+                    .map(|_| {
+                        Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))))
+                    })
                     .unwrap_or(Value::Undefined))
             },
         ))),
@@ -378,9 +376,7 @@ JSON.stringify([target.p, log]);
 
     #[test]
     fn with_primitive_assignment_falls_through_to_outer_var() {
-        let result = eval_ok_with_builtins(
-            "var foo = 1; with (2) { foo = 42; } foo",
-        );
+        let result = eval_ok_with_builtins("var foo = 1; with (2) { foo = 42; } foo");
         assert_eq!(result, Value::Number(42.0));
     }
 
@@ -412,7 +408,10 @@ JSON.stringify([target.p, log]);
             .expect("proxy metadata expected");
         let (_handler, target) = info;
         assert!(matches!(target, Value::Object(_)));
-        assert_eq!(crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap(), true);
+        assert_eq!(
+            crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap(),
+            true
+        );
     }
 
     #[test]
