@@ -105,7 +105,18 @@ pub(crate) fn call_value_impl(
                 }
                 bind_params(&f, &f.params, &args, &call_env_rc)?;
 
-                let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
+                let body_env_rc = if f.strict {
+                    function_body_env(&call_env_rc, &f, &this_val, &f.params)
+                } else {
+                    let body_env = Environment::with_parent(Rc::clone(&call_env_rc));
+                    if !f.is_arrow {
+                        body_env
+                            .current_scope()
+                            .borrow_mut()
+                            .set_this(this_val.clone());
+                    }
+                    Rc::new(RefCell::new(body_env))
+                };
                 body_env_rc.borrow_mut().push_scope();
                 predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
                 predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());

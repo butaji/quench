@@ -191,6 +191,8 @@ impl GeneratorObject {
 
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(self.strict);
+        let previous_eval_env = crate::interpreter::get_current_eval_env();
+        crate::interpreter::set_current_eval_env(Some(Rc::clone(&call_env)));
 
         // Re-set Return/Throw control flow so eval_yield can detect it.
         // Yield/YieldDelegate variants are stale and NOT re-set (they were
@@ -238,6 +240,7 @@ impl GeneratorObject {
                             self.yield_delegate_suspend = Some(s);
                         }
                         crate::value::generator_replay::set_resuming_pending_yield(false);
+                        crate::interpreter::set_current_eval_env(previous_eval_env);
                         crate::interpreter::set_strict_mode(prev_strict);
                         return Ok(IteratorResult {
                             value: self.yielded_value.clone(),
@@ -264,6 +267,7 @@ impl GeneratorObject {
                 Err(e) => {
                     self.state = GeneratorState::Completed;
                     self.call_env = None;
+                    crate::interpreter::set_current_eval_env(previous_eval_env);
                     crate::interpreter::set_strict_mode(prev_strict);
                     return Err(e);
                 }
@@ -280,6 +284,7 @@ impl GeneratorObject {
         let _ = crate::eval::iteration::take_pending_yield_delegate_suspend();
         self.call_env = None;
         crate::value::generator_replay::set_resuming_pending_yield(false);
+        crate::interpreter::set_current_eval_env(previous_eval_env);
         crate::interpreter::set_strict_mode(prev_strict);
         Ok(IteratorResult {
             value: completion,
