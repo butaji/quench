@@ -90,8 +90,11 @@ bash tools/test-run-go-next-dryrun.sh
 bash tools/test-run-go-next-dryrun.sh --print-json
 bash tools/test-run-go-next-dryrun.sh --assert-ready
 bash tools/test-run-go-next-dryrun.sh --run-check
-# CI gate for next-stage flow (asserts current-stage + preflight payload validity)
+# CI gate for next-stage readiness.
+# Default: human-readable checks (asserts current-stage and auto-advance readiness).
 bash tools/test-run-go-next-ci.sh
+# JSON output for CI/parsers (same checks, machine-readable).
+bash tools/test-run-go-next-ci.sh --json
 # Single JSON readout with optional immediate run
 bash tools/test-run-go.sh --ready --json
 # Fast mode: skip preflight when reruns are intentionally unsafe
