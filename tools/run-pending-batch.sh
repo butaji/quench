@@ -148,7 +148,7 @@ FAIL_COUNT=0
 while IFS= read -r STAGE; do
     [[ -z "$STAGE" ]] && continue
     echo "[run-pending-batch] stage=${STAGE}"
-    if ! TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --; then
+    if ! TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh; then
         echo "[run-pending-batch] stage ${STAGE} failed" >&2
         FAILED=1
         FAIL_COUNT=$((FAIL_COUNT + 1))
