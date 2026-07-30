@@ -29,26 +29,31 @@ if echo "$OUTPUT" | grep -q "ALL STAGES COMPLETE" && ! echo "$OUTPUT" | grep -qE
     echo "✅ Stage $STAGE is 100%!"
 
     # Update index.json
-    python3 -c "
+    python3 - <<'PY'
 import json
+
 with open('tasks/index.json') as f:
     d = json.load(f)
+
+stage = int('$STAGE')
 for s in d['stages']:
-    if s['id'] == $STAGE:
+    if s['id'] == stage:
         s['status'] = 'done'
         break
-if d['current_stage'] == $STAGE:
-    # Advance to next pending stage
+
+if d['current_stage'] == stage:
     for s in d['stages']:
         if s['status'] != 'done':
             d['current_stage'] = s['id']
-            print(f'Advanced current_stage to {s[\"id\"]} ({s[\"path\"]})')
+            print(f"Advanced current_stage to {s['id']} ({s['path']})")
             break
+
 with open('tasks/index.json', 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
+
 print('index.json updated')
-"
+PY
 else
     # Portable (BSD/macOS-safe) extraction of the "Stage N: P/T" tally.
     PASSED=$(echo "$OUTPUT" | grep -oE 'Stage [0-9]+: [0-9]+/[0-9]+' | head -1 | grep -oE '[0-9]+/[0-9]+' || echo "?")
