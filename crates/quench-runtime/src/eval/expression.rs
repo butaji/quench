@@ -244,9 +244,15 @@ pub fn eval_expression(
             eval_unary_expr(*op, argument, env, in_arrow_function)
         }
         Expression::Assignment { left, right } => {
+            let identifier_scope = match left.as_ref() {
+                Expression::Identifier(name) => env.borrow().binding_scope(name),
+                _ => None,
+            };
             if crate::interpreter::is_strict_mode() {
                 if let Expression::Identifier(name) = left.as_ref() {
-                    if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
+                    if identifier_scope.is_none()
+                        && matches!(name.as_str(), "NaN" | "undefined" | "Infinity")
+                    {
                         let (_, error) = crate::value::error::create_js_error_with_type(
                             &format!("Cannot assign to '{}' in strict mode", name),
                             "TypeError",
@@ -255,10 +261,6 @@ pub fn eval_expression(
                     }
                 }
             }
-            let identifier_scope = match left.as_ref() {
-                Expression::Identifier(name) => env.borrow().binding_scope(name),
-                _ => None,
-            };
             let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
                 (left.as_ref(), right.as_ref())
             {
@@ -325,8 +327,8 @@ pub fn eval_expression(
                     Some(crate::ast::VarKind::Var) | None
                 );
                 if is_var_like
-                    && scope.borrow().object_binding_has(name) == Some(false)
                     && crate::interpreter::is_strict_mode()
+                    && scope.borrow().object_binding_has(name) == Some(false)
                 {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         &format!("{} is not defined", name),

@@ -36,6 +36,27 @@ fn with_unscopables_deleted_binding_write_recreates_property() {
 }
 
 #[test]
+fn with_proxy_assignment_has_specified_trap_sequence() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var log=[];var env={p:0};var proxy=new Proxy(env,{has(t,k){log.push('has:'+String(k));return Reflect.has(t,k);},get(t,k,r){log.push('get:'+String(k));return Reflect.get(t,k,r);},set(t,k,v,r){log.push('set:'+String(k));return Reflect.set(t,k,v,r);},getOwnPropertyDescriptor(t,k){log.push('getOwnPropertyDescriptor:'+String(k));return Reflect.getOwnPropertyDescriptor(t,k);},defineProperty(t,k,d){log.push('defineProperty:'+String(k));return Reflect.defineProperty(t,k,d);}});with(proxy){p=1;}log.join(',')")
+        .unwrap();
+    assert_eq!(
+        result,
+        Value::String("has:p,get:Symbol(Symbol.unscopables),has:p,set:p,getOwnPropertyDescriptor:p,defineProperty:p".to_string())
+    );
+}
+
+#[test]
+fn with_unscopables_getter_error_is_propagated() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var env={x:86};env[Symbol.unscopables]={};Object.defineProperty(env[Symbol.unscopables],'x',{get:function(){throw 1;}});with(env){x;}",
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn native_jsx_basic() {
     let result = parser::parse_jsx("const el = <div>hello</div>;");
     assert!(result.is_ok(), "Failed to parse JSX: {:?}", result);

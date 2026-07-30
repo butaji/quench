@@ -129,12 +129,24 @@ impl Scope {
             };
             match unscopables_val {
                 Some(Value::Object(u_obj)) => {
-                    let u = u_obj.borrow();
                     let mut blocked = HashSet::new();
-                    for name in u.own_property_names() {
-                        let value = match crate::eval::object::proxy_get_property(&u_obj, &name) {
+                    let names = u_obj.borrow().own_property_names();
+                    for name in names {
+                        let value = match crate::eval::member::eval_object_member_value(
+                            &u_obj,
+                            &Value::String(name.clone()),
+                            None,
+                        ) {
                             Ok(v) => v,
-                            Err(_) => return false,
+                            Err(err) => {
+                                if get_thrown_value().is_none() {
+                                    set_thrown_value(
+                                        crate::value::create_js_error_with_type(&err.0, "TypeError")
+                                            .0,
+                                    );
+                                }
+                                return false;
+                            }
                         };
                         if to_bool(&value) {
                             blocked.insert(name);
@@ -253,9 +265,6 @@ impl Scope {
             return Some(false);
         }
         let set_ok = if let Some((handler, target)) = proxy_handler_and_target(&object) {
-            if proxy_has_property(&object, name).ok() != Some(true) {
-                return if strict { Some(false) } else { None };
-            }
             let success = match call_proxy_set_trap(
                 &target,
                 &handler,
