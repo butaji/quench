@@ -120,11 +120,13 @@ PY
 emit_ci_payload() {
     local run_requested="$1"
     local run_rc="$2"
-    local current_err="$3"
-    local next_err="$4"
-    local run_err="$5"
+    local current_ready="$3"
+    local next_ready="$4"
+    local current_err="$5"
+    local next_err="$6"
+    local run_err="$7"
 
-    python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CHECK_CURRENT" "$CHECK_NEXT" "$CURRENT_RC" "$NEXT_RC" "$run_requested" "$run_rc" "$current_err" "$next_err" "$run_err" <<'PY'
+    python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CHECK_CURRENT" "$CHECK_NEXT" "$CURRENT_RC" "$NEXT_RC" "$run_requested" "$run_rc" "$current_ready" "$next_ready" "$current_err" "$next_err" "$run_err" <<'PY'
 import json
 import sys
 
@@ -136,9 +138,11 @@ current_rc = int(sys.argv[5])
 next_rc = int(sys.argv[6])
 run_requested = sys.argv[7] == "1"
 run_rc = int(sys.argv[8])
-current_err = sys.argv[9].strip()
-next_err = sys.argv[10].strip()
-run_err = sys.argv[11].strip()
+current_ready = sys.argv[9] == "1"
+next_ready = sys.argv[10] == "1"
+current_err = sys.argv[11].strip()
+next_err = sys.argv[12].strip()
+run_err = sys.argv[13].strip()
 
 try:
     current_payload = json.loads(current_json) if current_json else {}
@@ -149,19 +153,6 @@ try:
     next_payload = json.loads(next_json) if next_json else {}
 except Exception:
     next_payload = {}
-
-current_ready = False
-if check_current:
-    try:
-        dashboard = current_payload.get("test_run_dashboard", {})
-        signals = dashboard.get("signals", {})
-        current_ready = bool(signals.get("can_run", False))
-    except Exception:
-        current_ready = False
-
-next_ready = False
-if check_next:
-    next_ready = bool(next_payload.get("ci", {}).get("ready", False))
 
 if check_current and check_next:
     combined_ready = current_ready and next_ready
@@ -252,7 +243,7 @@ read CURRENT_READY NEXT_READY COMBINED_READY <<<"$(compute_readiness)"
 if [[ "$JSON" -eq 1 ]]; then
     if [[ "$RUN_CURRENT" -eq 1 ]]; then
         if [[ "$COMBINED_READY" != "1" ]]; then
-            emit_ci_payload 0 0 "$CURRENT_ERR" "$NEXT_ERR" ""
+            emit_ci_payload 0 0 "$CURRENT_READY" "$NEXT_READY" "$CURRENT_ERR" "$NEXT_ERR" ""
             exit 1
         fi
 
@@ -264,11 +255,11 @@ if [[ "$JSON" -eq 1 ]]; then
         RUN_ERR="$(cat "$RUN_ERR_FILE")"
         rm -f "$RUN_ERR_FILE"
 
-        emit_ci_payload 1 "$RUN_RC" "$CURRENT_ERR" "$NEXT_ERR" "$RUN_ERR"
+        emit_ci_payload 1 "$RUN_RC" "$CURRENT_READY" "$NEXT_READY" "$CURRENT_ERR" "$NEXT_ERR" "$RUN_ERR"
         exit "$RUN_RC"
     fi
 
-    emit_ci_payload 0 0 "$CURRENT_ERR" "$NEXT_ERR" ""
+    emit_ci_payload 0 0 "$CURRENT_READY" "$NEXT_READY" "$CURRENT_ERR" "$NEXT_ERR" ""
     exit 0
 fi
 
