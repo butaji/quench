@@ -6,12 +6,14 @@
 #   bash tools/milestone-rerun.sh --stage 34      # use explicit stage
 #   bash tools/milestone-rerun.sh --test tests/... # rerun explicit test file
 #   bash tools/milestone-rerun.sh --log /tmp/rerun.log # save diagnostic output
+#   bash tools/milestone-rerun.sh -- --filter "some filter"
 
 set -euo pipefail
 
 STAGE=""
 TEST=""
 LOG_FILE="${MILESTONE_RERUN_LOG:-./.test262_milestone_rerun.log}"
+EXTRA_ARGS=()
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -27,12 +29,21 @@ while [[ ${#} -gt 0 ]]; do
       LOG_FILE="$2"
       shift 2
       ;;
+    --stage=*)
+      STAGE="${1#--stage=}"
+      shift
+      ;;
+    --test=*)
+      TEST="${1#--test=}"
+      shift
+      ;;
     -h|--help)
       sed -n '1,200p' "$0"
       exit 0
       ;;
     --)
       shift
+      EXTRA_ARGS=("$@")
       break
       ;;
     *)
@@ -104,8 +115,9 @@ if [[ "$TEST" != *.js ]]; then
   exit 1
 fi
 
-echo "[milestone-rerun] Running diagnostics for ${TEST}"
 {
-  echo "[milestone-rerun] Running diagnostics for ${TEST}"
-  cargo run --bin run-test -- --show-script "$TEST"
-} | tee "$LOG_FILE"
+  echo "[milestone-rerun] $(date +'%Y-%m-%d %H:%M:%S%z') Running diagnostics for ${TEST}"
+  cargo run --bin run-test -- --show-script "${EXTRA_ARGS[@]}" "$TEST"
+} | tee -a "$LOG_FILE"
+
+echo "[milestone-rerun] Diagnostics saved to ${LOG_FILE}."
