@@ -161,6 +161,11 @@ if [[ "$RUN" -eq 1 || "$STAGE" != "" ]]; then
   exit 0
 fi
 
+if [[ "$NEXT" -eq 1 && -n "$STAGE" ]]; then
+  echo "error: --next and --stage are mutually exclusive" >&2
+  exit 1
+fi
+
 if [[ "$NEXT" -eq 1 ]]; then
   bash tools/test-run-go-next.sh --print
   exit 0
