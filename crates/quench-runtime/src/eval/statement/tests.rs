@@ -232,7 +232,7 @@ mod with_statement {
              var env = { Object };\n\
              var proxy = new Proxy(env, {\n\
               has(t, pk) { log.push('has:' + String(pk)); return Reflect.has(t, pk); },\n\
-              get(t, pk, r) { log.push('get:' + String(pk)); return Reflect.get(t, pk, r); },\n\
+              get(t, pk, r) { log.push('get:' + String(pk)); return t[pk]; },\n\
              });\n\
              with (proxy) { Object(); }\n\
              log.join(',');",

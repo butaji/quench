@@ -774,7 +774,23 @@ pub fn eval_statement(
             };
             env.borrow_mut().push_scope();
             {
-                let with_scope_names = obj_rc.borrow().own_property_names();
+                let with_scope_names = crate::eval::object::proxy_handler_and_target(&obj_rc)
+                    .and_then(|(_, target)| match target {
+                        crate::value::Value::Object(target_obj) => {
+                            Some(target_obj.borrow().own_property_names())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| obj_rc.borrow().own_property_names());
+                let current_scope = env.borrow_mut().current_scope();
+                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
+                for name in &with_scope_names {
+                    if crate::eval::object::proxy_has_property(&obj_rc, name).unwrap_or(false) {
+                        current_scope
+                            .borrow_mut()
+                            .declare_with_var(name.to_string(), VarKind::Var);
+                    }
+                }
                 // Check Symbol.unscopables (§13.11.7): properties blocked by
                 // unscopables are not added to the with-scope.
                 let blocked: HashSet<String> = {
@@ -796,13 +812,6 @@ pub fn eval_statement(
                         _ => HashSet::new(),
                     }
                 };
-                let current_scope = env.borrow_mut().current_scope();
-                current_scope.borrow_mut().set_object_binding(Rc::clone(&obj_rc));
-                for name in with_scope_names {
-                    if !blocked.contains(&name) {
-                        current_scope.borrow_mut().declare_with_var(name, VarKind::Var);
-                    }
-                }
                 current_scope
                     .borrow_mut()
                     .set_with_unscopables(blocked);
