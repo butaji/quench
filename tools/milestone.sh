@@ -34,6 +34,8 @@ CI_GATE_ONLY=0
 CI_GATE_JSON=0
 CI_GATE_SKIP_CURRENT=0
 CI_GATE_SKIP_NEXT=0
+CI_GATE_RUN=0
+CI_GATE_ARGS=()
 STATUS_JSON=0
 STATUS_CURRENT=0
 STATUS_NEXT=0
@@ -144,6 +146,10 @@ while [[ ${#} -gt 0 ]]; do
             CI_GATE_SKIP_NEXT=1
             shift
             ;;
+        --run)
+            CI_GATE_RUN=1
+            shift
+            ;;
         --ssot)
             RUN_TEST_RUN=1
             echo "[milestone] warning: --ssot is deprecated; use --test-run" >&2
@@ -194,6 +200,11 @@ while [[ ${#} -gt 0 ]]; do
             exit 0
             ;;
         *)
+            if [[ "$CI_GATE_ONLY" -eq 1 || "$CI_GATE_JSON" -eq 1 || "$CI_GATE_SKIP_CURRENT" -eq 1 || "$CI_GATE_SKIP_NEXT" -eq 1 ]]; then
+                CI_GATE_ARGS+=("$1")
+                shift
+                continue
+            fi
             echo "error: unknown argument: $1" >&2
             exit 1
             ;;
@@ -253,6 +264,12 @@ if [[ "$CI_GATE_ONLY" -eq 1 ]]; then
     fi
     if [[ "$CI_GATE_SKIP_NEXT" -eq 1 ]]; then
         GATE_ARGS+=(--skip-next)
+    fi
+    if [[ "$CI_GATE_RUN" -eq 1 ]]; then
+        GATE_ARGS+=(--run)
+    fi
+    if [[ ${#CI_GATE_ARGS[@]} -gt 0 ]]; then
+        GATE_ARGS+=("${CI_GATE_ARGS[@]}")
     fi
 
     bash tools/test-run-ci-gate.sh "${GATE_ARGS[@]}"

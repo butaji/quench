@@ -116,6 +116,8 @@ bash tools/milestone.sh --status --current
 bash tools/milestone.sh --ci-gate
 bash tools/milestone.sh --ci-gate --ci-gate-json
 bash tools/milestone.sh --ci-gate --json
+bash tools/milestone.sh --ci-gate --run --skip-next
+bash tools/milestone.sh --ci-gate --run --by-ratio --top 5
 # Next pending stage (actionable target)
 bash tools/stage-status.sh --next
 bash tools/milestone.sh --status --next
