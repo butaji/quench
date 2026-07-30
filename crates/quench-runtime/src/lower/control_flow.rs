@@ -225,7 +225,6 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
             case.consequent
                 .iter()
                 .filter_map(lower_stmt)
-                .map(desugar_switch_case_stmt)
                 .collect()
         })
         .collect();
@@ -441,76 +440,6 @@ fn collect_switch_case_decls(case_bodies: &[Vec<Statement>]) -> Vec<String> {
         }
     }
     out
-}
-
-fn desugar_switch_case_stmt(stmt: Statement) -> Statement {
-    match stmt {
-        Statement::FunctionDeclaration {
-            name,
-            params,
-            body,
-            is_async,
-            is_generator,
-        } => Statement::VarDeclaration {
-            kind: VarKind::Let,
-            name,
-            init: Some(Expression::FunctionExpression {
-                name: None,
-                params,
-                body,
-                is_async,
-                is_generator,
-            }),
-        },
-        Statement::Block(stmts) => {
-            Statement::Block(stmts.into_iter().map(desugar_switch_case_stmt).collect())
-        }
-        Statement::If {
-            condition,
-            consequent,
-            alternate,
-        } => Statement::If {
-            condition,
-            consequent: Box::new(desugar_switch_case_stmt(*consequent)),
-            alternate: alternate.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
-        },
-        Statement::While { condition, body } => Statement::While {
-            condition,
-            body: Box::new(desugar_switch_case_stmt(*body)),
-        },
-        Statement::DoWhile {
-            body,
-            condition,
-            labels,
-        } => Statement::DoWhile {
-            body: Box::new(desugar_switch_case_stmt(*body)),
-            condition,
-            labels,
-        },
-        Statement::For {
-            init,
-            condition,
-            update,
-            body,
-        } => Statement::For {
-            init,
-            condition,
-            update,
-            body: Box::new(desugar_switch_case_stmt(*body)),
-        },
-        Statement::Try {
-            body,
-            param,
-            handler,
-            finalizer,
-        } => Statement::Try {
-            body: Box::new(desugar_switch_case_stmt(*body)),
-            param,
-            handler: handler.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
-            finalizer: finalizer.map(|stmt| Box::new(desugar_switch_case_stmt(*stmt))),
-        },
-        other => other,
-    }
 }
 
 /// Lower a for loop init (variable declaration or expression)

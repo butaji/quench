@@ -138,18 +138,41 @@ fn check_for_switch_errors(switch: &ast::SwitchStatement) -> Result<(), JsError>
     let mut seen = std::collections::HashSet::new();
     for case in &switch.cases {
         for stmt in &case.consequent {
-            if let ast::Statement::VariableDeclaration(var_decl) = stmt {
-                if !var_decl.kind.is_var() {
-                    let names = collect_bound_names(var_decl);
-                    for name in &names {
-                        if !seen.insert(name.clone()) {
+            match stmt {
+                ast::Statement::VariableDeclaration(var_decl) => {
+                    if !var_decl.kind.is_var() {
+                        let names = collect_bound_names(var_decl);
+                        for name in &names {
+                            if !seen.insert(name.clone()) {
+                                return Err(JsError(format!(
+                                    "SyntaxError: Duplicate lexical declaration '{}' in switch case",
+                                    name
+                                )));
+                            }
+                        }
+                    }
+                }
+                ast::Statement::FunctionDeclaration(func) => {
+                    if let Some(name) = &func.id {
+                        if !seen.insert(name.name.to_string()) {
                             return Err(JsError(format!(
                                 "SyntaxError: Duplicate lexical declaration '{}' in switch case",
-                                name
+                                name.name
                             )));
                         }
                     }
                 }
+                ast::Statement::ClassDeclaration(class_decl) => {
+                    if let Some(name) = &class_decl.id {
+                        if !seen.insert(name.name.to_string()) {
+                            return Err(JsError(format!(
+                                "SyntaxError: Duplicate lexical declaration '{}' in switch case",
+                                name.name
+                            )));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1873,5 +1896,44 @@ mod tests {
             result.as_ref().unwrap_err().0.contains("SyntaxError"),
             "error should contain SyntaxError"
         );
+    }
+
+    #[test]
+    fn switch_redeclaration_function_decl_is_error() {
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, "switch(0){case 0: async function f() {} default: function f() {} }", source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let program = ret.program;
+        let result = check_early_errors(&program);
+        assert!(result.is_err(), "switch function redeclaration should be syntax error");
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn switch_redeclaration_class_decl_is_error() {
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, "switch(0){case 0: class C {} default: class C {} }", source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let program = ret.program;
+        let result = check_early_errors(&program);
+        assert!(result.is_err(), "switch class redeclaration should be syntax error");
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn switch_unique_lexical_decls_are_ok() {
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(
+            &allocator,
+            "switch (0) { case 0: function f() {} default: class C {} }",
+            source_type,
+        )
+        .parse();
+        assert!(ret.diagnostics.is_empty());
+        let program = ret.program;
+        assert!(check_early_errors(&program).is_ok(), "unique switch lexical decls should be ok");
     }
 }
