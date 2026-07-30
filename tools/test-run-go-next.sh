@@ -15,6 +15,7 @@ set -euo pipefail
 #   bash tools/test-run-go-next.sh --run --commit
 #   bash tools/test-run-go-next.sh --run --commit "chore: stage fix"
 #   bash tools/test-run-go-next.sh --run --commit --push
+#   (SSOT and test-run are the same canonical test-run flow; use the name your scripts already use.)
 
 RUN=0
 JSON=0
