@@ -295,7 +295,14 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --next)"
             elif [[ "$NEXT_ID_ONLY" -eq 1 ]]; then
                 NEXT_ID="$(bash tools/stage-status.sh --next-id)"
-                STATUS_PAYLOAD="{\"next_id\": \"${NEXT_ID}\"}"
+                STATUS_PAYLOAD="$(python3 - "$NEXT_ID" <<'PY'
+import json
+import sys
+
+payload = {"next_id": sys.argv[1].strip()}
+print(json.dumps(payload))
+PY
+)"
             else
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json)"
             fi
