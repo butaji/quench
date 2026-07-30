@@ -56,6 +56,8 @@ bash tools/run-next-pending.sh --print
 bash tools/run-next-pending.sh --print-json
 # Test-run metadata for next pending stage (same payload as --print-json)
 bash tools/run-next-pending.sh --status
+# Normalized status-only plan metadata (single/batch)
+bash tools/run-test-plan.sh --batch --top 5 --status --json
 # Run highest-failure-ratio pending stage
 bash tools/run-next-pending.sh --by-ratio
 # Restrict ratio-driven pick to top-N candidate window
