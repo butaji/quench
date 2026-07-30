@@ -5,20 +5,26 @@
 #   bash tools/milestone-rerun.sh                # use current stage
 #   bash tools/milestone-rerun.sh --stage 34      # use explicit stage
 #   bash tools/milestone-rerun.sh --test tests/... # rerun explicit test file
+#   bash tools/milestone-rerun.sh --log /tmp/rerun.log # save diagnostic output
 
 set -euo pipefail
 
 STAGE=""
 TEST=""
+LOG_FILE="${MILESTONE_RERUN_LOG:-./.test262_milestone_rerun.log}"
 
 while [[ ${#} -gt 0 ]]; do
-  case "${1:-}" in
+    case "${1:-}" in
     --stage)
       STAGE="$2"
       shift 2
       ;;
     --test)
       TEST="$2"
+      shift 2
+      ;;
+    --log)
+      LOG_FILE="$2"
       shift 2
       ;;
     -h|--help)
@@ -99,4 +105,7 @@ if [[ "$TEST" != *.js ]]; then
 fi
 
 echo "[milestone-rerun] Running diagnostics for ${TEST}"
-cargo run --bin run-test -- --show-script "$TEST"
+{
+  echo "[milestone-rerun] Running diagnostics for ${TEST}"
+  cargo run --bin run-test -- --show-script "$TEST"
+} | tee "$LOG_FILE"
