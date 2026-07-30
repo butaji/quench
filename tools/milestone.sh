@@ -7,6 +7,7 @@
 #   bash tools/milestone.sh --stage 32 --ssot           # run ssot-stage first
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
+#   bash tools/milestone.sh --stage 32 --ssot --commit --push
 
 set -euo pipefail
 
@@ -76,6 +77,22 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
     echo "[milestone] Running SSOT check for stage ${STAGE}..."
     bash tools/ssot-stage.sh "$STAGE"
     echo "[milestone] SSOT check complete for stage ${STAGE}."
+    if [[ "$AUTO_COMMIT" -eq 1 ]]; then
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            if [[ -z "$COMMIT_MESSAGE" ]]; then
+                COMMIT_MESSAGE="chore: stage ${STAGE} ssot milestone"
+            fi
+            git add -A
+            git commit -m "$COMMIT_MESSAGE"
+            echo "[milestone] Committed SSOT milestone for stage ${STAGE}."
+            if [[ "$AUTO_PUSH" -eq 1 ]]; then
+                git push
+                echo "[milestone] Pushed SSOT milestone commit."
+            fi
+        else
+            echo "[milestone] No working-tree changes to commit."
+        fi
+    fi
     exit 0
 fi
 
