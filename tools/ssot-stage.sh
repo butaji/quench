@@ -8,6 +8,7 @@ echo "[ssot-stage] Deprecated: use test-run-stage.sh instead." >&2
 
 if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
   # Legacy environment alias for prebuild mode.
+  echo "[ssot-stage] Deprecated env var: SSOT_BUILD_RUN_TEST=1 is deprecated; use TEST262_TEST_RUN_BUILD=1." >&2
   export TEST262_TEST_RUN_BUILD=1
 fi
 
