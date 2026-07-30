@@ -269,6 +269,40 @@ fn remove_property_directly() {
 }
 
 #[test]
+fn global_this_property_keeps_var_binding_in_sync() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "this['__declared__var'] = \"baloon\";\
+         if (this['__declared__var'] !== \"baloon\") { throw new Error('global object update failed'); }",
+    )
+    .unwrap();
+
+    let before_decl = ctx.eval("__declared__var").unwrap();
+    assert_eq!(before_decl, Value::String("baloon".to_string()));
+    assert_eq!(
+        ctx.get_global("__declared__var"),
+        Some(Value::String("baloon".to_string()))
+    );
+
+    ctx.eval("var __declared__var;").unwrap();
+    let after_decl = ctx.eval("__declared__var").unwrap();
+    assert_eq!(after_decl, Value::String("baloon".to_string()));
+}
+
+#[test]
+fn global_this_property_keeps_var_binding_in_sync_in_strict_mode() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "\"use strict\";\
+         this['__declared__var_strict'] = \"baloon\";\
+         if (this['__declared__var_strict'] !== \"baloon\") { throw new Error('global object update failed'); }\
+         var __declared__var_strict;\
+         if (__declared__var_strict !== \"baloon\") { throw new Error('binding was reset'); }",
+    )
+    .unwrap();
+}
+
+#[test]
 fn arrow_length_descriptor_configurable() {
     let mut ctx = Context::new().unwrap();
     let v = ctx.eval(

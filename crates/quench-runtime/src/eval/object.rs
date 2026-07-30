@@ -633,17 +633,38 @@ pub(crate) fn assign_to_object(
 
     o.borrow_mut().set(prop_name, value.clone());
 
-    // Mirror writes on globalThis into the global binding (root environment only),
-    // so function locals do not shadow globalThis property updates.
-    let is_global_this = env
-        .borrow()
-        .get("globalThis")
-        .map(|g| matches!(g, Value::Object(ref go) if Rc::ptr_eq(go, o)))
-        .unwrap_or(false);
+    // Mirror writes on globalThis into the global binding.
+    let this_value = crate::interpreter::get_this_binding(env);
+    let is_global_this = {
+        let global_this = crate::context::get_global_from_context("globalThis");
+        global_this.and_then(|global| match global {
+            Value::Object(global_obj) => Some(Rc::ptr_eq(&global_obj, o)),
+            _ => None,
+        }) == Some(true)
+            || matches!(
+                this_value,
+                Value::Object(ref this_obj) if Rc::ptr_eq(this_obj, o)
+            )
+            || env
+                .borrow()
+                .get("globalThis")
+                .is_some_and(|g| matches!(g, Value::Object(ref go) if Rc::ptr_eq(go, o)));
+    };
     if is_global_this {
-        // Find the root environment (global) even when called from within
-        // a nested function scope, block scope, or direct eval.
-        let mut root_env = Rc::clone(env);
+        // Mirror into the context's root environment when available;
+        // fall back to the passed env chain as a safety fallback.
+        let mut root_env = crate::context::get_current_env().unwrap_or_else(|| {
+            let mut fallback = Rc::clone(env);
+            loop {
+                let parent = { fallback.borrow().get_parent() };
+                if let Some(next) = parent {
+                    fallback = next;
+                } else {
+                    break;
+                }
+            }
+            fallback
+        });
         loop {
             let parent = { root_env.borrow().get_parent() };
             if let Some(next) = parent {
