@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical lightweight alias: SSOT is the implementation status for the current
-# test-run stage and the canonical command to execute test-run milestones.
+# SSOT is the canonical shorthand for implementation status of the current
+# test-run stage. This is the single command you should use for status/checkpoint
+# loops.
 # Usage:
 #   bash tools/ssot                         # status snapshot for current test-run stage
 #   bash tools/ssot --run                   # run current stage test-run (explicit)

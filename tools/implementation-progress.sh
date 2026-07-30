@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Single command status snapshot for ssot/test-run progress.
+# Legacy compatibility wrapper for SSOT/test-run status snapshots.
 # Usage:
 #   bash tools/implementation-progress.sh
 #   bash tools/implementation-progress.sh --next

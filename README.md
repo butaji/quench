@@ -34,15 +34,14 @@ ALL_STAGES=1      cargo test -p quench-runtime --test test262 test262_staged -- 
 On 100% the runner prints `ALL STAGES COMPLETE — Stage N: X/X`. Strict
 mode: every non-`raw` test runs sloppy, then with `"use strict";`.
 
-Fast milestone flow:
+Fast milestone flow (SSOT == test-run):
 
 ```bash
-bash tools/ssot --status                     # show current SSOT status (test-run summary)
-bash tools/ssot                              # same as `--status` (SSOT status)
-bash tools/ssot --test                        # explicit run alias (SSOT for execution)
-bash tools/ssot --run --commit               # run + commit current milestone
-bash tools/ssot --run --commit --push         # run + commit + push current milestone
-bash tools/ssot --run --fast                  # run current stage fast path (skip preflight)
+bash tools/ssot                               # show current SSOT status (test-run summary)
+bash tools/ssot --status                     # same as above
+bash tools/ssot --run --fast                 # run current stage (fast)
+bash tools/ssot --run --commit               # run + commit current stage milestone
+bash tools/ssot --run --commit --push         # run + commit + push current stage milestone
 bash tools/ssot --next                       # print next pending stage id
 ```
 `tools/ssot` is the canonical short path: `--next` targets next pending stage, default targets current.

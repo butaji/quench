@@ -2,12 +2,12 @@
 
 ## Quick Reference
 
-Terminology is single-source:
-- `test run` is the canonical term for stage status and milestone progress.
-- `progress` and `snapshot` refer to `test run` data.
-- `ssot` is the canonical shorthand for `test run` (`ssot` == `test run`).
-- `implementation-progress` is retained as a legacy wrapper for an ssot-style status view and is normalized to the same `test-run` payload.
-- `SSOT_BUILD_RUN_TEST` is supported for compatibility; use `TEST262_TEST_RUN_BUILD=1` for stage prebuild mode.
+Canonical language:
+- `SSOT` is the only phrase you should use for implementation status.
+- `SSOT` and `test-run` are strict synonyms.
+- `test-run` is the canonical command path for stage status and milestone execution.
+- `implementation-progress` is a legacy compatibility wrapper.
+- `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
@@ -37,16 +37,13 @@ TEST262_STAGE=N TEST262_QUICK=1 cargo test -p quench-runtime --test test262
 # Run all stages in digest mode, produce report
 bash tools/digest-all.sh
 
-# Quick overview of all stages
-bash tools/stage-status.sh
-# Current stage only (minimal output)
-bash tools/stage-status.sh --current
-# Canonical single-command test-run progress snapshot
-bash tools/implementation-progress.sh
-# Canonical one-line workflow for SSOT/test-run
+# SSOT/test-run canonical status
 bash tools/ssot
 bash tools/ssot --status
-bash tools/ssot --json
+# SSOT/test-run canonical execution
+bash tools/ssot --run --fast
+bash tools/ssot --run --commit --push
+# Next stage
 bash tools/ssot --next
 bash tools/ssot --next --run
 bash tools/ssot --next --run --commit --push
