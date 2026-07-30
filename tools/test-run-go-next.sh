@@ -190,10 +190,10 @@ if [[ "$JSON" -eq 0 ]]; then
 fi
 
 if [[ "$JSON" -eq 1 ]]; then
-    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json --
+    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --json
     RUN_RC=$?
 else
-    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh --
+    TEST262_STAGE="$STAGE" bash tools/test-run-stage.sh
     RUN_RC=$?
 fi
 

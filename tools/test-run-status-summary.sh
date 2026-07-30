@@ -50,6 +50,14 @@ failed = int(current_stage.get('failed', 0) or 0)
 blocked = failed > 0
 
 if json_mode:
+    next_payload = {}
+    if isinstance(next_stage, dict):
+        next_payload = {
+            'id': next_stage.get('id'),
+            'status': next_stage.get('status'),
+            'failed': int(next_stage.get('failed', 0) or 0),
+            'tests': next_stage.get('tests'),
+        }
     status = {
         'current_stage': current_id,
         'status': current_stage.get('status'),
@@ -58,6 +66,7 @@ if json_mode:
         'tests': current_stage.get('tests'),
         'is_blocked': blocked,
         'has_next': bool(next_stage not in (None, 0, '0')),
+        'next_stage': next_payload if next_payload else None,
     }
     if not blocker_only or blocked:
         print(json.dumps({'test_run_status_summary': status}, sort_keys=True))
