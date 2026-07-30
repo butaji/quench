@@ -289,6 +289,78 @@ mod switch_statement {
         let r = eval(&src).unwrap();
         assert_eq!(r, Value::Number(1.0));
     }
+
+    #[test]
+    fn switch_default_abrupt_empty_does_not_preserve_prior_completion() {
+        assert_eq!(
+            eval(
+                "1; \
+                 switch ('a') {\n\
+                   case 'a':\n\
+                     break;\n\
+                   default:\n\
+                 }",
+            )
+            .unwrap(),
+            Value::Undefined
+        );
+    }
+
+    #[test]
+    fn nested_switch_statements_follow_case_completion_rules() {
+        let src = "function SwitchTest(value){
+  var result = 0;
+  switch(value) {
+    case 0:
+      switch(value) {
+        case 0:
+         result += 3;
+        break;
+        default:
+          result += 32;
+          break;
+        }
+      result *= 2;
+      break;
+    default:
+      result += 32;
+      break;
+  }
+  return result;
+}
+
+SwitchTest(0);";
+        assert_eq!(eval(src).unwrap(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn nested_switch_12_11_a4_t1_matches_expected_result() {
+        let src = "function SwitchTest(value){\n".to_owned()
+            + "  var result = 0;\n"
+            + "  switch(value) {\n"
+            + "    case 0:\n"
+            + "      switch(value) {\n"
+            + "        case 0:\n"
+            + "         result += 3;\n"
+            + "        break;\n"
+            + "        default:\n"
+            + "          result += 32;\n"
+            + "          break;\n"
+            + "        }\n"
+            + "      result *= 2;\n"
+            + "      break;\n"
+            + "    default:\n"
+            + "      result += 32;\n"
+            + "      break;\n"
+            + "  }\n"
+            + "  return result;\n"
+            + "}\n"
+            + "var x = SwitchTest(0);\n"
+            + "if (x !== 6) { throw x; }\n"
+            + "x;";
+        let value = eval(&src);
+        assert_eq!(value.unwrap(), Value::Number(6.0));
+    }
 }
 
 mod empty_statement {

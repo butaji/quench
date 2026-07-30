@@ -132,6 +132,20 @@ pub(crate) fn acc_stack_top() -> Option<Value> {
     ACC_STACK.with(|cell| cell.borrow().last().cloned())
 }
 
+fn is_empty_completion(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::VarDeclaration { .. }
+        | Statement::FunctionDeclaration { .. }
+        | Statement::ClassDeclaration { .. }
+        | Statement::Break(_)
+        | Statement::Continue(_)
+        | Statement::Empty => true,
+        Statement::Block(stmts) => stmts.is_empty(),
+        Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
+        _ => false,
+    }
+}
+
 /// Evaluate a list of statements
 pub fn eval_statements(
     stmts: &[Statement],
@@ -147,16 +161,7 @@ pub fn eval_statements(
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, empty blocks) should not replace the previous completion value.
         // Only update last_val when the statement produces a non-empty value.
-        let is_empty_completion = matches!(
-            stmt,
-            Statement::VarDeclaration { .. }
-                | Statement::FunctionDeclaration { .. }
-                | Statement::ClassDeclaration { .. }
-                | Statement::SequenceDecls(_)
-                | Statement::Empty
-                | Statement::Break(_)
-                | Statement::Continue(_)
-        ) || matches!(stmt, Statement::Block(s) if s.is_empty());
+        let is_empty_completion = is_empty_completion(stmt);
         if !is_empty_completion {
             last_val = val;
         }
@@ -305,16 +310,7 @@ fn eval_function_body_impl(
         // Per ES §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, break/continue, empty blocks) should not replace the previous
         // completion value.
-        let is_empty = matches!(
-            stmt,
-            Statement::VarDeclaration { .. }
-                | Statement::FunctionDeclaration { .. }
-                | Statement::ClassDeclaration { .. }
-                | Statement::SequenceDecls(_)
-                | Statement::Break(_)
-                | Statement::Continue(_)
-                | Statement::Empty
-        ) || matches!(stmt, Statement::Block(s) if s.is_empty());
+        let is_empty = is_empty_completion(stmt);
         if !is_empty {
             _last_val = stmt_val;
         }

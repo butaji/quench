@@ -13,6 +13,13 @@ use crate::ast::{
 };
 use oxc::ast::ast;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static SWITCH_SCOPE_ID: AtomicUsize = AtomicUsize::new(0);
+
+fn next_switch_scope_id() -> usize {
+    SWITCH_SCOPE_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Lower an if statement
 pub fn lower_if_stmt(if_stmt: &ast::IfStatement) -> Option<Statement> {
@@ -217,7 +224,9 @@ fn ends_with_break_or_return(stmts: &[Statement]) -> bool {
 /// Lower a switch statement into nested if-else chains
 pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     let discriminant = lower_expr(&switch.discriminant).ok()?;
-    let disc_name = "__quench_switch_discriminant".to_string();
+    let switch_scope_id = next_switch_scope_id();
+    let disc_name = format!("__quench_switch_discriminant_{switch_scope_id}");
+    let loop_name = format!("__quench_switch_{switch_scope_id}");
     let own_bodies: Vec<Vec<Statement>> = switch
         .cases
         .iter()
@@ -292,19 +301,19 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     // one-shot counter loop, which consumes Break (and Continue) and always
     // terminates. `return` inside a case body still propagates.
     let for_stmt = Statement::For {
-        init: Some(ForInit::VarDeclaration {
+            init: Some(ForInit::VarDeclaration {
             kind: VarKind::Var,
-            name: "__quench_switch__".to_string(),
+            name: loop_name.clone(),
             init: Some(Expression::Number(0.0)),
         }),
         condition: Some(Box::new(Expression::Binary {
             op: BinaryOp::Lt,
-            left: Box::new(Expression::Identifier("__quench_switch__".to_string())),
+            left: Box::new(Expression::Identifier(loop_name.clone())),
             right: Box::new(Expression::Number(1.0)),
         })),
         update: Some(Box::new(Expression::Update {
             op: crate::ast::UpdateOp::Increment,
-            argument: Box::new(Expression::Identifier("__quench_switch__".to_string())),
+            argument: Box::new(Expression::Identifier(loop_name)),
             prefix: false,
         })),
         body: Box::new(chain),

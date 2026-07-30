@@ -407,6 +407,18 @@ pub fn eval_program(
     _source: Option<&str>,
     set_this: bool,
 ) -> Result<Value, JsError> {
+    fn is_empty_completion(stmt: &crate::ast::Statement) -> bool {
+        match stmt {
+            crate::ast::Statement::VarDeclaration { .. }
+            | crate::ast::Statement::FunctionDeclaration { .. }
+            | crate::ast::Statement::ClassDeclaration { .. }
+            | crate::ast::Statement::Empty => true,
+            crate::ast::Statement::Block(stmts) => stmts.is_empty(),
+            crate::ast::Statement::SequenceDecls(stmts) => stmts.iter().all(is_empty_completion),
+            _ => false,
+        }
+    }
+
     match program {
         Program::Script(statements) => {
             let prev_strict = is_strict_mode();
@@ -430,15 +442,7 @@ pub fn eval_program(
                 // Empty completions (var/let/const/function/class declarations,
                 // empty statements, empty blocks) should not replace the previous
                 // completion value (ES §8.3.2).
-                let is_empty_completion = matches!(
-                    stmt,
-                    crate::ast::Statement::VarDeclaration { .. }
-                        | crate::ast::Statement::FunctionDeclaration { .. }
-                        | crate::ast::Statement::ClassDeclaration { .. }
-                        | crate::ast::Statement::SequenceDecls(_)
-                        | crate::ast::Statement::Empty
-                ) || matches!(stmt, crate::ast::Statement::Block(s) if s.is_empty());
-                if !is_empty_completion {
+                if !is_empty_completion(stmt) {
                     last_value = val;
                 }
             }
