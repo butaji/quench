@@ -47,8 +47,7 @@ else
 fi
 
 if [[ "$PRINT_JSON" -eq 1 ]]; then
-    printf '%s
-' "$PAYLOAD"
+    printf '%s\n' "$PAYLOAD"
 else
     read -r STAGE STAGE_PATH SOURCE CURRENT MATCH AUTO <<<"$(python3 - "$PAYLOAD" <<'PY'
 import json
