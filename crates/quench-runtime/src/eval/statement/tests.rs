@@ -239,6 +239,58 @@ mod block_statement {
     }
 }
 
+mod switch_statement {
+    use super::*;
+
+    #[test]
+    fn switch_scope_lex_default_async_function_is_block_scoped() {
+        assert!(eval("switch (0) { default: async function x() {} } x").is_err());
+    }
+
+    #[test]
+    fn switch_scope_lex_open_case_uses_outer_lexical_for_discriminant() {
+        let src =
+            "let x = 'outside';\nvar probeExpr, probeSelector, probeStmt;\n".to_owned()
+                + "switch (probeExpr = function() { return x; }, null) {\n"
+                + "  case probeSelector = function() { return x; }, null:\n"
+                + "    probeStmt = function() { return x; };\n"
+                + "    let x = 'inside';\n"
+                + "}\n"
+                + "probeExpr() + '|' + probeSelector() + '|' + probeStmt();";
+        let r = eval(&src).unwrap();
+        assert_eq!(r, Value::String("outside|inside|inside".into()));
+    }
+
+    #[test]
+    fn switch_scope_lex_open_default_uses_outer_lexical_for_discriminant() {
+        let src =
+            "let x = 'outside';\nvar probeExpr, probeStmt;\n".to_owned()
+                + "switch (probeExpr = function() { return x; }) {\n"
+                + "  default:\n"
+                + "    probeStmt = function() { return x; };\n"
+                + "    let x = 'inside';\n"
+                + "}\n"
+                + "probeExpr() + '|' + probeStmt();";
+        let r = eval(&src).unwrap();
+        assert_eq!(r, Value::String("outside|inside".into()));
+    }
+
+    #[test]
+    fn switch_tail_call_can_run_many_iterations() {
+        let src = "var callCount = 0;\n".to_owned()
+                + "(function f(n) {\n"
+                + "  if (n === 0) {\n"
+                + "    callCount += 1;\n"
+                + "    return;\n"
+                + "  }\n"
+                + "  switch(0) { case 0: return f(n - 1); }\n"
+                + "})(1000);\n"
+                + "callCount;";
+        let r = eval(&src).unwrap();
+        assert_eq!(r, Value::Number(1.0));
+    }
+}
+
 mod empty_statement {
     use super::*;
 

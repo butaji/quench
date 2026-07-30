@@ -135,6 +135,16 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
 /// ES2025 §14.1.3 (CaseBlock): It is a Syntax Error if the
 /// LexicallyDeclaredNames of a CaseBlock contains any duplicate entries.
 fn check_for_switch_errors(switch: &ast::SwitchStatement) -> Result<(), JsError> {
+    let mut var_names = std::collections::HashSet::new();
+    for case in &switch.cases {
+        for stmt in &case.consequent {
+            if let ast::Statement::VariableDeclaration(var_decl) = stmt {
+                if var_decl.kind.is_var() {
+                    var_names.extend(collect_bound_names(var_decl));
+                }
+            }
+        }
+    }
     let mut seen = std::collections::HashSet::new();
     for case in &switch.cases {
         for stmt in &case.consequent {
@@ -149,25 +159,45 @@ fn check_for_switch_errors(switch: &ast::SwitchStatement) -> Result<(), JsError>
                                     name
                                 )));
                             }
+                            if var_names.contains(name) {
+                                return Err(JsError(format!(
+                                    "SyntaxError: Duplicate declaration '{}' in switch case",
+                                    name
+                                )));
+                            }
                         }
                     }
                 }
                 ast::Statement::FunctionDeclaration(func) => {
                     if let Some(name) = &func.id {
-                        if !seen.insert(name.name.to_string()) {
+                        let name = name.name.to_string();
+                        if !seen.insert(name.clone()) {
                             return Err(JsError(format!(
                                 "SyntaxError: Duplicate lexical declaration '{}' in switch case",
-                                name.name
+                                name
+                            )));
+                        }
+                        if var_names.contains(&name) {
+                            return Err(JsError(format!(
+                                "SyntaxError: Duplicate declaration '{}' in switch case",
+                                name
                             )));
                         }
                     }
                 }
                 ast::Statement::ClassDeclaration(class_decl) => {
                     if let Some(name) = &class_decl.id {
-                        if !seen.insert(name.name.to_string()) {
+                        let name = name.name.to_string();
+                        if !seen.insert(name.clone()) {
                             return Err(JsError(format!(
                                 "SyntaxError: Duplicate lexical declaration '{}' in switch case",
-                                name.name
+                                name
+                            )));
+                        }
+                        if var_names.contains(&name) {
+                            return Err(JsError(format!(
+                                "SyntaxError: Duplicate declaration '{}' in switch case",
+                                name
                             )));
                         }
                     }
@@ -1935,5 +1965,54 @@ mod tests {
         assert!(ret.diagnostics.is_empty());
         let program = ret.program;
         assert!(check_early_errors(&program).is_ok(), "unique switch lexical decls should be ok");
+    }
+
+    #[test]
+    fn switch_lexical_decl_overlaps_var_decl_in_case_block_is_error() {
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(
+            &allocator,
+            "switch (0) { case 0: async function f() {} default: var f; }",
+            source_type,
+        )
+        .parse();
+        assert!(ret.diagnostics.is_empty());
+        let program = ret.program;
+        let result = check_early_errors(&program);
+        assert!(
+            result.is_err(),
+            "switch lexical and var declarations should not overlap"
+        );
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn switch_redeclaration_async_function_and_async_generator_with_same_name_is_error() {
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(
+            &allocator,
+            "$DONOTEVALUATE(); switch (0) { case 1: async function f() {} default: async function* f() {} }",
+            source_type,
+        )
+        .parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(
+            result.is_err(),
+            "async function and async generator redeclaration should be syntax error"
+        );
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn parse_script_reports_async_function_redeclaration_in_switch_as_error() {
+        use crate::parser::parse_script;
+        let source = "$DONOTEVALUATE(); switch (0) { case 1: async function f() {} default: async function* f() {} }";
+        assert!(
+            parse_script(source).is_err(),
+            "parse_script should reject switch switch redeclaration"
+        );
     }
 }

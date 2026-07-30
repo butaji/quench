@@ -266,7 +266,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
         if case.test.is_some() {
             non_default.push((i, effective_bodies[i].clone()));
         } else {
-            default_body = Some(Statement::Block(effective_bodies[i].clone()));
+            default_body = Some(Statement::SequenceDecls(effective_bodies[i].clone()));
         }
     }
 
@@ -281,7 +281,7 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
                 left: Box::new(Expression::Identifier(disc_name.clone())),
                 right: Box::new(test_expr),
             }),
-            consequent: Box::new(Statement::Block(case_body)),
+            consequent: Box::new(Statement::SequenceDecls(case_body)),
             alternate: current.map(Box::new),
         });
     }
@@ -321,15 +321,16 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
             init: None,
         });
     }
-
-    switch_scope_stmts.push(Statement::VarDeclaration {
-        kind: VarKind::Var,
-        name: disc_name,
-        init: Some(discriminant),
-    });
     switch_scope_stmts.push(for_stmt);
 
-    Some(Statement::Block(switch_scope_stmts))
+    Some(Statement::SequenceDecls(vec![
+        Statement::VarDeclaration {
+            kind: VarKind::Var,
+            name: disc_name,
+            init: Some(discriminant),
+        },
+        Statement::Block(switch_scope_stmts),
+    ]))
 }
 
 fn collect_switch_case_decls(case_bodies: &[Vec<Statement>]) -> Vec<String> {

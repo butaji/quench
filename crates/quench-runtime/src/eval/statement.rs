@@ -258,11 +258,11 @@ fn eval_function_body_impl(
         }
 
         // Check for tail-call return inside a block or do-while at the last position.
-        if is_last_stmt {
-            if let Statement::Block(inner_stmts) = stmt {
-                if acc_stack_len() > 0
-                    && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
-                        .is_some()
+            if is_last_stmt {
+                if let Statement::Block(inner_stmts) = stmt {
+                    if acc_stack_len() > 0
+                        && handle_tail_call_in_block(inner_stmts, env, in_arrow_function, false)?
+                            .is_some()
                 {
                     // Tail call was set; break to let trampoline run.
                     break;
@@ -279,20 +279,27 @@ fn eval_function_body_impl(
                 {
                     break;
                 }
-            } else if let Statement::For { body, .. } = stmt {
-                if acc_stack_len() > 0
-                    && handle_tail_call_in_block(
-                        std::slice::from_ref(body.as_ref()),
-                        env,
-                        in_arrow_function,
-                        true,
-                    )?
-                    .is_some()
-                {
-                    break;
+                } else if let Statement::For { body, .. } = stmt {
+                    if acc_stack_len() > 0
+                        && handle_tail_call_in_block(
+                            std::slice::from_ref(body.as_ref()),
+                            env,
+                            in_arrow_function,
+                            true,
+                        )?
+                        .is_some()
+                    {
+                        break;
+                    }
+                } else if let Statement::SequenceDecls(stmts) = stmt {
+                    if acc_stack_len() > 0
+                        && handle_tail_call_in_block(stmts, env, in_arrow_function, true)?
+                            .is_some()
+                    {
+                        break;
+                    }
                 }
             }
-        }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
         // Per ES §8.3.2, empty completions (var/let/const/function declarations,
@@ -419,6 +426,58 @@ fn handle_tail_call_in_block(
         // Pop current scope before recursing — the recursive call pushes its own.
         env.borrow_mut().pop_scope();
         return handle_tail_call_in_block(inner_stmts, env, in_arrow_function, tail_calls_only);
+    }
+
+    // Last statement is the switch lowering loop wrapper.
+    if let Statement::For {
+        init: Some(ForInit::VarDeclaration {
+            kind: VarKind::Var,
+            name: loop_name,
+            init: Some(Expression::Number(0.0)),
+            ..
+        }),
+        condition: Some(cond),
+        update: Some(upd),
+        body,
+    } = last_stmt
+    {
+        let is_loop_var = loop_name == "__quench_switch__";
+        let is_condition = matches!(
+            cond.as_ref(),
+            Expression::Binary {
+                op: BinaryOp::Lt,
+                left: l,
+                right: r
+            } if matches!(l.as_ref(), Expression::Identifier(id) if id == "__quench_switch__")
+                && matches!(r.as_ref(), Expression::Number(v) if *v == 1.0)
+        );
+        let is_update = matches!(
+            upd.as_ref(),
+            Expression::Update {
+                op: UpdateOp::Increment,
+                argument: arg,
+                prefix: false
+            } if matches!(arg.as_ref(), Expression::Identifier(id) if id == "__quench_switch__")
+        );
+
+        if is_loop_var && is_condition && is_update {
+            if handle_tail_call_in_block(
+                std::slice::from_ref(body.as_ref()),
+                env,
+                in_arrow_function,
+                true,
+            )?
+            .is_some()
+            {
+                env.borrow_mut().pop_scope();
+                return Ok(Some(()));
+            }
+        }
+
+        if tail_calls_only {
+            env.borrow_mut().pop_scope();
+            return Ok(None);
+        }
     }
 
     // Last statement is a Return → check for tail call.
@@ -803,6 +862,7 @@ fn eval_func_decl(
     if matches!(env.borrow().get(name), Some(Value::Function(_))) {
         return Ok(Value::Undefined);
     }
+    let existing_kind = env.borrow().get_kind(name);
     let mut func = crate::value::ValueFunction::new(
         Some(name.to_owned()),
         params.to_vec(),
@@ -815,18 +875,28 @@ fn eval_func_decl(
         || crate::interpreter::helpers::check_use_strict_directive(body);
     func.name = Some(name.to_string()); // Set .name property per ES spec SetFunctionName
     let value = Value::Function(func);
-    // ES2015+ strict mode: function declarations in blocks are block-scoped
-    // (already handled by hoist_functions skipping block recursion).
-    // Use VarKind::Let so the function stays in the block scope.
-    // In sloppy mode (Annex B), function declarations use VarKind::Var and
-    // are hoisted to the function scope (handled in hoist_functions).
-    //
-    // Check if the env has more than 1 scope (meaning we're in a nested block:
-    // scope[0] = function scope, scope[1+] = block scopes). If so, and we're
-    // in strict mode, use Let to stay block-scoped.
-    // This mirrors what hoist_functions does: it skips recursion into blocks
-    // in strict mode, so the function decl is NOT pre-declared at function level.
-    // During eval, we declare it in the current block scope via Let.
+    if let Some(existing_kind) = existing_kind {
+        let mut env_mut = env.borrow_mut();
+        match existing_kind {
+            crate::ast::VarKind::Let | crate::ast::VarKind::Const => {
+                env_mut.define(name.to_owned(), value.clone());
+            }
+            crate::ast::VarKind::Var => {
+                env_mut.initialize_declared(name, value.clone());
+                if env_mut.get_parent().is_none() {
+                    set_on_global_this(env, name, value);
+                }
+                return Ok(Value::Undefined);
+            }
+        }
+        if env_mut.get_parent().is_none() {
+            set_on_global_this(env, name, value);
+        }
+        return Ok(Value::Undefined);
+    }
+    // ES2015+ strict mode: function declarations in blocks are block-scoped.
+    // In sloppy mode, function declarations without prior lexical predeclaration
+    // still default to var semantics for compatibility.
     let scope_depth = env.borrow().scopes.len();
     let in_block = scope_depth > 1;
     let kind = if crate::interpreter::is_strict_mode() && in_block {
