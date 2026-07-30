@@ -15,6 +15,7 @@ CHECK_CURRENT=1
 CHECK_NEXT=1
 NEXT_ARGS=()
 RUN_CURRENT=0
+CURRENT_STAGE=""
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -44,6 +45,8 @@ while [[ ${#} -gt 0 ]]; do
             ;;
     esac
 done
+
+CURRENT_STAGE="$(bash tools/current-stage.sh)"
 
 CURRENT_JSON=''
 NEXT_JSON=''
@@ -291,7 +294,7 @@ if [[ "$JSON" -eq 1 ]]; then
         fi
 
         set +e
-        RUN_CAPTURE="$(bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)" 2>&1)"
+        RUN_CAPTURE="$(TEST262_STAGE="$CURRENT_STAGE" bash tools/test-run-stage.sh 2>&1)"
         RUN_RC=$?
         set -e
         RUN_ERR="$RUN_CAPTURE"
@@ -321,7 +324,7 @@ if [[ "$RUN_CURRENT" -eq 1 ]]; then
         echo "error: readiness checks failed; aborting run" >&2
         exit 1
     fi
-    bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)"
+    TEST262_STAGE="$CURRENT_STAGE" bash tools/test-run-stage.sh "$CURRENT_STAGE"
 fi
 
 exit 0
