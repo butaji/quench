@@ -5,7 +5,6 @@
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
 #   bash tools/milestone.sh --stage 32 --test-run --preflight # preflight + stage test-run
-#   bash tools/milestone.sh --stage 32 --ssot            # compatibility alias for --test-run
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --json              # print stage progress as JSON
@@ -171,7 +170,7 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --ssot)
             RUN_TEST_RUN=1
-            # Backward-compatible alias for --test-run.
+            # Deprecated alias retained for compatibility; canonical command is --test-run.
             shift
             ;;
         --test-run)
