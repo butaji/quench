@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical wrapper for plan status in the active SSOT flow.
+# Canonical wrapper for plan status in the test-run flow.
 # Usage:
 #   bash tools/run-test-plan-status.sh
 #   bash tools/run-test-plan-status.sh --batch
@@ -37,4 +37,3 @@ if [[ "$RAW" -eq 1 ]]; then
 else
     bash tools/run-test-plan.sh --status-json "${ARGS[@]}"
 fi
-
