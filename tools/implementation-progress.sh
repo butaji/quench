@@ -72,6 +72,10 @@ if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
 fi
 
 STATS_JSON=''
+if [[ "$CI" -eq 1 ]]; then
+    INCLUDE_SUMMARY=1
+fi
+
 if [[ "$INCLUDE_SUMMARY" -eq 1 ]]; then
     if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
         echo "error: failed to read overall stage status" >&2
@@ -96,9 +100,16 @@ stats_payload = json.loads(stats_json) if stats_json else None
 
 current_stage = current_payload.get("stage") if isinstance(current_payload, dict) else None
 current_status = current_stage.get("status") if isinstance(current_stage, dict) else None
+all_stages = []
+if stats_payload and isinstance(stats_payload, dict):
+    all_stages = stats_payload.get('stages', [])
+
 has_pending = False
 if include_next and isinstance(next_payload, dict):
     has_pending = bool(next_payload.get("next_stage") not in (None, 0, "0"))
+else:
+    if all_stages:
+        has_pending = any(s.get('status') != 'done' for s in all_stages)
 
 out = {
     "implementation": {
