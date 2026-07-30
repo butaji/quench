@@ -369,6 +369,14 @@ JSON.stringify([target.p, log]);
     }
 
     #[test]
+    fn with_var_declaration_keeps_identifier_binding_after_scope_exit() {
+        let result = eval_ok_with_builtins(
+            "var object = {value: 'object'}; with (object) { var value = 'value'; } object.value",
+        );
+        assert_eq!(result, Value::String("value".to_string()));
+    }
+
+    #[test]
     fn reflect_has_own_property() {
         let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
         assert_eq!(result, Value::Boolean(true));
