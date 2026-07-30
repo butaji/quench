@@ -45,6 +45,7 @@ STATUS_CURRENT=0
 STATUS_NEXT=0
 NEXT_ID_ONLY=0
 STATUS_WITH_CI=0
+STATUS_RAW=0
 RUN_TEST_RUN=0
 RUN_TEST_RUN_PREFLIGHT=1
 AUTO_ADVANCE=0
@@ -103,6 +104,10 @@ while [[ ${#} -gt 0 ]]; do
                 case "${1:-}" in
                     --json)
                         STATUS_JSON=1
+                        shift
+                        ;;
+                    --raw)
+                        STATUS_RAW=1
                         shift
                         ;;
                     --ci)
@@ -289,7 +294,7 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
 if [[ "$STATUS_WITH_CI" -eq 1 ]]; then
         set +e
         STATUS_SCOPE="all"
-        if [[ "$STATUS_JSON" -eq 1 ]]; then
+            if [[ "$STATUS_JSON" -eq 1 || "$STATUS_RAW" -eq 1 ]]; then
             if [[ "$STATUS_CURRENT" -eq 1 ]]; then
                 STATUS_PAYLOAD="$(bash tools/stage-status.sh --json --current)"
                 STATUS_SCOPE="current"
@@ -314,14 +319,15 @@ PY
             CI_PAYLOAD="$(bash tools/test-run-ci-gate.sh --json)"
             CI_RC=$?
 
-            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_RC" "$CI_RC" <<'PY'
+            python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
 import json
 import sys
 
 status_payload = sys.argv[1]
 ci_payload = sys.argv[2]
-status_rc = int(sys.argv[3])
-ci_rc = int(sys.argv[4])
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
 
 
 def parse(payload):
@@ -335,7 +341,7 @@ ci = parse(ci_payload)
 print(
     json.dumps(
         {
-            "status_scope": "$STATUS_SCOPE",
+            "status_scope": status_scope,
             "status": status,
             "ci": ci,
             "ready": bool(ci.get("ci", {}).get("ready", False)),
@@ -348,6 +354,37 @@ print(
 )
 PY
             set -e
+            if [[ "$STATUS_RAW" -eq 1 && "$STATUS_JSON" -eq 0 ]]; then
+                STATUS_SCOPE="$STATUS_SCOPE" \
+                STATUS_RC="$STATUS_RC" \
+                CI_RC="$CI_RC" \
+                python3 - "$STATUS_PAYLOAD" "$CI_PAYLOAD" "$STATUS_SCOPE" "$STATUS_RC" "$CI_RC" <<'PY'
+import json
+import sys
+
+status_payload = sys.argv[1]
+ci_payload = sys.argv[2]
+status_scope = sys.argv[3]
+status_rc = int(sys.argv[4])
+ci_rc = int(sys.argv[5])
+
+
+def parse(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+status = parse(status_payload)
+ci = parse(ci_payload)
+ready = bool(ci.get("ci", {}).get("ready", False))
+print(
+    f"[milestone:{status_scope}] status_rc={status_rc} ci_rc={ci_rc} ready={ready} ok={status_rc == 0 and ci_rc == 0}"
+)
+print(f"status={json.dumps(status)}")
+print(f"ci={json.dumps(ci)}")
+PY
+            fi
         else
             if [[ "$QUIET" -eq 0 ]]; then
                 if [[ "$STATUS_CURRENT" -eq 1 ]]; then
