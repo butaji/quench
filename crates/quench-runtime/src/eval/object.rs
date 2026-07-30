@@ -633,15 +633,28 @@ pub(crate) fn assign_to_object(
 
     o.borrow_mut().set(prop_name, value.clone());
 
-    // Mirror writes on globalThis into the global binding.
+    // Mirror writes on globalThis into the global binding (root environment only),
+    // so function locals do not shadow globalThis property updates.
     let is_global_this = env
         .borrow()
         .get("globalThis")
         .map(|g| matches!(g, Value::Object(ref go) if Rc::ptr_eq(go, o)))
         .unwrap_or(false);
-    if is_global_this && !env.borrow_mut().set(prop_name, value.clone()) {
-        env.borrow_mut()
-            .define(prop_name.to_string(), value.clone());
+    if is_global_this {
+        // Find the root environment (global) even when called from within
+        // a nested function scope, block scope, or direct eval.
+        let mut root_env = Rc::clone(env);
+        loop {
+            let parent = { root_env.borrow().get_parent() };
+            if let Some(next) = parent {
+                root_env = next;
+            } else {
+                break;
+            }
+        }
+        if !root_env.borrow_mut().set(prop_name, value.clone()) {
+            root_env.borrow_mut().define(prop_name.to_string(), value.clone());
+        }
     }
     Ok(())
 }

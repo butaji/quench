@@ -518,10 +518,13 @@ fn check_use_strict(body: &[Statement]) -> bool {
 }
 
 /// Box a primitive `this` value per ES spec 10.2.1.2 (sloppy mode only).
-/// Object values pass through unchanged; null/undefined pass through too —
-/// the globalThis coercion happens later in `get_this_binding`.
+/// In sloppy mode, `null`/`undefined` become `globalThis`, and objects pass
+/// through unchanged.
 fn box_sloppy_this(this_val: Value) -> Value {
     match &this_val {
+        Value::Undefined | Value::Null => {
+            crate::context::get_global_from_context("globalThis").unwrap_or(Value::Undefined)
+        }
         Value::Boolean(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
             crate::value::convert::to_object(&this_val).unwrap_or(this_val.clone())
         }
