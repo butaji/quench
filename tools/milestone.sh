@@ -10,6 +10,7 @@
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
+#   env MILESTONE_RERUN_JSON_OUT=/tmp/milestone-rerun.json bash tools/milestone.sh --rerun --rerun-json --stage 32
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
 #   bash tools/milestone.sh --rerun-json --rerun-json-out /tmp/milestone-rerun.json # env: MILESTONE_RERUN_JSON_OUT
