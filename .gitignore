@@ -27,3 +27,4 @@ Thumbs.db
 # test262 report
 /target/test262_report.json
 /target/test262_report.md
+/.test262_milestones.log

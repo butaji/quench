@@ -67,16 +67,38 @@ STAGE="${STAGE:-${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open
 export TEST262_STAGE="$STAGE"
 export TEST262_QUICK=1
 
+log_status() {
+    local outcome="$1"
+    local note="$2"
+    local log_file="${MILESTONE_LOG:-./.test262_milestones.log}"
+    {
+        printf "[%s] stage=%s outcome=%s " \
+            "$(date +'%Y-%m-%d %H:%M:%S%z')" \
+            "$STAGE" \
+            "$outcome"
+        printf "branch=%s " "$(git branch --show-current)"
+        printf "commit=%s " "$(git rev-parse --short HEAD)"
+        printf "note=%s\n" "$note"
+    } >> "$log_file"
+}
+
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
     bash tools/stage-status.sh
     echo "[milestone] Current stage is ${STAGE}."
+    log_status "status-only" "displayed status only"
     exit 0
 fi
 
 if [[ "$RUN_SSOT" -eq 1 ]]; then
     echo "[milestone] Running SSOT check for stage ${STAGE}..."
-    bash tools/ssot-stage.sh "$STAGE"
-    echo "[milestone] SSOT check complete for stage ${STAGE}."
+    if bash tools/ssot-stage.sh "$STAGE"; then
+        echo "[milestone] SSOT check complete for stage ${STAGE}."
+        log_status "ssot" "pass"
+    else
+        log_status "ssot" "fail"
+        echo "[milestone] Stage ${STAGE} failed SSOT." >&2
+        exit 1
+    fi
 
     if [[ "$AUTO_ADVANCE" -eq 1 ]]; then
         bash tools/advance-stage.sh
@@ -94,8 +116,10 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
                 git push
                 echo "[milestone] Pushed SSOT milestone commit."
             fi
+            log_status "ssot" "committed"
         else
             echo "[milestone] No working-tree changes to commit."
+            log_status "ssot" "passed-no-changes"
         fi
     fi
     bash tools/stage-status.sh
@@ -121,14 +145,18 @@ if bash tools/fix-stage.sh; then
                 git push
                 echo "[milestone] Pushed milestone commit."
             fi
+            log_status "test-run" "committed"
         else
             echo "[milestone] No working-tree changes to commit."
+            log_status "test-run" "passed-no-changes"
         fi
     fi
+    log_status "test-run" "passed"
     bash tools/stage-status.sh
 
     exit 0
 else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
+    log_status "test-run" "failed"
     exit 1
 fi
