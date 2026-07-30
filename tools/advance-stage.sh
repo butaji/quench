@@ -8,7 +8,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-STAGE=${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}
+STAGE=$(bash tools/current-stage.sh)
 
 echo "Checking Stage $STAGE..."
 
