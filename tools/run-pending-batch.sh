@@ -86,31 +86,23 @@ fi
 PAYLOAD="$(${PAYLOAD_CMD[@]})"
 
 if [[ "$STATUS" -eq 1 ]]; then
-    export TOP
-    export RATIO
-    export DRY_RUN
-    export BUILD
-    export STOP_ON_FAIL
-    export MAX_FAILURES
-    export JSON
-    export PAYLOAD
-    python3 - <<PY
+    python3 - "$PAYLOAD" "$TOP" "$RATIO" "$DRY_RUN" "$BUILD" "$STOP_ON_FAIL" "$MAX_FAILURES" "$JSON" <<'PY'
 import json
-import os
+import sys
 
-data = json.loads(os.environ["PAYLOAD"])
+data = json.loads(sys.argv[1])
 stages = data.get("stages", [])
 payload = {
     "count": data.get("count", 0),
-    "top": int(os.environ["TOP"]),
-    "ratio": os.environ["RATIO"] == "1",
-    "run": os.environ["DRY_RUN"] == "0",
-    "build": os.environ["BUILD"] == "1",
-    "stop_on_fail": os.environ["STOP_ON_FAIL"] == "1",
-    "max_failures": int(os.environ["MAX_FAILURES"]),
+    "top": int(sys.argv[2]),
+    "ratio": sys.argv[3] == "1",
+    "run": sys.argv[4] == "0",
+    "build": sys.argv[5] == "1",
+    "stop_on_fail": sys.argv[6] == "1",
+    "max_failures": int(sys.argv[7]),
     "stages": stages,
 }
-if os.environ["JSON"] == "1":
+if sys.argv[8] == "1":
     print(json.dumps({
         "run-pending-batch": payload,
         "run-pending-batch-json": data,

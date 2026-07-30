@@ -114,18 +114,15 @@ fi
 if [[ "$PRINT_ONLY" -eq 1 || "$STATUS" -eq 1 ]]; then
     STAGE_PATH="$(bash tools/stage-path.sh "$STAGE")"
     if [[ "$PRINT_JSON" -eq 1 || "$STATUS" -eq 1 ]]; then
-        export STAGE
-        export SOURCE
-        export STAGE_PATH
-        python3 - <<PY
+        python3 - "$STAGE" "$SOURCE" "$STAGE_PATH" <<'PY'
 import json
-import os
+import sys
 
-stage = int(os.environ["STAGE"])
+stage = int(sys.argv[1])
 payload = {
-    "source": os.environ["SOURCE"],
+    "source": sys.argv[2],
     "stage": stage,
-    "path": os.environ["STAGE_PATH"],
+    "path": sys.argv[3],
 }
 print(json.dumps(payload, sort_keys=True))
 PY
