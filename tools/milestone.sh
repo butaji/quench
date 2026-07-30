@@ -130,7 +130,7 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-STAGE="${STAGE:-${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}}"
+STAGE="${STAGE:-$(bash tools/current-stage.sh)}"
 RERUN_JSON_OUT="${MILESTONE_RERUN_JSON_OUT:-$RERUN_JSON_OUT}"
 if [[ "$RERUN_JSON" -eq 1 && "$RERUN_JSON_OUT" == "" ]]; then
     RERUN_JSON_OUT=".milestone-rerun-${STAGE}.json"
