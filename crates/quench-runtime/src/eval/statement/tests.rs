@@ -138,6 +138,12 @@ mod var_declarations_misc {
             Value::String("xCls".into())
         );
     }
+
+    #[test]
+    fn const_init_reads_previous_const_binding_without_tdz() {
+        let result = eval("const first = [1, 2, 3];\nconst second = first.concat(4);\nsecond.length");
+        assert_eq!(result.unwrap(), Value::Number(4.0));
+    }
 }
 
 mod class_static_properties {
