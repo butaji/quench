@@ -38,6 +38,10 @@ bash tools/stage-status.sh
 bash tools/stage-status.sh --current
 # Canonical single-command implementation progress snapshot
 bash tools/implementation-progress.sh
+# Fast preflight guard before running stage test-run automation
+bash tools/test-run-preflight.sh
+# Preflight with machine-readable output
+bash tools/test-run-preflight.sh --json
 # Assert no pending work: exit 0 when all stages done, 1 otherwise
 bash tools/implementation-progress.sh --ci
 # Include next pending stage in the same snapshot
