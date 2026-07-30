@@ -11,12 +11,14 @@ set -euo pipefail
 #   bash tools/run-test-plan.sh --batch --run --json
 #   bash tools/run-test-plan.sh --status --json
 #   bash tools/run-test-plan.sh --status --json --raw
+#   bash tools/run-test-plan.sh --status --json --strict
 #   bash tools/run-test-plan.sh --json --build
 
 MODE="single"
 JSON=0
 STATUS=0
 RAW=0
+STRICT=0
 DRY_RUN=1
 BUILD=0
 TOP=3
@@ -35,16 +37,39 @@ run_json_status() {
     raw="$(cat "$tmp")"
     rm -f "$tmp"
 
-    python3 - "$mode" "$raw" <<'PY'
+    python3 - "$mode" "$raw" "$STRICT" <<'PY'
 import json
 import sys
 
 mode = sys.argv[1]
 raw = sys.argv[2]
+strict = sys.argv[3] == "1"
+
 try:
     payload = json.loads(raw)
 except json.JSONDecodeError:
+    if strict:
+        raise SystemExit("error: status output is not valid JSON")
     payload = {"raw": raw}
+
+if strict:
+    if not isinstance(payload, dict):
+        raise SystemExit("error: status payload must be a JSON object")
+
+    if mode == "single":
+        if not isinstance(payload, dict):
+            raise SystemExit("error: single status payload must be a JSON object")
+        for key in ["source", "stage", "path"]:
+            if key not in payload:
+                raise SystemExit(f"error: missing field '{key}' in single status payload")
+    elif mode == "batch":
+        rp = payload
+        if not isinstance(rp, dict) or "run-pending-batch" not in rp:
+            raise SystemExit("error: missing 'run-pending-batch' in batch status payload")
+        if "stages" not in rp.get("run-pending-batch", {}):
+            raise SystemExit("error: missing 'stages' in run-pending-batch status payload")
+    else:
+        raise SystemExit("error: unknown run-test-plan mode")
 
 print(json.dumps({
     "run-test-plan": {
@@ -75,6 +100,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --raw)
             RAW=1
+            shift
+            ;;
+        --strict)
+            STRICT=1
             shift
             ;;
         --run)
@@ -110,7 +139,7 @@ while [[ ${#} -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            sed -n '1,160p' "$0"
+            sed -n '1,180p' "$0"
             exit 0
             ;;
         *)

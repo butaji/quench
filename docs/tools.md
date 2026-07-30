@@ -60,6 +60,8 @@ bash tools/run-next-pending.sh --status
 bash tools/run-test-plan.sh --batch --top 5 --status --json
 # Emit native payload (non-normalized), useful for older automation
 bash tools/run-test-plan.sh --batch --top 5 --status --json --raw
+# Fail-fast schema validation on status payload
+bash tools/run-test-plan.sh --batch --top 5 --status --json --strict
 # Run highest-failure-ratio pending stage
 bash tools/run-next-pending.sh --by-ratio
 # Restrict ratio-driven pick to top-N candidate window
