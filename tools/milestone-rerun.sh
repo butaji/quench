@@ -182,6 +182,13 @@ else
     fi
 fi
 
+if [[ -n "$JSON_OUT" ]]; then
+    out_dir="$(dirname "$JSON_OUT")"
+    if [[ ! -d "$out_dir" ]]; then
+        mkdir -p "$out_dir"
+    fi
+fi
+
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
     RERUN_ARGS_JSON="$(python3 - "${EXTRA_ARGS[@]}" <<'PY'
 import json

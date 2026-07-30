@@ -12,6 +12,7 @@
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --rerun-json # rerun first failure and emit JSON
+#   bash tools/milestone.sh --rerun-json --rerun-json-out /tmp/milestone-rerun.json
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
 #   bash tools/milestone.sh --log /tmp/milestones.log --status
 #   bash tools/milestone.sh --quiet                    # suppress human-readable output
@@ -29,6 +30,7 @@ AUTO_PUSH=0
 DRY_RUN=0
 AUTO_RERUN=0
 RERUN_JSON=0
+RERUN_JSON_OUT=""
 QUIET=0
 COMMIT_MESSAGE=""
 HISTORY=0
@@ -66,6 +68,10 @@ while [[ ${#} -gt 0 ]]; do
             RERUN_JSON=1
             QUIET=1
             shift
+            ;;
+        --rerun-json-out)
+            RERUN_JSON_OUT="$2"
+            shift 2
             ;;
         --status)
             STATUS_ONLY=1
@@ -123,6 +129,9 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 STAGE="${STAGE:-${TEST262_STAGE:-$(python3 -c "import json; print(json.load(open('tasks/index.json'))['current_stage'])")}}"
+if [[ "$RERUN_JSON" -eq 1 && "$RERUN_JSON_OUT" == "" ]]; then
+    RERUN_JSON_OUT=".milestone-rerun-${STAGE}.json"
+fi
 export TEST262_STAGE="$STAGE"
 export TEST262_QUICK=1
 
@@ -179,9 +188,9 @@ if [[ "$RUN_TEST_RUN" -eq 1 ]]; then
         log_msg "[milestone] Test-run check complete for stage ${STAGE}."
         log_status "test-run" "pass"
     else
-            if [[ "$AUTO_RERUN" -eq 1 ]]; then
+        if [[ "$AUTO_RERUN" -eq 1 ]]; then
             if [[ "$RERUN_JSON" -eq 1 ]]; then
-                bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out ".milestone-rerun-${STAGE}.json"
+                bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out "$RERUN_JSON_OUT"
             else
                 bash tools/milestone-rerun.sh --stage "$STAGE"
             fi
@@ -256,7 +265,7 @@ else
     echo "[milestone] Stage $STAGE failed. fix-stage already opened the first failing test." >&2
     if [[ "$AUTO_RERUN" -eq 1 ]]; then
         if [[ "$RERUN_JSON" -eq 1 ]]; then
-            bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out ".milestone-rerun-${STAGE}.json"
+            bash tools/milestone-rerun.sh --stage "$STAGE" --json --no-log --quiet --out "$RERUN_JSON_OUT"
         else
             bash tools/milestone-rerun.sh --stage "$STAGE"
         fi
