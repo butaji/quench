@@ -54,6 +54,79 @@ RUN_RC=0
 CURRENT_RC=0
 NEXT_RC=0
 
+require_json_obj() {
+    local payload="$1"
+    local parsed
+    parsed="$(python3 - "$payload" <<'PY'
+import json
+import sys
+
+payload = sys.argv[1]
+try:
+    obj = json.loads(payload)
+except Exception:
+    print("no")
+    raise SystemExit
+
+print("yes" if isinstance(obj, dict) else "no")
+PY
+)"
+    if [[ "$parsed" != "yes" ]]; then
+        return 1
+    fi
+}
+
+emit_not_ready() {
+    python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CURRENT_RC" "$NEXT_RC" "$CHECK_CURRENT" "$CHECK_NEXT" <<'PY'
+import json
+import sys
+
+current_json = sys.argv[1]
+next_json = sys.argv[2]
+current_rc = int(sys.argv[3])
+next_rc = int(sys.argv[4])
+check_current = sys.argv[5] == "1"
+check_next = sys.argv[6] == "1"
+
+def parse_payload(payload):
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+current_payload = parse_payload(current_json) if check_current and current_rc == 0 else {}
+next_payload = parse_payload(next_json) if check_next and next_rc == 0 else {}
+
+obj = {
+    "ci": {
+        "ready": False,
+        "checks": {
+            "current": {
+                "checked": check_current,
+                "ready": False,
+                "error": None,
+                "rc": current_rc,
+            },
+            "next": {
+                "checked": check_next,
+                "ready": False,
+                "error": None,
+                "rc": next_rc,
+            },
+        },
+    },
+    "current": current_payload.get("test_run_dashboard") if isinstance(current_payload, dict) else {},
+    "next": next_payload.get("payload") if isinstance(next_payload, dict) else {},
+    "run": {
+        "requested": True,
+        "rc": 0,
+    },
+    "error": "not ready to run current stage",
+}
+print(json.dumps(obj, sort_keys=True))
+PY
+}
+
 if [[ "$CHECK_CURRENT" -eq 1 ]]; then
     CURRENT_ERR_FILE="$(mktemp)"
     set +e
@@ -61,6 +134,10 @@ if [[ "$CHECK_CURRENT" -eq 1 ]]; then
     CURRENT_RC=$?
     set -e
     CURRENT_ERR="$(cat "$CURRENT_ERR_FILE")"
+    if [[ "$CURRENT_RC" -eq 0 ]] && ! require_json_obj "$CURRENT_JSON"; then
+        CURRENT_RC=1
+        CURRENT_ERR="invalid JSON payload from test-run-dashboard --json"
+    fi
     rm -f "$CURRENT_ERR_FILE"
 else
     CURRENT_JSON='{}'
@@ -77,6 +154,10 @@ if [[ "$CHECK_NEXT" -eq 1 ]]; then
     NEXT_RC=$?
     set -e
     NEXT_ERR="$(cat "$NEXT_ERR_FILE")"
+    if [[ "$NEXT_RC" -eq 0 ]] && ! require_json_obj "$NEXT_JSON"; then
+        NEXT_RC=1
+        NEXT_ERR="invalid JSON payload from test-run-go-next-ci --json-only"
+    fi
     rm -f "$NEXT_ERR_FILE"
 fi
 
@@ -120,7 +201,7 @@ PY
 
     if [[ "$RUN_CURRENT" -eq 1 ]]; then
         if [[ "$READY_FOR_RUN" != "1" ]]; then
-            echo '{"ci":{"ready":false},"error":"not ready to run current stage"}'
+            emit_not_ready
             exit 1
         fi
         RUN_ERR_FILE="$(mktemp)"
