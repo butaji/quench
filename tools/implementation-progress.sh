@@ -51,10 +51,47 @@ if [[ "$RAW" -eq 1 ]]; then
         echo "error: --summary requires machine-readable output" >&2
         exit 1
     fi
-    bash tools/stage-status.sh --current
+
+    if ! STATS_JSON=$(bash tools/stage-status.sh --json); then
+        echo "error: failed to read overall stage status" >&2
+        exit 1
+    fi
+
+    python3 - "$STATS_JSON" "$INCLUDE_NEXT" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+include_next = sys.argv[2] == "1"
+
+stages = payload.get('stages', []) if isinstance(payload, dict) else []
+current_stage_id = payload.get('current_stage') if isinstance(payload, dict) else None
+current = next((s for s in stages if s.get('id') == current_stage_id), {})
+
+if not isinstance(current, dict):
+    current = {}
+
+print(f"Current stage: {current_stage_id}")
+print(f"Path:       {current.get('path', '')}")
+print(f"Status:     {current.get('status', 'unknown')}")
+print(f"Tests:      {current.get('tests', 0)}")
+print(f"Failed:     {current.get('failed', 0)}")
+
+if include_next:
+    next_stage = next((s for s in stages if s.get('id', 0) > (current_stage_id or 0) and s.get('status') != 'done'), None)
+    print()
+    if next_stage is None:
+        print("No pending next stage found.")
+    else:
+        print(f"Next stage: {next_stage.get('id')}")
+        print(f"Path:      {next_stage.get('path', '')}")
+        print(f"Status:    {next_stage.get('status', 'unknown')}")
+        print(f"Tests:     {next_stage.get('tests', 0)}")
+
+PY
+
     if [[ "$INCLUDE_NEXT" -eq 1 ]]; then
-        echo
-        bash tools/stage-status.sh --next
+        :
     fi
     exit 0
 fi
