@@ -69,6 +69,8 @@ bash tools/pending-stages.sh --top-ratio 10 --json
 bash tools/run-pending-batch.sh
 bash tools/run-pending-batch.sh --ratio --top 5
 bash tools/run-pending-batch.sh --ratio --top 5 --run
+# Machine-readable status object for batch plan
+bash tools/run-pending-batch.sh --ratio --top 5 --status
 # Quick aggregate remaining-work summary
 bash tools/pending-stages.sh --summary
 bash tools/pending-stages.sh --summary --json

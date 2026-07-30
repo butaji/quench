@@ -12,6 +12,7 @@ RATIO=0
 BUILD=0
 DRY_RUN=1
 JSON=0
+STATUS=0
 
 while [[ ${#} -gt 0 ]]; do
     case "${1:-}" in
@@ -37,6 +38,10 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --json)
             JSON=1
+            shift
+            ;;
+        --status)
+            STATUS=1
             shift
             ;;
         -h|--help)
@@ -79,6 +84,31 @@ fi
 
 if [[ "$JSON" -eq 1 ]]; then
     echo "$PAYLOAD"
+    exit 0
+fi
+
+if [[ "$STATUS" -eq 1 ]]; then
+    export TOP_BATCH="$TOP"
+    export RATIO_BATCH="$RATIO"
+    export DRY_RUN_BATCH="$DRY_RUN"
+    export BUILD_BATCH="$BUILD"
+    export PAYLOAD_BATCH="$PAYLOAD"
+    python3 - <<PY
+import json
+import sys
+import os
+
+data = json.loads(os.environ["PAYLOAD_BATCH"])
+payload = {
+    "count": data.get("count", 0),
+    "top": int(os.environ["TOP_BATCH"]),
+    "ratio": os.environ["RATIO_BATCH"] == "1",
+    "run": os.environ["DRY_RUN_BATCH"] == "0",
+    "build": os.environ["BUILD_BATCH"] == "1",
+    "stages": data.get("stages", []),
+}
+print(json.dumps({"run-pending-batch": payload}, sort_keys=True))
+PY
     exit 0
 fi
 
