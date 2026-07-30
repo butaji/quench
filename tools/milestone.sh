@@ -7,6 +7,7 @@
 #   bash tools/milestone.sh --stage 32 --test-run       # run stage test-run first
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
+#   bash tools/milestone.sh --status --json              # print stage progress as JSON
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
 #   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
@@ -24,6 +25,7 @@ cd "$(dirname "$0")/.."
 
 STAGE=""
 STATUS_ONLY=0
+STATUS_JSON=0
 RUN_TEST_RUN=0
 AUTO_ADVANCE=0
 AUTO_COMMIT=0
@@ -76,6 +78,11 @@ while [[ ${#} -gt 0 ]]; do
             ;;
         --status)
             STATUS_ONLY=1
+            shift
+            ;;
+        --status-json)
+            STATUS_ONLY=1
+            STATUS_JSON=1
             shift
             ;;
         --ssot)
@@ -175,11 +182,15 @@ fi
 
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
     if [[ "$QUIET" -eq 0 ]]; then
-        bash tools/stage-status.sh
+        if [[ "$STATUS_JSON" -eq 1 ]]; then
+            bash tools/stage-status.sh --json
+        else
+            bash tools/stage-status.sh
+        fi
     fi
     log_msg "[milestone] Current stage is ${STAGE}."
     log_status "status-only" "displayed status only"
-    if [[ "$QUIET" -eq 0 ]]; then
+    if [[ "$QUIET" -eq 0 && "$STATUS_JSON" -eq 0 ]]; then
         show_history
     fi
     exit 0
