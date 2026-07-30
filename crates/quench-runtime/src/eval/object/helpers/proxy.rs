@@ -3,12 +3,16 @@
 use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::value::object::get_getter;
 
 /// If `obj` is a Proxy exotic object, return `(handler, target)`.
 pub fn proxy_handler_and_target(
     obj: &Rc<RefCell<crate::value::Object>>,
 ) -> Option<(Rc<RefCell<crate::value::Object>>, Value)> {
     let borrowed = obj.borrow();
+    if let crate::value::ObjData::Proxy { target, handler } = &borrowed.data {
+        return Some((Rc::clone(handler), Value::Object(Rc::clone(target))));
+    }
     let handler = borrowed.properties.get("__quench_proxy_handler")?;
     let target = borrowed.properties.get("__quench_proxy_target")?.clone();
     match handler {
@@ -34,7 +38,13 @@ pub fn proxy_has_property(
     let Some((handler, target)) = proxy_handler_and_target(obj) else {
         return Ok(obj.borrow().has(prop_name));
     };
-    let trap = handler.borrow().get_own_value("has");
+    let trap = {
+        let handler_ref = handler.borrow();
+        handler_ref
+            .get_own_value("has")
+            .or_else(|| handler_ref.get("has"))
+            .or_else(|| get_getter(&handler_ref, "has").and_then(|g| g.func.clone()))
+    };
     let Some(trap_val) = trap else {
         let Value::Object(target_obj) = target else {
             return Ok(false);
@@ -358,5 +368,23 @@ mod tests {
              new Base();",
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn proxy_has_property_uses_has_trap_for_scope_lookup() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let proxy = ctx
+            .eval(
+                "var proxy = new Proxy({Object}, {\
+                   has(t,p) { return p in t; },\
+                   get(t, p, r) { return t[p]; }\
+                }); proxy;",
+            )
+            .unwrap();
+        let Value::Object(obj) = proxy else {
+            panic!("expected proxy object");
+        };
+        assert!(super::proxy_has_property(&obj, "Object").unwrap());
     }
 }

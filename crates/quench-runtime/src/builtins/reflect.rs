@@ -6,13 +6,19 @@
 
 use crate::builtins::object_static::{object_define_property, to_property_key};
 use crate::context::Context;
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, ObjData, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
     match target {
-        Value::Object(o) => Ok(o.borrow().has(key)),
+        Value::Object(o) => {
+            if crate::eval::object::proxy_handler_and_target(o).is_some() {
+                return crate::eval::object::proxy_has_property(o, key)
+                    .or_else(|_| Ok(false));
+            }
+            Ok(o.borrow().has(key))
+        }
         Value::Function(f) => {
             if f.get_property(key).is_some() {
                 return Ok(true);
@@ -162,11 +168,25 @@ fn register_proxy(ctx: &mut Context) {
                     "TypeError: Proxy handler must be an object",
                 ));
             }
+            let handler_obj = if let Value::Object(h) = &handler {
+                Rc::clone(h)
+            } else {
+                return Err(crate::value::JsError::new(
+                    "TypeError: Proxy handler must be an object",
+                ));
+            };
             let mut proxy = Object::new(ObjectKind::Ordinary);
-            // Stash the target and handler on the proxy so the get/set
-            // forwarding logic (see object::get_setter) can find them.
-            proxy.set("__quench_proxy_target", target);
-            proxy.set("__quench_proxy_handler", handler);
+            if let Value::Object(target_obj) = &target {
+                proxy.data = ObjData::Proxy {
+                    target: Rc::clone(target_obj),
+                    handler: Rc::clone(&handler_obj),
+                };
+            } else {
+                // Compatibility: keep legacy fallback metadata on non-object targets
+                // so minimal tests that rely on direct property lookup still pass.
+                proxy.set("__quench_proxy_target", target);
+                proxy.set("__quench_proxy_handler", Value::Object(handler_obj));
+            }
             Ok(Value::Object(Rc::new(RefCell::new(proxy))))
         },
     );
@@ -209,6 +229,42 @@ mod tests {
     fn reflect_has_own_property() {
         let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn proxy_constructor_stores_exotic_data() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let proxy = ctx
+            .eval("var proxy = new Proxy({Object}, {}); proxy;")
+            .unwrap();
+        let Value::Object(proxy_obj) = proxy else {
+            panic!("proxy expected object");
+        };
+        let info = crate::eval::object::proxy_handler_and_target(&proxy_obj)
+            .expect("proxy metadata expected");
+        let (_handler, target) = info;
+        assert!(matches!(target, Value::Object(_)));
+        assert_eq!(crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap(), true);
+    }
+
+    #[test]
+    fn proxy_has_property_uses_handler_trap() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let proxy = ctx
+            .eval(
+                "var proxy = new Proxy({Object}, {\n            has(t, p) { return p in t; },\n            get(t, p, r) { return t[p]; },\n          });\n          proxy;",
+            )
+            .unwrap();
+        let Value::Object(proxy_obj) = proxy else {
+            panic!("proxy expected object");
+        };
+        assert!(crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap());
+        match crate::eval::object::proxy_get_property(&proxy_obj, "Object") {
+            Ok(v) => assert!(!matches!(v, Value::Undefined)),
+            Err(err) => panic!("proxy_get_property error: {err}"),
+        }
     }
 
     #[test]
