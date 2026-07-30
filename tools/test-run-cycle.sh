@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # End-to-end cycle helper for a stage test-run:
-# dry-gate then optional run + summary.
+# preflight, dry-gate and optional run + summary.
 # Usage:
 #   bash tools/test-run-cycle.sh
 #   bash tools/test-run-cycle.sh --run
@@ -59,6 +59,10 @@ if [[ "$ASSERT_READY" -eq 1 ]]; then
 fi
 
 if [[ "$RUN" -eq 1 ]]; then
+    if ! bash tools/test-run-preflight.sh ${JSON:+--json}; then
+        echo "error: preflight check failed" >&2
+        exit 1
+    fi
     bash tools/test-run-status-summary.sh --blocker
     STAGE="$(bash tools/current-stage.sh)"
     echo "[test-run-cycle] running test-run for stage ${STAGE}"

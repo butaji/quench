@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Compatibility wrapper retained for legacy callers.
-# Canonical command is `tools/test-run-stage.sh`.
-# Terminology is now "test-run".
+# Canonical term and command are "test-run".
 # This wrapper is deprecated and exists only for legacy callers.
 set -euo pipefail
 

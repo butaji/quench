@@ -2,7 +2,10 @@
 
 ## Quick Reference
 
-Implementation status is sourced only from stage test runs ("test-run").
+Terminology is single-source:
+- `SSOT` means the stage `test-run` status stream.
+- `implementation status`, `progress`, and `snapshot` refer to `test-run` data.
+- `ssot-stage.sh` is a legacy alias for `test-run-stage.sh`.
 
 ```bash
 # Run a single test with full diagnostics (auto-shows error type, source context)
