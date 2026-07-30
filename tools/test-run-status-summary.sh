@@ -30,26 +30,28 @@ while [[ ${#} -gt 0 ]]; do
     esac
 done
 
-CURRENT_JSON="$(bash tools/stage-status.sh --json --current)"
-NEXT_JSON="$(bash tools/stage-status.sh --json --next)"
+ALL_JSON="$(bash tools/stage-status.sh --json)"
 
-python3 - "$CURRENT_JSON" "$NEXT_JSON" "$JSON" "$BLOCKER_ONLY" <<'PY'
+python3 - "$ALL_JSON" "$JSON" "$BLOCKER_ONLY" <<'PY'
 import json
 import sys
-current_payload = json.loads(sys.argv[1]) if sys.argv[1] else {}
-next_payload = json.loads(sys.argv[2]) if sys.argv[2] else {}
-json_mode = sys.argv[3] == "1"
-blocker_only = sys.argv[4] == "1"
+payload = json.loads(sys.argv[1]) if sys.argv[1] else {}
+json_mode = sys.argv[2] == "1"
+blocker_only = sys.argv[3] == "1"
 
-current_stage = current_payload.get('stage', {}) if isinstance(current_payload, dict) else {}
-next_stage = next_payload.get('next_stage') if isinstance(next_payload, dict) else None
+stages = payload.get('stages', []) if isinstance(payload, dict) else []
+current_id = payload.get('current_stage')
+current_payload = next((s for s in stages if s.get('id') == current_id), {}) if isinstance(stages, list) else {}
+next_stage = next((s for s in stages if s.get('id', 0) > (current_id or 0) and s.get('status') != 'done'), None)
+
+current_stage = current_payload if isinstance(current_payload, dict) else {}
 
 failed = int(current_stage.get('failed', 0) or 0)
 blocked = failed > 0
 
 if json_mode:
     status = {
-        'current_stage': current_payload.get('current_stage'),
+        'current_stage': current_id,
         'status': current_stage.get('status'),
         'path': current_stage.get('path'),
         'failed': failed,
@@ -68,7 +70,7 @@ if blocker_only:
     print("no blocker: failed tests = 0")
     raise SystemExit(0)
 
-current_stage_id = current_payload.get('current_stage', '')
+current_stage_id = current_id if current_id is not None else ''
 current_status = current_stage.get('status', '')
 current_path = current_stage.get('path', '')
 current_failed = int(current_stage.get('failed', 0) or 0)
