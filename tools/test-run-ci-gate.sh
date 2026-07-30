@@ -306,6 +306,43 @@ if [[ "$CHECK_NEXT" -eq 1 ]]; then
         bash tools/test-run-go-next-ci.sh
     fi
 fi
+if [[ "$CHECK_CURRENT" -eq 1 && "$CHECK_NEXT" -eq 1 && "$RUN_CURRENT" -eq 1 ]]; then
+    READY_CURRENT="$(python3 - "$CURRENT_JSON" "$NEXT_JSON" <<'PY'
+import json
+import sys
+
+current_json = sys.argv[1]
+next_json = sys.argv[2]
+
+try:
+    current = json.loads(current_json)
+    dashboard = current.get("test_run_dashboard", {})
+    current_ready = bool(dashboard.get("signals", {}).get("can_run", False))
+except Exception:
+    current_ready = False
+
+print("1" if current_ready else "0")
+PY
+)"
+    READY_NEXT="$(python3 - "$NEXT_JSON" <<'PY'
+import json
+import sys
+
+next_json = sys.argv[1]
+try:
+    next_payload = json.loads(next_json)
+    ready = bool(next_payload.get("ci", {}).get("ready", False))
+except Exception:
+    ready = False
+
+print("1" if ready else "0")
+PY
+)"
+    if [[ "$READY_CURRENT" != "1" || "$READY_NEXT" != "1" ]]; then
+        echo "error: readiness checks failed; aborting run" >&2
+        exit 1
+    fi
+fi
 
 if [[ "$RUN_CURRENT" -eq 1 ]]; then
     bash tools/test-run-stage.sh "$(bash tools/current-stage.sh)"
