@@ -4,11 +4,11 @@
 #   bash tools/milestone.sh                    # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --stage 32 --advance
 #   bash tools/milestone.sh --stage 32 --commit
-#   bash tools/milestone.sh --stage 32 --ssot           # run ssot-stage first
+#   bash tools/milestone.sh --stage 32 --test-run       # run stage test-run first (alias: --ssot)
 #   bash tools/milestone.sh --commit --push  # uses TEST262_STAGE if set, else current_stage
 #   bash tools/milestone.sh --status                   # print stage progress and current stage
 #   bash tools/milestone.sh --status --history 20       # show last 20 logged events
-#   bash tools/milestone.sh --stage 32 --ssot --commit --push
+#   bash tools/milestone.sh --stage 32 --test-run --commit --push
 #   bash tools/milestone.sh --stage 32 --dry-run         # do not mutate state or git
 #   bash tools/milestone.sh --stage 32 --rerun           # auto-rerun first failure on fail
 #   bash tools/milestone.sh --stage 32 --rerun --tail 20 # show last 20 logged events
@@ -62,6 +62,10 @@ while [[ ${#} -gt 0 ]]; do
             shift
             ;;
         --ssot)
+            RUN_SSOT=1
+            shift
+            ;;
+        --test-run)
             RUN_SSOT=1
             shift
             ;;
@@ -145,16 +149,16 @@ if [[ "$STATUS_ONLY" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_SSOT" -eq 1 ]]; then
-    echo "[milestone] Running SSOT check for stage ${STAGE}..."
+    echo "[milestone] Running test-run check for stage ${STAGE}..."
     if bash tools/ssot-stage.sh "$STAGE"; then
-        echo "[milestone] SSOT check complete for stage ${STAGE}."
+        echo "[milestone] Test-run check complete for stage ${STAGE}."
         log_status "ssot" "pass"
     else
         if [[ "$AUTO_RERUN" -eq 1 ]]; then
             bash tools/milestone-rerun.sh --stage "$STAGE"
         fi
         log_status "ssot" "fail"
-        echo "[milestone] Stage ${STAGE} failed SSOT." >&2
+        echo "[milestone] Stage ${STAGE} test-run failed." >&2
         exit 1
     fi
 
@@ -165,14 +169,14 @@ if [[ "$RUN_SSOT" -eq 1 ]]; then
     if [[ "$AUTO_COMMIT" -eq 1 ]]; then
         if ! git diff --quiet || ! git diff --cached --quiet; then
             if [[ -z "$COMMIT_MESSAGE" ]]; then
-                COMMIT_MESSAGE="chore: stage ${STAGE} ssot milestone"
+                COMMIT_MESSAGE="chore: stage ${STAGE} test-run milestone"
             fi
             git add -A
             git commit -m "$COMMIT_MESSAGE"
-            echo "[milestone] Committed SSOT milestone for stage ${STAGE}."
+            echo "[milestone] Committed test-run milestone for stage ${STAGE}."
             if [[ "$AUTO_PUSH" -eq 1 ]]; then
                 git push
-                echo "[milestone] Pushed SSOT milestone commit."
+                echo "[milestone] Pushed test-run milestone commit."
             fi
             log_status "ssot" "committed"
         else
