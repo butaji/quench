@@ -9,6 +9,7 @@ use std::rc::Rc;
 use crate::ast::VarKind;
 use crate::eval::object::{proxy_get_property, proxy_has_property};
 use crate::value::error::set_thrown_value;
+use crate::value::get_thrown_value;
 use crate::value::Value;
 
 /// Whether a variable was declared (hoisting support) but not yet initialized
@@ -107,31 +108,14 @@ impl Scope {
             {
                 match crate::eval::member::eval_object_member_value(obj, &symbol.into(), None) {
                     Ok(v) => Some(v),
-                    Err(err) => {
-                        if crate::value::get_thrown_value().is_none() {
-                            let msg = err.0;
-                            let (err_type, msg) = msg
-                                .strip_prefix("Test262Error: ")
-                                .map(|m| ("Test262Error", m))
-                                .or_else(|| {
-                                    msg.strip_prefix("TypeError: ").map(|m| ("TypeError", m))
-                                })
-                                .or_else(|| {
-                                    msg.strip_prefix("ReferenceError: ")
-                                        .map(|m| ("ReferenceError", m))
-                                })
-                                .or_else(|| {
-                                    msg.strip_prefix("SyntaxError: ").map(|m| ("SyntaxError", m))
-                                })
-                                .unwrap_or(("Error", msg.as_str()));
-                            set_thrown_value(crate::value::create_js_error_with_type(
-                                msg,
-                                err_type,
-                            )
-                            .0);
+                        Err(err) => {
+                            if get_thrown_value().is_none() {
+                                set_thrown_value(
+                                    crate::value::create_js_error_with_type(&err.0, "TypeError").0,
+                                );
+                            }
+                            return false;
                         }
-                        return false;
-                    }
                 }
             } else {
                 None
@@ -179,14 +163,15 @@ impl Scope {
         if self.object_binding.is_none() {
             return None;
         }
+        let has_binding = self.object_has_binding_property(name)?;
+        if !has_binding {
+            return Some(false);
+        }
         if !self.load_with_unscopables() {
             return None;
         }
         if self.is_unscopable(name) {
             return Some(false);
-        }
-        if matches!(self.object_has_binding_property(name), Some(false)) {
-            return None;
         }
         Some(!self.is_unscopable(name))
     }
@@ -425,6 +410,11 @@ impl Scope {
         if self.declarations.contains_key(&name)
             && matches!(self.declarations.get(&name), Some(VarState::DeclaredOnly))
         {
+            if self.object_binding.is_some()
+                && !matches!(self.object_has_binding_property(&name), Some(true))
+            {
+                return false;
+            }
             self.declarations.remove(&name);
             // Clone the RefCell Rc so all scopes sharing this binding see the update.
             let rc = Rc::new(RefCell::new(value.clone()));
@@ -613,6 +603,21 @@ mod tests {
     }
 
     #[test]
+    fn with_scope_proxy_missing_binding_does_not_load_unscopables() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "var log = []; \
+             var proxy = new Proxy({}, { \
+               has(t, p) { log.push('has:' + String(p)); return p in t; }, \
+               get() { throw new Error('unexpected get'); }, \
+             }); \
+             with (proxy) { Object; } \
+             log.join(',');",
+        );
+        assert_eq!(result.unwrap(), Value::String("has:Object".to_string()));
+    }
+
+    #[test]
     fn with_scope_object_binding_has_uses_proxy_has_trap() {
         let mut ctx = Context::new().unwrap();
         let result = ctx
@@ -628,9 +633,28 @@ mod tests {
             .unwrap();
         let log = result.to_string();
         assert!(log.contains("get:Symbol(Symbol.unscopables)"));
-        assert!(log.contains("has:log"));
-        assert!(log.contains("get:Object"));
-        assert!(log.contains("with-id:function"));
+            assert!(log.contains("has:log"));
+            assert!(log.contains("get:Object"));
+            assert!(log.contains("with-id:function"));
+    }
+
+    #[test]
+    fn with_scope_unscopables_getter_throws() {
+        let mut ctx = Context::new().unwrap();
+        let err = ctx
+            .eval(
+                "var log = []; \
+                 var base = {}; \
+                 Object.defineProperty(base, Symbol.unscopables, { \
+                   get() { log.push('get-unscopables'); throw new Error('unscopables-threw'); } \
+                 }); \
+                 with (new Proxy(base, { \
+                   has(t, p) { log.push('has:' + String(p)); return p in t; }, \
+                   get(t, p) { log.push('get:' + String(p)); return t[p]; }, \
+                 }) { Object; }",
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("unscopables-threw"));
     }
 
     #[test]

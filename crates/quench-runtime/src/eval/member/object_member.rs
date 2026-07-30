@@ -201,6 +201,18 @@ fn eval_object_member_inner_value(
             let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
             while let Some(obj_rc) = current {
                 let obj = obj_rc.borrow();
+                if let Value::Symbol(sym) = prop_name {
+                    let key = sym.property_key();
+                    if let Some(getter_storage) = obj.get_getter(&key) {
+                        let getter_clone = getter_storage.clone();
+                        drop(obj);
+                        return call_getter(
+                            o,
+                            &getter_clone,
+                            &Rc::new(RefCell::new(Environment::new())),
+                        );
+                    }
+                }
                 if let Some(val) = obj.get_property(prop_name) {
                     return Ok(val);
                 }
