@@ -618,6 +618,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_strict_with_statement_is_syntax_error() {
+        let result = parse_script("\"use strict\"; with ({}) {};");
+        assert!(result.is_err(), "with statement in strict mode must be syntax error");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("SyntaxError"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn test_parse_typescript_complex() {
         // Test more complex TypeScript with JSX
         let result = parse_typescript(

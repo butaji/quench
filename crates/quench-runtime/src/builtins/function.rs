@@ -808,6 +808,13 @@ mod tests {
     }
 
     #[test]
+    fn test_function_constructor_strict_with_statement_throws() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("var f = Function(\"'use strict'; with ({}) {}\")");
+        assert!(result.is_err(), "strict with in Function constructor body must throw");
+    }
+
+    #[test]
     fn test_function_constructor_immediate_call() {
         let mut ctx = Context::new().unwrap();
         let result = ctx.eval("Function('a', 'return a')(3)").unwrap();

@@ -112,11 +112,18 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             }
         }
         ast::Statement::FunctionDeclaration(func) => {
+            let is_func_strict = strict
+                || func.body.as_ref().is_some_and(|body| {
+                    body.directives
+                        .iter()
+                        .any(|d| d.expression.value == "use strict")
+                });
             if let Some(body) = &func.body {
                 for stmt in &body.statements {
-                    check_stmt(stmt, strict)?;
+                    check_stmt(stmt, is_func_strict)?;
                 }
             }
+            check_fn_params(&func.params, is_func_strict)?;
         }
         ast::Statement::ReturnStatement(ret) => {
             if let Some(arg) = &ret.argument {
@@ -142,6 +149,13 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
                 for stmt in &finalizer.body {
                     check_stmt(stmt, strict)?;
                 }
+            }
+        }
+        ast::Statement::WithStatement(_) => {
+            if strict {
+                return Err(JsError(
+                    "SyntaxError: 'with' statements are not allowed in strict mode".to_string(),
+                ));
             }
         }
         _ => {}
