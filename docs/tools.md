@@ -58,6 +58,8 @@ bash tools/run-next-pending.sh --print-json
 bash tools/run-next-pending.sh --status
 # Normalized status-only plan metadata (single/batch)
 bash tools/run-test-plan.sh --batch --top 5 --status --json
+# Emit native payload (non-normalized), useful for older automation
+bash tools/run-test-plan.sh --batch --top 5 --status --json --raw
 # Run highest-failure-ratio pending stage
 bash tools/run-next-pending.sh --by-ratio
 # Restrict ratio-driven pick to top-N candidate window

@@ -10,11 +10,13 @@ set -euo pipefail
 #   bash tools/run-test-plan.sh --batch --run --status
 #   bash tools/run-test-plan.sh --batch --run --json
 #   bash tools/run-test-plan.sh --status --json
+#   bash tools/run-test-plan.sh --status --json --raw
 #   bash tools/run-test-plan.sh --json --build
 
 MODE="single"
 JSON=0
 STATUS=0
+RAW=0
 DRY_RUN=1
 BUILD=0
 TOP=3
@@ -71,6 +73,10 @@ while [[ ${#} -gt 0 ]]; do
             STATUS=1
             shift
             ;;
+        --raw)
+            RAW=1
+            shift
+            ;;
         --run)
             DRY_RUN=0
             shift
@@ -125,7 +131,7 @@ if [[ "$MODE" == "batch" ]]; then
         FLAGS+=(--status)
         [[ "$DRY_RUN" -eq 0 ]] && FLAGS+=(--run)
         [[ "$JSON" -eq 1 ]] && FLAGS+=(--json)
-        if [[ "$JSON" -eq 1 ]]; then
+        if [[ "$JSON" -eq 1 && "$RAW" -eq 0 ]]; then
             run_json_status "batch" bash tools/run-pending-batch.sh "${FLAGS[@]}"
         else
             bash tools/run-pending-batch.sh "${FLAGS[@]}"
@@ -134,7 +140,7 @@ if [[ "$MODE" == "batch" ]]; then
     fi
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        if [[ "$JSON" -eq 1 ]]; then
+        if [[ "$JSON" -eq 1 && "$RAW" -eq 0 ]]; then
             run_json_status "batch" bash tools/run-pending-batch.sh "${FLAGS[@]}" --status
             exit 0
         fi
@@ -145,7 +151,11 @@ if [[ "$MODE" == "batch" ]]; then
     FLAGS+=(--run)
     if [[ "$JSON" -eq 1 ]]; then
         FLAGS+=(--status --json)
-        run_json_status "batch" bash tools/run-pending-batch.sh "${FLAGS[@]}"
+        if [[ "$RAW" -eq 0 ]]; then
+            run_json_status "batch" bash tools/run-pending-batch.sh "${FLAGS[@]}"
+            exit 0
+        fi
+        bash tools/run-pending-batch.sh "${FLAGS[@]}"
         exit 0
     fi
 
@@ -164,7 +174,11 @@ fi
 if [[ "$STATUS" -eq 1 ]]; then
     if [[ "$JSON" -eq 1 ]]; then
         FLAGS+=(--status)
-        run_json_status "single" bash tools/run-next-pending.sh "${FLAGS[@]}"
+        if [[ "$RAW" -eq 0 ]]; then
+            run_json_status "single" bash tools/run-next-pending.sh "${FLAGS[@]}"
+            exit 0
+        fi
+        bash tools/run-next-pending.sh "${FLAGS[@]}"
         exit 0
     fi
     FLAGS+=(--print)
