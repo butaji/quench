@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# SSOT is the canonical shorthand for the current test-run stage status.
-# It is intentionally the single command for status/run/commit flows in this repo.
+# SSOT is the shorthand alias for the canonical test-run workflow.
+# It is intentionally the single command family for status/run/commit flows.
 # Usage:
 #   bash tools/ssot                         # test-run status snapshot for current stage
 #   bash tools/ssot --run                   # run current stage test-run (explicit)
-#   bash tools/ssot --status                # status snapshot for current stage
+#   bash tools/ssot --status                # same as default: test-run status snapshot
 #   bash tools/ssot --run --commit           # run, then commit current milestone
 #   bash tools/ssot --run --commit --push    # run, commit, and push current milestone
 #   bash tools/ssot --run --json             # run current stage with JSON stage result

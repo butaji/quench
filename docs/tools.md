@@ -3,9 +3,9 @@
 ## Quick Reference
 
 Canonical language:
-- `SSOT` is the only phrase you should use for implementation status.
-- `SSOT` and `test-run` are strict synonyms.
-- `test-run` is the canonical command path for stage status and milestone execution.
+- `SSOT` is the short alias for the canonical **test-run** workflow.
+- `SSOT` and `test-run` are 1:1 aliases.
+- `test-run` is the canonical term for stage status and milestone execution.
 - `implementation-progress` is a legacy compatibility wrapper.
 - `SSOT_BUILD_RUN_TEST` is supported for compatibility; prefer `TEST262_TEST_RUN_BUILD=1`.
 
