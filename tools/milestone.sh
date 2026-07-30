@@ -131,6 +131,11 @@ while [[ ${#} -gt 0 ]]; do
             CI_GATE_JSON=1
             shift
             ;;
+        --json)
+            CI_GATE_ONLY=1
+            CI_GATE_JSON=1
+            shift
+            ;;
         --skip-current)
             CI_GATE_SKIP_CURRENT=1
             shift
