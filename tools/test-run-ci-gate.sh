@@ -212,7 +212,60 @@ PY
         RUN_ERR="$(cat "$RUN_ERR_FILE")"
         rm -f "$RUN_ERR_FILE"
         if [[ "$RUN_RC" -ne 0 ]]; then
-            echo "{\"run\":{\"requested\":true,\"rc\":$RUN_RC}}"
+            python3 - "$CURRENT_JSON" "$NEXT_JSON" "$CURRENT_ERR" "$NEXT_ERR" "$RUN_ERR" "$CHECK_CURRENT" "$CHECK_NEXT" "$CURRENT_RC" "$NEXT_RC" "1" "$RUN_RC" <<'PY'
+import json
+import sys
+
+current_json = sys.argv[1]
+next_json = sys.argv[2]
+current_err = sys.argv[3].strip()
+next_err = sys.argv[4].strip()
+run_err = sys.argv[5].strip()
+check_current = sys.argv[6] == "1"
+check_next = sys.argv[7] == "1"
+current_rc = int(sys.argv[8])
+next_rc = int(sys.argv[9])
+run_current = sys.argv[10] == "1"
+run_rc = int(sys.argv[11])
+
+try:
+    current_payload = json.loads(current_json) if current_json else {}
+except Exception:
+    current_payload = {}
+
+try:
+    next_payload = json.loads(next_json) if next_json else {}
+except Exception:
+    next_payload = {}
+
+current_ready = False
+if check_current:
+    try:
+        dashboard = current_payload.get("test_run_dashboard", {})
+        signals = dashboard.get("signals", {})
+        current_ready = bool(signals.get("can_run", False))
+    except Exception:
+        current_ready = False
+
+next_ready = False
+if check_next:
+    next_ready = bool(next_payload.get("ci", {}).get("ready", False))
+
+obj = {
+    "ci": {
+        "ready": bool(current_ready and next_ready) if check_current and check_next else bool(current_ready or next_ready),
+        "checks": {
+            "current": {"checked": check_current, "ready": current_ready, "error": current_err or None, "rc": current_rc},
+            "next": {"checked": check_next, "ready": next_ready, "error": next_err or None, "rc": next_rc},
+        },
+    },
+    "current": current_payload.get("test_run_dashboard") if isinstance(current_payload, dict) else {},
+    "next": next_payload.get("payload") if isinstance(next_payload, dict) else {},
+    "run": {"requested": run_current, "rc": run_rc},
+    "error": run_err or "stage run failed",
+}
+print(json.dumps(obj, sort_keys=True))
+PY
             exit "$RUN_RC"
         fi
     fi

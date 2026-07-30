@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Canonical runner for a stage test-run (legacy `ssot-stage.sh` delegates here).
+# Canonical runner for a stage test-run.
 # Usage:
 #   bash tools/test-run-stage.sh                  # run current stage test-run
 #   bash tools/test-run-stage.sh --stage 42        # explicit stage
