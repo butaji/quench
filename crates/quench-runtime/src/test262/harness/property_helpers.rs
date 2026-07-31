@@ -382,6 +382,9 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
 fn vp_is_enumerable(obj: &Value, key: &str) -> bool {
     if let Value::Object(obj_ref) = obj {
         let obj = obj_ref.borrow();
+        if obj.kind == crate::value::ObjectKind::Class && obj.has_own(key) {
+            return true;
+        }
         let exists = obj.has_own(key) || obj.has_getter(key) || obj.has_setter(key);
         if exists {
             return obj
