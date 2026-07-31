@@ -5,11 +5,64 @@
 //!   `call_js_function_with_this`, `call_js_function_impl`,
 //!   `call_js_function_impl_with_strict`, `call_native_function`.
 
-use crate::value::object::{PromiseObjectData, PromiseState};
+use crate::value::object::PromiseState;
 use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+#[test]
+fn async_for_await_destructuring_creates_sloppy_global_binding() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("async function f() { for await ([ ...unresolvable ] of [[]]) {} } f();")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("unresolvable.length"), Ok(Value::Number(0.0)));
+}
+
+#[test]
+fn async_for_await_nested_object_default_assigns_outer_binding() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "let yield = 2; let result; async function f() { for await ([{ result = yield }] of [[{}]]) {} } f();",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.get_global("result"), Some(Value::Number(2.0)));
+}
+
+#[test]
+fn async_generator_for_await_var_default_infers_binding_name() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "let observed; async function *fn() { 'use strict'; for await (var [fn = function () {}, xFn = function x() {}] of [[]]) { observed = fn.name + ':' + xFn.name; } } fn().next().then(() => observed = 'done', e => observed = String(e));",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.get_global("observed"),
+        Some(Value::String("done".into()))
+    );
+}
+
+#[test]
+fn iterator_return_getter_preserves_thrown_object() {
+    let mut ctx = Context::new().unwrap();
+    let iter = ctx
+        .eval("var innerError = { name: 'inner error' }; ({ get return() { throw innerError; } })")
+        .unwrap();
+    let Value::Object(iter) = iter else {
+        panic!("expected iterator")
+    };
+    assert!(crate::eval::object::call_iterator_return(&iter).is_some());
+    let Value::Object(thrown) = crate::value::get_thrown_value().unwrap() else {
+        panic!("expected thrown object")
+    };
+    let Value::Object(expected) = ctx.get_global("innerError").unwrap() else {
+        panic!("expected error object")
+    };
+    assert!(Rc::ptr_eq(&thrown, &expected));
+}
 
 // ─── call_value: basic function calls ─────────────────────────────────────
 
@@ -1087,6 +1140,18 @@ fn async_await_super_with_done_binding_fulfills_with_string() {
 }
 
 #[test]
+fn async_for_await_close_getter_rejects_with_original_error() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var innerError = { name: 'inner error' }; var iterable = { [Symbol.asyncIterator]() { return { next() { return { done: false, value: null }; }, get return() { throw innerError; } }; } }; var same; (async function() { for await (const value of iterable) { break; } })().then(function() { same = false; }, function(error) { same = error === innerError; });",
+    )
+    .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(ctx.get_global("same"), Some(Value::Boolean(true)));
+}
+
+#[test]
 fn object_method_super_call_returns_super_result() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(
@@ -1723,7 +1788,6 @@ fn var_function_initializer_inside_with_can_be_called_after_scope() {
     assert_eq!(value, Value::Number(2.0));
 }
 
-#[test]
 #[test]
 fn global_this_inherits_object_prototype_for_with_function_case() {
     use crate::test262::host::{QuenchHost, Test262Host};

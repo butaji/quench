@@ -152,7 +152,7 @@ fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
             if keep_reserved && width == 1 && is_uri_reserved(first as char) {
                 out.push_str(&s[start..i]);
             } else {
-                out.push_str(&decoded);
+                out.push_str(decoded);
             }
         } else if b < 0x80 {
             out.push(b as char);
@@ -261,7 +261,7 @@ pub fn register_uri(ctx: &mut Context) {
     ctx.register_native("parseInt", |args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         let s = to_string_for_spec(&arg)?;
-        let radix_raw = args.get(1).map(|v| to_number(v)).unwrap_or(0.0);
+        let radix_raw = args.get(1).map(to_number).unwrap_or(0.0);
         // ToInt32 per spec: NaN/Infinity → 0, wrapping at 2^32.
         let radix = if radix_raw.is_nan() || radix_raw.is_infinite() {
             0i32

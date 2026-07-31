@@ -199,13 +199,11 @@ impl Scope {
 
     fn object_has_binding_property(&self, name: &str) -> Option<bool> {
         let obj = self.object_binding.as_ref()?;
-        Some(proxy_has_property(obj, name).ok()?)
+        proxy_has_property(obj, name).ok()
     }
 
     pub fn object_binding_has(&self, name: &str) -> Option<bool> {
-        if self.object_binding.is_none() {
-            return None;
-        }
+        self.object_binding.as_ref()?;
         let has_binding = self.object_has_binding_property(name)?;
         if !has_binding {
             if self.was_deleted_during_unscopables(name) {
@@ -361,7 +359,7 @@ impl Scope {
                 value,
             )
             .ok()
-            .map(|success| success.then_some(true).unwrap_or(false));
+            .map(|success| success);
         }
         object.borrow_mut().set(name, value);
         Some(true)

@@ -14,7 +14,7 @@ fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
     match target {
         Value::Object(o) => {
             if crate::eval::object::proxy_handler_and_target(o).is_some() {
-                return crate::eval::object::proxy_has_property(o, key).or_else(|_| Ok(false));
+                return crate::eval::object::proxy_has_property(o, key).or(Ok(false));
             }
             Ok(o.borrow().has(key))
         }
@@ -459,10 +459,7 @@ JSON.stringify([target.p, log]);
             .expect("proxy metadata expected");
         let (_handler, target) = info;
         assert!(matches!(target, Value::Object(_)));
-        assert_eq!(
-            crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap(),
-            true
-        );
+        assert!(crate::eval::object::proxy_has_property(&proxy_obj, "Object").unwrap());
     }
 
     #[test]

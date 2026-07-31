@@ -1133,6 +1133,13 @@ pub fn assign_to_identifier(
     let value = prepare_identifier_binding_value(name, value, default_expr);
 
     if let Some(scope) = crate::eval::object::take_destructuring_identifier_reference(name) {
+        if scope.is_none() && !crate::interpreter::is_strict_mode() {
+            if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
+                global_obj.borrow_mut().set(name, value.clone());
+                return Ok(());
+            }
+        }
+        let Some(scope) = scope else { return Ok(()) };
         if scope.borrow().is_tdz(name) {
             return Err(JsError(format!(
                 "ReferenceError: Cannot access '{}' before initialization",
@@ -1140,6 +1147,11 @@ pub fn assign_to_identifier(
             )));
         }
         if scope.borrow().get_kind(name) == Some(VarKind::Const) {
+            if scope.borrow().is_function_name(name)
+                && (default_expr.is_some() || !crate::interpreter::is_strict_mode())
+            {
+                return Ok(());
+            }
             return Err(JsError(format!(
                 "TypeError: Assignment to constant variable '{}'",
                 name
@@ -1194,6 +1206,12 @@ pub fn assign_to_identifier(
     if env.borrow().has(name) {
         if let Some(kind) = env.borrow().get_kind(name) {
             if kind == VarKind::Const {
+                if env.borrow().binding_scope(name).is_some_and(|scope| {
+                    scope.borrow().is_function_name(name)
+                        && (default_expr.is_some() || !crate::interpreter::is_strict_mode())
+                }) {
+                    return Ok(());
+                }
                 let (_, js_err) = crate::value::error::create_js_error_with_type(
                     &format!("Assignment to constant variable '{}'", name),
                     "TypeError",

@@ -827,11 +827,9 @@ fn walk_inner_statements_for_fn_params(stmt: &ast::Statement, strict: bool) -> R
 fn check_no_fn_decl_in_stmt(stmt: &ast::Statement) -> Result<(), JsError> {
     match stmt {
         // `while (false) function f() {}` — SyntaxError (§14.1.0)
-        ast::Statement::FunctionDeclaration(_) => {
-            return Err(JsError(
-                "SyntaxError: Function declaration not allowed in statement position".into(),
-            ));
-        }
+        ast::Statement::FunctionDeclaration(_) => Err(JsError(
+            "SyntaxError: Function declaration not allowed in statement position".into(),
+        )),
         ast::Statement::BlockStatement(block) => {
             for stmt in &block.body {
                 check_no_fn_decl_in_stmt(stmt)?;
@@ -1896,7 +1894,7 @@ impl<'a> Visit<'a> for BreakContinueChecker {
             if !self
                 .all_labels
                 .iter()
-                .any(|(n, _)| n == &label.name.as_str())
+                .any(|(n, _)| n == label.name.as_str())
             {
                 self.error = Some(JsError(
                     "SyntaxError: Undefined label '".to_string() + &label.name + "'",
@@ -1918,12 +1916,12 @@ impl<'a> Visit<'a> for BreakContinueChecker {
                 let is_known_non_iter = self
                     .all_labels
                     .iter()
-                    .any(|(n, is_iter)| n == &label.name.as_str() && !is_iter);
+                    .any(|(n, is_iter)| n == label.name.as_str() && !is_iter);
                 if is_known_non_iter
                     || !self
                         .all_labels
                         .iter()
-                        .any(|(n, _)| n == &label.name.as_str())
+                        .any(|(n, _)| n == label.name.as_str())
                 {
                     self.error = Some(JsError(
                         "SyntaxError: Undefined label '".to_string() + &label.name + "'",
@@ -2227,7 +2225,7 @@ mod tests {
     use oxc::parser::Parser;
     use oxc::span::SourceType;
 
-    fn test_source(source: &str) -> ast::Program {
+    fn test_source(source: &str) -> ast::Program<'_> {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, source, source_type).parse();
@@ -2735,7 +2733,7 @@ mod tests {
         let s = "([x]) => { 'use strict'; }";
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
-        let ret = Parser::new(&allocator, s, source_type).parse();
+        let _ret = Parser::new(&allocator, s, source_type).parse();
     }
 
     // ===== Switch statement early errors =====

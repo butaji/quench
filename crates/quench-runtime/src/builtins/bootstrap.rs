@@ -977,7 +977,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn _disabled_to_sorted() {
         let mut ctx = new_ctx();
         let r = ctx

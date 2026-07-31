@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 thread_local! {
     static DESTRUCTURING_MEMBER_REFERENCE: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
-    static DESTRUCTURING_IDENTIFIER_REFERENCE: RefCell<Option<(String, Rc<RefCell<crate::env::Scope>>)>> = const { RefCell::new(None) };
+    static DESTRUCTURING_IDENTIFIER_REFERENCE: RefCell<Option<(String, Option<Rc<RefCell<crate::env::Scope>>>)>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn clear_destructuring_member_reference() {
@@ -28,13 +28,13 @@ pub(crate) fn cache_destructuring_identifier_reference(
     scope: Option<Rc<RefCell<crate::env::Scope>>>,
 ) {
     DESTRUCTURING_IDENTIFIER_REFERENCE.with(|cell| {
-        *cell.borrow_mut() = scope.map(|scope| (name.to_string(), scope));
+        *cell.borrow_mut() = Some((name.to_string(), scope));
     });
 }
 
 pub(crate) fn take_destructuring_identifier_reference(
     name: &str,
-) -> Option<Rc<RefCell<crate::env::Scope>>> {
+) -> Option<Option<Rc<RefCell<crate::env::Scope>>>> {
     DESTRUCTURING_IDENTIFIER_REFERENCE.with(|cell| {
         let cached = cell.borrow_mut().take();
         cached.and_then(|(cached_name, scope)| (cached_name == name).then_some(scope))
@@ -303,8 +303,11 @@ pub(crate) fn touch_assignment_target(
                 }
                 cache_destructuring_identifier_reference(name, scope);
             } else {
-                cache_destructuring_identifier_reference(name, None);
-                eval_expression(&Expression::Identifier(name.clone()), env, false)?;
+                let scope = env.borrow().binding_scope(name);
+                if scope.is_none() && crate::interpreter::is_strict_mode() {
+                    eval_expression(&Expression::Identifier(name.clone()), env, false)?;
+                }
+                cache_destructuring_identifier_reference(name, scope);
             }
             Ok(())
         }
@@ -522,18 +525,17 @@ pub fn assign_to_member(
         Value::Function(f) => assign_to_function(&f, &prop_name, value.clone()),
         Value::NativeFunction(ref nf) => {
             // Bound functions throw TypeError on caller/arguments assignment.
-            if prop_name == "caller" || prop_name == "arguments" {
-                if nf
+            if (prop_name == "caller" || prop_name == "arguments")
+                && nf
                     .get_property("name")
                     .is_some_and(|v| matches!(&v, Value::String(n) if n.starts_with("bound ")))
-                {
-                    let (err, js_err) = crate::value::create_js_error_with_type(
+            {
+                let (err, js_err) = crate::value::create_js_error_with_type(
                         "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
                         "TypeError",
                     );
-                    crate::value::set_thrown_value(err);
-                    return Err(js_err);
-                }
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
             }
             assign_to_native_function(nf, &prop_name, value.clone())
         }

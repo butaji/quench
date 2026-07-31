@@ -355,10 +355,10 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     match closed {
                         Ok(value) => return Ok(value),
                         Err(error) if crate::interpreter::is_in_async_generator() => {
-                            return Err(error)
+                            return Err(error);
                         }
                         Err(error) if crate::interpreter::is_in_async_function() => {
-                            return Err(error)
+                            return Err(error);
                         }
                         Err(error) => return deferred_for_await_rejection(error),
                     }
@@ -420,7 +420,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     match closed {
                         Ok(value) => return Ok(value),
                         Err(error) if crate::interpreter::is_in_async_generator() => {
-                            return Err(error)
+                            return Err(error);
                         }
                         Err(error) => return deferred_for_await_rejection(error),
                     }
@@ -676,6 +676,10 @@ pub fn eval_for_of(
         }
         Value::Generator(gen) => {
             crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
+        }
+        Value::Object(o) if await_of => {
+            let (iterator, _) = obtain_async_iterator(o, env)?;
+            iterator
         }
         Value::Object(o) => obtain_iterator(o)?,
         _ => return Err(JsError("TypeError: Value is not iterable".to_string())),

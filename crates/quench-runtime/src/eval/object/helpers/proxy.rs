@@ -195,9 +195,8 @@ pub fn proxy_get_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<
         ],
         Value::Object(Rc::clone(obj)),
     )
-    .map(|v| {
+    .inspect(|_v| {
         let _ = crate::interpreter::take_control_flow();
-        v
     })
 }
 

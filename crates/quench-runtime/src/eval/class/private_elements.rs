@@ -440,7 +440,6 @@ fn class_member_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Program;
     use crate::Context;
 
     fn eval(src: &str) -> Result<crate::value::Value, JsError> {

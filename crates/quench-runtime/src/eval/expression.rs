@@ -453,14 +453,12 @@ pub fn eval_expression(
                     if let Some(thrown) = crate::value::get_thrown_value() {
                         return Err(JsError(crate::value::to_js_string(&thrown)));
                     }
-                    if !result {
-                        if crate::interpreter::is_strict_mode() {
-                            let (_, error) = crate::value::error::create_js_error_with_type(
-                                &format!("Cannot assign to read-only property '{}'", name),
-                                "TypeError",
-                            );
-                            return Err(error);
-                        }
+                    if !result && crate::interpreter::is_strict_mode() {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            &format!("Cannot assign to read-only property '{}'", name),
+                            "TypeError",
+                        );
+                        return Err(error);
                     }
                     return Ok(right_val);
                 }

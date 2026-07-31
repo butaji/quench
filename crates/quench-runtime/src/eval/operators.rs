@@ -453,14 +453,14 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         // an ancestor of the stored prototype.
         (Value::Generator(gen), Value::Function(ctor)) => {
             let ctor_proto = ctor.get_prototype();
-            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+            let result = gen.borrow().prototype.as_ref().is_some_and(|gen_proto| {
                 Rc::ptr_eq(gen_proto, &ctor_proto)
                     || has_prototype_in_chain(&gen_proto.borrow(), &ctor_proto)
             });
             Ok(Value::Boolean(result))
         }
         (Value::Generator(gen), Value::NativeConstructor(ctor)) => {
-            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+            let result = gen.borrow().prototype.as_ref().is_some_and(|gen_proto| {
                 Rc::ptr_eq(gen_proto, &ctor.prototype)
                     || has_prototype_in_chain(&gen_proto.borrow(), &ctor.prototype)
             });
@@ -468,7 +468,7 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         }
         (Value::Generator(gen), Value::NativeFunction(nf)) => {
             if let Some(Value::Object(proto)) = nf.get_property("prototype") {
-                let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
+                let result = gen.borrow().prototype.as_ref().is_some_and(|gen_proto| {
                     Rc::ptr_eq(gen_proto, &proto)
                         || has_prototype_in_chain(&gen_proto.borrow(), &proto)
                 });
@@ -479,9 +479,10 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
         }
         (Value::Generator(gen), Value::Class(class)) => {
             let class_proto = get_class_prototype_for_instanceof(class)?;
-            let result = gen.borrow().prototype.as_ref().map_or(false, |gen_proto| {
-                has_prototype_in_chain(&gen_proto.borrow(), &class_proto)
-            });
+            let result =
+                gen.borrow().prototype.as_ref().is_some_and(|gen_proto| {
+                    has_prototype_in_chain(&gen_proto.borrow(), &class_proto)
+                });
             Ok(Value::Boolean(result))
         }
         _ => Ok(Value::Boolean(false)),
@@ -528,7 +529,7 @@ where
     // Per ES §12.9.3.1 / 12.9.4.1: shift count is masked to 5 bits (0-31).
     // This avoids Rust's panic on shifting by >= bit width.
     let count = (r as i64) & 0x1F;
-    let left = to_uint32(l) as u32 as i32 as i64;
+    let left = to_uint32(l) as i32 as i64;
     Ok(Value::Number((f(left, count) as i32) as f64))
 }
 

@@ -537,18 +537,17 @@ fn handle_tail_call_in_block(
             }
         };
 
-        if is_switch_wrapper {
-            if handle_tail_call_in_block(
+        if is_switch_wrapper
+            && handle_tail_call_in_block(
                 std::slice::from_ref(body.as_ref()),
                 env,
                 in_arrow_function,
                 true,
             )?
             .is_some()
-            {
-                env.borrow_mut().pop_scope();
-                return Ok(Some(()));
-            }
+        {
+            env.borrow_mut().pop_scope();
+            return Ok(Some(()));
         }
 
         if tail_calls_only {

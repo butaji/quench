@@ -140,10 +140,8 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                     hoist_functions(std::slice::from_ref(body.as_ref()), env);
                 }
             }
-            Statement::For { body, .. } => {
-                if !strict {
-                    hoist_functions(std::slice::from_ref(body.as_ref()), env);
-                }
+            Statement::For { body, .. } if !strict => {
+                hoist_functions(std::slice::from_ref(body.as_ref()), env);
             }
             _ => {}
         }

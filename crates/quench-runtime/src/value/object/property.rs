@@ -107,10 +107,10 @@ impl Object {
                         .map(|v| crate::value::to_number(&v) as u64)
                         .unwrap_or(0);
                     let bpe = crate::value::object::helpers::bytes_per_element(name);
-                    if offset as u64 >= buf_bl {
+                    if offset >= buf_bl {
                         0
                     } else {
-                        (buf_bl - offset as u64) / bpe as u64
+                        (buf_bl - offset) / bpe as u64
                     }
                 } else {
                     length
@@ -265,10 +265,10 @@ impl Object {
                     return Some(Value::Number(buf_bl as f64));
                 }
                 let bpe = crate::value::object::helpers::bytes_per_element(name);
-                let len = if offset as u64 >= buf_bl {
+                let len = if offset >= buf_bl {
                     0
                 } else {
-                    (buf_bl - offset as u64) / bpe as u64
+                    (buf_bl - offset) / bpe as u64
                 };
                 return Some(Value::Number(len as f64));
             }
@@ -303,10 +303,10 @@ impl Object {
                         .map(|v| crate::value::to_number(&v) as u64)
                         .unwrap_or(0);
                     let bpe = crate::value::object::helpers::bytes_per_element(name);
-                    effective_length = if offset as u64 >= buf_bl {
+                    effective_length = if offset >= buf_bl {
                         0
                     } else {
-                        (buf_bl - offset as u64) / bpe as u64
+                        (buf_bl - offset) / bpe as u64
                     };
                     is_rab = true;
                 } else {
@@ -320,7 +320,7 @@ impl Object {
                 if is_rab {
                     if let Some(bl) = self.properties.get("byteLength") {
                         let explicit_bl = crate::value::to_number(bl) as u64;
-                        if explicit_bl > buf_bl.saturating_sub(offset as u64) {
+                        if explicit_bl > buf_bl.saturating_sub(offset) {
                             return None;
                         }
                     }
@@ -398,9 +398,9 @@ impl Object {
         // Fixed-length TA: has explicit byteLength own property
         if let Some(bl) = self.properties.get("byteLength") {
             let explicit_bl = crate::value::to_number(bl) as u64;
-            explicit_bl > buf_bl.saturating_sub(offset as u64)
+            explicit_bl > buf_bl.saturating_sub(offset)
         } else {
-            (offset as u64) > buf_bl
+            offset > buf_bl
         }
     }
 }

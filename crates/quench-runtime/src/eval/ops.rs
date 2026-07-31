@@ -216,7 +216,7 @@ pub fn make_ops_object() -> Value {
         match &o {
             Value::Object(obj_rc) => {
                 let proto = obj_rc.borrow().prototype.clone();
-                Ok(proto.map_or(Value::Null, |p| Value::Object(p)))
+                Ok(proto.map_or(Value::Null, Value::Object))
             }
             _ => Ok(Value::Null),
         }
@@ -409,10 +409,10 @@ pub fn make_ops_object() -> Value {
                     }
                     let enumerable = desc_ref
                         .get("enumerable")
-                        .map_or(false, |v| crate::value::to_bool(&v));
+                        .is_some_and(|v| crate::value::to_bool(&v));
                     let configurable = desc_ref
                         .get("configurable")
-                        .map_or(false, |v| crate::value::to_bool(&v));
+                        .is_some_and(|v| crate::value::to_bool(&v));
                     let acc_flags = crate::value::object::helpers::PropertyFlags {
                         value: None,
                         writable: false,
@@ -447,13 +447,13 @@ pub fn make_ops_object() -> Value {
                     }
                     let flags = crate::value::object::helpers::PropertyFlags {
                         value: has_value,
-                        writable: has_writable.map_or(false, |v| crate::value::to_bool(&v)),
+                        writable: has_writable.is_some_and(|v| crate::value::to_bool(&v)),
                         enumerable: desc_ref
                             .get("enumerable")
-                            .map_or(false, |v| crate::value::to_bool(&v)),
+                            .is_some_and(|v| crate::value::to_bool(&v)),
                         configurable: desc_ref
                             .get("configurable")
-                            .map_or(false, |v| crate::value::to_bool(&v)),
+                            .is_some_and(|v| crate::value::to_bool(&v)),
                     };
                     obj_rc.borrow_mut().define(&key, val, flags);
                     Ok(Value::Boolean(true))

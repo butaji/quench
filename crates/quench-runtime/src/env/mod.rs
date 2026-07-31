@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn object_binding_has_missing_property_returns_false() {
-        let mut env = Environment::new();
+        let env = Environment::new();
         let obj = Rc::new(RefCell::new(crate::value::Object::new(
             crate::value::kind::ObjectKind::Ordinary,
         )));
@@ -841,7 +841,7 @@ mod tests {
             scope_ref.set_object_binding(Rc::clone(&obj));
             scope_ref.declare_with_var("x".to_string(), VarKind::Var);
         }
-        assert_eq!(obj.borrow_mut().delete("x"), true);
+        assert!(obj.borrow_mut().delete("x"));
 
         assert_eq!(
             scope.borrow().object_binding_has("x"),
@@ -852,7 +852,7 @@ mod tests {
 
     #[test]
     fn object_scope_declared_binding_missing_property_does_not_initialize_local_binding() {
-        let mut env = Environment::new();
+        let env = Environment::new();
         let obj = Rc::new(RefCell::new(crate::value::Object::new(
             crate::value::kind::ObjectKind::Ordinary,
         )));
@@ -864,7 +864,7 @@ mod tests {
             scope_ref.set_object_binding(Rc::clone(&obj));
             scope_ref.declare_with_var("x".to_string(), VarKind::Var);
         }
-        assert_eq!(obj.borrow_mut().delete("x"), true);
+        assert!(obj.borrow_mut().delete("x"));
 
         assert!(!scope
             .borrow_mut()

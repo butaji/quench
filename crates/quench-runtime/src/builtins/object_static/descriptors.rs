@@ -279,8 +279,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     }
                     let number = crate::value::to_number(&primitive);
                     if !number.is_finite()
-                        || number < 0.0
-                        || number > 4_294_967_295.0
+                        || !(0.0..=4_294_967_295.0).contains(&number)
                         || number.fract() != 0.0
                     {
                         let (error, js_error) = crate::value::error::create_js_error_with_type(
