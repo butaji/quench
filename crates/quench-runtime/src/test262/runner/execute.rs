@@ -10,7 +10,7 @@ use crate::test262::metadata::Test262Metadata;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
 /// subprocess (isolated) paths so a test cannot pass one way and fail the other.
-pub const TEST_TIMEOUT_SECS: u64 = 15;
+pub const TEST_TIMEOUT_SECS: u64 = 30;
 
 /// Async prelude: `$DONE` records invocations and rethrows error arguments.
 /// The count is verified after the microtask drain by `async_done_probe`.

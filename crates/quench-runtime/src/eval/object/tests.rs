@@ -4,6 +4,38 @@
 use crate::{Context, Value};
 
 #[test]
+fn computed_symbol_assignment_is_readable() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var o = {}; o[Symbol.unscopables] = {};").unwrap();
+    assert!(matches!(
+        ctx.eval("o[Symbol.unscopables]").unwrap(),
+        Value::Object(_)
+    ));
+}
+
+#[test]
+fn nested_computed_symbol_assignment_updates_nested_property() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var o = {}; o[Symbol.unscopables] = {}; o[Symbol.unscopables].x = 'string';")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("o[Symbol.unscopables].x").unwrap(),
+        Value::String("string".to_string())
+    );
+}
+
+#[test]
+fn strict_with_assignment_to_deleted_binding_throws_reference_error() {
+    let mut ctx = Context::new().unwrap();
+    let error = ctx
+        .eval(
+            "var env = { NaN: 100 }; with (env) { (function() { 'use strict'; NaN = (delete env.NaN, 0); })(); }",
+        )
+        .expect_err("assignment to deleted with binding must throw");
+    assert!(error.0.starts_with("ReferenceError:"), "{error:?}");
+}
+
+#[test]
 fn strict_for_in_var_iterates() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(

@@ -20,7 +20,10 @@ fn is_uri_unreserved(c: char) -> bool {
 /// Characters reserved by RFC 3986 that encodeURI leaves alone (the
 /// "reserved" set minus characters that encodeURIComponent also escapes).
 fn is_uri_reserved(c: char) -> bool {
-    matches!(c, ';' | ',' | '/' | ':' | '&' | '=' | '+' | '$' | '?' | '@')
+    matches!(
+        c,
+        ';' | ',' | '/' | ':' | '&' | '=' | '+' | '$' | '?' | '@' | '#'
+    )
 }
 
 /// Decode a single percent-escape `%XX` to a byte (0..=255). Returns None
@@ -365,6 +368,11 @@ mod tests {
         assert_eq!(eval_num("parseInt('0x1F', 16)"), 31.0);
         assert!(eval_num("parseInt('hello')").is_nan());
         assert_eq!(eval_num("parseInt('ff', 16)"), 255.0);
+    }
+
+    #[test]
+    fn decode_uri_preserves_encoded_hash() {
+        assert_eq!(eval_str("decodeURI('%23')"), "%23");
     }
 
     #[test]

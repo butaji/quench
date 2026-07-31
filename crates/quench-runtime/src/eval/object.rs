@@ -383,6 +383,7 @@ pub fn assign_to_member(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let cached = DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take());
+    let cached = computed.then_some(cached).flatten();
     let cached_symbol = cached.as_ref().and_then(|(_, key)| match key {
         Value::Symbol(symbol) => Some(symbol.clone()),
         Value::String(key) => {

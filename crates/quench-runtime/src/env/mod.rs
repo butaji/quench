@@ -12,6 +12,7 @@ mod scope;
 
 use crate::ast::{Expression, PropertyKey, VarKind};
 use crate::value::{get_thrown_value, Value};
+pub(crate) use scope::set_compound_binding_read;
 pub use scope::{Scope, VarState};
 
 // ─── Environment ─────────────────────────────────────────────────────────────
@@ -634,7 +635,6 @@ impl Clone for Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_live_scopes_snapshot() {
         let mut env = Environment::new();

@@ -99,6 +99,19 @@ mod tests {
     }
 
     #[test]
+    fn promise_resolve_preserves_identity_after_constructor_getter() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var p = Promise.resolve(0);\
+                 Object.defineProperty(p, 'constructor', { get() { return Promise; }, configurable: true });\
+                 Promise.resolve(p) === p",
+            )
+            .unwrap();
+        assert_eq!(result, crate::value::Value::Boolean(true));
+    }
+
+    #[test]
     fn test_queue_microtask_runs_at_checkpoint() {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var q = []; queueMicrotask(() => q.push(1)); q.push(2);")

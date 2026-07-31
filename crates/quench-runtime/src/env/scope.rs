@@ -14,6 +14,18 @@ use crate::value::error::set_thrown_value;
 use crate::value::get_thrown_value;
 use crate::value::{to_bool, Value};
 
+thread_local! {
+    static COMPOUND_BINDING_READ: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn set_compound_binding_read(enabled: bool) {
+    COMPOUND_BINDING_READ.with(|cell| cell.set(enabled));
+}
+
+fn compound_binding_read() -> bool {
+    COMPOUND_BINDING_READ.with(Cell::get)
+}
+
 /// Whether a variable was declared (hoisting support) but not yet initialized
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -255,6 +267,7 @@ impl Scope {
     pub fn set_with_object_binding(&mut self, object: Rc<RefCell<crate::value::Object>>) {
         self.object_binding = Some(object);
         self.with_environment = true;
+        self.clear_with_unscopables();
     }
 
     pub fn set_with_unscopables(&mut self, blocked: HashSet<String>) {
@@ -486,10 +499,7 @@ impl Scope {
                         return Some(Value::Undefined);
                     }
                     Some(true) => {
-                        // Evaluate `HasProperty` again for GetBindingValue step 2:
-                        // the proxy trap must run once for declaration lookup and again
-                        // when the binding value is actually loaded.
-                        if self.object_has_binding_property(name) != Some(true) {
+                        if !matches!(self.object_has_binding_property(name), Some(true)) {
                             if crate::interpreter::is_strict_mode() {
                                 return None;
                             }
@@ -523,7 +533,9 @@ impl Scope {
                 if self.with_unscopables_loaded.get() && self.is_unscopable(name) {
                     return None;
                 }
-                if !matches!(self.object_has_binding_property(name), Some(true)) {
+                if !compound_binding_read()
+                    && !matches!(self.object_has_binding_property(name), Some(true))
+                {
                     return None;
                 }
                 return match proxy_get_property(object, name) {

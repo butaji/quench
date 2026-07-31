@@ -468,56 +468,56 @@
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 67,
-      "pass_rate": "63.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 38,
       "path": "test/language/statements/async-generator",
       "tests": 301,
-      "status": "pending",
-      "difficulty": 7,
-      "impl": "rust",
-      "rust_loc": "500\u20131000",
-      "js_loc": "0\u20130",
-      "failed": 3,
-      "pass_rate": "99.0%"
-    },
-    {
-      "id": 39,
-      "path": "test/language/statements/await-using",
-      "tests": 94,
-      "status": "pending",
-      "difficulty": 6,
-      "impl": "hybrid",
-      "rust_loc": "200\u2013400",
-      "js_loc": "0\u20130",
-      "failed": 2,
-      "pass_rate": "97.9%"
-    },
-    {
-      "id": 40,
-      "path": "test/language/statements/for-await-of",
-      "tests": 1234,
       "status": "done",
       "difficulty": 7,
       "impl": "rust",
-      "rust_loc": "400\u2013800",
+      "rust_loc": "500\u20131000",
       "js_loc": "0\u20130",
       "failed": 0,
       "pass_rate": "100.0%"
     },
     {
+      "id": 39,
+      "path": "test/language/statements/await-using",
+      "tests": 94,
+      "status": "done",
+      "difficulty": 6,
+      "impl": "hybrid",
+      "rust_loc": "200\u2013400",
+      "js_loc": "0\u20130",
+      "failed": 0,
+      "pass_rate": "100.0%"
+    },
+    {
+      "id": 40,
+      "path": "test/language/statements/for-await-of",
+      "tests": 1234,
+      "status": "pending",
+      "difficulty": 7,
+      "impl": "rust",
+      "rust_loc": "400\u2013800",
+      "js_loc": "0\u20130",
+      "failed": 2,
+      "pass_rate": "99.8%"
+    },
+    {
       "id": 41,
       "path": "test/language/statements/using",
       "tests": 78,
-      "status": "pending",
+      "status": "done",
       "difficulty": 6,
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "200\u2013400",
-      "failed": 34,
-      "pass_rate": "56.4%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 42,
@@ -559,25 +559,25 @@
       "id": 45,
       "path": "test/language/computed-property-names",
       "tests": 48,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 16,
-      "pass_rate": "66.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 46,
       "path": "test/language/destructuring",
       "tests": 19,
-      "status": "pending",
+      "status": "done",
       "difficulty": 4,
       "impl": "rust",
       "rust_loc": "200\u2013500",
       "js_loc": "0\u20130",
-      "failed": 2,
-      "pass_rate": "89.5%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 47,
@@ -595,13 +595,13 @@
       "id": 48,
       "path": "test/language/function-code",
       "tests": 217,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "100\u2013200",
       "js_loc": "0\u20130",
-      "failed": 5,
-      "pass_rate": "97.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 49,
@@ -715,61 +715,61 @@
       "id": 58,
       "path": "test/built-ins/Infinity",
       "tests": 6,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 4,
-      "pass_rate": "33.3%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 59,
       "path": "test/built-ins/NaN",
       "tests": 6,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 4,
-      "pass_rate": "33.3%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 60,
       "path": "test/built-ins/undefined",
       "tests": 8,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "0\u20130",
-      "failed": 5,
-      "pass_rate": "37.5%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 61,
       "path": "test/built-ins/parseInt",
       "tests": 55,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 3,
-      "pass_rate": "94.5%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 62,
       "path": "test/built-ins/parseFloat",
       "tests": 54,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 7,
-      "pass_rate": "87.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 63,
@@ -780,8 +780,8 @@
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 7,
-      "pass_rate": "53.3%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 64,
@@ -792,8 +792,8 @@
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 1,
-      "pass_rate": "93.3%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 65,
@@ -804,8 +804,8 @@
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "150\u2013300",
-      "failed": 24,
-      "pass_rate": "56.4%"
+      "failed": 2,
+      "pass_rate": "96.4%"
     },
     {
       "id": 66,
@@ -847,13 +847,13 @@
       "id": 69,
       "path": "test/built-ins/eval",
       "tests": 10,
-      "status": "pending",
+      "status": "done",
       "difficulty": 4,
       "impl": "rust",
       "rust_loc": "300\u2013600",
       "js_loc": "0\u20130",
-      "failed": 3,
-      "pass_rate": "70.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 70,

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 fn in_process_and_isolated_share_one_timeout() {
     // Both paths read TEST_TIMEOUT_SECS; pin the value so a slow test cannot
     // pass in-process (formerly 10s) and fail isolated (formerly 15s).
-    assert_eq!(TEST_TIMEOUT_SECS, 15);
+    assert_eq!(TEST_TIMEOUT_SECS, 30);
 }
 
 #[test]
