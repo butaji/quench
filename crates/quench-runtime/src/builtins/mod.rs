@@ -173,6 +173,7 @@ pub fn register_builtins(ctx: &mut Context) {
     array::register_array_iterator();
     // %TypedArray%.prototype[Symbol.iterator] requires Symbol to be registered first.
     typed_array::register_typed_array_iterator();
+    math::register_math_to_string_tag(ctx);
 }
 
 use crate::value::{Object, ObjectKind, Value};

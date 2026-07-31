@@ -979,13 +979,13 @@
       "id": 80,
       "path": "test/built-ins/Math",
       "tests": 327,
-      "status": "pending",
+      "status": "done",
       "difficulty": 5,
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "250\u2013500",
-      "failed": 27,
-      "pass_rate": "91.7%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 81,

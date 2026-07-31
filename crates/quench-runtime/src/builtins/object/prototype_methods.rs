@@ -158,10 +158,13 @@ pub fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value
             let obj = o.borrow();
 
             // Check for symbol properties first (stored in symbol_properties)
-            if let Value::Symbol(_) = key_val {
+            if let Value::Symbol(symbol) = key_val {
                 if obj.has_symbol(key_val) {
-                    // Symbol properties are enumerable by default
-                    return Ok(Value::Boolean(true));
+                    return Ok(Value::Boolean(
+                        obj.get_descriptor(&symbol.property_key())
+                            .map(|flags| flags.enumerable)
+                            .unwrap_or(true),
+                    ));
                 }
             }
 

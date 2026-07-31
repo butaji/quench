@@ -88,6 +88,27 @@ pub fn register_math(ctx: &mut Context) {
     ctx.set_global("Math".to_string(), Value::Object(math));
 }
 
+pub fn register_math_to_string_tag(ctx: &mut Context) {
+    let (Some(Value::Object(math)), Some(Value::Symbol(symbol))) = (
+        ctx.get_global("Math"),
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag"),
+    ) else {
+        return;
+    };
+    let key = symbol.property_key();
+    let mut math = math.borrow_mut();
+    math.set_symbol(&key, Value::String("Math".to_string()));
+    math.descriptors.insert(
+        key,
+        PropertyFlags {
+            value: Some(Value::String("Math".to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+}
+
 fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
     macro_rules! math_fn {
         ($name:expr, $fn:expr) => {
@@ -259,6 +280,17 @@ fn register_math_constants(math: &Rc<RefCell<Object>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn math_has_configurable_to_string_tag() {
+        let mut ctx = crate::Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let result = ctx
+            .eval("verifyProperty(Math, Symbol.toStringTag, { writable: false, enumerable: false, configurable: true }); 'ok'")
+            .unwrap();
+        assert_eq!(result, crate::Value::String("ok".to_string()));
+    }
 
     #[test]
     fn test_random_returns_value_in_range() {
