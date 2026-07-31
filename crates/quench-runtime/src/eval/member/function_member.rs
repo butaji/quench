@@ -13,6 +13,16 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
     if let Some(val) = f.get_property(prop_name) {
         return Ok(val);
     }
+    if let Some(accessor) = f.get_accessor(prop_name) {
+        if let Some(getter) = accessor.getter {
+            return crate::eval::function::call_value_with_this(
+                getter,
+                Vec::new(),
+                Value::Function(f.clone()),
+            );
+        }
+        return Ok(Value::Undefined);
+    }
     if f.is_arrow && (prop_name == "arguments" || prop_name == "caller") {
         let msg = format!(
             "'caller' and 'arguments' are restricted properties and cannot be accessed on arrow functions"

@@ -252,14 +252,10 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             }
         }
         if let Some(getter) = getter {
-            let value =
-                crate::eval::function::call_value_with_this(getter, Vec::new(), obj.clone())?;
-            function.set_property(&prop, value)?;
-        }
-        if let Some(setter) = setter {
-            function.set_property(&prop, setter)?;
-        }
-        if let Some(value) = flags.value {
+            function.define_accessor(&prop, Some(getter), setter);
+        } else if setter.is_some() {
+            function.define_accessor(&prop, None, setter);
+        } else if let Some(value) = flags.value {
             function.set_property(&prop, value)?;
         }
         if !flags.writable {

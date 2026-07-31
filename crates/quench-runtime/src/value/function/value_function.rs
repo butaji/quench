@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use crate::ast::{ArrowBody, Param, Statement};
 use crate::env::Environment;
+use crate::value::function::ConstructorAccessor;
 use crate::value::kind::ObjectKind;
 use crate::value::object::Object;
 use crate::value::Value;
@@ -89,6 +90,8 @@ pub struct ValueFunction {
     /// Additional properties (e.g., sameValue, notSameValue on assert)
     /// Wrapped in Rc<RefCell> so clones share mutations (see Clone impl).
     properties: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>,
+    accessors:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, ConstructorAccessor>>>,
 }
 
 impl Clone for ValueFunction {
@@ -110,6 +113,7 @@ impl Clone for ValueFunction {
             proto_cell: self.proto_cell.clone(),
             instance_proto: self.instance_proto.as_ref().map(Rc::clone),
             properties: std::rc::Rc::clone(&self.properties),
+            accessors: std::rc::Rc::clone(&self.accessors),
         }
     }
 }
@@ -180,7 +184,18 @@ impl ValueFunction {
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
+    }
+
+    pub fn define_accessor(&self, key: &str, getter: Option<Value>, setter: Option<Value>) {
+        self.accessors
+            .borrow_mut()
+            .insert(key.to_string(), ConstructorAccessor { getter, setter });
+    }
+
+    pub fn get_accessor(&self, key: &str) -> Option<ConstructorAccessor> {
+        self.accessors.borrow().get(key).cloned()
     }
 
     pub fn set_empty_prototype(&mut self, empty: bool) {
@@ -212,6 +227,7 @@ impl ValueFunction {
             proto_cell: ProtoCellRef::Strong(Rc::new(RefCell::new(None))),
             instance_proto: None,
             properties: std::rc::Rc::new(std::cell::RefCell::new(props)),
+            accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         }
     }
 
