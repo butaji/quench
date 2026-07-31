@@ -41,7 +41,10 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                 if key_str == "prototype" && !f.is_arrow {
                     return Ok(Value::Boolean(true));
                 }
-                if f.get_property(&key_str).is_some() {
+                if key_str == "name" && !f.is_property_deleted("name")
+                    || key_str == "length" && !f.is_property_deleted("length")
+                    || f.get_property(&key_str).is_some()
+                {
                     return Ok(Value::Boolean(true));
                 }
                 return Ok(Value::Boolean(false));
@@ -83,6 +86,10 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
                 if c.has_static_own_property(&key_str) {
                     return Ok(Value::Boolean(true));
                 }
+            }
+        } else if let Value::Class(class) = &this_val {
+            if let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) {
+                return Ok(Value::Boolean(class.get_static_field(&key).is_some()));
             }
         }
     }
@@ -144,7 +151,9 @@ pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsErr
 
 /// Object.prototype.propertyIsEnumerable - checks if property is enumerable
 pub fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value, JsError> {
-    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this_val = crate::interpreter::get_this_value()
+        .or_else(crate::builtins::get_native_this)
+        .unwrap_or(Value::Undefined);
     let key_val = args.first();
     if let Some(key_val) = key_val {
         if let Value::Object(o) = &this_val {
@@ -163,6 +172,10 @@ pub fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value
                 if obj.has_own(&key) {
                     return Ok(Value::Boolean(obj.is_enumerable(&key)));
                 }
+            }
+        } else if let Value::Class(class) = &this_val {
+            if let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) {
+                return Ok(Value::Boolean(class.get_static_field(&key).is_some()));
             }
         }
     }

@@ -25,6 +25,7 @@ pub struct ForOfSuspend {
     pub body: Statement,
     pub loop_binding: Option<crate::ast::VarKind>,
     pub dispose_async: Option<bool>,
+    pub await_of: bool,
     pub per_iteration: bool,
     pub in_arrow_function: bool,
     /// The pending (item, resume) from the current iteration — must be restored
@@ -400,6 +401,8 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
+            let pending_destructuring =
+                crate::eval::iteration::take_pending_destructuring_iterator();
             let mut g = gen.borrow_mut();
             if g.state == GeneratorState::Completed {
                 return Ok(IteratorResult {
@@ -432,6 +435,18 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 {
                     return Err(close_err);
                 }
+            }
+            if let Some(iterator) = pending_destructuring {
+                if let Some(close_err) = crate::eval::object::call_iterator_return(&iterator) {
+                    return Err(close_err);
+                }
+                g.state = GeneratorState::Completed;
+                g.call_env = None;
+                return Ok(IteratorResult {
+                    value: arg,
+                    done: true,
+                }
+                .to_object());
             }
             crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
                 arg.clone(),
@@ -509,8 +524,21 @@ pub fn async_generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                     proto,
                 ),
                 Err(error) => {
-                    let reason = crate::value::take_thrown_value()
-                        .unwrap_or_else(|| Value::String(error.to_string()));
+                    {
+                        let mut generator = gen.borrow_mut();
+                        generator.state = GeneratorState::Completed;
+                        generator.call_env = None;
+                    }
+                    let reason = match crate::value::take_thrown_value() {
+                        Some(Value::String(_)) | None => {
+                            crate::value::error::create_js_error_with_type(
+                                &error.to_string(),
+                                "TypeError",
+                            )
+                            .0
+                        }
+                        Some(value) => value,
+                    };
                     crate::builtins::promise::promise_reject_impl_static(vec![reason], proto)
                 }
             }
@@ -566,10 +594,39 @@ pub fn async_generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             let proto = crate::builtins::promise::get_promise_proto();
-            if gen.borrow().yield_delegate_suspend.is_some() {
+            let pending_suspend = crate::eval::iteration::take_pending_for_of_suspend();
+            let pending_destructuring =
+                crate::eval::iteration::take_pending_destructuring_iterator();
+            if gen.borrow().yield_delegate_suspend.is_some()
+                && gen.borrow().for_of_suspend.is_none()
+                && pending_suspend.is_none()
+            {
                 return async_delegate_return_queued(Rc::clone(&gen), arg, proto);
             }
+            let close_error = gen
+                .borrow()
+                .for_of_suspend
+                .as_ref()
+                .and_then(|suspend| crate::eval::object::call_iterator_return(&suspend.iterator))
+                .or_else(|| {
+                    pending_suspend.as_ref().and_then(|suspend| {
+                        crate::eval::object::call_iterator_return(&suspend.iterator)
+                    })
+                })
+                .or_else(|| {
+                    pending_destructuring
+                        .as_ref()
+                        .and_then(crate::eval::object::call_iterator_return)
+                });
+            if let Some(error) = close_error {
+                let reason = crate::value::take_thrown_value()
+                    .unwrap_or_else(|| Value::String(error.to_string()));
+                gen.borrow_mut().state = GeneratorState::Completed;
+                gen.borrow_mut().for_of_suspend = None;
+                return crate::builtins::promise::promise_reject_impl_static(vec![reason], proto);
+            }
             gen.borrow_mut().state = GeneratorState::Completed;
+            gen.borrow_mut().for_of_suspend = None;
             resolve_async_result_queued(
                 IteratorResult {
                     value: arg,
@@ -739,6 +796,24 @@ fn delegate_abrupt(
         .unwrap();
     let method = crate::eval::member::eval_object_member(&state.iterator, method_name, None)?;
     if matches!(method, Value::Undefined | Value::Null) {
+        if method_name == "throw" {
+            let close = crate::eval::member::eval_object_member(&state.iterator, "return", None)?;
+            if !matches!(close, Value::Undefined | Value::Null) {
+                if !close.is_callable() {
+                    return Err(generator_type_error("iterator return is not callable"));
+                }
+                let result = crate::eval::function::call_value_with_this(
+                    close,
+                    vec![],
+                    Value::Object(Rc::clone(&state.iterator)),
+                )?;
+                let _ = crate::eval::object::await_async_iterator_result(result)?;
+            }
+            generator.borrow_mut().state = GeneratorState::Completed;
+            return Err(generator_type_error(
+                "iterator does not provide a throw method",
+            ));
+        }
         generator.borrow_mut().state = GeneratorState::Completed;
         return Ok(IteratorResult {
             value: argument,
@@ -1208,6 +1283,53 @@ mod tests {
     }
 
     #[test]
+    fn async_yield_star_null_throw_closes_iterator_and_rejects() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var throwGets = 0, returnGets = 0, result; \
+             var source = { [Symbol.asyncIterator]() { return this; }, \
+               next() { return { value: 1, done: false }; }, \
+               get throw() { throwGets++; return null; }, \
+               get return() { returnGets++; } }; \
+             async function* g() { yield* source; } var iterator = g(); \
+             iterator.next().then(function() { return iterator.throw(); }, function(e) { result = e; }) \
+             .then(function(e) { result = e; }, function(e) { result = e; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("throwGets"), Some(crate::Value::Number(1.0)));
+        assert_eq!(
+            ctx.get_global("returnGets"),
+            Some(crate::Value::Number(1.0))
+        );
+        assert!(matches!(
+            ctx.get_global("result"),
+            Some(crate::Value::Object(_))
+        ));
+    }
+
+    #[test]
+    fn async_generator_yield_thenable_exposes_reject_function() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var result; var thenable = { then(resolve, reject) { resolve(reject); } }; \
+             var iter = (async function*() { yield thenable; }()); \
+             iter.next().then(function(value) { result = [typeof value.value, value.value.length, value.value.name]; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert!(matches!(
+            ctx.get_global("result"),
+            Some(crate::Value::Object(_))
+        ));
+        assert_eq!(
+            ctx.eval("result[0] + ',' + result[1] + ',' + result[2]")
+                .unwrap(),
+            crate::Value::String("function,1,".into())
+        );
+    }
+
+    #[test]
     fn test_async_generator_is_async_flag() {
         // Test that async generators have is_async = true
         let mut ctx = crate::Context::new().unwrap();
@@ -1312,6 +1434,74 @@ mod tests {
         .unwrap();
         let result = ctx.eval("caught.marker").unwrap();
         assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn async_generator_yield_in_destructuring_keeps_iterator_suspend() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var iterable = { [Symbol.iterator]() { return { next() { return { done: false, value: undefined }; }, return() { return null; } }; } }; \
+             async function* fn() { for await ([{} = yield] of [iterable]) {} }",
+        )
+        .unwrap();
+        let generator = match ctx.eval("fn()").unwrap() {
+            Value::Generator(generator) => generator,
+            _ => panic!("expected generator"),
+        };
+        crate::eval::function::call_value_with_this(
+            async_generator_next_fn(Rc::clone(&generator)),
+            vec![],
+            Value::Generator(Rc::clone(&generator)),
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        assert!(generator.borrow().for_of_suspend.is_some());
+    }
+
+    #[test]
+    fn async_generator_for_await_rejected_yield_closes_generator() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var error = new Error(); var first; var second; \
+             async function* gen() { for await (let value of [Promise.reject(error), 'unreachable']) { yield value; } } \
+             var iter = gen(); iter.next().catch(function(value) { first = value; iter.next().then(function(result) { second = result; }); });",
+        )
+        .unwrap();
+        assert_eq!(ctx.eval("first === error").unwrap(), Value::Boolean(true));
+        assert_eq!(
+            ctx.eval("second.done === true && second.value === undefined")
+                .unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn async_generator_for_await_destructuring_rejects_with_type_error_object() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var constructor; var iterCount = 0; async function* fn() { for await ([[ _ ]] of [[null]]) { iterCount += 1; } } \
+             fn().next().catch(function(error) { constructor = error.constructor; });",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("constructor === TypeError").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(ctx.eval("iterCount").unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn promise_rejection_arrow_object_pattern_receives_reason() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var seen; Promise.reject({ constructor: TypeError }).then(undefined, ({ constructor }) => { seen = constructor; });",
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        assert_eq!(
+            ctx.eval("seen === TypeError").unwrap(),
+            Value::Boolean(true)
+        );
     }
 
     #[test]

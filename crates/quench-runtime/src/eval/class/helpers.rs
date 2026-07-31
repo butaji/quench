@@ -106,9 +106,6 @@ fn new_instance(class: &ClassValue, env: &Rc<RefCell<Environment>>) -> Result<Va
     instance.prototype = Some(Rc::clone(&proto_rc));
     let instance_rc = Rc::new(RefCell::new(instance));
     let this_val = Value::Object(Rc::clone(&instance_rc));
-    instance_rc
-        .borrow_mut()
-        .set("constructor", Value::Class(Box::new(class.clone())));
     Ok(this_val)
 }
 
@@ -588,6 +585,17 @@ pub fn create_class_prototype_helper_with_env(
         Object::new(ObjectKind::Ordinary)
     };
 
+    proto.define(
+        "constructor",
+        Value::Class(Box::new(class.clone())),
+        PropertyFlags {
+            enumerable: false,
+            writable: true,
+            configurable: true,
+            value: None,
+        },
+    );
+
     let closure = Rc::clone(env);
     closure.borrow_mut().push_scope();
     let member_closure = capture_env_for_closure(&closure);
@@ -659,19 +667,6 @@ pub fn create_class_prototype_helper_with_env(
             Some(fn_name),
         );
     }
-
-    // Set `constructor` on the prototype so `C.prototype.constructor === C`
-    // Must be non-enumerable per ES spec §10.1.7
-    proto.define(
-        "constructor",
-        Value::Class(Box::new(class.clone())),
-        PropertyFlags {
-            enumerable: false,
-            writable: true,
-            configurable: true,
-            value: None,
-        },
-    );
 
     Ok(Rc::new(RefCell::new(proto)))
 }
@@ -752,6 +747,17 @@ fn is_anonymous_function_definition(expr: &Expression) -> bool {
 pub fn field_display_name(key: &PropertyKey, key_str: &str) -> String {
     if crate::value::is_private_element_key(key_str) {
         return crate::value::private_method_display_name(key_str);
+    }
+    if let Some(description) = key_str
+        .split('\0')
+        .next()
+        .filter(|_| key_str.contains('\0'))
+    {
+        return if description.is_empty() {
+            String::new()
+        } else {
+            format!("[{description}]")
+        };
     }
     if let PropertyKey::Ident(s) = key {
         if s.starts_with('#') {
@@ -1769,6 +1775,16 @@ mod tests {
     }
 
     #[test]
+    fn class_prototype_lists_constructor_before_methods() {
+        let r = eval(
+            "class C { a() {} [1]() {} c() {} } \
+             Object.getOwnPropertyNames(C.prototype).join(',')",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("1,constructor,a,c".into()));
+    }
+
+    #[test]
     fn class_prototype_getter() {
         let r = eval("class C { get val() { return 99; } } new C().val").unwrap();
         assert_eq!(r, Value::Number(99.0));
@@ -1837,7 +1853,7 @@ mod tests {
             "class C { [Symbol.for('test')]() { return 'symbol'; } } var desc = Object.getOwnPropertyNames(C.prototype)[0]; desc !== 'constructor'",
         )
         .unwrap();
-        assert_eq!(r, Value::Boolean(true));
+        assert_eq!(r, Value::Boolean(false));
     }
 
     #[test]
@@ -3460,6 +3476,16 @@ mod tests {
     }
 
     #[test]
+    fn static_super_assignment_with_null_prototype_throws() {
+        let result = eval(
+            "var count = 0; class C { static m() { super[0] = count += 1; } } \
+             Object.setPrototypeOf(C, null); try { C.m(); 'no'; } catch (error) { error.name; }",
+        )
+        .unwrap();
+        assert_eq!(result, Value::String("TypeError".into()));
+    }
+
+    #[test]
     fn super_property_without_extends_in_constructor() {
         eval(
             "class A { constructor() { super.toString(); } dontDoThis() { super.makeBugs = 1; } } \
@@ -3568,7 +3594,7 @@ mod tests {
              let c = new C(); c.func(); c.prop",
         )
         .unwrap();
-        assert_eq!(r, Value::Undefined);
+        assert_eq!(r, Value::String("test262".into()));
     }
 
     #[test]

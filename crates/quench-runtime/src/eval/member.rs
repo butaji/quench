@@ -141,6 +141,9 @@ pub fn eval_class_member(
     prop_name: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    if class.deleted_properties.borrow().contains(prop_name) {
+        return Ok(Value::Undefined);
+    }
     match prop_name {
         "prototype" => {
             let proto = get_class_prototype_cached(class, env)?;
@@ -260,6 +263,9 @@ pub fn eval_class_member(
                 let super_val = crate::eval::expression::eval_expression(super_expr, env, false)?;
                 // Recursively look up on the superclass
                 return eval_member_access(&super_val, prop_name, env);
+            }
+            if let Some(function_proto) = crate::builtins::get_function_prototype() {
+                return eval_object_member(&function_proto, prop_name, None);
             }
             // ES spec §16.1: class constructors have restricted 'caller' and 'arguments'.
             // Only throw if no static member with that name was found.
@@ -457,14 +463,11 @@ fn box_primitive(
     let ctor_val = env
         .borrow()
         .get(ctor_name)
+        .or_else(|| crate::context::get_global_from_context(ctor_name))
         .ok_or_else(|| JsError(format!("{} not found", ctor_name)))?;
     let proto = match &ctor_val {
         Value::Object(o) => o.borrow().get("prototype"),
-        Value::NativeFunction(nf) => nf
-            .prototype
-            .borrow()
-            .as_ref()
-            .map(|p| Value::Object(Rc::clone(p))),
+        Value::NativeFunction(nf) => nf.get_property("prototype"),
         Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
         _ => None,
     };

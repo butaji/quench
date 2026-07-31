@@ -882,7 +882,7 @@ mod tests {
         assert_eq!(format!("{}", obj()), "[object Object]");
         let nf = Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Undefined))));
         assert_eq!(format!("{}", nf), "[Function]");
-        assert_eq!(format!("{}", big(123)), "123n");
+        assert_eq!(format!("{}", big(123)), "123");
     }
 
     #[test]
@@ -975,7 +975,7 @@ mod tests {
         let large = BigInt::from_str("12345678901234567890").unwrap();
         assert_eq!(
             format!("{}", Value::BigInt(Rc::new(large))),
-            "12345678901234567890n"
+            "12345678901234567890"
         );
     }
 

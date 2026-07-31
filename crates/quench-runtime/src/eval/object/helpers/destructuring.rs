@@ -120,12 +120,11 @@ fn array_destructuring_impl(
                     return Err(err);
                 }
             }
-            // Throw to signal: exit the for-of loop without running the body.
-            // V8 does NOT re-evaluate the destructuring on generator.return();
-            // the for-of is effectively "done" since it consumed the iterator
-            // value in the initial iteration and is just waiting for the next.
             crate::value::set_thrown_value(val);
-            return Err(JsError("Return completion".to_string()));
+            crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
+                crate::value::take_thrown_value().unwrap_or(Value::Undefined),
+            ));
+            return Ok(());
         }
         Some(crate::interpreter::ControlFlow::Throw(val)) => {
             if let Ok(iter) = iterator_from_value(value) {
@@ -391,7 +390,9 @@ fn array_with_iterator_impl(
         // .return()/.throw(), or via this same code in a fresh call for
         // normal .next() resume). Closing it now would double-close on
         // .return() resume, producing two iterator.return() calls.
-        if !crate::interpreter::peek_generator_yield() {
+        if crate::interpreter::peek_generator_yield() {
+            crate::eval::iteration::stage_pending_destructuring_iterator(Rc::clone(iterator));
+        } else {
             if let Some(err) = call_iterator_return(iterator) {
                 return Err(err);
             }
@@ -548,7 +549,7 @@ fn take_iterator_step_with_args(
 }
 
 pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsError> {
-    if !crate::interpreter::is_in_async_generator() {
+    if !crate::interpreter::is_in_async_generator() && !crate::interpreter::is_in_async_function() {
         return Ok(result);
     }
     let promise = crate::builtins::promise::promise_resolve_impl_static(
@@ -786,7 +787,6 @@ fn object_destructuring_impl(
                     _ => crate::value::to_js_string(&resumed_key),
                 };
                 excluded.insert(key_str.clone());
-                crate::eval::object::touch_assignment_target(target, env)?;
                 let prop_value =
                     crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
                 if init {
@@ -831,6 +831,14 @@ fn object_destructuring_impl(
         } else {
             let key_str = extract_destructure_key(key, env)?;
             excluded.insert(key_str.clone());
+            if let BindingElement::Default(inner, _) = binding {
+                if let BindingElement::AssignmentTarget(target) = inner.as_ref() {
+                    crate::eval::object::touch_assignment_target(target, env)?;
+                } else {
+                    let target = crate::eval::object::binding_pattern_expression(binding.clone());
+                    crate::eval::object::touch_assignment_target(&target, env)?;
+                }
+            }
             let prop_value = crate::eval::member::eval_object_member(&obj, &key_str, Some(env))?;
             apply(binding, &prop_value)?;
         }
@@ -1124,6 +1132,31 @@ pub fn assign_to_identifier(
 ) -> Result<(), JsError> {
     let value = prepare_identifier_binding_value(name, value, default_expr);
 
+    if let Some(scope) = crate::eval::object::take_destructuring_identifier_reference(name) {
+        if scope.borrow().is_tdz(name) {
+            return Err(JsError(format!(
+                "ReferenceError: Cannot access '{}' before initialization",
+                name
+            )));
+        }
+        if scope.borrow().get_kind(name) == Some(VarKind::Const) {
+            return Err(JsError(format!(
+                "TypeError: Assignment to constant variable '{}'",
+                name
+            )));
+        }
+        if scope.borrow().is_declared_only(name) {
+            scope.borrow_mut().initialize_declared(name, value);
+        } else {
+            scope.borrow_mut().set(
+                name.to_string(),
+                value,
+                crate::interpreter::is_strict_mode(),
+            );
+        }
+        return Ok(());
+    }
+
     if env.borrow().is_tdz(name) {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             &format!(
@@ -1136,17 +1169,23 @@ pub fn assign_to_identifier(
     }
 
     if !env.borrow().has(name) {
+        if let Some(Value::Object(global_obj)) = env.borrow().get("globalThis") {
+            if global_obj.borrow().has_own(name) {
+                global_obj.borrow_mut().set(name, value.clone());
+                return Ok(());
+            }
+        }
         if let Some(result) = env.borrow().set_in_object_env(
             name,
             value.clone(),
             crate::interpreter::is_strict_mode(),
         ) {
             if !result && crate::interpreter::is_strict_mode() {
-                return Err(crate::value::error::create_js_error_with_type(
-                    &format!("Cannot assign to read-only property '{}'.", name),
-                    "TypeError",
-                )
-                .1);
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    &format!("{} is not defined", name),
+                    "ReferenceError",
+                );
+                return Err(js_err);
             }
             return Ok(());
         }
@@ -1308,6 +1347,7 @@ pub fn is_anonymous_function_definition(expr: &Expression) -> bool {
         Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
             true
         }
+        Expression::Parenthesized(inner) => is_anonymous_function_definition(inner),
         Expression::Sequence(exprs) if exprs.len() == 1 => {
             is_anonymous_function_definition(&exprs[0])
         }
@@ -2027,6 +2067,42 @@ mod tests {
     }
 
     #[test]
+    fn destructure_return_closes_iterator_before_returning_generator_value() {
+        let result = eval(
+            "var nextCount = 0; var returnCount = 0; \
+             var iterator = { next: function() { nextCount += 1; return {done: false, value: undefined}; }, \
+             return: function() { returnCount += 1; return {}; } }; \
+             var iterable = {}; iterable[Symbol.iterator] = function() { return iterator; }; \
+             function* g() { var result; result = [ {} = yield ] = iterable; } \
+             var iter = g(); iter.next(); var result = iter.return(777); \
+             [nextCount, returnCount, result.value, result.done]",
+        )
+        .unwrap();
+        let Value::Object(array) = result else {
+            panic!("expected array")
+        };
+        assert_eq!(array.borrow().get("0"), Some(Value::Number(1.0)));
+        assert_eq!(array.borrow().get("1"), Some(Value::Number(1.0)));
+        assert_eq!(array.borrow().get("2"), Some(Value::Number(777.0)));
+        assert_eq!(array.borrow().get("3"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn object_destructure_resumes_computed_target_key() {
+        let result = eval(
+            "var x = {}; var iter = (function*() { var result; \
+             result = { x: x[yield] } = { x: 23 }; })(); \
+             var first = iter.next(); var second = iter.next('prop'); \
+             [first.value, first.done, x.prop, second.value, second.done]",
+        )
+        .unwrap();
+        let Value::Object(array) = result else {
+            panic!("expected array")
+        };
+        assert_eq!(array.borrow().get("2"), Some(Value::Number(23.0)));
+    }
+
+    #[test]
     fn destructure_yield_iterator_return_non_object_throws_typeerror() {
         // Tests IteratorClose throws TypeError when `return` returns non-Object.
         let err = eval(
@@ -2064,8 +2140,8 @@ mod tests {
              var rc1 = iter.return(777); \
              JSON.stringify([nextCount, returnCount, rc1.value, rc1.done])",
         )
-        .unwrap_err();
-        assert!(v.0.contains("Return completion"));
+        .unwrap();
+        assert_eq!(v, Value::String("[1,1,777,true]".into()));
     }
 
     // ─── TDZ + default value destructuring ─────────────────────────────────────
@@ -2121,5 +2197,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(err, Value::String("COMPUTED_KEY_ERR".into()));
+    }
+
+    #[test]
+    fn array_destructure_member_target_evaluates_object_before_key_once() {
+        let result = eval(
+            "var log = []; \
+             function source() { log.push('source'); return [1]; } \
+             function target() { log.push('target'); return { set q(v) { log.push('set'); } }; } \
+             function key() { log.push('key'); return { toString() { log.push('string'); return 'q'; } }; } \
+             ([target()[key()]] = source()); log.join(',');",
+        )
+        .unwrap();
+        assert_eq!(result, Value::String("source,target,key,string,set".into()));
+    }
+
+    #[test]
+    fn destructuring_inferred_class_name_is_configurable() {
+        let result = eval(
+            "var xCls, cls, xCls2; \
+             var vals = []; \
+             [xCls = class x {}, cls = class {}, xCls2 = class { static name() {} }] = vals; \
+             [cls.name, Object.getOwnPropertyDescriptor(cls, 'name').configurable, delete cls.name]",
+        )
+        .unwrap();
+        let Value::Object(array) = result else {
+            panic!("expected array")
+        };
+        assert_eq!(array.borrow().get("0"), Some(Value::String("cls".into())));
+        assert_eq!(array.borrow().get("1"), Some(Value::Boolean(true)));
+        assert_eq!(array.borrow().get("2"), Some(Value::Boolean(true)));
     }
 }

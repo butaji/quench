@@ -295,16 +295,10 @@ fn collect_var_names_from_for_init(init: Option<&ForInit>, names: &mut Vec<Strin
 
 fn collect_var_names_from_expr(expr: &Expression, names: &mut Vec<String>) {
     match expr {
-        Expression::ForIn { variable, body, .. } => {
-            if let Expression::Identifier(name) = variable.as_ref() {
-                names.push(name.clone());
-            }
+        Expression::ForIn { body, .. } => {
             collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
         }
-        Expression::ForOf { variable, body, .. } => {
-            if let Expression::Identifier(name) = variable.as_ref() {
-                names.push(name.clone());
-            }
+        Expression::ForOf { body, .. } => {
             collect_var_names_recursive(std::slice::from_ref(body.as_ref()), names);
         }
         _ => {}

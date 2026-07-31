@@ -10,9 +10,36 @@ use crate::eval::statement::{
 };
 use crate::interpreter::{predeclare_let_const, predeclare_var};
 use crate::value::function::ValueFunction;
-use crate::value::{GetterStorage, JsError, Object, SetterStorage, Value};
+use crate::value::{GetterStorage, JsError, Object, ObjectKind, SetterStorage, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+thread_local! {
+    static DESTRUCTURING_MEMBER_REFERENCE: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
+    static DESTRUCTURING_IDENTIFIER_REFERENCE: RefCell<Option<(String, Rc<RefCell<crate::env::Scope>>)>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn clear_destructuring_member_reference() {
+    DESTRUCTURING_MEMBER_REFERENCE.with(|cell| *cell.borrow_mut() = None);
+}
+
+pub(crate) fn cache_destructuring_identifier_reference(
+    name: &str,
+    scope: Option<Rc<RefCell<crate::env::Scope>>>,
+) {
+    DESTRUCTURING_IDENTIFIER_REFERENCE.with(|cell| {
+        *cell.borrow_mut() = scope.map(|scope| (name.to_string(), scope));
+    });
+}
+
+pub(crate) fn take_destructuring_identifier_reference(
+    name: &str,
+) -> Option<Rc<RefCell<crate::env::Scope>>> {
+    DESTRUCTURING_IDENTIFIER_REFERENCE.with(|cell| {
+        let cached = cell.borrow_mut().take();
+        cached.and_then(|(cached_name, scope)| (cached_name == name).then_some(scope))
+    })
+}
 
 mod helpers;
 pub use helpers::*;
@@ -132,14 +159,8 @@ pub fn eval_callee_with_this(
             if let Expression::Identifier(id) = object.as_ref() {
                 if id == "super" {
                     crate::eval::class::helpers::check_this_access_allowed(env)?;
-                    let super_val =
-                        crate::eval::literal::get_super_value(env).ok_or_else(|| {
-                            JsError(
-                                "ReferenceError: super is only valid in class methods".to_string(),
-                            )
-                        })?;
-                    let prop_name = extract_property_name(property, *computed, env, false)?;
-                    let func = get_member_function(&super_val, &prop_name, env)?;
+                    let func =
+                        crate::eval::call::eval_super_member(property, *computed, env, false)?;
                     let this_val = crate::interpreter::get_this_binding(env);
                     return Ok((func, this_val, false));
                 }
@@ -263,22 +284,21 @@ pub(crate) fn touch_assignment_target(
             Ok(())
         }
         Expression::Identifier(name) => {
-            // Per ES §14.3.3.3 KeyedBindingInitialization step 2: ResolveBinding
-            // must be evaluated BEFORE GetV (step 3). Call eval_identifier to
-            // trigger HasBinding on each environment scope (including Proxy
-            // has traps for `with` scopes). The result is discarded; the real
-            // assignment happens in assign_to_identifier/init_to_identifier.
-            // In sloppy mode, unresolvable references are valid assignment targets
-            // (the PutValue creates a property on the global object).
-            let result = eval_expression(&Expression::Identifier(name.clone()), env, false);
-            if result.is_err() && !crate::interpreter::is_strict_mode() {
-                // In sloppy mode, unresolvable references are valid assignment targets
-                // (the PutValue creates a property on the global object).
-                // Clear any thrown value that was set by create_js_error_with_type.
-                let _ = crate::value::take_thrown_value();
-                return Ok(());
+            let has_object_binding = env
+                .borrow()
+                .scopes
+                .iter()
+                .any(|scope| scope.borrow().is_object_binding());
+            if has_object_binding {
+                let scope = env.borrow().binding_scope(name);
+                if scope.is_none() && crate::interpreter::is_strict_mode() {
+                    return Err(JsError(format!("ReferenceError: {} is not defined", name)));
+                }
+                cache_destructuring_identifier_reference(name, scope);
+            } else {
+                cache_destructuring_identifier_reference(name, None);
+                eval_expression(&Expression::Identifier(name.clone()), env, false)?;
             }
-            result?;
             Ok(())
         }
         Expression::Member {
@@ -286,7 +306,7 @@ pub(crate) fn touch_assignment_target(
             property,
             computed: true,
         } => {
-            touch_assignment_target(object, env)?;
+            let object_value = eval_expression(object, env, false)?;
             // Per ES §13.15.5.3 IteratorDestructuringAssignmentEvaluation step 1,
             // the DestructuringAssignmentTarget evaluation includes evaluating
             // computed property keys. This happens BEFORE IteratorStep (step 2),
@@ -296,7 +316,27 @@ pub(crate) fn touch_assignment_target(
             // the key is already cached — no need to re-evaluate the expression
             // (especially `yield`, which would yield a second time).
             if !crate::interpreter::peek_destructuring_yield_key() {
-                let _key = extract_property_name(property, true, env, false)?;
+                let resume_value = crate::interpreter::peek_generator_resume_value();
+                if !matches!(resume_value, Value::Undefined) {
+                    crate::interpreter::set_destructuring_yield_key(resume_value);
+                    return Ok(());
+                }
+                let key = match property {
+                    PropertyKey::Computed(expression) => eval_expression(expression, env, false)?,
+                    _ => unreachable!(),
+                };
+                if crate::value::generator_replay::is_resuming_pending_yield() {
+                    crate::interpreter::set_destructuring_yield_key(key.clone());
+                }
+                if crate::interpreter::peek_destructuring_yield_key()
+                    || crate::interpreter::peek_generator_yield()
+                {
+                    clear_destructuring_member_reference();
+                } else {
+                    DESTRUCTURING_MEMBER_REFERENCE.with(|cell| {
+                        *cell.borrow_mut() = Some((object_value, key));
+                    });
+                }
             }
             Ok(())
         }
@@ -332,12 +372,21 @@ pub fn assign_to_member(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
-    let prop_name = extract_property_name(property, computed, env, false)?;
+    let cached = DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take());
+    let (prop_name, cached_object) = match cached {
+        Some((object, key)) => {
+            let name = match key {
+                Value::Symbol(symbol) => symbol.property_key(),
+                value => crate::value::to_js_string(&value),
+            };
+            (name, Some(object))
+        }
+        None => (extract_property_name(property, computed, env, false)?, None),
+    };
 
     if let Expression::Identifier(id) = object {
         if id == "super" {
-            let this_val =
-                eval_expression(&Expression::Identifier("this".to_string()), env, false)?;
+            let this_val = crate::interpreter::get_this_binding(env);
             if let Value::Object(o) = this_val {
                 return assign_to_object(&o, &prop_name, value, env);
             }
@@ -352,51 +401,57 @@ pub fn assign_to_member(
     }
 
     // Handle chained member: e.g. assert.deepEqual._compare = ...
-    if let Expression::Member {
-        object: parent_obj,
-        property: parent_prop,
-        computed: parent_computed,
-    } = object
-    {
-        let parent_prop_name = extract_property_name(parent_prop, *parent_computed, env, false)?;
-        let parent_val = eval_expression(parent_obj, env, false)?;
+    if cached_object.is_none() {
+        if let Expression::Member {
+            object: parent_obj,
+            property: parent_prop,
+            computed: parent_computed,
+        } = object
+        {
+            let parent_prop_name =
+                extract_property_name(parent_prop, *parent_computed, env, false)?;
+            let parent_val = eval_expression(parent_obj, env, false)?;
 
-        // Value::Object parent: read, modify function property, write back.
-        if let Value::Object(ref parent_o) = parent_val {
-            let func_opt = {
-                let parent_read = parent_o.borrow();
-                parent_read.properties.get(&parent_prop_name).cloned()
-            };
-            if let Some(Value::Function(func)) = func_opt {
-                let func = func;
-                func.set_property(&prop_name, value.clone())?;
-                parent_o
-                    .borrow_mut()
-                    .properties
-                    .insert(parent_prop_name, Value::Function(func));
-                return Ok(());
+            // Value::Object parent: read, modify function property, write back.
+            if let Value::Object(ref parent_o) = parent_val {
+                let func_opt = {
+                    let parent_read = parent_o.borrow();
+                    parent_read.properties.get(&parent_prop_name).cloned()
+                };
+                if let Some(Value::Function(func)) = func_opt {
+                    let func = func;
+                    func.set_property(&prop_name, value.clone())?;
+                    parent_o
+                        .borrow_mut()
+                        .properties
+                        .insert(parent_prop_name, Value::Function(func));
+                    return Ok(());
+                }
             }
-        }
 
-        // NativeFunction parent: clone property, modify, write back via set_property.
-        if let Value::NativeFunction(ref nf) = parent_val {
-            let prop_opt = nf.get_property(&parent_prop_name);
-            if let Some(Value::Function(func)) = prop_opt {
-                let func = func;
-                func.set_property(&prop_name, value.clone())?;
-                let _ = nf.set_property(&parent_prop_name, Value::Function(func));
-                return Ok(());
-            }
-            // Nested NativeFunction property: clone inner, modify, write both.
-            if let Some(Value::NativeFunction(inner_nf)) = nf.get_property(&parent_prop_name) {
-                let _ = inner_nf.set_property(&prop_name, value.clone());
-                let _ = nf.set_property(&parent_prop_name, Value::NativeFunction(inner_nf));
-                return Ok(());
+            // NativeFunction parent: clone property, modify, write back via set_property.
+            if let Value::NativeFunction(ref nf) = parent_val {
+                let prop_opt = nf.get_property(&parent_prop_name);
+                if let Some(Value::Function(func)) = prop_opt {
+                    let func = func;
+                    func.set_property(&prop_name, value.clone())?;
+                    let _ = nf.set_property(&parent_prop_name, Value::Function(func));
+                    return Ok(());
+                }
+                // Nested NativeFunction property: clone inner, modify, write both.
+                if let Some(Value::NativeFunction(inner_nf)) = nf.get_property(&parent_prop_name) {
+                    let _ = inner_nf.set_property(&prop_name, value.clone());
+                    let _ = nf.set_property(&parent_prop_name, Value::NativeFunction(inner_nf));
+                    return Ok(());
+                }
             }
         }
     }
 
-    let obj_val = eval_expression(object, env, false)?;
+    let obj_val = match cached_object {
+        Some(object) => object,
+        None => eval_expression(object, env, false)?,
+    };
 
     if crate::value::is_private_name_key(&prop_name)
         && !matches!(obj_val, Value::Object(_) | Value::Class(_))
@@ -451,6 +506,23 @@ pub fn assign_to_member(
         _ => Err(JsError(format!(
             "Cannot assign to property of non-object, got {:?}",
             obj_val
+        ))),
+    }
+}
+
+pub fn assign_to_member_value(
+    object: &Value,
+    property: &str,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    match object {
+        Value::Object(o) => assign_to_object(o, property, value, env),
+        Value::Function(f) => assign_to_function(f, property, value.clone()),
+        Value::Class(c) => c.set_static_field(property, value.clone()),
+        _ => Err(JsError(format!(
+            "Cannot assign to property of non-object, got {:?}",
+            object
         ))),
     }
 }
@@ -527,6 +599,57 @@ pub(crate) fn assign_to_object(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    if o.borrow().kind == ObjectKind::ModuleNamespace {
+        if crate::interpreter::is_strict_mode() {
+            let (_, error) = crate::value::error::create_js_error_with_type(
+                "Cannot assign to module namespace property",
+                "TypeError",
+            );
+            return Err(error);
+        }
+        return Ok(());
+    }
+    if matches!(
+        o.borrow().data,
+        crate::value::object::helpers::ObjData::Args { .. }
+    ) {
+        if let Some(flags) = o.borrow().get_descriptor(prop_name) {
+            if !flags.writable {
+                if crate::interpreter::is_strict_mode() {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        "Cannot assign to read-only property",
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
+                return Ok(());
+            }
+        }
+        let setter = { o.borrow().get_setter(prop_name).cloned() };
+        if let Some(setter) = setter {
+            call_setter(o, &setter, value.clone(), env)?;
+            return Ok(());
+        }
+    }
+    let has_accessor = {
+        let object = o.borrow();
+        object.get_getter(prop_name).is_some() || object.get_setter(prop_name).is_some()
+    };
+    if has_accessor {
+        let setter = { o.borrow().get_setter(prop_name).cloned() };
+        if let Some(setter) = setter {
+            call_setter(o, &setter, value.clone(), env)?;
+            return Ok(());
+        }
+        if crate::interpreter::is_strict_mode() {
+            let (_, error) = crate::value::error::create_js_error_with_type(
+                "Cannot set property without a setter",
+                "TypeError",
+            );
+            return Err(error);
+        }
+        return Ok(());
+    }
     if !crate::value::is_private_name_key(prop_name) {
         let own_flags = { o.borrow().get_descriptor(prop_name) };
         if let Some(flags) = own_flags {
@@ -610,7 +733,7 @@ pub(crate) fn assign_to_object(
 
     if crate::value::is_private_name_key(prop_name) {
         let target = private_field_object(o);
-        return assign_private_name(&target, prop_name, value);
+        return assign_private_name(&target, prop_name, value, env);
     }
 
     // Strict mode checks.
@@ -688,6 +811,7 @@ fn assign_private_name(
     o: &Rc<RefCell<Object>>,
     prop_name: &str,
     value: &Value,
+    env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let obj_ref = o.borrow();
     let has_field = obj_ref.properties.contains_key(prop_name);
@@ -695,6 +819,7 @@ fn assign_private_name(
         has_field && matches!(obj_ref.properties.get(prop_name), Some(Value::Function(_)));
     let has_getter = obj_ref.getters.contains_key(prop_name);
     let has_setter = obj_ref.setters.contains_key(prop_name);
+    let extensible = obj_ref.extensible;
 
     if !has_field && !has_getter && !has_setter {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -717,7 +842,15 @@ fn assign_private_name(
         );
         return Err(js_err);
     }
-    if !obj_ref.extensible && !has_field {
+    if has_setter {
+        let setter = obj_ref.get_setter(prop_name).cloned();
+        if let Some(setter) = setter {
+            drop(obj_ref);
+            call_setter(o, &setter, value.clone(), env)?;
+            return Ok(());
+        }
+    }
+    if !extensible && !has_field {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "Cannot add private field to non-extensible object",
             "TypeError",
@@ -745,7 +878,7 @@ fn assign_to_function(
         crate::value::set_thrown_value(err);
         return Err(js_err);
     }
-    if f.get_property(prop_name).is_some() && (prop_name == "length" || prop_name == "name") {
+    if (prop_name == "length" || prop_name == "name") && !f.is_property_deleted(prop_name) {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot assign to read only property",

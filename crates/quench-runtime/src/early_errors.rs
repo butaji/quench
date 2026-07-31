@@ -10,7 +10,7 @@
 use crate::value::JsError;
 use oxc::ast::ast::{self, ForStatementLeft};
 use oxc::ast_visit::Visit;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Check all early errors on the OXC program before lowering.
 /// Called from `parser.rs` after parsing.
@@ -26,7 +26,424 @@ pub fn check_early_errors(program: &ast::Program) -> Result<(), JsError> {
         check_fn_params_in_stmt(stmt)?;
     }
     check_nested_function_strict_errors(program, strict)?;
+    check_class_name_errors(program)?;
+    let mut strict_function_names = StrictFunctionNameChecker(false);
+    strict_function_names.visit_program(program);
+    if strict_function_names.0 {
+        return Err(JsError(
+            "SyntaxError: eval or arguments is not allowed as a strict function name".into(),
+        ));
+    }
+    let mut generator_params = GeneratorParameterChecker(false);
+    generator_params.visit_program(program);
+    if generator_params.0 {
+        return Err(JsError(
+            "SyntaxError: yield is not allowed in generator parameters".into(),
+        ));
+    }
+    let mut proto_properties = DuplicateProtoPropertyChecker(false);
+    proto_properties.visit_program(program);
+    if proto_properties.0 {
+        return Err(JsError(
+            "SyntaxError: duplicate __proto__ data properties".into(),
+        ));
+    }
+    check_duplicate_private_names(program)?;
+    check_delete_private_names(program)?;
+    check_async_arrow_param_awaits(program)?;
+    if strict {
+        let mut checker = StrictAssignmentChecker(false);
+        checker.visit_program(program);
+        if checker.0 {
+            return Err(JsError(
+                "SyntaxError: invalid strict assignment target".into(),
+            ));
+        }
+        let mut checker = StrictDeleteIdentifierChecker(false);
+        checker.visit_program(program);
+        if checker.0 {
+            return Err(JsError(
+                "SyntaxError: delete of an identifier in strict mode".into(),
+            ));
+        }
+    }
+    let mut reserved_assignments = StrictReservedAssignmentChecker {
+        strict: false,
+        error: false,
+    };
+    reserved_assignments.visit_program(program);
+    if reserved_assignments.error {
+        return Err(JsError(
+            "SyntaxError: assignment to a strict-mode reserved word".into(),
+        ));
+    }
     Ok(())
+}
+
+struct StrictDeleteIdentifierChecker(bool);
+
+impl<'a> Visit<'a> for StrictDeleteIdentifierChecker {
+    fn visit_unary_expression(&mut self, expression: &ast::UnaryExpression<'a>) {
+        if expression.operator == oxc::syntax::operator::UnaryOperator::Delete
+            && expression.argument.is_identifier_reference()
+        {
+            self.0 = true;
+        }
+        if !self.0 {
+            self.visit_expression(&expression.argument);
+        }
+    }
+}
+
+struct DeletePrivateNameChecker {
+    error: Option<JsError>,
+}
+
+impl<'a> Visit<'a> for DeletePrivateNameChecker {
+    fn visit_unary_expression(&mut self, expression: &ast::UnaryExpression<'a>) {
+        if self.error.is_none()
+            && expression.operator == oxc::syntax::operator::UnaryOperator::Delete
+            && is_private_delete_target(&expression.argument)
+        {
+            self.error = Some(JsError(
+                "SyntaxError: delete of a private field is not allowed".into(),
+            ));
+            return;
+        }
+        self.visit_expression(&expression.argument);
+    }
+}
+
+fn is_private_delete_target(expression: &ast::Expression<'_>) -> bool {
+    match expression {
+        ast::Expression::PrivateFieldExpression(_) => true,
+        ast::Expression::CallExpression(call) => {
+            matches!(&call.callee, ast::Expression::PrivateFieldExpression(_))
+        }
+        ast::Expression::ParenthesizedExpression(expression) => {
+            is_private_delete_target(&expression.expression)
+        }
+        _ => false,
+    }
+}
+
+fn check_delete_private_names(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = DeletePrivateNameChecker { error: None };
+    checker.visit_program(program);
+    checker.error.map_or(Ok(()), Err)
+}
+
+fn check_class_name_errors(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = ClassNameChecker { error: None };
+    checker.visit_program(program);
+    checker.error.map_or(Ok(()), Err)
+}
+
+struct ClassNameChecker {
+    error: Option<JsError>,
+}
+
+struct StrictFunctionNameChecker(bool);
+
+impl<'a> Visit<'a> for StrictFunctionNameChecker {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        let strict = function.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|d| d.expression.value == "use strict")
+        });
+        let bad_name = function
+            .id
+            .as_ref()
+            .is_some_and(|id| matches!(id.name.as_str(), "eval" | "arguments"));
+        let bad_parameter = function.params.items.iter().any(|parameter| {
+            matches!(&parameter.pattern, ast::BindingPattern::BindingIdentifier(id) if matches!(id.name.as_str(), "eval" | "arguments"))
+        });
+        if strict && (bad_name || bad_parameter) {
+            self.0 = true;
+        }
+        if !self.0 {
+            if let Some(body) = &function.body {
+                self.visit_function_body(body);
+            }
+        }
+    }
+}
+
+struct GeneratorParameterChecker(bool);
+
+impl<'a> Visit<'a> for GeneratorParameterChecker {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        if function.generator
+            && function.params.items.iter().any(|parameter| {
+                parameter
+                    .initializer
+                    .as_ref()
+                    .is_some_and(|init| contains_yield_name(init))
+            })
+        {
+            self.0 = true;
+        }
+        if !self.0 {
+            if let Some(body) = &function.body {
+                self.visit_function_body(body);
+            }
+        }
+    }
+}
+
+struct DuplicateProtoPropertyChecker(bool);
+
+impl<'a> Visit<'a> for DuplicateProtoPropertyChecker {
+    fn visit_object_expression(&mut self, object: &ast::ObjectExpression<'a>) {
+        let mut count = 0;
+        for property in &object.properties {
+            if let ast::ObjectPropertyKind::ObjectProperty(property) = property {
+                if property.kind == ast::PropertyKind::Init
+                    && !property.computed
+                    && property_key_is_proto(&property.key)
+                {
+                    count += 1;
+                }
+            }
+            if count > 1 {
+                self.0 = true;
+                return;
+            }
+            self.visit_object_property_kind(property);
+        }
+    }
+}
+
+fn property_key_is_proto(key: &ast::PropertyKey<'_>) -> bool {
+    match key {
+        ast::PropertyKey::StaticIdentifier(identifier) => identifier.name == "__proto__",
+        ast::PropertyKey::StringLiteral(string) => string.value == "__proto__",
+        _ => false,
+    }
+}
+
+struct ArgumentsFinder(bool);
+
+impl<'a> Visit<'a> for ArgumentsFinder {
+    fn visit_identifier_reference(&mut self, identifier: &ast::IdentifierReference<'a>) {
+        if identifier.name == "arguments" {
+            self.0 = true;
+        }
+    }
+
+    fn visit_function(
+        &mut self,
+        _function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+    }
+}
+
+fn contains_arguments(expression: &ast::Expression<'_>) -> bool {
+    let mut finder = ArgumentsFinder(false);
+    finder.visit_expression(expression);
+    finder.0
+}
+
+struct SuperCallFinder(bool);
+
+impl<'a> Visit<'a> for SuperCallFinder {
+    fn visit_call_expression(&mut self, call: &ast::CallExpression<'a>) {
+        if matches!(&call.callee, ast::Expression::Super(_)) {
+            self.0 = true;
+        }
+        if !self.0 {
+            self.visit_expression(&call.callee);
+            for argument in &call.arguments {
+                self.visit_argument(argument);
+            }
+        }
+    }
+}
+
+fn contains_super_call(expression: &ast::Expression<'_>) -> bool {
+    let mut finder = SuperCallFinder(false);
+    finder.visit_expression(expression);
+    finder.0
+}
+
+struct DirectSuperCallFinder(bool);
+
+impl<'a> Visit<'a> for DirectSuperCallFinder {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        if let Some(body) = &function.body {
+            for statement in &body.statements {
+                self.visit_statement(statement);
+            }
+        }
+    }
+
+    fn visit_call_expression(&mut self, call: &ast::CallExpression<'a>) {
+        if matches!(&call.callee, ast::Expression::Super(_)) {
+            self.0 = true;
+        }
+        if !self.0 {
+            self.visit_expression(&call.callee);
+            for argument in &call.arguments {
+                self.visit_argument(argument);
+            }
+        }
+    }
+}
+
+fn contains_direct_super_call(function: &ast::Function<'_>) -> bool {
+    let mut finder = DirectSuperCallFinder(false);
+    finder.visit_function(function, oxc::syntax::scope::ScopeFlags::empty());
+    finder.0
+}
+
+impl<'a> Visit<'a> for ClassNameChecker {
+    fn visit_class(&mut self, class: &ast::Class<'a>) {
+        if self.error.is_none()
+            && class.id.as_ref().is_some_and(|id| {
+                matches!(
+                    id.name.as_str(),
+                    "implements"
+                        | "interface"
+                        | "let"
+                        | "package"
+                        | "private"
+                        | "protected"
+                        | "public"
+                        | "static"
+                        | "yield"
+                )
+            })
+        {
+            self.error = Some(JsError("SyntaxError: invalid class name".into()));
+            return;
+        }
+        let mut constructors = 0;
+        for element in &class.body.body {
+            if matches!(
+                element,
+                ast::ClassElement::MethodDefinition(method)
+                    if method.kind == ast::MethodDefinitionKind::Constructor
+            ) {
+                constructors += 1;
+                if constructors > 1 {
+                    self.error = Some(JsError("SyntaxError: duplicate class constructor".into()));
+                    return;
+                }
+            }
+            if let ast::ClassElement::PropertyDefinition(property) = element {
+                if property.value.as_ref().is_some_and(contains_arguments) {
+                    self.error = Some(JsError(
+                        "SyntaxError: arguments is not allowed in a class field initializer".into(),
+                    ));
+                    return;
+                }
+                if property.value.as_ref().is_some_and(contains_super_call) {
+                    self.error = Some(JsError(
+                        "SyntaxError: super() is not allowed in a class field initializer".into(),
+                    ));
+                    return;
+                }
+            }
+            if let ast::ClassElement::MethodDefinition(method) = element {
+                if method.value.params.items.iter().any(|param| {
+                    param
+                        .initializer
+                        .as_ref()
+                        .is_some_and(|init| contains_yield_name(init))
+                }) {
+                    self.error = Some(JsError(
+                        "SyntaxError: yield not allowed in class method parameters".into(),
+                    ));
+                    return;
+                }
+                if method.kind == ast::MethodDefinitionKind::Constructor
+                    && class.super_class.is_none()
+                    && contains_direct_super_call(&method.value)
+                {
+                    self.error = Some(JsError(
+                        "SyntaxError: super() in a base class constructor".into(),
+                    ));
+                    return;
+                }
+                if method.kind != ast::MethodDefinitionKind::Constructor
+                    && contains_direct_super_call(&method.value)
+                {
+                    self.error = Some(JsError(
+                        "SyntaxError: super() is not allowed in a non-constructor method".into(),
+                    ));
+                    return;
+                }
+            }
+            self.visit_class_element(element);
+        }
+    }
+}
+
+fn private_name(key: &ast::PropertyKey<'_>) -> Option<String> {
+    match key {
+        ast::PropertyKey::PrivateIdentifier(identifier) => Some(identifier.name.to_string()),
+        _ => None,
+    }
+}
+
+struct DuplicatePrivateNameChecker {
+    error: Option<JsError>,
+}
+
+impl<'a> Visit<'a> for DuplicatePrivateNameChecker {
+    fn visit_class(&mut self, class: &ast::Class<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        let mut names = HashMap::new();
+        for element in &class.body.body {
+            let (key, kind) = match element {
+                ast::ClassElement::MethodDefinition(method) => {
+                    let kind = match method.kind {
+                        ast::MethodDefinitionKind::Get => 4,
+                        ast::MethodDefinitionKind::Set => 8,
+                        _ => 1,
+                    };
+                    (Some(&method.key), kind)
+                }
+                ast::ClassElement::PropertyDefinition(property) => (Some(&property.key), 2),
+                ast::ClassElement::AccessorProperty(property) => (Some(&property.key), 2),
+                _ => (None, 0),
+            };
+            if let Some(name) = key.and_then(private_name) {
+                let previous = names.get(&name).copied().unwrap_or(0);
+                let combined = previous | kind;
+                if previous != 0 && combined != 12 {
+                    self.error = Some(JsError(
+                        "SyntaxError: duplicate private name in class body".into(),
+                    ));
+                    return;
+                }
+                names.insert(name, combined);
+            }
+            self.visit_class_element(element);
+        }
+    }
+}
+
+fn check_duplicate_private_names(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = DuplicatePrivateNameChecker { error: None };
+    checker.visit_program(program);
+    checker.error.map_or(Ok(()), Err)
 }
 
 fn check_nested_function_strict_errors(
@@ -52,6 +469,10 @@ struct NestedStrictFnChecker {
 impl<'a> Visit<'a> for NestedStrictFnChecker {
     fn visit_function(&mut self, func: &ast::Function<'a>, _flags: oxc::syntax::scope::ScopeFlags) {
         if self.error.is_some() {
+            return;
+        }
+        if let Err(err) = check_async_generator_params(func.r#async, func.generator, &func.params) {
+            self.error = Some(err);
             return;
         }
         if let Some(body) = &func.body {
@@ -119,6 +540,12 @@ fn check_strict_function_body(
 
 fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
     match stmt {
+        ast::Statement::BlockStatement(block) => {
+            check_block_lexical_errors(&block.body)?;
+            for statement in &block.body {
+                check_stmt(statement, strict)?;
+            }
+        }
         ast::Statement::ForOfStatement(for_of) => {
             check_for_of_declaration_errors(for_of, strict)?;
             check_for_of_body_errors(for_of)?;
@@ -152,6 +579,7 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             }
         }
         ast::Statement::ForInStatement(for_in) => {
+            check_for_in_declaration_errors(for_in)?;
             check_no_fn_decl_in_stmt(&for_in.body)?;
             walk_inner_statements_for_fn_params(&for_in.body, strict)?;
             // BoundNames of ForDeclaration cannot contain "let" (§13.7.5.1).
@@ -250,6 +678,45 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             walk_inner_statements_for_fn_params(&with_stmt.body, strict)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn check_block_lexical_errors(statements: &[ast::Statement]) -> Result<(), JsError> {
+    let mut names = std::collections::HashSet::new();
+    let mut var_names = std::collections::HashSet::new();
+    for statement in statements {
+        var_names.extend(collect_var_declared(statement));
+        let declared = match statement {
+            ast::Statement::VariableDeclaration(var_decl) if var_decl.kind.is_var() => Vec::new(),
+            ast::Statement::VariableDeclaration(var_decl) if !var_decl.kind.is_var() => {
+                collect_bound_names(var_decl)
+            }
+            ast::Statement::FunctionDeclaration(function) => function
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            ast::Statement::ClassDeclaration(class_decl) => class_decl
+                .id
+                .as_ref()
+                .map(|id| vec![id.name.to_string()])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for name in declared {
+            if !names.insert(name.clone()) {
+                return Err(JsError(format!(
+                    "SyntaxError: Duplicate lexical declaration '{}'",
+                    name
+                )));
+            }
+        }
+    }
+    if names.iter().any(|name| var_names.contains(name)) {
+        return Err(JsError(
+            "SyntaxError: lexical declaration conflicts with var".into(),
+        ));
     }
     Ok(())
 }
@@ -422,6 +889,9 @@ fn check_fn_params_in_stmt(stmt: &ast::Statement) -> Result<(), JsError> {
         // ES2025 §15.5.1: yield in generator parameter defaults is SyntaxError.
         if func.generator {
             check_generator_params_no_yield(&func.params)?;
+            if let Some(body) = &func.body {
+                check_generator_body_no_yield_in_arrow_defaults(body)?;
+            }
         }
     }
     Ok(())
@@ -433,6 +903,71 @@ impl<'a> oxc::ast_visit::Visit<'a> for YieldFinder {
     fn visit_yield_expression(&mut self, _expr: &ast::YieldExpression<'a>) {
         self.0 = true;
     }
+}
+
+struct YieldNameFinder(bool);
+
+impl<'a> Visit<'a> for YieldNameFinder {
+    fn visit_identifier_reference(&mut self, identifier: &ast::IdentifierReference<'a>) {
+        self.0 |= identifier.name == "yield";
+    }
+
+    fn visit_yield_expression(&mut self, _expression: &ast::YieldExpression<'a>) {
+        self.0 = true;
+    }
+}
+
+fn contains_yield_name(expression: &ast::Expression<'_>) -> bool {
+    let mut finder = YieldNameFinder(false);
+    finder.visit_expression(expression);
+    finder.0
+}
+
+struct AwaitFinder(bool);
+
+impl<'a> Visit<'a> for AwaitFinder {
+    fn visit_await_expression(&mut self, _expr: &ast::AwaitExpression<'a>) {
+        self.0 = true;
+    }
+}
+
+struct AsyncArrowParamAwaitChecker {
+    async_context: bool,
+    error: bool,
+}
+
+impl<'a> Visit<'a> for AsyncArrowParamAwaitChecker {
+    fn visit_arrow_function_expression(&mut self, arrow: &ast::ArrowFunctionExpression<'a>) {
+        if self.async_context || arrow.r#async {
+            for param in &arrow.params.items {
+                if let Some(init) = &param.initializer {
+                    let mut finder = AwaitFinder(false);
+                    finder.visit_expression(init);
+                    self.error |= finder.0;
+                }
+            }
+        }
+        let previous = self.async_context;
+        self.async_context |= arrow.r#async;
+        for stmt in &arrow.body.statements {
+            self.visit_statement(stmt);
+        }
+        self.async_context = previous;
+    }
+}
+
+fn check_async_arrow_param_awaits(program: &ast::Program) -> Result<(), JsError> {
+    let mut checker = AsyncArrowParamAwaitChecker {
+        async_context: false,
+        error: false,
+    };
+    checker.visit_program(program);
+    if checker.error {
+        return Err(JsError(
+            "SyntaxError: await in async arrow parameter default".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// `yield` in a generator function parameter default expression is a SyntaxError.
@@ -447,6 +982,62 @@ fn check_generator_params_no_yield(params: &ast::FormalParameters) -> Result<(),
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn check_async_generator_params(
+    is_async: bool,
+    is_generator: bool,
+    params: &ast::FormalParameters,
+) -> Result<(), JsError> {
+    if !is_async || !is_generator {
+        return Ok(());
+    }
+    for param in &params.items {
+        if let Some(init) = &param.initializer {
+            let mut await_finder = AwaitFinder(false);
+            await_finder.visit_expression(init);
+            let mut yield_finder = YieldFinder(false);
+            yield_finder.visit_expression(init);
+            if await_finder.0 || yield_finder.0 {
+                return Err(JsError(
+                    "SyntaxError: await or yield not allowed in async generator parameters".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+struct GeneratorArrowParamYieldChecker(bool);
+
+impl<'a> oxc::ast_visit::Visit<'a> for GeneratorArrowParamYieldChecker {
+    fn visit_arrow_function_expression(&mut self, arrow: &ast::ArrowFunctionExpression<'a>) {
+        for param in &arrow.params.items {
+            if let Some(init) = &param.initializer {
+                let mut finder = YieldFinder(false);
+                finder.visit_expression(init);
+                self.0 |= finder.0;
+            }
+        }
+        for stmt in &arrow.body.statements {
+            self.visit_statement(stmt);
+        }
+    }
+}
+
+fn check_generator_body_no_yield_in_arrow_defaults(
+    body: &ast::FunctionBody,
+) -> Result<(), JsError> {
+    let mut checker = GeneratorArrowParamYieldChecker(false);
+    for stmt in &body.statements {
+        checker.visit_statement(stmt);
+    }
+    if checker.0 {
+        return Err(JsError(
+            "SyntaxError: yield not allowed in arrow parameter default".into(),
+        ));
     }
     Ok(())
 }
@@ -663,6 +1254,26 @@ fn check_for_of_declaration_errors(
     Ok(())
 }
 
+fn check_for_in_declaration_errors(for_in: &ast::ForInStatement) -> Result<(), JsError> {
+    let ForStatementLeft::VariableDeclaration(var_decl) = &for_in.left else {
+        return Ok(());
+    };
+    if var_decl.kind.is_var() {
+        return Ok(());
+    }
+    if var_decl.declarations.len() != 1 {
+        return Err(JsError(
+            "SyntaxError: for-in ForDeclaration must have one binding".into(),
+        ));
+    }
+    if var_decl.declarations.iter().any(|decl| decl.init.is_some()) {
+        return Err(JsError(
+            "SyntaxError: for-in ForDeclaration may not have an initializer".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Check strict-mode binding identifiers in a ForStatementLeft that is not a
 /// VariableDeclaration (e.g., ObjectAssignmentTarget, ArrayAssignmentTarget).
 fn check_for_of_lhs_strict_binding(left: &ast::ForStatementLeft) -> Result<(), JsError> {
@@ -706,16 +1317,162 @@ fn check_assignment_target_inner(
     target: &ast::AssignmentTargetMaybeDefault,
 ) -> Result<(), JsError> {
     if let Some(assignment_target) = target.as_assignment_target() {
-        if let ast::AssignmentTarget::AssignmentTargetIdentifier(ident) = assignment_target {
-            if ident.name == "eval" || ident.name == "arguments" {
-                return Err(JsError(format!(
-                    "SyntaxError: Unexpected strict mode reserved word '{}'",
-                    ident.name
-                )));
+        match assignment_target {
+            ast::AssignmentTarget::AssignmentTargetIdentifier(ident) => {
+                if ident.name == "eval" || ident.name == "arguments" {
+                    return Err(JsError(format!(
+                        "SyntaxError: Unexpected strict mode reserved word '{}'",
+                        ident.name
+                    )));
+                }
             }
+            ast::AssignmentTarget::ArrayAssignmentTarget(array) => {
+                for element in array.elements.iter().flatten() {
+                    check_assignment_target_inner(element)?;
+                }
+            }
+            ast::AssignmentTarget::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(id) => {
+                            if id.binding.name == "eval" || id.binding.name == "arguments" {
+                                return Err(JsError(
+                                    "SyntaxError: invalid strict assignment target".into(),
+                                ));
+                            }
+                        }
+                        ast::AssignmentTargetProperty::AssignmentTargetPropertyProperty(p) => {
+                            check_assignment_target_inner(&p.binding)?;
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
+}
+
+fn check_assignment_target_value(target: &ast::AssignmentTarget) -> Result<(), JsError> {
+    match target {
+        ast::AssignmentTarget::AssignmentTargetIdentifier(ident) => {
+            if ident.name == "eval" || ident.name == "arguments" {
+                return Err(JsError(
+                    "SyntaxError: invalid strict assignment target".into(),
+                ));
+            }
+        }
+        ast::AssignmentTarget::ArrayAssignmentTarget(array) => {
+            for element in array.elements.iter().flatten() {
+                check_assignment_target_inner(element)?;
+            }
+        }
+        ast::AssignmentTarget::ObjectAssignmentTarget(object) => {
+            for property in &object.properties {
+                if let ast::AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(id) =
+                    property
+                {
+                    if id.binding.name == "eval" || id.binding.name == "arguments" {
+                        return Err(JsError(
+                            "SyntaxError: invalid strict assignment target".into(),
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+struct StrictAssignmentChecker(bool);
+
+impl<'a> Visit<'a> for StrictAssignmentChecker {
+    fn visit_assignment_expression(&mut self, expr: &ast::AssignmentExpression<'a>) {
+        if check_assignment_target_value(&expr.left).is_err() {
+            self.0 = true;
+        }
+    }
+}
+
+struct StrictReservedAssignmentChecker {
+    strict: bool,
+    error: bool,
+}
+
+impl<'a> Visit<'a> for StrictReservedAssignmentChecker {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        let previous = self.strict;
+        self.strict = function.body.as_ref().is_some_and(|body| {
+            body.directives
+                .iter()
+                .any(|directive| directive.expression.value == "use strict")
+        });
+        if let Some(body) = &function.body {
+            self.visit_function_body(body);
+        }
+        self.strict = previous;
+    }
+
+    fn visit_assignment_expression(&mut self, expression: &ast::AssignmentExpression<'a>) {
+        if self.strict && assignment_target_is_reserved(&expression.left) {
+            self.error = true;
+        }
+        self.visit_expression(&expression.right);
+    }
+
+    fn visit_object_expression(&mut self, object: &ast::ObjectExpression<'a>) {
+        for property in &object.properties {
+            if self.strict {
+                if let ast::ObjectPropertyKind::ObjectProperty(property) = property {
+                    if property.shorthand && property_key_is_reserved(&property.key) {
+                        self.error = true;
+                    }
+                }
+            }
+            self.visit_object_property_kind(property);
+        }
+    }
+}
+
+fn assignment_target_is_reserved(target: &ast::AssignmentTarget) -> bool {
+    let ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+        return false;
+    };
+    matches!(
+        identifier.name.as_str(),
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+    )
+}
+
+fn property_key_is_reserved(key: &ast::PropertyKey<'_>) -> bool {
+    let ast::PropertyKey::StaticIdentifier(identifier) = key else {
+        return false;
+    };
+    matches!(
+        identifier.name.as_str(),
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+    )
 }
 
 /// Walk a BindingPattern looking for rest elements with default values.
@@ -1352,6 +2109,25 @@ impl<'a> Visit<'a> for SuperChecker {
         self.in_class_body = prev;
     }
 
+    fn visit_object_expression(&mut self, object: &ast::ObjectExpression<'a>) {
+        for property in &object.properties {
+            let ast::ObjectPropertyKind::ObjectProperty(property) = property else {
+                self.visit_object_property_kind(property);
+                continue;
+            };
+            self.visit_property_key(&property.key);
+            let method = property.method
+                || matches!(
+                    property.kind,
+                    ast::PropertyKind::Get | ast::PropertyKind::Set
+                );
+            let previous = self.in_class_body;
+            self.in_class_body = method;
+            self.visit_expression(&property.value);
+            self.in_class_body = previous;
+        }
+    }
+
     fn visit_static_block(&mut self, block: &ast::StaticBlock<'a>) {
         if self.error.is_some() {
             return;
@@ -1386,6 +2162,28 @@ struct PrivateNameChecker {
 }
 
 impl<'a> Visit<'a> for PrivateNameChecker {
+    fn visit_private_in_expression(&mut self, expr: &ast::PrivateInExpression<'a>) {
+        if matches!(&expr.right, ast::Expression::Identifier(identifier) if identifier.name == "yield")
+        {
+            self.error = Some(JsError("SyntaxError: yield is not allowed here".into()));
+            return;
+        }
+        if self.error.is_none()
+            && !self
+                .declared
+                .iter()
+                .rev()
+                .any(|names| names.contains(expr.left.name.as_str()))
+        {
+            self.error = Some(JsError(format!(
+                "SyntaxError: Private field '#{}' must be declared in an enclosing class",
+                expr.left.name
+            )));
+            return;
+        }
+        self.visit_expression(&expr.right);
+    }
+
     fn visit_private_field_expression(&mut self, expr: &ast::PrivateFieldExpression<'a>) {
         if self.error.is_some() {
             return;
@@ -1444,6 +2242,22 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_parameters_reject_await_and_yield() {
+        let allocator = Allocator::default();
+        let source_type = SourceType::default().with_script(true);
+        for source in [
+            "(async function*(x = await 1) {});",
+            "(async function*(x = yield) {});",
+        ] {
+            let parsed = Parser::new(&allocator, source, source_type).parse();
+            assert!(
+                check_early_errors(&parsed.program).is_err(),
+                "accepted invalid async generator parameters: {source}"
+            );
+        }
+    }
+
+    #[test]
     fn for_of_const_init_is_error() {
         let s = "for (const x = 1 of []) {}";
         let source_type = SourceType::default().with_script(true).with_jsx(true);
@@ -1454,6 +2268,54 @@ mod tests {
         }
         let result = check_for_of_early_errors(&ret.program);
         assert!(result.is_err(), "Expected SyntaxError");
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn for_in_let_init_is_error() {
+        let s = "for (let x = 3 in {}) {}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn for_in_multiple_lexical_bindings_are_error() {
+        let s = "for (let x, y in {}) {}";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn block_duplicate_async_function_names_are_error() {
+        let s = "{ async function f() {} async function f() {} }";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().0.contains("SyntaxError"));
+    }
+
+    #[test]
+    fn block_lexical_name_redeclared_by_var_is_error() {
+        let s = "{ async function f() {} var f; }";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let ret = Parser::new(&allocator, s, source_type).parse();
+        assert!(ret.diagnostics.is_empty());
+        let result = check_early_errors(&ret.program);
+        assert!(result.is_err());
         assert!(result.unwrap_err().0.contains("SyntaxError"));
     }
 
@@ -2148,6 +3010,36 @@ mod tests {
     }
 
     #[test]
+    fn yield_in_arrow_default_inside_generator_is_early_error() {
+        let source = "function* g() { (x = yield) => {}; }";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, source_type).parse();
+        assert!(parsed.diagnostics.is_empty(), "OXC should accept this");
+        assert!(check_early_errors(&parsed.program).is_err());
+    }
+
+    #[test]
+    fn strict_destructuring_assignment_requires_valid_target() {
+        let source = "\"use strict\"; 0, [arguments] = [];";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, source_type).parse();
+        assert!(parsed.diagnostics.is_empty(), "OXC should accept this");
+        assert!(check_early_errors(&parsed.program).is_err());
+    }
+
+    #[test]
+    fn await_in_nested_async_arrow_parameter_default_is_early_error() {
+        let source = "async () => { (a = await /r/g) => {}; }";
+        let source_type = SourceType::default().with_script(true).with_jsx(true);
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, source, source_type).parse();
+        assert!(parsed.diagnostics.is_empty(), "OXC should accept this");
+        assert!(check_early_errors(&parsed.program).is_err());
+    }
+
+    #[test]
     fn switch_redeclaration_function_decl_is_error() {
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
@@ -2272,5 +3164,117 @@ mod tests {
             parse_script(source).is_err(),
             "parse_script should reject function declaration in with block body"
         );
+    }
+
+    #[test]
+    fn parse_script_rejects_reserved_class_name_let() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class let {}; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_arguments_in_class_field_arrow() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { x = () => arguments; }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_super_call_in_class_field_initializer() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { x = () => super(); }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_direct_super_call_in_non_constructor_method() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { method() { super(); } }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_delete_of_private_field_reference() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { #x; x = delete this.#x; }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_duplicate_class_constructors() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { constructor() {} constructor() {} }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_super_call_in_base_constructor() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { constructor() { super(); } }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_yield_in_class_method_parameter_default() {
+        use crate::parser::parse_script;
+        assert!(parse_script("class C { method(x = yield) {} }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_delete_identifier_in_strict_mode() {
+        use crate::parser::parse_script;
+        assert!(parse_script("'use strict'; delete identifier; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_eval_and_arguments_as_strict_function_names() {
+        use crate::parser::parse_script;
+        assert!(parse_script("(function eval() { 'use strict'; });").is_err());
+        assert!(parse_script("(function arguments() { 'use strict'; });").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_eval_parameter_in_strict_function_body() {
+        use crate::parser::parse_script;
+        assert!(parse_script("(function (eval) { 'use strict'; });").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_yield_in_generator_expression_parameters() {
+        use crate::parser::parse_script;
+        assert!(parse_script("0, function*(x = yield) {}; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_duplicate_object_proto_data_properties() {
+        use crate::parser::parse_script;
+        assert!(parse_script("({ __proto__: null, '__proto__': null });").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_reserved_assignment_in_strict_getter_body() {
+        use crate::parser::parse_script;
+        assert!(parse_script("void { get x() { 'use strict'; public = 42; } }; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_reserved_word_object_shorthand_in_strict_function() {
+        use crate::parser::parse_script;
+        assert!(parse_script(
+            "var implements = 1; (function() { 'use strict'; ({ implements }); });"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_private_in_without_declared_name() {
+        use crate::parser::parse_script;
+        assert!(parse_script("#name in {}; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_yield_as_private_in_rhs() {
+        use crate::parser::parse_script;
+        assert!(parse_script("class C { #field; static method() { #field in yield; } }").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_duplicate_private_names() {
+        use crate::parser::parse_script;
+        assert!(parse_script("var C = class { #x; #x; }; ").is_err());
     }
 }

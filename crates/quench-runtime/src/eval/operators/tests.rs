@@ -405,6 +405,20 @@ fn binary_relational_string_vs_string() {
     );
 }
 
+#[test]
+fn relational_comparison_coerces_left_operand_first() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "'use strict'; \
+             var x = { valueOf: function() { throw 'x'; } }; \
+             var y = { valueOf: function() { throw 'y'; } }; \
+             try { x < y; 'none'; } catch (e) { e; }",
+        )
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("x".into()));
+}
+
 // =====================================================================
 // eval_in_op
 // =====================================================================
@@ -423,37 +437,19 @@ fn binary_in_found_in_object() {
 }
 
 #[test]
-fn binary_in_string_index() {
+fn binary_in_non_object() {
     let mut ctx = crate::Context::new().unwrap();
-    assert_eq!(
-        ctx.eval("0 in 'hello'").unwrap(),
-        crate::value::Value::Boolean(true)
-    );
-    assert_eq!(
-        ctx.eval("4 in 'hello'").unwrap(),
-        crate::value::Value::Boolean(true)
-    );
-    assert_eq!(
-        ctx.eval("5 in 'hello'").unwrap(),
-        crate::value::Value::Boolean(false)
-    );
+    assert!(ctx.eval("'foo' in null").is_err());
+    assert!(ctx.eval("'foo' in undefined").is_err());
+    assert!(ctx.eval("'foo' in 42").is_err());
 }
 
 #[test]
-fn binary_in_non_object() {
+fn binary_in_primitive_rhs_throws_type_error() {
     let mut ctx = crate::Context::new().unwrap();
-    assert_eq!(
-        ctx.eval("'foo' in null").unwrap(),
-        crate::value::Value::Boolean(false)
-    );
-    assert_eq!(
-        ctx.eval("'foo' in undefined").unwrap(),
-        crate::value::Value::Boolean(false)
-    );
-    assert_eq!(
-        ctx.eval("'foo' in 42").unwrap(),
-        crate::value::Value::Boolean(false)
-    );
+    assert!(ctx.eval("'foo' in null").is_err());
+    assert!(ctx.eval("'foo' in undefined").is_err());
+    assert!(ctx.eval("'foo' in 42").is_err());
 }
 
 // =====================================================================
@@ -484,6 +480,60 @@ fn binary_instanceof_unrelated() {
         ctx.eval("({}) instanceof Array").unwrap(),
         crate::value::Value::Boolean(false)
     );
+}
+
+#[test]
+fn instanceof_non_callable_rhs_throws_type_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert!(ctx.eval("1 instanceof Math").is_err());
+    assert!(ctx.eval("true instanceof true").is_err());
+    assert!(ctx.eval("1 instanceof null").is_err());
+}
+
+#[test]
+fn instanceof_throws_when_function_prototype_is_not_object() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval(
+        "var F = new Function(); F.prototype = undefined;\
+         try { ({} instanceof F); false; } catch (e) { e instanceof TypeError; }",
+    );
+    assert_eq!(result.unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn wrapped_bigint_shift_stays_bigint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("Object(2n) << 1n");
+    assert_eq!(result.unwrap(), Value::BigInt(std::rc::Rc::new(4.into())));
+}
+
+#[test]
+fn wrapped_bigint_bitwise_and_stays_bigint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("Object(2n) & 3n");
+    assert_eq!(result.unwrap(), Value::BigInt(std::rc::Rc::new(2.into())));
+}
+
+#[test]
+fn wrapped_bigint_multiplication_stays_bigint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("Object(2n) * 3n");
+    assert_eq!(result.unwrap(), Value::BigInt(std::rc::Rc::new(6.into())));
+}
+
+#[test]
+fn wrapped_bigint_unary_operations_stay_bigint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("-Object(2n) === -2n && ~Object(2n) === -3n");
+    assert_eq!(result.unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn unsigned_shift_rejects_wrapped_bigint() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result =
+        ctx.eval("try { Object(2n) >>> 0n; false; } catch (e) { e instanceof TypeError; }");
+    assert_eq!(result.unwrap(), Value::Boolean(true));
 }
 
 #[test]
@@ -910,4 +960,55 @@ fn shift_op_left_to_number_throws() {
         _ => panic!("expected string"),
     };
     assert_eq!(s, "shift-boom");
+}
+
+#[test]
+fn signed_shift_wraps_to_int32() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("(-2147483648 << 0) === -2147483648 && (-2147483648 << 1) === 0");
+    assert_eq!(result, Ok(crate::value::Value::Boolean(true)));
+}
+
+#[test]
+fn arithmetic_coerces_each_operand_once_in_order() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "var log = []; \
+             var left = { valueOf: function() { log.push('left'); return 7; } }; \
+             var right = { valueOf: function() { log.push('right'); return 2; } }; \
+             left - right; log.join(',');",
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::String("left,right".to_string())
+    );
+}
+
+#[test]
+fn bigint_addition_preserves_bigint_precision() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("0xFEDCBA9876543210n + 0xFEDCBA9876543210n === 0x1FDB97530ECA86420n"),
+        Ok(crate::value::Value::Boolean(true))
+    );
+}
+
+#[test]
+fn null_to_primitive_method_falls_back_to_ordinary_conversion() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("({ [Symbol.toPrimitive]: null, valueOf: function() { return 2; } }) + 1"),
+        Ok(crate::value::Value::Number(3.0))
+    );
+}
+
+#[test]
+fn bigint_addition_with_string_uses_string_concatenation() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("1n + 'x'"),
+        Ok(crate::value::Value::String("1x".to_string()))
+    );
 }

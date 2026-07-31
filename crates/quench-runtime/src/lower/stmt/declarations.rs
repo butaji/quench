@@ -64,7 +64,7 @@ pub fn lower_var_decl_impl(
         ast::VariableDeclarationKind::Let => VarKind::Let,
         ast::VariableDeclarationKind::Const => VarKind::Const,
         ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-            VarKind::Let
+            VarKind::Const
         }
     };
     let mut decls = Vec::new();
@@ -285,7 +285,7 @@ fn lower_class_member_stmt(member: &ast::ClassElement) -> Option<ClassMember> {
     match member {
         ast::ClassElement::MethodDefinition(method) => {
             // Check if this method is a constructor
-            if method.kind == ast::MethodDefinitionKind::Constructor {
+            if method.kind == ast::MethodDefinitionKind::Constructor && !method.computed {
                 lower_constructor_stmt(method)
             } else {
                 lower_method_stmt(method)

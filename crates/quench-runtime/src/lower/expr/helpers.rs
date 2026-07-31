@@ -47,6 +47,10 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         }
         ast::Expression::Super(_) => Ok(Expression::Undefined),
         ast::Expression::CallExpression(call) => expr_helpers::lower_call_expr_pub(call),
+        ast::Expression::ImportExpression(import) => Ok(Expression::Call {
+            callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
+            arguments: vec![lower_expr(&import.source)?],
+        }),
         ast::Expression::NewExpression(new_expr) => expr_helpers::lower_new_expr_pub(new_expr),
         ast::Expression::SequenceExpression(seq) => expr_helpers::lower_seq_expr_pub(seq),
         ast::Expression::ConditionalExpression(cond) => expr_helpers::lower_cond_expr_pub(cond),
@@ -117,7 +121,11 @@ fn lower_object_expr(obj: &ast::ObjectExpression) -> Result<Expression, LowerErr
 fn lower_object_prop(
     prop: &ast::ObjectProperty,
 ) -> Result<(PropertyKey, PropertyValue), LowerError> {
-    let key = lower_prop_name_key_oxc(&prop.key)?;
+    let key = if prop.computed {
+        PropertyKey::Computed(Box::new(lower_expr(prop.key.to_expression())?))
+    } else {
+        lower_prop_name_key_oxc(&prop.key)?
+    };
 
     // OXC uses PropertyKind::Get for BOTH { get() {} } (getter shorthand) and
     // { get: fn } (method named "get"). Only treat as accessor if value is a

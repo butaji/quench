@@ -37,6 +37,7 @@ pub struct Scope {
     declarations: HashMap<String, VarState>,
     /// Track var kinds for const enforcement
     var_kinds: HashMap<String, VarKind>,
+    function_names: HashSet<String>,
     this_value: Option<Value>,
     /// Whether `this` has been initialized for this scope.
     this_initialized: bool,
@@ -74,6 +75,7 @@ impl Clone for Scope {
                 .collect(),
             declarations: self.declarations.clone(),
             var_kinds: self.var_kinds.clone(),
+            function_names: self.function_names.clone(),
             this_value: self.this_value.clone(),
             this_initialized: self.this_initialized,
             object_binding: self.object_binding.as_ref().map(Rc::clone),
@@ -92,6 +94,7 @@ impl Scope {
             bindings: HashMap::new(),
             declarations: HashMap::new(),
             var_kinds: HashMap::new(),
+            function_names: HashSet::new(),
             this_value: None,
             this_initialized: false,
             object_binding: None,
@@ -223,6 +226,24 @@ impl Scope {
         self.object_binding.is_some()
     }
 
+    pub fn create_object_binding_property(&self, name: &str, value: Value) {
+        if let Some(object) = &self.object_binding {
+            object.borrow_mut().set(name, value);
+        }
+    }
+
+    pub fn is_with_environment(&self) -> bool {
+        self.with_environment
+    }
+
+    pub fn mark_function_name(&mut self, name: String) {
+        self.function_names.insert(name);
+    }
+
+    pub fn is_function_name(&self, name: &str) -> bool {
+        self.function_names.contains(name)
+    }
+
     pub fn is_global_object_binding(&self) -> bool {
         self.object_binding
             .as_ref()
@@ -266,14 +287,14 @@ impl Scope {
         self.is_static_class_body = true;
     }
 
-    pub fn set_object_property(&self, name: &str, value: Value, strict: bool) -> Option<bool> {
+    pub fn set_object_property(&self, name: &str, value: Value, _strict: bool) -> Option<bool> {
         let object = self.object_binding.as_ref()?.clone();
         if !matches!(self.object_has_binding_property(name), Some(true)) {
             if self.was_deleted_during_unscopables(name) {
                 object.borrow_mut().set(name, value);
                 return Some(true);
             }
-            return if strict { Some(false) } else { None };
+            return None;
         }
         if !self.load_with_unscopables() {
             return None;
@@ -312,10 +333,18 @@ impl Scope {
         Some(true)
     }
 
-    pub fn set_object_property_after_get(&self, name: &str, value: Value) -> Option<bool> {
+    pub fn set_object_property_after_get(
+        &self,
+        name: &str,
+        value: Value,
+        strict: bool,
+    ) -> Option<bool> {
         let object = self.object_binding.as_ref()?.clone();
         if !self.load_with_unscopables() || self.is_unscopable(name) {
             return None;
+        }
+        if strict && self.object_has_binding_property(name) != Some(true) {
+            return Some(false);
         }
         if matches!(object.borrow().get_descriptor(name), Some(flags) if !flags.writable) {
             return Some(false);

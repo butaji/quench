@@ -186,7 +186,7 @@ fn try_to_primitive_symbol(
     };
     let to_prim_method =
         crate::eval::member::eval_object_member(obj, &symbol_key.property_key(), None)?;
-    if matches!(to_prim_method, Value::Undefined) {
+    if matches!(to_prim_method, Value::Undefined | Value::Null) {
         return Ok(None);
     }
     let hint_str = match hint {
@@ -278,9 +278,18 @@ pub fn to_object(value: &Value) -> Result<Value, JsError> {
         | Value::NativeConstructor(_)
         | Value::Generator(_)
         | Value::Class(_) => Ok(value.clone()),
-        Value::Symbol(_s) => Ok(Value::Object(Rc::new(RefCell::new(
-            crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary),
-        )))),
+        Value::Symbol(_s) => {
+            let mut obj =
+                crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
+            if let Some(Value::NativeFunction(symbol)) =
+                crate::context::get_global_from_context("Symbol")
+            {
+                if let Some(Value::Object(prototype)) = symbol.get_property("prototype") {
+                    obj.prototype = Some(prototype);
+                }
+            }
+            Ok(Value::Object(Rc::new(RefCell::new(obj))))
+        }
         Value::BigInt(_) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);

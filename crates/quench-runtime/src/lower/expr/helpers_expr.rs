@@ -66,8 +66,18 @@ fn is_logical_compound_op(op: &AssignmentOperator) -> bool {
 }
 
 fn lower_assign_expr(assign: &ast::AssignmentExpression) -> Result<Expression, LowerError> {
-    let left = lower_assignment_target(&assign.left)?;
-    let right = lower_expr_inner(&assign.right)?;
+    let mut left = lower_assignment_target(&assign.left)?;
+    if let ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assign.left {
+        if assign.span.start != identifier.span.start {
+            left = Expression::Parenthesized(Box::new(left));
+        }
+    }
+    let right = match &assign.right {
+        ast::Expression::ParenthesizedExpression(paren) => {
+            Expression::Parenthesized(Box::new(lower_expr_inner(&paren.expression)?))
+        }
+        _ => lower_expr_inner(&assign.right)?,
+    };
     if assign.operator == AssignmentOperator::Assign {
         Ok(Expression::Assignment {
             left: Box::new(left),
@@ -144,8 +154,11 @@ fn lower_private_field_expr(
 
 fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError> {
     let callee = match &call.callee {
-        ast::Expression::ImportExpression(_) => {
-            return Err(LowerError::new("import() not supported"));
+        ast::Expression::ImportExpression(import) => {
+            return Ok(Expression::Call {
+                callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
+                arguments: vec![lower_expr_inner(&import.source)?],
+            });
         }
         ast::Expression::Super(_) => Expression::Identifier("super".to_string()),
         _ => lower_expr_inner(&call.callee)?,

@@ -229,6 +229,7 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     init_js_globals(ctx)?;
     sync_globals_to_global_this(ctx);
     register_eval_function(ctx)?;
+    register_dynamic_import(ctx);
     // Register __ops__ — the Rust↔JS bridge for spec abstract operations.
     // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__.
     ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
@@ -294,9 +295,15 @@ pub fn init_js_globals(ctx: &mut Context) -> Result<(), JsError> {
         enumerable: false,
         configurable: false,
     };
-    ctx.set_global("undefined".to_string(), Value::Undefined);
-    ctx.set_global("Infinity".to_string(), Value::Number(f64::INFINITY));
-    ctx.set_global("NaN".to_string(), Value::Number(f64::NAN));
+    ctx.env
+        .borrow_mut()
+        .define("undefined".to_string(), Value::Undefined);
+    ctx.env
+        .borrow_mut()
+        .define("Infinity".to_string(), Value::Number(f64::INFINITY));
+    ctx.env
+        .borrow_mut()
+        .define("NaN".to_string(), Value::Number(f64::NAN));
 
     let define_value_prop = |key: &str, val: Value, global_obj: &Rc<RefCell<Object>>| {
         let mut flags = value_flags.clone();
@@ -328,20 +335,38 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
     let global_scope = scopes[0].borrow();
     for (name, value_rc) in global_scope.bindings() {
         let value = value_rc.borrow().clone();
-        global_obj.borrow_mut().define(
-            name.as_str(),
-            value.clone(),
-            crate::value::PropertyFlags {
-                value: Some(value),
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            },
-        );
+        let mut flags =
+            global_obj
+                .borrow()
+                .get_descriptor(name)
+                .unwrap_or(crate::value::PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                });
+        flags.value = Some(value.clone());
+        global_obj.borrow_mut().define(name.as_str(), value, flags);
     }
 }
 
 /// Register the eval function as a global
+fn register_dynamic_import(ctx: &mut Context) {
+    let function = NativeFunction::new(|args| {
+        let source = args
+            .first()
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
+        let env = crate::context::get_current_env()
+            .ok_or_else(|| JsError::new("TypeError: no current context"))?;
+        crate::eval::statement::dynamic_import(&source, &env)
+    });
+    ctx.set_global(
+        "__dynamic_import__".to_string(),
+        Value::NativeFunction(Rc::new(function)),
+    );
+}
+
 pub fn register_eval_function(ctx: &mut Context) -> Result<(), JsError> {
     let eval_fn = NativeFunction::new_named("eval", |args: Vec<Value>| {
         let source = args

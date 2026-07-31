@@ -4,6 +4,54 @@ fn eval(src: &str) -> Result<Value, crate::value::JsError> {
     Context::new().unwrap().eval(src)
 }
 
+#[test]
+fn dynamic_import_returns_promise_for_missing_module() {
+    let value = eval("typeof import('missing-module').then").unwrap();
+    assert_eq!(value, Value::String("function".into()));
+}
+
+#[test]
+fn dynamic_import_namespace_rejects_set() {
+    let mut ctx = crate::Context::new().unwrap();
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("x", Value::Number(1.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name').then(ns => result = Reflect.set(ns, 'x', 2));")
+        .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Boolean(false));
+    ctx.eval("var deleted; import('module-name').then(ns => deleted = Reflect.deleteProperty(ns, 'x')); ")
+        .unwrap();
+    assert_eq!(ctx.eval("deleted").unwrap(), Value::Boolean(false));
+    ctx.eval("var after; import('module-name').then(ns => { ns.x = 2; after = ns.x; });")
+        .unwrap();
+    assert_eq!(ctx.eval("after").unwrap(), Value::Number(1.0));
+}
+
+#[test]
+fn dynamic_import_namespace_strict_assignment_throws() {
+    let mut ctx = crate::Context::new().unwrap();
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("x", Value::Number(1.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("'use strict'; var result; import('module-name').then(ns => { try { ns.x = 2; result = false; } catch (e) { result = e instanceof TypeError; } });")
+        .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn dynamic_import_namespace_descriptor_has_spec_fields() {
+    let mut ctx = crate::Context::new().unwrap();
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("x", Value::String("value".into()));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name').then(ns => { var d = Object.getOwnPropertyDescriptor(ns, 'x'); result = [d.value, d.enumerable, d.writable, d.configurable]; });")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("JSON.stringify(result)").unwrap(),
+        Value::String("[\"value\",true,true,false]".into())
+    );
+}
+
 mod return_statement {
     use super::*;
 
@@ -188,6 +236,157 @@ mod with_statement {
              p4;",
         );
         assert_eq!(result.unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn with_empty_object_falls_through_to_outer_binding() {
+        let result = eval("var count = 0; with ({}) { count++; } count").unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn strict_closure_inside_with_falls_through_to_outer_binding() {
+        let result =
+            eval("var count = 0; with ({}) { (function() { 'use strict'; count++; })(); } count")
+                .unwrap();
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn assert_throws_inside_strict_with_callback_preserves_count() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let result = ctx.eval(
+            r#"
+                var count = 0;
+                var scope = { get x() { delete this.x; return 2; } };
+                with (scope) {
+                    (function() {
+                        "use strict";
+                        assert.throws(ReferenceError, () => {
+                            count++;
+                            x += 1;
+                            count++;
+                        });
+                        count++;
+                    })();
+                }
+                assert.sameValue(count, 2);
+                assert(!('x' in scope));
+            "#,
+        );
+        assert!(result.is_ok(), "strict with assert.throws: {:?}", result);
+    }
+
+    #[test]
+    fn getter_can_delete_its_own_property() {
+        let result =
+            eval("var o = { get x() { delete this.x; return 2; } }; o.x; o.hasOwnProperty('x');");
+        assert_eq!(result, Ok(Value::Boolean(false)));
+    }
+
+    #[test]
+    fn with_getter_receives_with_object_as_this() {
+        let result = eval(
+            "var o = { get x() { delete this.x; return 2; } }; with (o) { x; } o.hasOwnProperty('x');",
+        );
+        assert_eq!(result, Ok(Value::Boolean(false)));
+    }
+
+    #[test]
+    fn strict_compound_assignment_after_with_getter_deletion_throws() {
+        let result = eval(
+            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { count++; x += 1; count++; } catch (e) { if (!String(e).includes('ReferenceError')) throw e; } count++; })(); } count",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    #[test]
+    fn strict_arrow_callback_inside_with_preserves_outer_count() {
+        let result = eval(
+            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { (() => { count++; x += 1; count++; })(); } catch (e) { if (!String(e).includes('ReferenceError')) throw e; } count++; })(); } count",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    #[test]
+    fn with_assignment_retains_deleted_object_reference() {
+        let result = eval(
+            "function f() { var x = 0; var scope = { x: 1 }; with (scope) { x = (delete scope.x, 2); } return [scope.x, x]; } f().join(',');",
+        );
+        assert_eq!(result, Ok(Value::String("2,0".to_string())));
+    }
+
+    #[test]
+    fn sloppy_unresolvable_assignment_creates_global_object_property() {
+        let result = eval(
+            "function f() { implicit_global_for_test = 42; } f(); Object.getOwnPropertyDescriptor(this, 'implicit_global_for_test').value;",
+        );
+        assert_eq!(result, Ok(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn object_spread_preserves_own_key_order() {
+        let result = eval(
+            "var calls = []; var o = { get z() { calls.push('z'); }, get a() { calls.push('a'); } }; Object.defineProperty(o, 1, { get: () => { calls.push(1); }, enumerable: true }); Object.defineProperty(o, Symbol('foo'), { get: () => { calls.push('Symbol(foo)'); }, enumerable: true }); ({ ...o }); calls.join(',');",
+        );
+        assert_eq!(result, Ok(Value::String("1,z,a,Symbol(foo)".to_string())));
+    }
+
+    #[test]
+    fn sloppy_named_function_name_assignment_is_ignored() {
+        let result = eval(
+            "var ref = function named() { (() => { named = 1; })(); return named; }; ref() === ref",
+        );
+        assert_eq!(result, Ok(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn object_literal_arrow_functions_receive_property_names() {
+        let result = eval(
+            "var s = Symbol('test'); var a = Symbol(); var o = { id: () => {}, [a]: () => {}, [s]: () => {} }; [o.id.name, o[a].name, o[s].name].join('|');",
+        );
+        assert_eq!(result, Ok(Value::String("id||[test]".to_string())));
+    }
+
+    #[test]
+    fn object_literal_proto_property_sets_internal_prototype() {
+        let result = eval(
+            "var proto = {}; var o = { __proto__: proto }; Object.getPrototypeOf(o) === proto;",
+        );
+        assert_eq!(result, Ok(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn computed_proto_property_does_not_set_internal_prototype() {
+        let result = eval(
+            "var proto = {}; var o = { ['__proto__']: proto }; [o.hasOwnProperty('__proto__'), o['__proto__'] === proto].join(',');",
+        );
+        assert_eq!(result, Ok(Value::String("true,true".to_string())));
+    }
+
+    #[test]
+    fn strict_assignment_to_global_undefined_throws() {
+        let result = eval("'use strict'; var global = this; global.undefined = 42;");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn object_spread_copies_symbol_value() {
+        let result =
+            eval("var s = Symbol('s'); var o = {}; o[s] = 1; var copy = { ...o }; copy[s];");
+        assert_eq!(result, Ok(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn with_compound_assignment_retains_deleted_object_reference() {
+        let result = eval(
+            "var x = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { x ^= 3; } [scope.x, x].join(',');",
+        );
+        assert_eq!(result, Ok(Value::String("1,0".to_string())));
     }
 
     #[test]

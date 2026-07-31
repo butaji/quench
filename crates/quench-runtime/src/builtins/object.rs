@@ -12,9 +12,10 @@ mod tests;
 use crate::builtins::object_static::{
     object_assign, object_create, object_define_properties, object_define_property, object_entries,
     object_freeze, object_from_entries, object_get_own_property_descriptor,
-    object_get_own_property_descriptors, object_get_own_property_names, object_get_prototype_of,
-    object_has_own, object_is, object_is_extensible, object_is_frozen, object_is_sealed,
-    object_keys, object_prevent_extensions, object_seal, object_set_prototype_of, object_values,
+    object_get_own_property_descriptors, object_get_own_property_names,
+    object_get_own_property_symbols, object_get_prototype_of, object_has_own, object_is,
+    object_is_extensible, object_is_frozen, object_is_sealed, object_keys,
+    object_prevent_extensions, object_seal, object_set_prototype_of, object_values,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -106,6 +107,12 @@ pub fn register_object(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(object_get_own_property_names))),
     );
     constructor.set_static_method(
+        "getOwnPropertySymbols",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            object_get_own_property_symbols,
+        ))),
+    );
+    constructor.set_static_method(
         "freeze",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_freeze))),
     );
@@ -165,6 +172,14 @@ pub fn register_object(ctx: &mut Context) {
 /// Store the primitive payload of a boxed wrapper as a non-enumerable
 /// internal property (stands in for the spec's [[PrimitiveData]] slot).
 pub(crate) fn set_boxed_value(obj: &mut Object, value: Value) {
+    obj.exotic_kind = match value {
+        Value::BigInt(_) => Some(crate::value::kind::ExoticKind::BigInt),
+        Value::Boolean(_) => Some(crate::value::kind::ExoticKind::Boolean),
+        Value::Number(_) => Some(crate::value::kind::ExoticKind::Number),
+        Value::String(_) => Some(crate::value::kind::ExoticKind::String),
+        Value::Symbol(_) => obj.exotic_kind.clone(),
+        _ => obj.exotic_kind.clone(),
+    };
     obj.define(
         "_value",
         value,

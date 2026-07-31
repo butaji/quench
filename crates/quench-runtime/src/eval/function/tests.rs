@@ -885,6 +885,216 @@ fn tco_simple_tail_call_deep() {
     assert_eq!(v, Value::Number(42.0));
 }
 
+#[test]
+fn tco_logical_or_tail_call_deep() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval(
+            r#""use strict";
+            var count = 0;
+            function f(n) {
+              if (n === 0) { count += 1; return; }
+              return false || f(n - 1);
+            }
+            f(100000); count"#,
+        )
+        .unwrap();
+    assert_eq!(value, Value::Number(1.0));
+}
+
+#[test]
+fn async_object_method_can_read_super_method() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var sup = { method() { return 'sup'; } }; var child = { async method() { var x = await super.method(); return x; } }; Object.setPrototypeOf(child, sup); child.method();",
+    );
+    assert!(result.is_ok(), "async super method: {:?}", result);
+}
+
+#[test]
+fn async_object_method_can_return_super_method_without_await() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var sup = { method() { return 'sup'; } }; var child = { async method() { return super.method(); } }; Object.setPrototypeOf(child, sup); child.method();",
+    );
+    assert!(result.is_ok(), "async super without await: {:?}", result);
+}
+
+#[test]
+fn async_static_private_method_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static async #x(value) { return await value; } static async y(value) { return await this.#x(value); } } C.y(1);",
+    );
+    assert!(result.is_ok(), "async static private method: {:?}", result);
+}
+
+#[test]
+fn static_private_method_unicode_escape_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static async #\\u{6F}(value) { return await value; } static async y(value) { return await this.#\\u{6F}(value); } } C.y(1);",
+    );
+    assert!(result.is_ok(), "unicode private method: {:?}", result);
+}
+
+#[test]
+fn static_private_method_zero_width_escape_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static async #ZW_\\u{200C}_NJ(value) { return await value; } static async y(value) { return await this.#ZW_\\u{200C}_NJ(value); } } C.y(1);",
+    );
+    assert!(result.is_ok(), "zero-width private method: {:?}", result);
+}
+
+#[test]
+fn static_async_public_dollar_method_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("class C { static async $(value) { return await value; } } C.$(1);");
+    assert!(result.is_ok(), "async dollar method: {:?}", result);
+}
+
+#[test]
+fn static_async_public_unicode_method_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result =
+        ctx.eval("class C { static async \\u{6F}(value) { return await value; } } C.o(1);");
+    assert!(result.is_ok(), "async unicode method: {:?}", result);
+}
+
+#[test]
+fn static_async_public_other_id_start_method_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result =
+        ctx.eval("class C { static async \\u2118(value) { return await value; } } C.\\u2118(1);");
+    assert!(result.is_ok(), "async other id start method: {:?}", result);
+}
+
+#[test]
+fn static_async_public_escaped_call_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result =
+        ctx.eval("class C { static async o(value) { return await value; } } C.\\u{6F}(1);");
+    assert!(result.is_ok(), "async escaped call: {:?}", result);
+}
+
+#[test]
+fn static_async_public_zero_width_call_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("class C { static async ZW_\\u{200C}_NJ(value) { return await value; } } C.ZW_\\u{200C}_NJ(1);");
+    assert!(result.is_ok(), "async zero-width call: {:?}", result);
+}
+
+#[test]
+fn static_async_private_method_matrix_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static async #$(v) { return await v; } static async #_(v) { return await v; } static async #\\u{6F}(v) { return await v; } static async #\\u2118(v) { return await v; } static async #ZW_\\u200C_NJ(v) { return await v; } static async #ZW_\\u200D_J(v) { return await v; } static async $(v) { return await this.#$(v); } static async _(v) { return await this.#_(v); } static async \\u{6F}(v) { return await this.#\\u{6F}(v); } static async \\u2118(v) { return await this.#\\u2118(v); } static async ZW_\\u200C_NJ(v) { return await this.#ZW_\\u200C_NJ(v); } static async ZW_\\u200D_J(v) { return await this.#ZW_\\u200D_J(v); } } Promise.all([C.$(1), C._(1), C.\\u{6F}(1), C.\\u2118(1), C.ZW_\\u200C_NJ(1), C.ZW_\\u200D_J(1)]);",
+    );
+    assert!(result.is_ok(), "private method matrix: {:?}", result);
+}
+
+#[test]
+fn static_class_field_is_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("class C { static field; } Object.getOwnPropertyDescriptor(C, 'field').enumerable")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn static_keyword_named_class_field_is_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("class C { static static; } Object.getOwnPropertyDescriptor(C, 'static').enumerable")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn class_constructor_inherits_property_is_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("class C {} typeof C.propertyIsEnumerable")
+        .unwrap();
+    assert_eq!(result, Value::String("function".into()));
+}
+
+#[test]
+fn class_static_field_property_is_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("class C { static field; } C.propertyIsEnumerable('field')")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn async_super_method_fulfills_with_super_result() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var sup = { method() { return 'sup'; } }; var child = { async method() { return super.method(); } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
+    )
+    .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.get_global("result"),
+        Some(Value::String("sup".to_string()))
+    );
+}
+
+#[test]
+fn async_super_await_fulfills_with_super_result() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var sup = { method() { return 'sup'; } }; var child = { async method() { return await super.method(); } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.get_global("result"),
+        Some(Value::String("sup".to_string()))
+    );
+}
+
+#[test]
+fn async_super_await_variable_fulfills_with_super_result() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "\"use strict\"; var sup = { method() { return 'sup'; } }; var child = { async method() { var x = await super.method(); return x; } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.get_global("result"),
+        Some(Value::String("sup".to_string()))
+    );
+}
+
+#[test]
+fn async_await_super_with_done_binding_fulfills_with_string() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "\"use strict\"; var $DONE = function() {}; var sup = { method() { return 'sup'; } }; var child = { async method() { var x = await super.method(); return x; } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
+    )
+    .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.get_global("result"),
+        Some(Value::String("sup".to_string()))
+    );
+}
+
+#[test]
+fn object_method_super_call_returns_super_result() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var sup = { method() { return 'sup'; } }; var child = { method() { return super.method(); } }; Object.setPrototypeOf(child, sup); child.method();",
+    );
+    assert_eq!(result, Ok(Value::String("sup".to_string())));
+}
+
 /// TCO: verify trampoline is working with small depth first.
 #[test]
 fn tco_small_depth() {
@@ -1785,7 +1995,48 @@ fn await_using_combines_body_and_disposal_errors() {
              })();",
     )
     .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
     assert_eq!(ctx.eval("outcome").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_rejects_true_then_false_disposal_methods() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var outcome = 'pending';
+         function check(value) { return new Promise(function(resolve) {
+           (async function() { await using x = { [Symbol.dispose]: value }; })().then(
+             function() { resolve('fulfilled'); },
+             function(error) { resolve(error instanceof TypeError ? 'TypeError' : 'wrong'); });
+         }); }
+         (async function() { var a = await check(true); var b = await check(false); var c = await check(1); var d = await check('object'); var e = await check(Symbol()); outcome = a + ':' + b + ':' + c + ':' + d + ':' + e; })();",
+    )
+    .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.eval("outcome").unwrap(),
+        Value::String("TypeError:TypeError:TypeError:TypeError:TypeError".to_string())
+    );
+}
+
+#[test]
+fn await_using_async_disposal_scope_clears_outer_await_marker() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var outcome = 'pending'; class MyError extends Error {}
+         function check() { return new Promise(function(resolve) {
+           (async function() { await using a = { async [Symbol.asyncDispose]() {} }; await using b = { [Symbol.dispose]() { throw new MyError(); } }; })().then(
+             function() { resolve('fulfilled'); },
+             function(error) { resolve(error instanceof MyError ? 'MyError' : 'wrong'); });
+         }); }
+         (async function() { outcome = await check(); })();",
+    )
+    .unwrap();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
+    assert_eq!(
+        ctx.eval("outcome").unwrap(),
+        Value::String("MyError".to_string())
+    );
 }
 
 #[test]
@@ -1919,4 +2170,33 @@ fn await_using_disposes_method_syntax_resource() {
     )
     .unwrap();
     assert_eq!(ctx.eval("resource.disposed").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn default_destructured_arrow_gets_binding_name() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("function f({ arrow = () => {} } = {}) { return arrow.name; } f()")
+        .unwrap();
+    assert_eq!(value, Value::String("arrow".into()));
+}
+
+#[test]
+fn await_using_async_dispose_method_keeps_binding_through_async_test_wrapper() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var same = false; var done = false; function $DONE(error) { if (error) throw error; done = true; } function asyncTest(testFunc) { try { testFunc().then(function() { $DONE(); }, function(error) { $DONE(error); }); } catch (error) { $DONE(error); } } asyncTest(async function() { var resource = {}; resource[Symbol.asyncDispose] = async function() { same = this === resource; }; { await using _ = resource; } });",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("same").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn await_using_async_dispose_literal_method_keeps_binding_through_async_test_wrapper() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var same = false; var done = false; function $DONE(error) { if (error) throw error; done = true; } function asyncTest(testFunc) { try { testFunc().then(function() { $DONE(); }, function(error) { $DONE(error); }); } catch (error) { $DONE(error); } } asyncTest(async function() { var resource = { async [Symbol.asyncDispose]() { same = this === resource; } }; { await using _ = resource; } });",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("same").unwrap(), Value::Boolean(true));
 }

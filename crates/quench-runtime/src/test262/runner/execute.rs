@@ -242,18 +242,22 @@ fn execute_script(script: &str, is_module: bool, is_async: bool) -> Result<(), S
 fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
     crate::builtins::register_builtins(&mut ctx);
+    let strict = source.trim_start().starts_with("\"use strict\";")
+        || source.trim_start().starts_with("'use strict';");
+    crate::interpreter::set_strict_mode(strict);
     crate::test262::harness::try_inject_harness(&mut ctx)
         .map_err(|e| format!("harness load failure: {}", e))?;
     if let Some(te) = ctx.get_global("Test262Error") {
         crate::value::error::set_main_realm_test262_error(te);
     }
-    crate::interpreter::set_strict_mode(false);
+    crate::interpreter::set_strict_mode(strict);
     let result = if is_module {
         ctx.eval_es_module(source)
     } else {
         ctx.eval(source)
     };
     result.map_err(|e| format!("{:?}", e))?;
+    let _ = crate::builtins::promise::execute_pending_microtasks();
     // Clear any stale thrown_value left by an uncaught error that was
     // converted to a rejected Promise (e.g. TDZ ReferenceError in for-of
     // head with `await using`). The probe below evaluates JS which would

@@ -41,8 +41,13 @@ pub fn eval_function_member(f: &ValueFunction, prop_name: &str) -> Result<Value,
         set_thrown_value(err);
         return Err(js_err);
     }
+    if (prop_name == "arguments" || prop_name == "caller") && !f.is_arrow {
+        return Ok(Value::Undefined);
+    }
     match prop_name {
+        "name" if f.is_property_deleted("name") => Ok(Value::Undefined),
         "name" => Ok(Value::String(f.name.clone().unwrap_or_default())),
+        "length" if f.is_property_deleted("length") => Ok(Value::Undefined),
         "length" => eval_function_length(f),
         "prototype" => Ok(Value::Object(f.get_prototype())),
         "call" => eval_callable_call_method(Value::Function(f.clone())),

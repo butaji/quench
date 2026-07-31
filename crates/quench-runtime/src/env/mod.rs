@@ -232,7 +232,11 @@ impl Environment {
 
     pub fn delete_from_object_env(&mut self, name: &str) -> Option<bool> {
         for scope_rc in self.scopes.iter().rev() {
-            if let Some(deleted) = scope_rc.borrow_mut().delete_object_property(name) {
+            let mut scope = scope_rc.borrow_mut();
+            if let Some(deleted) = scope.delete_object_property(name) {
+                if deleted && scope.is_global_object_binding() && scope.get_kind(name).is_none() {
+                    scope.delete(name);
+                }
                 return Some(deleted);
             }
         }
@@ -414,6 +418,11 @@ impl Environment {
         // the caller throws ReferenceError.
         if !crate::interpreter::is_strict_mode() {
             if let Some(global_scope) = self.scopes.first() {
+                if global_scope.borrow().is_global_object_binding() {
+                    global_scope
+                        .borrow()
+                        .create_object_binding_property(name, value.clone());
+                }
                 global_scope
                     .borrow_mut()
                     .bindings_mut()

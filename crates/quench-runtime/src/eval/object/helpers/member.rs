@@ -15,7 +15,9 @@ pub fn get_member_function(
     match obj_val {
         Value::Object(o) => crate::eval::member::eval_object_member(o, prop_name, Some(env)),
         Value::String(s) => get_string_method(s, prop_name, env),
-        Value::Number(_) | Value::BigInt(_) => get_number_method(obj_val, prop_name, env),
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_) => {
+            get_number_method(obj_val, prop_name, env)
+        }
         Value::Function(f) => crate::eval::member::eval_function_member(f, prop_name),
         Value::NativeFunction(nf) => {
             crate::eval::member::eval_native_function_member(nf, prop_name)
@@ -99,17 +101,17 @@ pub fn get_number_method(
         Value::BigInt(_) => "BigInt",
         _ => return Ok(Value::Undefined),
     };
-    let ctor_val = match env.borrow().get(ctor_name) {
+    let ctor_val = match env
+        .borrow()
+        .get(ctor_name)
+        .or_else(|| crate::context::get_global_from_context(ctor_name))
+    {
         Some(v) => v,
         None => return Ok(Value::Undefined),
     };
     let proto = match &ctor_val {
         Value::Object(o) => o.borrow().get("prototype"),
-        Value::NativeFunction(nf) => nf
-            .prototype
-            .borrow()
-            .as_ref()
-            .map(|p| Value::Object(Rc::clone(p))),
+        Value::NativeFunction(nf) => nf.get_property("prototype"),
         Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
         _ => None,
     };
@@ -137,20 +139,23 @@ pub fn get_number_method(
 
 /// Get the `this` value for a getter/setter call.
 pub fn getter_this_value(obj: &Rc<RefCell<Object>>) -> Value {
-    let obj_borrow = obj.borrow();
-    if let Some(exotic) = &obj_borrow.exotic_kind {
-        match exotic {
-            crate::value::kind::ExoticKind::Number => {
-                if let Some(Value::Number(n)) = obj_borrow.properties.get("_value") {
-                    return Value::Number(*n);
-                }
+    if crate::interpreter::is_strict_mode() {
+        let borrowed = obj.borrow();
+        if matches!(
+            borrowed.exotic_kind,
+            Some(crate::value::kind::ExoticKind::Number)
+        ) {
+            if let Some(Value::Number(n)) = borrowed.properties.get("_value") {
+                return Value::Number(*n);
             }
-            crate::value::kind::ExoticKind::Boolean => {
-                if let Some(Value::Boolean(b)) = obj_borrow.properties.get("_value") {
-                    return Value::Boolean(*b);
-                }
+        }
+        if matches!(
+            borrowed.exotic_kind,
+            Some(crate::value::kind::ExoticKind::Boolean)
+        ) {
+            if let Some(Value::Boolean(b)) = borrowed.properties.get("_value") {
+                return Value::Boolean(*b);
             }
-            _ => {}
         }
     }
     Value::Object(Rc::clone(obj))

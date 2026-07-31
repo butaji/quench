@@ -17,6 +17,7 @@ pub fn eval_logical_compound_assign(
     right: &Expression,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
+    member_target: Option<(&Value, &str)>,
 ) -> Result<Value, JsError> {
     match op {
         crate::ast::CompoundOp::LogicalOrAssign => {
@@ -25,7 +26,7 @@ pub fn eval_logical_compound_assign(
             } else {
                 let right_val =
                     crate::eval::expression::eval_expression(right, env, in_arrow_function)?;
-                crate::eval::object::assign_to(left, &right_val, env)?;
+                assign_logical_result(left, right, &right_val, env, member_target)?;
                 Ok(right_val)
             }
         }
@@ -35,7 +36,7 @@ pub fn eval_logical_compound_assign(
             } else {
                 let right_val =
                     crate::eval::expression::eval_expression(right, env, in_arrow_function)?;
-                crate::eval::object::assign_to(left, &right_val, env)?;
+                assign_logical_result(left, right, &right_val, env, member_target)?;
                 Ok(right_val)
             }
         }
@@ -43,12 +44,37 @@ pub fn eval_logical_compound_assign(
             Value::Null | Value::Undefined => {
                 let right_val =
                     crate::eval::expression::eval_expression(right, env, in_arrow_function)?;
-                crate::eval::object::assign_to(left, &right_val, env)?;
+                assign_logical_result(left, right, &right_val, env, member_target)?;
                 Ok(right_val)
             }
             _ => Ok(left_val.clone()),
         },
         _ => Err(JsError("Invalid logical compound assignment".to_string())),
+    }
+}
+
+fn assign_logical_result(
+    left: &Expression,
+    right: &Expression,
+    value: &Value,
+    env: &Rc<RefCell<Environment>>,
+    member_target: Option<(&Value, &str)>,
+) -> Result<(), JsError> {
+    let mut assigned = value.clone();
+    if let Expression::Identifier(name) = left {
+        if crate::eval::object::is_anonymous_function_definition(right) {
+            if let Value::Function(function) = &mut assigned {
+                if function.name.is_none() {
+                    function.name = Some(name.clone());
+                    let _ = function.set_property("name", Value::String(name.clone()));
+                }
+            }
+        }
+    }
+    if let Some((object, property)) = member_target {
+        crate::eval::object::assign_to_member_value(object, property, &assigned, env)
+    } else {
+        crate::eval::object::assign_to(left, &assigned, env)
     }
 }
 
@@ -105,6 +131,13 @@ pub fn eval_delete(
                 )),
                 Value::Object(obj_rc) => {
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
+                    if !deleted && crate::interpreter::is_strict_mode() {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot delete non-configurable property",
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
                     Ok(Value::Boolean(deleted))
                 }
                 Value::Function(f) => {
@@ -116,12 +149,18 @@ pub fn eval_delete(
                     }
                 }
                 Value::Class(c) => {
-                    if prop_key == "name" || prop_key == "prototype" {
+                    if prop_key == "name" {
                         c.deleted_properties.borrow_mut().insert(prop_key.clone());
-                        Ok(Value::Boolean(true))
-                    } else {
-                        Ok(Value::Boolean(false))
+                        return Ok(Value::Boolean(true));
                     }
+                    if prop_key == "prototype" {
+                        return Ok(Value::Boolean(false));
+                    }
+                    if !c.has_static_own_property(&prop_key) {
+                        return Ok(Value::Boolean(true));
+                    }
+                    c.deleted_properties.borrow_mut().insert(prop_key.clone());
+                    Ok(Value::Boolean(true))
                 }
                 Value::NativeFunction(nf) => {
                     let flags = nf.get_property_flags(&prop_key);
@@ -185,17 +224,54 @@ pub fn eval_update(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
-    let current = crate::eval::expression::eval_expression(argument, env, in_arrow_function)?;
-    let current_num = to_number(&current);
-    let new_val = match op {
-        UpdateOp::Increment => current_num + 1.0,
-        UpdateOp::Decrement => current_num - 1.0,
-    };
-    crate::eval::object::assign_to(argument, &Value::Number(new_val), env)?;
-    if prefix {
-        Ok(Value::Number(new_val))
+    let identifier_scope = if let Expression::Identifier(name) = argument {
+        env.borrow().binding_scope(name)
     } else {
-        Ok(Value::Number(current_num))
+        None
+    };
+    let current = crate::eval::expression::eval_expression(argument, env, in_arrow_function)?;
+    let (new_value, old_value) = match &current {
+        Value::BigInt(value) => {
+            let unit = num_bigint::BigInt::from(1);
+            let updated = match op {
+                UpdateOp::Increment => value.as_ref() + &unit,
+                UpdateOp::Decrement => value.as_ref() - &unit,
+            };
+            (
+                Value::BigInt(Rc::new(updated)),
+                Value::BigInt(Rc::clone(value)),
+            )
+        }
+        _ => {
+            let current_num = to_number(&current);
+            let new_num = match op {
+                UpdateOp::Increment => current_num + 1.0,
+                UpdateOp::Decrement => current_num - 1.0,
+            };
+            (Value::Number(new_num), Value::Number(current_num))
+        }
+    };
+    if let (Expression::Identifier(name), Some(scope)) = (argument, identifier_scope) {
+        let scope_ref = scope.borrow();
+        if scope_ref.is_with_environment()
+            && scope_ref.set_object_property_after_get(
+                name,
+                new_value.clone(),
+                crate::interpreter::is_strict_mode(),
+            ) == Some(true)
+        {
+            return if prefix {
+                Ok(new_value.clone())
+            } else {
+                Ok(old_value.clone())
+            };
+        }
+    }
+    crate::eval::object::assign_to(argument, &new_value, env)?;
+    if prefix {
+        Ok(new_value)
+    } else {
+        Ok(old_value)
     }
 }
 
@@ -252,6 +328,22 @@ mod tests {
     fn logical_or_assign_empty_string() {
         let r = eval("var x = ''; x ||= 'default'; x").unwrap();
         assert_eq!(r, Value::String("default".into()));
+    }
+
+    #[test]
+    fn update_uses_initial_with_binding_after_getter_deletes_property() {
+        let r = eval(
+            "function f() { var x = 0; var scope = { get x() { delete this.x; return 2; } }; \
+             with (scope) { x++; } return scope.x === 3 && x === 0; } f()",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn update_preserves_bigint_type() {
+        let r = eval("var x = 0n; x++; x === 1n").unwrap();
+        assert_eq!(r, Value::Boolean(true));
     }
 
     // ─── eval_logical_compound_assign: &&= ────────────────────────────────────
@@ -437,10 +529,31 @@ mod tests {
 
     #[test]
     fn delete_nonexistent_returns_false() {
-        // Deleting a non-existent own property returns false in current runtime.
-        // (Spec says true, but this reflects current runtime behavior.)
         let r = eval("var o = {}; delete o.missing").unwrap();
-        assert_eq!(r, Value::Boolean(false));
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn compound_assignment_null_base_throws_before_property_key() {
+        let err = eval(
+            "var base = null; var prop = { toString: function() { throw new Error('key'); } }; base[prop] ^= 1;",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("TypeError"), "got {}", err.0);
+        assert!(
+            !err.0.contains("key"),
+            "property key was evaluated: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn compound_assignment_evaluates_computed_property_once() {
+        let result = eval(
+            "var seen = 0; var base = {}; var prop = { toString: function() { seen++; return 'x'; } }; base[prop] ^= 1; seen",
+        )
+        .unwrap();
+        assert_eq!(result, Value::Number(1.0));
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub fn simple_string_value(v: &Value) -> Option<String> {
         Value::Boolean(b) => Some(b.to_string()),
         Value::Number(n) => Some(number_to_string(*n)),
         Value::String(s) => Some(s.clone()),
-        Value::BigInt(bi) => Some(format!("{}n", bi)),
+        Value::BigInt(bi) => Some(bi.to_string()),
         _ => None,
     }
 }
@@ -157,7 +157,11 @@ fn strip_exponential_trailing_zeros(s: &str) -> String {
     if let Some(e_pos) = s.find('e') {
         let (mantissa, exp) = s.split_at(e_pos);
         let clean_mantissa = strip_trailing_zeros(mantissa);
-        let clean_exp = exp.replace(['+'], "");
+        let clean_exp = exp
+            .strip_prefix('e')
+            .and_then(|digits| digits.parse::<i32>().ok())
+            .map(|value| format!("e{:+}", value))
+            .unwrap_or_else(|| exp.to_string());
         format!("{}{}", clean_mantissa, clean_exp)
     } else {
         strip_trailing_zeros(s)

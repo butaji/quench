@@ -215,6 +215,14 @@ pub fn to_bigint_value(val: &Value) -> Result<BigInt, crate::value::JsError> {
                 create_js_error_with_type("Cannot convert undefined to BigInt", "TypeError");
             Err(err)
         }
+        Value::Object(object)
+            if object.borrow().exotic_kind == Some(crate::value::kind::ExoticKind::BigInt) =>
+        {
+            match object.borrow().get_own_value("_value") {
+                Some(Value::BigInt(bi)) => Ok(bi.as_ref().clone()),
+                _ => Err(crate::JsError::from("TypeError: not a BigInt object")),
+            }
+        }
         Value::Object(_)
         | Value::Function(_)
         | Value::NativeFunction(_)

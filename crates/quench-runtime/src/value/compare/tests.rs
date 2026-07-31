@@ -351,6 +351,13 @@ fn loose_eq_boolean_coercion() {
 }
 
 #[test]
+fn loose_eq_boxed_bigint_uses_primitive_value_of() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("0n == Object(0n) && Object(1n) != 0n");
+    assert_eq!(result.unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn loose_eq_undefined_not_equal_to_zero() {
     assert!(!loose_eq(&Value::Undefined, &Value::Number(0.0)));
     assert!(!loose_eq(&Value::Null, &Value::Number(0.0)));
@@ -445,7 +452,7 @@ fn primitive_for_compare_native_constructor() {
 fn primitive_for_compare_bigint() {
     use num_bigint::BigInt;
     let bi = Value::BigInt(Rc::new(BigInt::from(123)));
-    assert_eq!(primitive_for_compare(&bi), None);
+    assert_eq!(primitive_for_compare(&bi), Some(bi));
 }
 
 // ─── to_primitive_for_compare_strict ────────────────────────────────────────

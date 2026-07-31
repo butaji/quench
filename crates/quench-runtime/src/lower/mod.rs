@@ -16,7 +16,7 @@ pub use stmt::{lower_module, lower_program, lower_script, lower_stmt};
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{ClassMember, Expression, Program, Statement};
+    use crate::ast::{BindingElement, ClassMember, Expression, Program, Statement};
     use crate::lower::{lower_module, lower_script};
     use oxc::allocator::Allocator;
     use oxc::parser::Parser;
@@ -57,6 +57,62 @@ mod tests {
     }
 
     #[test]
+    fn lower_dynamic_import_uses_runtime_hook() {
+        let stmt = first_stmt("import('module-name');");
+        assert!(matches!(
+            stmt,
+            Statement::Expression(expr)
+                if matches!(
+                    *expr,
+                    Expression::Call { ref callee, ref arguments }
+                        if matches!(**callee, Expression::Identifier(ref name) if name == "__dynamic_import__")
+                            && arguments.len() == 1
+                )
+        ));
+    }
+
+    #[test]
+    fn lower_object_assignment_default_keeps_member_target_binding() {
+        let stmt = first_stmt("({ p: target[key] = 0 } = source);");
+        let Statement::Expression(expr) = stmt else {
+            panic!("expected assignment");
+        };
+        let Expression::Assignment { left, .. } = *expr else {
+            panic!("expected assignment expression");
+        };
+        let Expression::ObjectPattern(props) = *left else {
+            panic!("expected object pattern");
+        };
+        assert!(matches!(
+            &props[0].1,
+            BindingElement::Default(inner, _) if matches!(inner.as_ref(), BindingElement::AssignmentTarget(Expression::Member { computed: true, .. }))
+        ));
+    }
+
+    #[test]
+    fn assignment_target_span_preserves_cover_parentheses() {
+        let allocator = Allocator::default();
+        let source = "(fn) = function() {};";
+        let parsed =
+            Parser::new(&allocator, source, SourceType::default().with_script(true)).parse();
+        let oxc::ast::ast::Statement::ExpressionStatement(statement) = &parsed.program.body[0]
+        else {
+            panic!("expected expression statement")
+        };
+        let oxc::ast::ast::Expression::AssignmentExpression(assignment) = &statement.expression
+        else {
+            panic!("expected assignment")
+        };
+        let oxc::ast::ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) =
+            &assignment.left
+        else {
+            panic!("expected identifier target")
+        };
+        assert_eq!(assignment.span.start, 0);
+        assert_eq!(identifier.span.start, 1);
+    }
+
+    #[test]
     fn lower_await_using_preserves_binding_declaration() {
         let stmt = match parse_and_lower_module("await using resource = null;") {
             Program::Script(stmts) => stmts.into_iter().next().unwrap(),
@@ -64,7 +120,7 @@ mod tests {
         assert!(matches!(
             stmt,
             Statement::VarDeclaration {
-                kind: crate::ast::VarKind::Let,
+                kind: crate::ast::VarKind::Const,
                 name,
                 init: Some(Expression::Null),
             } if name == "resource"
@@ -79,7 +135,7 @@ mod tests {
         assert!(matches!(
             stmt,
             Statement::VarDeclaration {
-                kind: crate::ast::VarKind::Let,
+                kind: crate::ast::VarKind::Const,
                 name,
                 init: Some(Expression::Null),
             } if name == "resource"

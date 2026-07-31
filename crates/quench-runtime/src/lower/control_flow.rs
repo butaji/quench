@@ -108,7 +108,7 @@ fn lower_using_for_stmt(
         };
         let name = id.name.as_str().to_string();
         body.push(Statement::VarDeclaration {
-            kind: VarKind::Let,
+            kind: VarKind::Const,
             name: name.clone(),
             init: item.init.as_ref().and_then(|expr| lower_expr(expr).ok()),
         });
@@ -161,7 +161,7 @@ pub fn lower_for_in_stmt(for_in_stmt: &ast::ForInStatement) -> Option<Statement>
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    VarKind::Let
+                    VarKind::Const
                 }
             };
             let has_pattern = decl
@@ -218,7 +218,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    VarKind::Let
+                    VarKind::Const
                 }
             };
             let has_pattern = decl
@@ -244,6 +244,7 @@ pub fn lower_for_of_stmt(for_of_stmt: &ast::ForOfStatement) -> Option<Statement>
         variable: Box::new(variable),
         iterable: Box::new(iterable),
         body,
+        await_of: for_of_stmt.r#await,
         loop_binding,
         dispose_async,
     }));
@@ -559,7 +560,7 @@ pub fn lower_for_init(init: &ast::ForStatementInit) -> Option<ForInit> {
                 ast::VariableDeclarationKind::Let => VarKind::Let,
                 ast::VariableDeclarationKind::Const => VarKind::Const,
                 ast::VariableDeclarationKind::Using | ast::VariableDeclarationKind::AwaitUsing => {
-                    VarKind::Let
+                    VarKind::Const
                 }
             };
             if decl.declarations.len() > 1 {

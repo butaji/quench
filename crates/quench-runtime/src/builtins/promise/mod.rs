@@ -92,6 +92,13 @@ mod tests {
     }
 
     #[test]
+    fn promise_resolve_reads_existing_promise_constructor() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx.eval("var p = Promise.resolve(0); Object.defineProperty(p, 'constructor', { get() { throw new Error('getter'); } }); Promise.resolve(p);");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_queue_microtask_runs_at_checkpoint() {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var q = []; queueMicrotask(() => q.push(1)); q.push(2);")

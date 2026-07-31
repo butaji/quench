@@ -74,7 +74,7 @@ fn queue_thenable_job(promise: &Rc<RefCell<Object>>, thenable: &Rc<RefCell<Objec
 }
 
 fn resolving_function(target: Rc<RefCell<Object>>, reject: bool) -> Value {
-    Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+    let function = Rc::new(NativeFunction::new(move |args| {
         let value = args.first().cloned().unwrap_or(Value::Undefined);
         if reject {
             settle_reject(&target, value);
@@ -82,7 +82,10 @@ fn resolving_function(target: Rc<RefCell<Object>>, reject: bool) -> Value {
             settle_resolve(&target, value);
         }
         Ok(Value::Undefined)
-    })))
+    }));
+    let _ = function.set_property("length", Value::Number(1.0));
+    let _ = function.set_property("name", Value::String(String::new()));
+    Value::NativeFunction(function)
 }
 
 /// Settle a promise as rejected and enqueue its reactions as microtasks.

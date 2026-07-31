@@ -202,7 +202,7 @@ fn test_simple_string_value_bigint() {
     let bi = num_bigint::BigInt::from(123);
     assert_eq!(
         simple_string_value(&Value::BigInt(Rc::new(bi))),
-        Some("123n".to_string())
+        Some("123".to_string())
     );
 }
 

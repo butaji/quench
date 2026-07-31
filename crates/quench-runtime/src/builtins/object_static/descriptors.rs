@@ -62,7 +62,10 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         // invokes getters. For accessor properties, also check getters map.
         // Helper: read a descriptor boolean flag, invoking accessor getter if needed.
         let read_flag = |key: &str, has: &mut bool, flag: &mut bool| {
-            if let Some(val) = desc_borrowed.get(key) {
+            if let Some(val) = desc_borrowed
+                .get(key)
+                .or_else(|| desc_borrowed.properties.get(key).cloned())
+            {
                 *has = true;
                 *flag = to_bool(&val);
             } else if let Some(g) = desc_borrowed.get_getter(key) {
@@ -85,6 +88,10 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             &mut has_configurable,
             &mut flags.configurable,
         );
+        if let Some(value) = desc_borrowed.get_own("configurable") {
+            has_configurable = true;
+            flags.configurable = to_bool(&value);
+        }
         // Per ES §10.1.6.1 ToPropertyDescriptor: "get" in desc → accessor descriptor.
         if getter.is_none() {
             if let Some(g) = desc_borrowed.get("get") {
@@ -148,6 +155,71 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
 
+    if let Value::Class(c) = &obj {
+        let value = flags.value.clone().unwrap_or(Value::Undefined);
+        c.set_static_property(&prop, value, &Rc::new(RefCell::new(Environment::new())))?;
+        c.deleted_properties.borrow_mut().remove(&prop);
+        return Ok(obj);
+    }
+
+    if let Value::Object(o) = &obj {
+        let mapped_non_configurable = as_array_index(&prop).is_some()
+            && matches!(
+                o.borrow().data,
+                crate::value::object::helpers::ObjData::Args { .. }
+            )
+            && o.borrow()
+                .get_descriptor(&prop)
+                .is_some_and(|existing| !existing.configurable);
+        let descriptor_requests_configurable = match desc {
+            Value::Object(descriptor) => descriptor
+                .borrow()
+                .get("configurable")
+                .is_some_and(|value| to_bool(&value)),
+            _ => false,
+        };
+        if mapped_non_configurable && descriptor_requests_configurable {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot redefine non-configurable property",
+                "TypeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
+        let accessor_redefinition = o.borrow().get_descriptor(&prop).is_some_and(|existing| {
+            let mapped = matches!(&o.borrow().data, crate::value::object::helpers::ObjData::Args { mapped } if as_array_index(&prop).is_some_and(|idx| mapped.contains_key(&(idx as u32))));
+            !mapped && !existing.configurable && (o.borrow().has_getter(&prop) || o.borrow().has_setter(&prop))
+        });
+        if accessor_redefinition && (flags.value.is_some() || has_writable) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot redefine non-configurable accessor property",
+                "TypeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
+        let existing_non_configurable = o
+            .borrow()
+            .descriptors
+            .get(&prop)
+            .is_some_and(|existing| !existing.configurable);
+        let requests_configurable = match desc {
+            Value::Object(descriptor) => descriptor
+                .borrow()
+                .get("configurable")
+                .is_some_and(|value| to_bool(&value)),
+            _ => false,
+        };
+        if existing_non_configurable && requests_configurable {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot redefine non-configurable property",
+                "TypeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
+    }
+
     if getter.is_some() || setter.is_some() {
         // Accessor descriptor: store the get/set functions themselves so
         // invocation and getOwnPropertyDescriptor see the same values.
@@ -185,6 +257,15 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     }
                 }
             }
+            if let Some(idx) = as_array_index(&prop) {
+                if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
+                    mapped.remove(&(idx as u32));
+                    obj.holes.insert(idx);
+                    obj.properties.shift_remove(&prop);
+                    obj.getters.shift_remove(&prop);
+                    obj.setters.shift_remove(&prop);
+                }
+            }
             obj.define_accessor(&prop, getter, setter, flags);
         } else if let Value::NativeConstructor(nc) = &obj {
             // Object.defineProperty on a native constructor (e.g., Promise)
@@ -196,10 +277,71 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         return Ok(obj);
     }
 
-    let value = flags.value.clone().unwrap_or(Value::Undefined);
-
     if let Value::Object(o) = &obj {
+        if let Some(existing) = o.borrow().get_descriptor(&prop) {
+            if !existing.configurable && has_configurable && flags.configurable {
+                return Err(JsError::from(
+                    "TypeError: Cannot redefine non-configurable property",
+                ));
+            }
+        }
+        if let Some(value) = flags.value.clone() {
+            if matches!(
+                o.borrow().data,
+                crate::value::object::helpers::ObjData::Args { .. }
+            ) {
+                let writable = o
+                    .borrow()
+                    .get_descriptor(&prop)
+                    .map(|flags| flags.writable)
+                    .unwrap_or(true);
+                if writable {
+                    if let Some(setter) = o.borrow().get_setter(&prop).cloned() {
+                        let env = Rc::new(RefCell::new(crate::env::Environment::new()));
+                        crate::eval::object::call_setter(o, &setter, value, &env)?;
+                    }
+                }
+            }
+        }
+        let mapped_value = if flags.value.is_none() {
+            let frozen_value = as_array_index(&prop).and_then(|idx| {
+                let borrowed = o.borrow();
+                borrowed
+                    .get_descriptor(&prop)
+                    .filter(|flags| !flags.writable)
+                    .and_then(|_| {
+                        borrowed
+                            .properties
+                            .get(&prop)
+                            .cloned()
+                            .or_else(|| borrowed.elements.get(idx).cloned())
+                    })
+            });
+            if frozen_value.is_some() {
+                frozen_value
+            } else {
+                o.borrow()
+                    .get_getter(&prop)
+                    .and_then(|getter| getter.func.clone())
+                    .and_then(|getter| {
+                        crate::eval::function::call_value_with_this(
+                            getter,
+                            vec![],
+                            Value::Object(Rc::clone(o)),
+                        )
+                        .ok()
+                    })
+            }
+        } else {
+            None
+        };
         let mut obj = o.borrow_mut();
+        let value = flags
+            .value
+            .clone()
+            .or(mapped_value)
+            .or_else(|| obj.get(&prop))
+            .unwrap_or(Value::Undefined);
         // Per ES §9.4.2.1 (Array Exotic Objects): if defining an array index
         // >= length, update length. For ordinary objects this does not apply.
         if obj.kind == ObjectKind::Array {
@@ -232,7 +374,18 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                 }
             }
         }
+        let removes_mapping =
+            !flags.configurable && !flags.writable && (has_writable || has_configurable);
         obj.define(&prop, value, flags);
+        if removes_mapping {
+            if let Some(idx) = as_array_index(&prop) {
+                if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
+                    mapped.remove(&(idx as u32));
+                    obj.getters.shift_remove(&prop);
+                    obj.setters.shift_remove(&prop);
+                }
+            }
+        }
     }
     Ok(obj)
 }
@@ -277,6 +430,33 @@ pub fn get_object_property_descriptor(
                 configurable: true,
             });
             return Ok(make_descriptor_value(flags, value.clone()));
+        }
+    }
+
+    if let Some(idx) = as_array_index(prop) {
+        if let crate::value::object::helpers::ObjData::Args { mapped } = &obj.data {
+            if mapped.contains_key(&(idx as u32)) {
+                let mut flags = obj.get_descriptor(prop).unwrap_or(PropertyFlags {
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    value: None,
+                });
+                let getter = obj.get_getter(prop).and_then(|getter| getter.func.clone());
+                let value = getter
+                    .and_then(|getter| {
+                        crate::eval::function::call_value_with_this(
+                            getter,
+                            vec![],
+                            Value::Object(Rc::clone(o)),
+                        )
+                        .ok()
+                    })
+                    .or_else(|| obj.get(prop))
+                    .unwrap_or(Value::Undefined);
+                flags.value = None;
+                return Ok(make_descriptor_value(flags, value));
+            }
         }
     }
 
@@ -334,6 +514,9 @@ pub fn get_function_property_descriptor(
     f: &crate::value::ValueFunction,
     prop: &str,
 ) -> Result<Value, JsError> {
+    if f.is_property_deleted(prop) {
+        return Ok(Value::Undefined);
+    }
     if prop == "name" {
         let value = f
             .get_property("name")
@@ -535,7 +718,7 @@ pub fn get_class_property_descriptor(
             let mut desc = new_ordinary_with_object_proto();
             desc.set("value", val);
             desc.set("writable", Value::Boolean(true));
-            desc.set("enumerable", Value::Boolean(false));
+            desc.set("enumerable", Value::Boolean(true));
             desc.set("configurable", Value::Boolean(true));
             return Ok(Value::Object(Rc::new(RefCell::new(desc))));
         }
@@ -651,12 +834,31 @@ pub fn get_class_property_descriptor(
 }
 
 fn push_static_key(names: &mut Vec<String>, key: &str) {
-    if key.starts_with('#') || key == "name" {
+    if key.starts_with('#') || key.contains('\0') || key == "name" {
         return;
     }
     if !names.iter().any(|k| k == key) {
         names.push(key.to_string());
     }
+}
+
+fn ordinary_key_order(names: Vec<String>) -> Vec<String> {
+    let mut indices = Vec::new();
+    let mut strings = Vec::new();
+    for name in names {
+        let is_index = name
+            .parse::<u32>()
+            .ok()
+            .is_some_and(|index| index < u32::MAX && index.to_string() == name);
+        if is_index {
+            indices.push(name);
+        } else {
+            strings.push(name);
+        }
+    }
+    indices.sort_by_key(|name| name.parse::<u32>().unwrap_or(u32::MAX));
+    indices.extend(strings);
+    indices
 }
 
 /// Own property names for a class constructor (includes non-enumerable builtins).
@@ -692,7 +894,32 @@ pub fn class_own_property_names(c: &crate::value::ClassValue) -> Vec<String> {
             push_static_key(&mut names, &k);
         }
     }
-    names
+    ordinary_key_order(names)
+}
+
+pub fn class_own_property_symbols(c: &crate::value::ClassValue) -> Vec<Value> {
+    let eval_env = c
+        .get_class_def_env()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Environment::new())));
+    c.static_methods
+        .iter()
+        .map(|(key, _, _, _, _)| key)
+        .chain(c.static_getters.iter().map(|(key, _)| key))
+        .chain(c.static_setters.iter().map(|(key, _, _)| key))
+        .filter_map(|key| prop_key_to_string(key, &eval_env, false).ok())
+        .filter_map(|key| {
+            let (desc, id) = key.split_once('\0')?;
+            Some(Value::Symbol(Rc::new(crate::value::Symbol {
+                desc: if desc.is_empty() {
+                    None
+                } else {
+                    Some(Rc::from(desc))
+                },
+                global: false,
+                id: id.parse().ok()?,
+            })))
+        })
+        .collect()
 }
 
 pub fn function_own_property_names(f: &ValueFunction) -> Vec<String> {

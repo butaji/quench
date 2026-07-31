@@ -34,8 +34,9 @@ fn strict_eq_same_type(a: &Value, b: &Value) -> bool {
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
         (Value::Number(ai), Value::Number(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
-        (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::Symbol(ai), Value::Symbol(bi)) => ai.id == bi.id,
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::Generator(ai), Value::Generator(bi)) => Rc::ptr_eq(ai, bi),
         (Value::BigInt(ai), Value::BigInt(bi)) => ai.as_ref() == bi.as_ref(),
         (Value::Function(_), Value::Function(_))
         | (Value::NativeFunction(_), Value::NativeFunction(_))
@@ -76,6 +77,7 @@ pub fn same_value_zero(a: &Value, b: &Value) -> bool {
         | (Value::NativeFunction(_), Value::NativeFunction(_))
         | (Value::NativeConstructor(_), Value::NativeConstructor(_))
         | (Value::Class(_), Value::Class(_)) => strict_eq_funcs(a, b),
+        (Value::Generator(ai), Value::Generator(bi)) => Rc::ptr_eq(ai, bi),
         _ => a == b,
     }
 }
@@ -91,8 +93,9 @@ fn same_value_same_type(a: &Value, b: &Value) -> bool {
         (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
         (Value::Boolean(ai), Value::Boolean(bi)) => ai == bi,
         (Value::String(ai), Value::String(bi)) => ai == bi,
-        (Value::Symbol(ai), Value::Symbol(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::Symbol(ai), Value::Symbol(bi)) => ai.id == bi.id,
         (Value::Object(ai), Value::Object(bi)) => Rc::ptr_eq(ai, bi),
+        (Value::Generator(ai), Value::Generator(bi)) => Rc::ptr_eq(ai, bi),
         (Value::BigInt(ai), Value::BigInt(bi)) => ai.as_ref() == bi.as_ref(),
         _ => false,
     }
@@ -124,10 +127,27 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
     if let Some(result) = number_string_eq(a, b) {
         return result;
     }
+    if let Some(result) = bigint_string_eq(a, b) {
+        return result;
+    }
     if let Some(result) = boolean_coercion_eq(a, b) {
         return result;
     }
     object_vs_primitive_eq(a, b)
+}
+
+fn bigint_string_eq(a: &Value, b: &Value) -> Option<bool> {
+    let (bigint, string) = match (a, b) {
+        (Value::BigInt(value), Value::String(text)) => (value, text),
+        (Value::String(text), Value::BigInt(value)) => (value, text),
+        _ => return None,
+    };
+    Some(
+        string
+            .trim()
+            .parse::<num_bigint::BigInt>()
+            .is_ok_and(|parsed| parsed == bigint.as_ref().clone()),
+    )
 }
 
 fn null_undefined_eq(a: &Value, b: &Value) -> bool {
@@ -208,6 +228,7 @@ pub fn primitive_for_compare(v: &Value) -> Option<Value> {
         Value::Number(n) => Some(Value::Number(*n)),
         Value::String(s) => Some(Value::String(s.clone())),
         Value::Symbol(s) => Some(Value::Symbol(s.clone())),
+        Value::BigInt(bi) => Some(Value::BigInt(Rc::clone(bi))),
         _ => None,
     }
 }

@@ -68,19 +68,23 @@ pub fn create_promise_constructor(
                 let resolve_rc_clone = Rc::clone(&resolve_rc);
                 let reject_rc_clone = Rc::clone(&reject_rc);
 
-                let resolve_val =
-                    Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-                        let val = args.first().cloned().unwrap_or(Value::Undefined);
-                        resolve_rc_clone.borrow()(val);
-                        Ok(Value::Undefined)
-                    })));
+                let resolve_native = Rc::new(NativeFunction::new(move |args: Vec<Value>| {
+                    let val = args.first().cloned().unwrap_or(Value::Undefined);
+                    resolve_rc_clone.borrow()(val);
+                    Ok(Value::Undefined)
+                }));
+                let _ = resolve_native.set_property("length", Value::Number(1.0));
+                let _ = resolve_native.set_property("name", Value::String(String::new()));
+                let resolve_val = Value::NativeFunction(resolve_native);
 
-                let reject_val =
-                    Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-                        let reason = args.first().cloned().unwrap_or(Value::Undefined);
-                        reject_rc_clone.borrow()(reason);
-                        Ok(Value::Undefined)
-                    })));
+                let reject_native = Rc::new(NativeFunction::new(move |args: Vec<Value>| {
+                    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                    reject_rc_clone.borrow()(reason);
+                    Ok(Value::Undefined)
+                }));
+                let _ = reject_native.set_property("length", Value::Number(1.0));
+                let _ = reject_native.set_property("name", Value::String(String::new()));
+                let reject_val = Value::NativeFunction(reject_native);
 
                 let _executor_result =
                     call_value_with_this(executor, vec![resolve_val, reject_val], Value::Undefined);

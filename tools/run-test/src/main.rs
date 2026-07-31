@@ -172,6 +172,7 @@ fn main() -> ExitCode {
         };
         builtins::register_builtins(&mut ctx);
         if !is_raw {
+            quench_runtime::interpreter::reset_interpreter_state();
             if let Err(e) = try_inject_harness(&mut ctx) {
                 eprintln!("{}: harness load failed: {}", label, e);
                 return 4;
@@ -310,6 +311,7 @@ fn judge(
         }
         Ok(v) => {
             if jc.is_async {
+                let _ = quench_runtime::builtins::promise::execute_pending_microtasks();
                 if let Some(code) = async_done_verdict(ctx, jc.label) {
                     inspect_failed(ctx, jc.is_async, jc.inspect_exprs);
                     return code;

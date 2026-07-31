@@ -78,6 +78,19 @@ pub(crate) fn call_value_impl(
                 bind_params(&f, &f.params, &args, &call_env_rc)?;
                 let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
                 body_env_rc.borrow_mut().push_scope();
+                if let Some(name) = &f.name {
+                    body_env_rc
+                        .borrow_mut()
+                        .declare_var(name.clone(), VarKind::Const);
+                    body_env_rc
+                        .borrow_mut()
+                        .current_scope()
+                        .borrow_mut()
+                        .mark_function_name(name.clone());
+                    body_env_rc
+                        .borrow_mut()
+                        .initialize_declared(name, Value::Function(f.clone()));
+                }
                 predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
                 predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
                 let mut gen_obj = crate::value::GeneratorObject::new(
@@ -92,7 +105,7 @@ pub(crate) fn call_value_impl(
                 // %GeneratorPrototype% as fallback when .prototype is not an object).
                 gen_obj.prototype = f
                     .get_prototype_if_object()
-                    .or_else(crate::builtins::function::get_generator_prototype);
+                    .or_else(crate::builtins::function::get_async_generator_prototype);
                 Ok(Value::Generator(Rc::new(RefCell::new(gen_obj))))
             } else if f.is_generator {
                 // Sync generator: FunctionDeclarationInstantiation (incl. param binding)
@@ -252,15 +265,21 @@ pub(crate) fn call_js_function_impl_with_strict(
     // inner non-tail calls from removing outer placeholders. For example:
     //   f() { var x = g(); return x + 1; }
     // g() pushes/pops its own placeholder; f() then pops its own.
+    let starting_depth = crate::eval::statement::acc_stack_len();
+    crate::eval::statement::acc_stack_push(create_symbol(Some("TCO_PLACEHOLDER")));
     loop {
-        let starting_depth = crate::eval::statement::acc_stack_len();
-        crate::eval::statement::acc_stack_push(create_symbol(Some("TCO_PLACEHOLDER")));
-
         let closure = Rc::clone(&f.closure);
         let params = f.params.clone();
 
         let function_is_strict = f.strict;
-        let body_is_strict = check_use_strict(&f.body);
+        let body_is_strict = check_use_strict(&f.body)
+            || f.arrow_body
+                .as_ref()
+                .as_ref()
+                .is_some_and(|body| match body {
+                    ArrowBody::Block(stmts) => check_use_strict(stmts.as_slice()),
+                    ArrowBody::Expression(_) => false,
+                });
         let in_strict = function_is_strict || body_is_strict || force_strict;
 
         this_val = if in_strict {
@@ -298,12 +317,12 @@ pub(crate) fn call_js_function_impl_with_strict(
 
         let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &params);
         body_env_rc.borrow_mut().push_scope();
+        let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(in_strict);
         predeclare_var(&f.body, &mut body_env_rc.borrow_mut());
         predeclare_let_const(&f.body, &mut body_env_rc.borrow_mut());
         hoist_functions(&f.body, &body_env_rc);
 
-        let prev_strict = crate::interpreter::is_strict_mode();
-        crate::interpreter::set_strict_mode(in_strict);
         let previous_eval_env = crate::interpreter::get_current_eval_env();
         crate::interpreter::set_current_eval_env(Some(Rc::clone(&body_env_rc)));
 
@@ -395,6 +414,15 @@ pub(crate) fn bind_params(
     }
 
     let result = (|| {
+        if has_parameter_expressions(params) {
+            for param in params {
+                if !param.rest && param.pattern.is_none() && param.name == "arguments" {
+                    call_env_rc
+                        .borrow_mut()
+                        .declare_var(param.name.clone(), crate::ast::VarKind::Let);
+                }
+            }
+        }
         let mut found_rest = false;
         for (i, param) in params.iter().enumerate() {
             if found_rest {
@@ -547,8 +575,18 @@ fn create_arguments_object(
     call_env: &Rc<RefCell<Environment>>,
 ) -> Value {
     let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.prototype = crate::builtins::get_object_prototype();
     obj.elements = args.clone();
     obj.set("length", Value::Number(args.len() as f64));
+    obj.descriptors.insert(
+        "length".to_string(),
+        crate::value::object::helpers::PropertyFlags {
+            writable: true,
+            enumerable: false,
+            configurable: true,
+            ..Default::default()
+        },
+    );
 
     let mappable = !strict_mode
         && f.params
@@ -578,6 +616,15 @@ fn create_arguments_object(
             })));
             crate::value::object::set_getter_func(&mut obj, &key, getter);
             crate::value::object::set_setter_func(&mut obj, &key, setter);
+            obj.descriptors.insert(
+                key,
+                crate::value::object::helpers::PropertyFlags {
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    ..Default::default()
+                },
+            );
         }
         obj.data = crate::value::object::helpers::ObjData::Args { mapped };
     } else {
@@ -599,22 +646,26 @@ fn create_arguments_object(
     } else {
         obj.set("callee", Value::Function(f.clone()));
     }
+    obj.descriptors.insert(
+        "callee".to_string(),
+        crate::value::object::helpers::PropertyFlags {
+            writable: true,
+            enumerable: false,
+            configurable: !strict_mode,
+            ..Default::default()
+        },
+    );
 
     let obj_rc = Rc::new(RefCell::new(obj));
     if let Some(Value::Symbol(sym)) =
         crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
     {
         let key = sym.property_key();
-        let target = Rc::clone(&obj_rc);
-        let iter_fn = NativeFunction::new(move |_args| {
-            Ok(crate::builtins::map::helpers::make_live_index_iterator(
-                Rc::clone(&target),
-                crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
-            ))
-        });
-        obj_rc
-            .borrow_mut()
-            .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
+        if let Some(array_proto) = crate::builtins::get_array_prototype() {
+            if let Some(iterator) = array_proto.borrow().get(&key) {
+                obj_rc.borrow_mut().set_builtin_method(&key, iterator);
+            }
+        }
     }
 
     Value::Object(obj_rc)

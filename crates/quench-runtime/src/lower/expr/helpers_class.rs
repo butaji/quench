@@ -8,7 +8,7 @@ use oxc::ast::ast;
 fn lower_class_member(member: &ast::ClassElement) -> Result<ClassMember, LowerError> {
     match member {
         ast::ClassElement::MethodDefinition(method) => {
-            if method.kind == ast::MethodDefinitionKind::Constructor {
+            if method.kind == ast::MethodDefinitionKind::Constructor && !method.computed {
                 lower_constructor(method)
             } else {
                 lower_method(method)

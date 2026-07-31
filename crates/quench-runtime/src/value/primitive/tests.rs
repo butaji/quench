@@ -65,6 +65,14 @@ fn test_to_primitive_null() {
 }
 
 #[test]
+fn symbol_primitive_member_uses_symbol_prototype() {
+    assert_eq!(
+        eval_val("Symbol('foo').toString()"),
+        Value::String("Symbol(foo)".into())
+    );
+}
+
+#[test]
 fn test_to_primitive_boolean() {
     assert_eq!(
         to_primitive(&Value::Boolean(true), None).unwrap(),
@@ -392,7 +400,7 @@ fn test_to_js_string_primitives() {
     assert_eq!(to_js_string(&Value::Number(42.0)), "42");
     assert_eq!(to_js_string(&Value::Number(-0.0)), "0");
     assert_eq!(to_js_string(&Value::String("hi".to_string())), "hi");
-    assert_eq!(to_js_string(&big(123)), "123n");
+    assert_eq!(to_js_string(&big(123)), "123");
 }
 
 #[test]

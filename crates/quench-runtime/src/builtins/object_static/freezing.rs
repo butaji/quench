@@ -276,6 +276,10 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             o.borrow_mut().prototype = proto;
             Ok(Value::Object(Rc::clone(o)))
         }
+        Value::Class(class) => {
+            class.set_super_class_own_proto(proto.map(Value::Object));
+            Ok(Value::Class(class.clone()))
+        }
         Value::Function(_) => Err(JsError::from(
             "TypeError: Object.setPrototypeOf called on a function (prototype is non-configurable)",
         )),
@@ -484,6 +488,15 @@ mod tests {
     fn test_set_prototype_of_function_throws() {
         let mut ctx = Context::new().unwrap();
         assert!(ctx.eval("Object.setPrototypeOf(function(){}, {})").is_err());
+    }
+
+    #[test]
+    fn test_set_prototype_of_class_allows_null() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result =
+            ctx.eval("class C {}; Object.setPrototypeOf(C, null); Object.getPrototypeOf(C)");
+        assert_eq!(result, Ok(Value::Null));
     }
 
     #[test]

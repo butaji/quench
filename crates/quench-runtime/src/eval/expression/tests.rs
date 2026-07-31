@@ -205,7 +205,18 @@ fn test_instanceof_and_in() {
     assert_eq!(eval("'a' in {a: 1}").unwrap(), Value::Boolean(true));
     assert_eq!(eval("'b' in {a: 1}").unwrap(), Value::Boolean(false));
     assert_eq!(eval("'length' in [1, 2]").unwrap(), Value::Boolean(true));
-    assert_eq!(eval("'x' in null").unwrap(), Value::Boolean(false));
+    assert!(eval("'x' in null").is_err());
+}
+
+#[test]
+fn logical_compound_assignment_evaluates_computed_member_once() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval(
+        "var count = 0; var obj = {}; function incr() { return ++count; } \
+         obj[incr()] &&= incr(); obj[2] = 1; obj[incr()] &&= incr(); \
+         obj[2] === 3 && count === 3",
+    );
+    assert_eq!(result, Ok(Value::Boolean(true)));
 }
 
 #[test]
@@ -224,6 +235,28 @@ fn test_update_prefix_postfix() {
         eval("let x = 1; let y = x++; y").unwrap(),
         Value::Number(1.0)
     );
+}
+
+#[test]
+fn logical_assignment_infers_anonymous_function_name() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var value = 0; value ||= function() {}; value.name"),
+        Ok(Value::String("value".into()))
+    );
+}
+
+#[test]
+fn compound_assignment_keeps_initial_binding_after_eval_declares_inner_name() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "function f() { var x = 3; var inner = (function() { \
+             x *= (eval('var x = 2;'), 4); return x; })(); \
+             return String(inner) + ',' + String(x); } f()",
+        )
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("2,12".into()));
 }
 
 #[test]
@@ -602,4 +635,30 @@ fn super_in_static_method_of_derived_class_works() {
     )
     .unwrap();
     assert_eq!(r, Value::String("hello".into()));
+}
+
+#[test]
+fn assignment_of_arrow_expression_sets_name_property() {
+    let result = eval(
+        "var arrow; arrow = () => {}; \
+         [arrow.name, Object.getOwnPropertyDescriptor(arrow, 'name').configurable]",
+    )
+    .unwrap();
+    let Value::Object(array) = result else {
+        panic!("expected array")
+    };
+    assert_eq!(array.borrow().get("0"), Some(Value::String("arrow".into())));
+    assert_eq!(array.borrow().get("1"), Some(Value::Boolean(true)));
+}
+
+#[test]
+fn assignment_evaluates_computed_member_before_rhs() {
+    let result = eval(
+        "function DummyError() {} var base = null; \
+         var prop = function() { throw new DummyError(); }; \
+         var expr = function() { throw new Error('rhs'); }; \
+         try { base[prop()] = expr(); 'no'; } catch (error) { error.constructor.name; }",
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("DummyError".into()));
 }

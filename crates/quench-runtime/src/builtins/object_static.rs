@@ -118,9 +118,7 @@ pub fn object_keys(args: Vec<Value>) -> Result<Value, JsError> {
         .first()
         .ok_or_else(|| JsError::from("Object.keys requires argument"))?;
     if let Value::Object(o) = obj {
-        let keys: Vec<Value> = o
-            .borrow()
-            .own_keys()
+        let keys: Vec<Value> = crate::value::object::enumerable_own_keys(&o.borrow())
             .into_iter()
             .map(Value::String)
             .collect();
@@ -158,6 +156,48 @@ pub fn object_get_own_property_names(args: Vec<Value>) -> Result<Value, JsError>
     let key_vals: Vec<Value> = keys.into_iter().map(Value::String).collect();
     Ok(Value::Object(Rc::new(RefCell::new(
         Object::new_array_from(key_vals),
+    ))))
+}
+
+pub fn object_get_own_property_symbols(args: Vec<Value>) -> Result<Value, JsError> {
+    let obj = args
+        .first()
+        .ok_or_else(|| JsError::from("Object.getOwnPropertySymbols requires argument"))?;
+    if let Value::Class(class) = obj {
+        return Ok(Value::Object(Rc::new(RefCell::new(
+            Object::new_array_from(descriptors::class_own_property_symbols(class)),
+        ))));
+    }
+    let Value::Object(object) = obj else {
+        if matches!(obj, Value::Null | Value::Undefined) {
+            return Err(JsError::from(
+                "TypeError: Object.getOwnPropertySymbols called on null or undefined",
+            ));
+        }
+        return Ok(Value::Object(Rc::new(RefCell::new(Object::new_array(0)))));
+    };
+    let borrowed = object.borrow();
+    let mut seen = std::collections::HashSet::new();
+    let symbols = borrowed
+        .symbol_properties
+        .keys()
+        .chain(borrowed.properties.keys().filter(|key| key.contains('\0')))
+        .filter(|key| seen.insert((*key).clone()))
+        .filter_map(|key| {
+            let (desc, id) = key.split_once('\0')?;
+            Some(Value::Symbol(Rc::new(crate::value::Symbol {
+                desc: if desc.is_empty() {
+                    None
+                } else {
+                    Some(Rc::from(desc))
+                },
+                global: false,
+                id: id.parse().ok()?,
+            })))
+        })
+        .collect();
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(symbols),
     ))))
 }
 

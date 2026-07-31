@@ -40,6 +40,12 @@ pub fn eval_call(
         crate::interpreter::set_current_eval_env(Some(Rc::clone(env)));
     }
     let result = call_value_with_this(func, args, this_val);
+    if matches!(
+        &result,
+        Ok(Value::Object(object)) if object.borrow().promise_data.is_some()
+    ) {
+        let _ = crate::value::take_thrown_value();
+    }
     if is_direct_eval && prev_eval_env.is_none() {
         crate::interpreter::set_current_eval_env(prev_eval_env);
     }
@@ -209,22 +215,29 @@ pub fn eval_member(
             return eval_super_member(property, computed, env, in_arrow_function);
         }
     }
-    let prop_name = eval_property_key(property, env, in_arrow_function)?;
-
-    // For identifiers, use get_shared to preserve function identity for property access
-    if let Expression::Identifier(name) = object {
+    let obj_val = if let Expression::Identifier(name) = object {
         if let Some(rc) = env.borrow().get_shared(name) {
-            let obj_val = rc.borrow().clone();
-            return eval_member_access(&obj_val, &prop_name, env);
+            rc.borrow().clone()
+        } else {
+            crate::eval::expression::eval_expression(object, env, in_arrow_function)?
         }
+    } else {
+        crate::eval::expression::eval_expression(object, env, in_arrow_function)?
+    };
+    if matches!(obj_val, Value::Null | Value::Undefined) {
+        if let PropertyKey::Computed(expression) = property {
+            crate::eval::expression::eval_expression(expression, env, in_arrow_function)?;
+        }
+        return Err(JsError(
+            "TypeError: Cannot read properties of null or undefined".into(),
+        ));
     }
-
-    let obj_val = crate::eval::expression::eval_expression(object, env, in_arrow_function)?;
+    let prop_name = eval_property_key(property, env, in_arrow_function)?;
     eval_member_access(&obj_val, &prop_name, env)
 }
 
 /// Evaluate super.property - accesses methods on the superclass prototype
-fn eval_super_member(
+pub(crate) fn eval_super_member(
     property: &PropertyKey,
     _computed: bool,
     env: &Rc<RefCell<Environment>>,
@@ -268,6 +281,8 @@ fn eval_super_member(
         Value::Object(o) => {
             if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
                 Rc::clone(o)
+            } else if let Some(proto_obj) = o.borrow().prototype.clone() {
+                proto_obj
             } else {
                 let proto_val = o.borrow().get("prototype");
                 match proto_val {
@@ -323,7 +338,10 @@ pub fn set_super_property(
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     // Check if we're in a static context (static method, static init block).
-    let is_static = {
+    let this_val = crate::interpreter::get_this_binding(env);
+    let is_static = if env.borrow().is_in_class_field_initializer() {
+        matches!(this_val, Value::Class(_))
+    } else {
         let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
         let mut found = false;
         while let Some(e) = current {
@@ -338,7 +356,19 @@ pub fn set_super_property(
 
     if is_static {
         // Static: set property on the superclass constructor.
-        if let Value::Class(class) = &super_val {
+        let static_super = match &this_val {
+            Value::Class(class) => class.get_own_prototype().unwrap_or(Value::Null),
+            _ => super_val,
+        };
+        if matches!(static_super, Value::Null | Value::Undefined) {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot set property on null or undefined",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
+        if let Value::Class(class) = &this_val {
             class.set_static_property(&prop_name, value.clone(), env)?;
         }
         return Ok(value);
@@ -346,7 +376,6 @@ pub fn set_super_property(
 
     // Instance: super [[Set]] — look up the property on the super base prototype,
     // then call [[Set]] with `this` as receiver so the property ends up on the instance.
-    let this_val = crate::interpreter::get_this_binding(env);
     let proto = match &super_val {
         Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
         Value::Object(o) => {

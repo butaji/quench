@@ -18,6 +18,7 @@ pub enum ObjectKind {
     Promise,       // Promise object
     Class,         // Class object (constructor with prototype)
     RegExp,        // RegExp object
+    ModuleNamespace,
 }
 
 impl fmt::Display for ObjectKind {
@@ -36,7 +37,8 @@ fn object_kind_name(kind: &ObjectKind) -> &'static str {
         | ObjectKind::Global
         | ObjectKind::Promise
         | ObjectKind::Class
-        | ObjectKind::RegExp => complex_kind_name(kind),
+        | ObjectKind::RegExp
+        | ObjectKind::ModuleNamespace => complex_kind_name(kind),
     }
 }
 
@@ -73,6 +75,7 @@ fn complex_kind_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Promise => "promise",
         ObjectKind::Class => "class",
         ObjectKind::RegExp => "regexp",
+        ObjectKind::ModuleNamespace => "module namespace",
         _ => unreachable!("complex_kind_name called with {:?}", kind),
     }
 }

@@ -101,7 +101,9 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
                     // (created lazily on first access). Even generator functions.
                     !f.is_arrow
                 } else {
-                    f.get_property(&key_str).is_some()
+                    (key_str == "name" && !f.is_property_deleted("name"))
+                        || (key_str == "length" && !f.is_property_deleted("length"))
+                        || f.get_property(&key_str).is_some()
                 }
             } else {
                 false
@@ -129,6 +131,30 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
     };
     if !is_own {
         return mk_err(format!("{} should be an own property", name_label));
+    }
+
+    if let Value::Function(function) = &obj {
+        let actual =
+            crate::builtins::object_static::get_function_property_descriptor(function, &name_str)?;
+        let actual_obj = actual
+            .as_object()
+            .ok_or_else(|| JsError("function property descriptor is missing".into()))?;
+        let expected_obj = desc
+            .as_object()
+            .ok_or_else(|| JsError("function property descriptor is invalid".into()))?;
+        let actual_obj = actual_obj.borrow();
+        let expected_obj = expected_obj.borrow();
+        for key in ["value", "writable", "enumerable", "configurable"] {
+            if let Some(expected) = expected_obj.get(key) {
+                if !crate::value::same_value(
+                    &expected,
+                    &actual_obj.get(key).unwrap_or(Value::Undefined),
+                ) {
+                    return mk_err(format!("{} descriptor {} mismatch", name_label, key));
+                }
+            }
+        }
+        return Ok(Value::Boolean(true));
     }
 
     // Parse enumerable/configurable from desc
@@ -180,9 +206,28 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
         _ => return Ok(Value::Boolean(true)),
     };
     if let Some(expected_value) = desc_obj2.get("value") {
-        let actual_value = obj_as_ref
-            .borrow()
-            .get(&name_str)
+        let mapped_getter = {
+            let obj = obj_as_ref.borrow();
+            if matches!(
+                obj.data,
+                crate::value::object::helpers::ObjData::Args { .. }
+            ) {
+                obj.get_getter(&name_str)
+                    .and_then(|getter| getter.func.clone())
+            } else {
+                None
+            }
+        };
+        let actual_value = mapped_getter
+            .and_then(|getter| {
+                crate::eval::function::call_value_with_this(
+                    getter,
+                    vec![],
+                    Value::Object(Rc::clone(obj_as_ref)),
+                )
+                .ok()
+            })
+            .or_else(|| obj_as_ref.borrow().get(&name_str))
             .unwrap_or(Value::Undefined);
         let expected_str = crate::test262::harness::assert_helpers::debug_string(&expected_value);
         let mut failures = Vec::new();
@@ -192,7 +237,7 @@ pub fn verify_property(args: Vec<Value>) -> Result<Value, JsError> {
                 name_label, expected_str
             ));
             // Also check the actual `obj[name]` value (matching JS verifyProperty)
-            let obj_value = obj_as_ref.borrow().get(&name_str);
+            let obj_value = Some(actual_value.clone());
             if let Some(ov) = obj_value {
                 if !same_value(&expected_value, &ov) {
                     failures.push(format!("{} value should be {}", name_label, expected_str));

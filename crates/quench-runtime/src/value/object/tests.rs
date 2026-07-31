@@ -524,6 +524,22 @@ fn test_symbol_properties() {
 }
 
 #[test]
+fn delete_removes_symbol_property() {
+    let mut obj = Object::new(ObjectKind::Ordinary);
+    let key = Value::Symbol(Rc::new(crate::value::Symbol::new(
+        Some(Rc::from("delete")),
+        false,
+    )));
+    let key_string = match &key {
+        Value::Symbol(symbol) => symbol.property_key(),
+        _ => unreachable!(),
+    };
+    obj.set_symbol(&key_string, Value::Number(1.0));
+    assert!(obj.delete(&key_string));
+    assert!(!obj.has_symbol(&key));
+}
+
+#[test]
 fn test_non_extensible_object() {
     let mut obj = Object::new(ObjectKind::Ordinary);
     obj.set("existing", Value::Number(1.0));

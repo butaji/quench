@@ -1,5 +1,6 @@
 //! Proxy helper functions.
 
+use crate::env::Environment;
 use crate::value::object::get_getter;
 use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use std::cell::RefCell;
@@ -78,6 +79,14 @@ pub fn proxy_has_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<
 
 pub fn proxy_get_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
     let Some((handler, target)) = proxy_handler_and_target(obj) else {
+        let getter = obj.borrow().get_getter(prop_name).cloned();
+        if let Some(getter) = getter {
+            return crate::eval::object::call_getter(
+                obj,
+                &getter,
+                &Rc::new(RefCell::new(Environment::new())),
+            );
+        }
         return Ok(obj.borrow().get(prop_name).unwrap_or(Value::Undefined));
     };
 

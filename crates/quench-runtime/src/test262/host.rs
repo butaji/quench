@@ -297,6 +297,7 @@ impl Test262Host for QuenchHost {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
         let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
         // Set MAIN_REALM_TEST262_ERROR after harness injection so create_js_error_with_type
         // uses the correct constructor for this realm (not a sub-realm's constructor).
@@ -314,6 +315,7 @@ impl Test262Host for QuenchHost {
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
         let prev_strict = crate::interpreter::is_strict_mode();
+        crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
         if let Some(te) = ctx.get_global("Test262Error") {
             crate::value::error::set_main_realm_test262_error(te);

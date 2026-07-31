@@ -54,6 +54,9 @@ impl Object {
     /// Set a property value (own only, respects writable flag).
     /// Per ES §10.1.6 [[Set]]: new properties are only added if the object is extensible.
     pub fn set(&mut self, key: &str, value: Value) {
+        if self.kind == ObjectKind::ModuleNamespace {
+            return;
+        }
         if let Some(flags) = self.descriptors.get_mut(key) {
             if !flags.writable {
                 return;
@@ -180,8 +183,11 @@ impl Object {
 
     /// Define a property with explicit flags.
     pub fn define(&mut self, key: &str, value: Value, mut flags: PropertyFlags) {
-        self.getters.shift_remove(key);
-        self.setters.shift_remove(key);
+        let mapped = matches!(&self.data, ObjData::Args { .. }) && as_array_index(key).is_some();
+        if !mapped {
+            self.getters.shift_remove(key);
+            self.setters.shift_remove(key);
+        }
         self.properties.insert(key.to_string(), value.clone());
         flags.value = Some(value);
         self.descriptors.insert(key.to_string(), flags);
@@ -189,6 +195,19 @@ impl Object {
 
     /// Get property descriptor flags for a key.
     pub fn get_descriptor(&self, key: &str) -> Option<PropertyFlags> {
+        if matches!(self.data, ObjData::Args { .. })
+            && as_array_index(key).is_some_and(|idx| idx < self.elements.len())
+        {
+            if let Some(flags) = self.descriptors.get(key) {
+                return Some(flags.clone());
+            }
+            return Some(PropertyFlags {
+                writable: true,
+                enumerable: true,
+                configurable: true,
+                value: self.elements.get(as_array_index(key)?).cloned(),
+            });
+        }
         self.descriptors.get(key).cloned()
     }
 

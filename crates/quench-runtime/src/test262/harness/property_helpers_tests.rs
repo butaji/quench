@@ -24,6 +24,19 @@ fn test_verify_property_fn_name_method_class_body() {
 }
 
 #[test]
+fn test_verify_property_anonymous_arrow_name() {
+    let mut ctx = harness_ctx();
+    let result = ctx.eval(
+        "verifyProperty(() => {}, 'name', { value: '', writable: false, enumerable: false, configurable: true });",
+    );
+    assert!(
+        result.is_ok(),
+        "anonymous arrow name should verify: {:?}",
+        result
+    );
+}
+
+#[test]
 fn test_verify_property_class_prototype_symbol_method_name() {
     let mut ctx = harness_ctx();
     let result = ctx.eval(

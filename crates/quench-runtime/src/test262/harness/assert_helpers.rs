@@ -203,6 +203,11 @@ fn get_prototype_from_function(f: &Value) -> Option<Value> {
     match f {
         Value::NativeConstructor(nc) => Some(Value::Object(Rc::clone(&nc.prototype))),
         Value::Function(vf) => Some(Value::Object(vf.get_prototype())),
+        Value::Class(class) => class
+            .prototype_cell
+            .borrow()
+            .as_ref()
+            .map(|prototype| Value::Object(Rc::clone(prototype))),
         _ => None,
     }
 }
@@ -219,6 +224,7 @@ fn ptr_eq_value(a: &Value, b: &Value) -> bool {
         (Value::NativeConstructor(f_a), Value::NativeConstructor(f_b)) => {
             Rc::ptr_eq(f_a.func_rc(), f_b.func_rc())
         }
+        (Value::Class(a), Value::Class(b)) => a.id == b.id,
         _ => false,
     }
 }
@@ -313,7 +319,7 @@ pub fn assert_compare_array(args: Vec<Value>) -> Result<Value, JsError> {
             ));
         }
     }
-    Ok(Value::Undefined)
+    Ok(Value::Boolean(true))
 }
 
 pub fn debug_string(v: &Value) -> String {

@@ -231,6 +231,64 @@ mod generator_tests {
     }
 
     #[test]
+    fn async_generator_named_binding_assignment_in_arrow_keeps_function() {
+        let mut ctx = Context::new().unwrap();
+        let r = ctx
+            .eval(
+            "var result; \
+             let ref = async function * BindingIdentifier() { \
+               (() => { BindingIdentifier = 1; })(); \
+               return BindingIdentifier; \
+             }; \
+             async function test() { var item = await (await ref()).next(); result = ref.name + ',' + typeof item.value + ',' + String(item.value === 1) + ',' + String(item.value === ref); } \
+             test();",
+            )
+            .unwrap();
+        for _ in 0..8 {
+            let _ = crate::builtins::promise::execute_pending_microtasks();
+        }
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String(
+                "BindingIdentifier,function,false,true".to_string()
+            ))
+        );
+        assert!(matches!(r, Value::Object(_)));
+    }
+
+    #[test]
+    fn async_generator_nested_yield_object_spread_replays_symbol_value() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var s = Symbol('s'); var result; \
+             var gen = async function *g() { \
+               yield { ...yield yield, ...(function(arg) { var yield = arg; return {...yield}; }(yield)), ...yield }; \
+             }; \
+             var iter = gen(); iter.next(); iter.next(); \
+             iter.next({ x: 10, a: 0, b: 0, [s]: 1 }); \
+             iter.next({ y: 20, a: 1, b: 1, [s]: 42 }); \
+             iter.next({ z: 30, b: 2 }).then(function(item) { result = item.value[s]; });",
+        )
+        .unwrap();
+        for _ in 0..12 {
+            let _ = crate::builtins::promise::execute_pending_microtasks();
+        }
+        assert_eq!(ctx.get_global("result"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn async_generator_with_non_object_prototype_uses_async_generator_prototype() {
+        let r = eval(
+            "async function* g() {} \
+             var expected = Object.getPrototypeOf(g.prototype); \
+             g.prototype = undefined; \
+             Object.getPrototypeOf(g()) === expected;",
+        )
+        .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn async_generator_has_next_method() {
         let r = eval("async function* g() {} var gen = g(); typeof gen.next").unwrap();
         assert_eq!(r, Value::String("function".to_string()));

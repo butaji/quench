@@ -196,6 +196,11 @@ pub fn eval_expression(
                 closure
                     .borrow_mut()
                     .declare_var(name.clone(), crate::ast::VarKind::Const);
+                closure
+                    .borrow_mut()
+                    .current_scope()
+                    .borrow_mut()
+                    .mark_function_name(name.clone());
                 closure.borrow_mut().initialize_declared(name, func_clone);
             }
             Ok(func)
@@ -253,7 +258,15 @@ pub fn eval_expression(
         Expression::Assignment { left, right } => {
             let identifier_scope = match left.as_ref() {
                 Expression::Identifier(name) => env.borrow().binding_scope(name),
+                Expression::Parenthesized(inner) => match inner.as_ref() {
+                    Expression::Identifier(name) => env.borrow().binding_scope(name),
+                    _ => None,
+                },
                 _ => None,
+            };
+            let assignment_target = match left.as_ref() {
+                Expression::Parenthesized(inner) => inner.as_ref(),
+                other => other,
             };
             if crate::interpreter::is_strict_mode() {
                 if let Expression::Identifier(name) = left.as_ref() {
@@ -268,7 +281,10 @@ pub fn eval_expression(
                     }
                 }
             }
-            let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
+            if matches!(assignment_target, Expression::Member { .. }) {
+                crate::eval::object::touch_assignment_target(assignment_target, env)?;
+            }
+            let mut right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
                 (left.as_ref(), right.as_ref())
             {
                 let inferred_name = if class.name.is_none() {
@@ -280,12 +296,24 @@ pub fn eval_expression(
             } else {
                 eval_expression(right, env, in_arrow_function)?
             };
+            if let (Expression::Identifier(name), Value::Function(function)) =
+                (left.as_ref(), &right_val)
+            {
+                if function.name.is_none()
+                    && crate::eval::object::is_anonymous_function_definition(right)
+                {
+                    let mut named = function.clone();
+                    named.name = Some(name.clone());
+                    let _ = named.set_property("name", Value::String(name.clone()));
+                    right_val = Value::Function(named);
+                }
+            }
             // Handle super.property = value — uses super [[Set]] semantics.
             if let Expression::Member {
                 object,
                 property,
                 computed,
-            } = left.as_ref()
+            } = assignment_target
             {
                 if let Expression::Identifier(name) = object.as_ref() {
                     if name == "super" {
@@ -303,7 +331,7 @@ pub fn eval_expression(
                 object,
                 property,
                 computed,
-            } = left.as_ref()
+            } = assignment_target
             {
                 if !*computed {
                     if let Expression::Identifier(name) = object.as_ref() {
@@ -324,7 +352,9 @@ pub fn eval_expression(
                     }
                 }
             }
-            if let (Expression::Identifier(name), Some(scope)) = (left.as_ref(), identifier_scope) {
+            if let (Expression::Identifier(name), Some(scope)) =
+                (assignment_target, identifier_scope)
+            {
                 if crate::interpreter::is_strict_mode()
                     && matches!(name.as_str(), "NaN" | "undefined" | "Infinity")
                 {
@@ -352,16 +382,27 @@ pub fn eval_expression(
                     );
                     return Err(error);
                 }
-                if scope.borrow_mut().set_object_property(
-                    name,
-                    right_val.clone(),
-                    crate::interpreter::is_strict_mode(),
-                ) == Some(true)
-                {
-                    if scope.borrow().is_global_object_binding() {
-                        if let Some(global) = crate::context::get_current_env() {
-                            global.borrow_mut().set(name, right_val.clone());
-                        }
+                let set_object_property = if scope.borrow().is_with_environment() {
+                    scope.borrow().set_object_property_after_get(
+                        name,
+                        right_val.clone(),
+                        crate::interpreter::is_strict_mode(),
+                    )
+                } else {
+                    scope.borrow().set_object_property(
+                        name,
+                        right_val.clone(),
+                        crate::interpreter::is_strict_mode(),
+                    )
+                } == Some(true);
+                if set_object_property {
+                    let is_global_object_binding = scope.borrow().is_global_object_binding();
+                    if is_global_object_binding {
+                        scope.borrow_mut().set(
+                            name.clone(),
+                            right_val.clone(),
+                            crate::interpreter::is_strict_mode(),
+                        );
                     }
                     return Ok(right_val);
                 }
@@ -373,7 +414,15 @@ pub fn eval_expression(
                     right_val.clone(),
                     crate::interpreter::is_strict_mode(),
                 ) {
-                    if scope.borrow().get_kind(name) == Some(VarKind::Const) {
+                    if scope.borrow().is_function_name(name)
+                        && !crate::interpreter::is_strict_mode()
+                    {
+                        return Ok(right_val);
+                    }
+                    if scope.borrow().get_kind(name) == Some(VarKind::Const)
+                        && !(scope.borrow().is_function_name(name)
+                            && !crate::interpreter::is_strict_mode())
+                    {
                         let (_, error) = crate::value::error::create_js_error_with_type(
                             &format!("Assignment to constant variable '{}'", name),
                             "TypeError",
@@ -391,7 +440,7 @@ pub fn eval_expression(
                 return Ok(right_val);
             }
             // No binding scope: identifier not found in env chain.
-            if let Expression::Identifier(name) = left.as_ref() {
+            if let Expression::Identifier(name) = assignment_target {
                 let name = name.clone();
                 if let Some(result) = env.borrow().set_in_object_env(
                     &name,
@@ -426,7 +475,45 @@ pub fn eval_expression(
             Ok(right_val)
         }
         Expression::CompoundAssignment { op, left, right } => {
+            if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = left.as_ref()
+            {
+                let object_value = eval_expression(object, env, in_arrow_function)?;
+                if matches!(object_value, Value::Null | Value::Undefined) {
+                    if let PropertyKey::Computed(expression) = property {
+                        eval_expression(expression, env, in_arrow_function)?;
+                    }
+                    return Err(JsError(
+                        "TypeError: Cannot read properties of null or undefined".into(),
+                    ));
+                }
+                let property_name = crate::eval::call::extract_property_name(
+                    property.clone(),
+                    *computed,
+                    env,
+                    in_arrow_function,
+                )?;
+                let left_value =
+                    crate::eval::member::eval_member_access(&object_value, &property_name, env)?;
+                let right_value = eval_expression(right, env, in_arrow_function)?;
+                let result = eval_binary_op(op.to_binary(), &left_value, &right_value)?;
+                crate::eval::object::assign_to_member_value(
+                    &object_value,
+                    &property_name,
+                    &result,
+                    env,
+                )?;
+                return Ok(result);
+            }
             // Evaluate left first (needed for binary op value).
+            let identifier_scope = if let Expression::Identifier(name) = left.as_ref() {
+                env.borrow().binding_scope(name)
+            } else {
+                None
+            };
             let left_val = eval_expression(left, env, in_arrow_function)?;
             // Extract identifier info before dropping borrow.
             let ident_name = if let Expression::Identifier(name) = left.as_ref() {
@@ -440,7 +527,42 @@ pub fn eval_expression(
             let result = eval_binary_op(op.to_binary(), &left_val, &right_val)?;
             // Identifier with known scope: update binding directly (avoids nested borrow).
             if ident_name.is_some() {
-                crate::eval::object::assign_to(left, &result, env)?;
+                if let Some(name) = ident_name.as_ref() {
+                    if let Some(ref scope) = identifier_scope {
+                        let scope_ref = scope.borrow();
+                        if scope_ref.is_with_environment() {
+                            if scope_ref.set_object_property_after_get(
+                                name,
+                                result.clone(),
+                                crate::interpreter::is_strict_mode(),
+                            ) == Some(true)
+                            {
+                                return Ok(result);
+                            }
+                            if crate::interpreter::is_strict_mode()
+                                && scope_ref.object_binding_has(name) != Some(true)
+                            {
+                                let (err_val, err) = crate::value::error::create_js_error_with_type(
+                                    &format!("{} is not defined", name),
+                                    "ReferenceError",
+                                );
+                                crate::value::set_thrown_value(err_val);
+                                return Err(err);
+                            }
+                        }
+                    }
+                }
+                if let Some(scope) = identifier_scope {
+                    if let Some(name) = ident_name.as_ref() {
+                        crate::eval::object::cache_destructuring_identifier_reference(
+                            name,
+                            Some(scope),
+                        );
+                        crate::eval::object::assign_to_identifier(name, &result, env, None)?;
+                    }
+                } else {
+                    crate::eval::object::assign_to(left, &result, env)?;
+                }
                 return Ok(result);
             }
             // Member expression or other: re-evaluate left (borrow now dropped).
@@ -450,9 +572,52 @@ pub fn eval_expression(
             Ok(result2)
         }
         Expression::LogicalCompoundAssignment { op, left, right } => {
+            let member_target = if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = left.as_ref()
+            {
+                let object_value = eval_expression(object, env, in_arrow_function)?;
+                if matches!(object_value, Value::Null | Value::Undefined) {
+                    if let PropertyKey::Computed(expression) = property {
+                        eval_expression(expression, env, in_arrow_function)?;
+                    }
+                    return Err(JsError(
+                        "TypeError: Cannot read properties of null or undefined".into(),
+                    ));
+                }
+                let property_name = crate::eval::call::extract_property_name(
+                    property.clone(),
+                    *computed,
+                    env,
+                    in_arrow_function,
+                )?;
+                let left_val =
+                    crate::eval::member::eval_member_access(&object_value, &property_name, env)?;
+                let result = eval_logical_compound_assign(
+                    op,
+                    left,
+                    &left_val,
+                    right,
+                    env,
+                    in_arrow_function,
+                    Some((&object_value, property_name.as_str())),
+                )?;
+                return Ok(result);
+            } else {
+                None
+            };
             let left_val = eval_expression(left, env, in_arrow_function)?;
-            let result =
-                eval_logical_compound_assign(op, left, &left_val, right, env, in_arrow_function)?;
+            let result = eval_logical_compound_assign(
+                op,
+                left,
+                &left_val,
+                right,
+                env,
+                in_arrow_function,
+                member_target,
+            )?;
             Ok(result)
         }
         Expression::Call { callee, arguments } => {
@@ -484,6 +649,9 @@ pub fn eval_expression(
             arguments,
         } => eval_new(constructor, arguments, env, in_arrow_function),
         Expression::Sequence(exprs) => eval_sequence(exprs, env, in_arrow_function),
+        Expression::Parenthesized(expression) => {
+            eval_expression(expression, env, in_arrow_function)
+        }
         Expression::BlockExpr(stmts) => eval_block_expr(stmts, env, in_arrow_function),
         Expression::ArrayPattern(_) => Err(JsError(
             "Array pattern must be used in assignment context".to_string(),
@@ -495,6 +663,7 @@ pub fn eval_expression(
             variable,
             iterable,
             body,
+            await_of,
             loop_binding,
             dispose_async,
         } => eval_for_of(
@@ -503,6 +672,7 @@ pub fn eval_expression(
             body,
             *loop_binding,
             *dispose_async,
+            *await_of,
             env,
             in_arrow_function,
         ),
@@ -536,7 +706,7 @@ fn eval_await(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let value = eval_expression(arg, env, in_arrow_function)?;
-    Ok(crate::eval::r#await::eval_await_value(value))
+    crate::eval::r#await::eval_await_value(value)
 }
 
 /// Build the environment captured by a closure.

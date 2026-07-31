@@ -44,7 +44,8 @@ pub fn create_promise_proto() -> Rc<RefCell<Object>> {
 
 /// Create resolved promise with given value
 pub fn create_resolved_promise(value: Value) -> Rc<RefCell<Object>> {
-    let promise_obj = Object::new(ObjectKind::Promise);
+    let mut promise_obj = Object::new(ObjectKind::Promise);
+    set_promise_prototype(&mut promise_obj);
     let promise_rc = Rc::new(RefCell::new(promise_obj));
     {
         let mut obj = promise_rc.borrow_mut();
@@ -58,7 +59,8 @@ pub fn create_resolved_promise(value: Value) -> Rc<RefCell<Object>> {
 
 /// Create rejected promise with given reason
 pub fn create_rejected_promise(reason: Value) -> Result<Rc<RefCell<Object>>, JsError> {
-    let promise_obj = Object::new(ObjectKind::Promise);
+    let mut promise_obj = Object::new(ObjectKind::Promise);
+    set_promise_prototype(&mut promise_obj);
     let promise_rc = Rc::new(RefCell::new(promise_obj));
     {
         let mut obj = promise_rc.borrow_mut();
@@ -68,6 +70,15 @@ pub fn create_rejected_promise(reason: Value) -> Result<Rc<RefCell<Object>>, JsE
         }
     }
     Ok(promise_rc)
+}
+
+fn set_promise_prototype(object: &mut Object) {
+    let Some(Value::NativeConstructor(constructor)) =
+        crate::context::get_global_from_context("Promise")
+    else {
+        return;
+    };
+    object.prototype = Some(Rc::clone(&constructor.prototype));
 }
 
 /// Create callback promise object for linking promises

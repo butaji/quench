@@ -21,7 +21,12 @@ pub fn promise_resolve_impl_static(
     if let Value::Object(ref obj) = value {
         let obj_ref = obj.borrow();
         if obj_ref.kind == ObjectKind::Promise {
-            return Ok(value.clone());
+            drop(obj_ref);
+            let constructor = crate::eval::member::eval_object_member(obj, "constructor", None)?;
+            let intrinsic = crate::context::get_global_from_context("Promise");
+            if intrinsic.is_some_and(|promise| crate::value::same_value(&promise, &constructor)) {
+                return Ok(value.clone());
+            }
         }
     }
 

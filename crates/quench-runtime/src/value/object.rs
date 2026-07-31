@@ -175,9 +175,11 @@ impl Object {
             }
         }
         self.descriptors.shift_remove(key);
-        let had_getter = self.getters.shift_remove(key).is_some();
-        let had_setter = self.setters.shift_remove(key).is_some();
-        self.properties.shift_remove(key).is_some() || had_getter || had_setter
+        self.getters.shift_remove(key);
+        self.setters.shift_remove(key);
+        self.symbol_properties.shift_remove(key);
+        let _ = self.properties.shift_remove(key);
+        true
     }
 
     /// Check if property is enumerable.

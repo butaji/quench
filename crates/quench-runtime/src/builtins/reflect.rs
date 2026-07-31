@@ -154,10 +154,7 @@ pub fn register_reflect(ctx: &mut Context) {
                     to_property_key(args.get(1).ok_or_else(|| {
                         JsError::new("Reflect.set requires propertyKey argument")
                     })?)?;
-                let value = args
-                    .get(2)
-                    .ok_or_else(|| JsError::new("Reflect.set requires value argument"))?
-                    .clone();
+                let value = args.get(2).cloned().unwrap_or(Value::Undefined);
                 let receiver = args.get(3).unwrap_or(target).clone();
                 let Value::Object(target_obj) = target else {
                     return Err(JsError::new("Reflect.set target must be an object"));
@@ -188,6 +185,9 @@ pub fn register_reflect(ctx: &mut Context) {
                         ));
                     }
                 }
+                if target_obj.borrow().kind == ObjectKind::ModuleNamespace {
+                    return Ok(Value::Boolean(false));
+                }
                 target_obj.borrow_mut().set(&key, value);
                 Ok(Value::Boolean(true))
             },
@@ -208,13 +208,40 @@ pub fn register_reflect(ctx: &mut Context) {
                         "Reflect.getOwnPropertyDescriptor target must be an object",
                     ));
                 };
-                Ok(target
-                    .borrow()
-                    .get_descriptor(&key)
-                    .map(|_| {
-                        Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))))
-                    })
-                    .unwrap_or(Value::Undefined))
+                let Some(flags) = target.borrow().get_descriptor(&key) else {
+                    return Ok(Value::Undefined);
+                };
+                let mut descriptor = Object::new(ObjectKind::Ordinary);
+                if let Some(value) = flags.value {
+                    descriptor.set("value", value);
+                    descriptor.set("writable", Value::Boolean(flags.writable));
+                }
+                descriptor.set("enumerable", Value::Boolean(flags.enumerable));
+                descriptor.set("configurable", Value::Boolean(flags.configurable));
+                Ok(Value::Object(Rc::new(RefCell::new(descriptor))))
+            },
+        ))),
+    );
+    reflect.set(
+        "deleteProperty",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args
+                    .first()
+                    .ok_or_else(|| JsError::new("Reflect.deleteProperty requires target"))?;
+                let key =
+                    to_property_key(args.get(1).ok_or_else(|| {
+                        JsError::new("Reflect.deleteProperty requires propertyKey")
+                    })?)?;
+                let Value::Object(object) = target else {
+                    return Err(JsError::new(
+                        "Reflect.deleteProperty target must be an object",
+                    ));
+                };
+                if object.borrow().kind == ObjectKind::ModuleNamespace {
+                    return Ok(Value::Boolean(false));
+                }
+                Ok(Value::Boolean(object.borrow_mut().delete(&key)))
             },
         ))),
     );
@@ -364,6 +391,22 @@ JSON.stringify([target.p, log]);
 "#,
         );
         assert_eq!(result, Value::String("[1,[\"set:p\"]]".to_string()));
+    }
+
+    #[test]
+    fn reflect_set_uses_undefined_when_value_is_omitted() {
+        let result = eval_ok_with_builtins(
+            "var o = {}; Reflect.set(o, 'x'); JSON.stringify([o.x, Reflect.set(o, 'x')]);",
+        );
+        assert_eq!(result, Value::String("[null,true]".to_string()));
+    }
+
+    #[test]
+    fn reflect_get_own_property_descriptor_returns_fields() {
+        let result = eval_ok_with_builtins(
+            "var o = {}; Object.defineProperty(o, 'x', {value: 42, writable: false, enumerable: true, configurable: false}); var d = Reflect.getOwnPropertyDescriptor(o, 'x'); JSON.stringify([d.value, d.writable, d.enumerable, d.configurable]);",
+        );
+        assert_eq!(result, Value::String("[42,false,true,false]".to_string()));
     }
 
     #[test]

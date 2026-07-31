@@ -134,6 +134,16 @@ pub(crate) fn expected_argument_count(params: &[Param]) -> f64 {
 }
 
 impl ValueFunction {
+    fn deleted_marker(key: &str) -> String {
+        format!("\0deleted:{key}")
+    }
+
+    pub fn is_property_deleted(&self, key: &str) -> bool {
+        self.properties
+            .borrow()
+            .contains_key(&Self::deleted_marker(key))
+    }
+
     /// Create a new regular function
     pub fn new(
         name: Option<String>,
@@ -259,6 +269,11 @@ impl ValueFunction {
         if let Some(obj_proto) = crate::builtins::get_object_prototype() {
             proto.prototype = Some(obj_proto);
         }
+        if self.is_async && self.is_generator {
+            if let Some(async_proto) = crate::builtins::function::get_async_generator_prototype() {
+                proto.prototype = Some(async_proto);
+            }
+        }
         proto
     }
 
@@ -297,8 +312,14 @@ impl ValueFunction {
 
     /// Own property names including non-enumerable `length`, `name`, and `prototype`.
     pub fn own_property_names(&self) -> Vec<String> {
-        let mut names = vec!["length".to_string()];
-        if self.get_property("name").is_some() || self.name.is_some() {
+        let mut names = if self.is_property_deleted("length") {
+            Vec::new()
+        } else {
+            vec!["length".to_string()]
+        };
+        if !self.is_property_deleted("name")
+            && (self.get_property("name").is_some() || self.name.is_some())
+        {
             names.push("name".to_string());
         }
         // Non-arrow functions always have a .prototype property.
@@ -306,7 +327,7 @@ impl ValueFunction {
             names.push("prototype".to_string());
         }
         for key in self.properties.borrow().keys() {
-            if key != "length" && key != "name" && key != "prototype" {
+            if !key.starts_with('\0') && key != "length" && key != "name" && key != "prototype" {
                 names.push(key.clone());
             }
         }
@@ -330,12 +351,13 @@ impl ValueFunction {
                 Value::Function(proto) => Some(proto.get_prototype()),
                 _ => None,
             };
-            if let Some(proto) = proto {
-                if let Some(cell) = self.proto_cell.upgrade() {
-                    *cell.borrow_mut() = Some(proto);
-                }
+            if let Some(cell) = self.proto_cell.upgrade() {
+                *cell.borrow_mut() = proto;
             }
         }
+        self.properties
+            .borrow_mut()
+            .remove(&Self::deleted_marker(key));
         let property_value = value.clone();
         self.with_mut(|props| {
             props.insert(key.to_string(), value);
@@ -348,7 +370,19 @@ impl ValueFunction {
 
     /// Remove a property. Returns true if it was present.
     pub fn remove_property(&self, key: &str) -> bool {
-        self.properties.borrow_mut().remove(key).is_some()
+        let removed = self.properties.borrow_mut().remove(key).is_some();
+        if matches!(key, "name" | "length") {
+            let marker = Self::deleted_marker(key);
+            let was_deleted = self.properties.borrow_mut().remove(&marker).is_some();
+            if was_deleted {
+                return false;
+            }
+            self.properties
+                .borrow_mut()
+                .insert(marker, Value::Undefined);
+            return true;
+        }
+        removed
     }
 
     /// Access properties with mutable borrow.
@@ -737,6 +771,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
             Expression::Null => "null".to_string(),
             Expression::Undefined => "undefined".to_string(),
             Expression::Identifier(id) => id.clone(),
+            Expression::Parenthesized(expr) => format!("({})", expr_to_string(expr)),
             Expression::BigInt(s) => format!("{}n", s),
             Expression::RegExp { pattern, flags } => format!("/{}/{}", pattern, flags),
             Expression::Elision => String::new(),

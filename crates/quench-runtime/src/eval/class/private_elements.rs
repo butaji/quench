@@ -477,6 +477,14 @@ mod tests {
     }
 
     #[test]
+    fn direct_eval_arrow_body_super_property_in_derived_field_throws() {
+        let err =
+            eval("class A {} class C extends A { x = eval('() => super()[\"x\"]'); } new C().x();")
+                .unwrap_err();
+        assert!(is_syntax_error(&err));
+    }
+
+    #[test]
     fn indirect_eval_super_call_in_class_field_throws_syntax_error() {
         let err = eval("class A {} class C extends A { x = (0, eval)('super();'); } new C();")
             .unwrap_err();

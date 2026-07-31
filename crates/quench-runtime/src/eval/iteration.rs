@@ -126,6 +126,7 @@ struct ForOfIteratorRun<'a> {
     body: &'a Statement,
     loop_binding: Option<VarKind>,
     dispose_async: Option<bool>,
+    await_of: bool,
     env: &'a Rc<RefCell<Environment>>,
     in_arrow_function: bool,
     index: usize,
@@ -140,6 +141,14 @@ pub(crate) fn take_pending_for_of_suspend() -> Option<crate::value::generator::F
     take_for_of_suspend()
 }
 
+pub(crate) fn stage_pending_destructuring_iterator(iterator: Rc<RefCell<Object>>) {
+    PENDING_DESTRUCTURING_ITERATOR.with(|cell| *cell.borrow_mut() = Some(iterator));
+}
+
+pub(crate) fn take_pending_destructuring_iterator() -> Option<Rc<RefCell<Object>>> {
+    PENDING_DESTRUCTURING_ITERATOR.with(|cell| cell.borrow_mut().take())
+}
+
 fn save_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
     PENDING_FOR_OF.with(|cell| *cell.borrow_mut() = Some(state));
 }
@@ -150,6 +159,8 @@ fn take_for_of_suspend() -> Option<crate::value::generator::ForOfSuspend> {
 
 thread_local! {
     static PENDING_FOR_OF: RefCell<Option<crate::value::generator::ForOfSuspend>> =
+        const { RefCell::new(None) };
+    static PENDING_DESTRUCTURING_ITERATOR: RefCell<Option<Rc<RefCell<Object>>>> =
         const { RefCell::new(None) };
     static PENDING_YIELD_DELEGATE: RefCell<Option<crate::value::generator::YieldDelegateSuspend>> =
         const { RefCell::new(None) };
@@ -315,6 +326,17 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
             }
             (item, ForOfResume::default())
         };
+        let item = if run.await_of {
+            match await_for_await_of(item) {
+                Ok(value) => value,
+                Err(error) if crate::interpreter::is_in_async_generator() => {
+                    return Err(error);
+                }
+                Err(error) => return deferred_for_await_rejection(error),
+            }
+        } else {
+            item
+        };
         let step = ForOfStep {
             variable: run.variable,
             item: &item,
@@ -327,7 +349,22 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
         };
         match run_for_of_iteration(step, per_iteration) {
             Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
-            Ok(ForOfIterResult::Break(val)) => return abrupt_close(&run.iterator, Ok(val)),
+            Ok(ForOfIterResult::Break(val)) => {
+                let closed = abrupt_close(&run.iterator, Ok(val));
+                if run.await_of {
+                    match closed {
+                        Ok(value) => return Ok(value),
+                        Err(error) if crate::interpreter::is_in_async_generator() => {
+                            return Err(error)
+                        }
+                        Err(error) if crate::interpreter::is_in_async_function() => {
+                            return Err(error)
+                        }
+                        Err(error) => return deferred_for_await_rejection(error),
+                    }
+                }
+                return closed;
+            }
             Ok(ForOfIterResult::Yield(val, suspend_init)) => {
                 // Compute body_tail before setting pending so it can be used in both.
                 let body_tail = if suspend_init {
@@ -369,6 +406,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     body: run.body.clone(),
                     loop_binding: run.loop_binding,
                     dispose_async: run.dispose_async,
+                    await_of: run.await_of,
                     per_iteration,
                     in_arrow_function: run.in_arrow_function,
                     pending: run.pending.clone(),
@@ -376,7 +414,19 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                 return Ok(val);
             }
             Ok(ForOfIterResult::Step(body_val)) => completion = body_val,
-            Err(e) => return abrupt_close(&run.iterator, Err(e)),
+            Err(e) => {
+                let closed = abrupt_close(&run.iterator, Err(e));
+                if run.await_of {
+                    match closed {
+                        Ok(value) => return Ok(value),
+                        Err(error) if crate::interpreter::is_in_async_generator() => {
+                            return Err(error)
+                        }
+                        Err(error) => return deferred_for_await_rejection(error),
+                    }
+                }
+                return closed;
+            }
         }
     }
     if let Some(ControlFlow::Return(val))
@@ -384,9 +434,63 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
     | Some(ControlFlow::Yield(val))
     | Some(ControlFlow::YieldDelegate(val)) = take_control_flow()
     {
+        if run.await_of {
+            set_control_flow(ControlFlow::Return(val.clone()));
+        }
         Ok(val)
     } else {
         Ok(completion)
+    }
+}
+
+fn deferred_for_await_rejection(error: JsError) -> Result<Value, JsError> {
+    let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
+        let error_type = if error.0.contains("unresolvable") || error.0.contains("not defined") {
+            "ReferenceError"
+        } else {
+            "TypeError"
+        };
+        let (value, _) =
+            crate::value::error::create_js_error_with_type(&error.to_string(), error_type);
+        crate::value::take_thrown_value();
+        value
+    });
+    if error.0.contains("not defined") {
+        crate::value::set_thrown_value(reason);
+        return Err(error);
+    }
+    let proto = crate::builtins::promise::get_promise_proto();
+    let mut object = Object::with_prototype(crate::value::ObjectKind::Promise, proto);
+    object.promise_data = Some(crate::value::object::PromiseObjectData::new());
+    let target = Rc::new(RefCell::new(object));
+    let queued_target = Rc::clone(&target);
+    let first = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        crate::builtins::promise::settle_reject(&queued_target, reason.clone());
+        Ok(Value::Undefined)
+    })));
+    crate::builtins::promise::queue_microtask_impl(first);
+    let promise = Value::Object(target);
+    crate::interpreter::set_control_flow(ControlFlow::Return(promise.clone()));
+    Ok(promise)
+}
+
+fn await_for_await_of(value: Value) -> Result<Value, JsError> {
+    let promise = crate::builtins::promise::promise_resolve_impl_static(
+        vec![value],
+        crate::builtins::promise::get_promise_proto(),
+    )?;
+    let Value::Object(promise) = promise else {
+        return Ok(Value::Undefined);
+    };
+    crate::builtins::promise::execute_pending_microtasks()?;
+    let data = promise.borrow().promise_data.clone();
+    match data.map(|data| (data.state, data.result)) {
+        Some((crate::value::object::PromiseState::Fulfilled, value)) => Ok(value),
+        Some((crate::value::object::PromiseState::Rejected, reason)) => {
+            crate::value::set_thrown_value(reason);
+            Err(JsError("for-await value rejected".to_string()))
+        }
+        _ => Ok(Value::Undefined),
     }
 }
 
@@ -533,6 +637,7 @@ pub fn eval_for_of(
     body: &Statement,
     loop_binding: Option<crate::ast::VarKind>,
     dispose_async: Option<bool>,
+    await_of: bool,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
@@ -543,6 +648,7 @@ pub fn eval_for_of(
             body: &suspend.body,
             loop_binding: suspend.loop_binding,
             dispose_async: suspend.dispose_async,
+            await_of: suspend.await_of,
             env,
             in_arrow_function: suspend.in_arrow_function,
             index: suspend.index,
@@ -580,6 +686,7 @@ pub fn eval_for_of(
         body,
         loop_binding,
         dispose_async,
+        await_of,
         env,
         in_arrow_function,
         index: 0,
@@ -769,6 +876,61 @@ mod tests {
     }
 
     #[test]
+    fn for_await_of_awaits_values_from_sync_iterables() {
+        let mut ctx = new_ctx();
+        ctx.eval("var result = 0; async function f() { for await (var value of [Promise.resolve(7)]) { result = value; } } f();")
+            .unwrap();
+        assert_eq!(ctx.eval("result").unwrap(), Value::Number(7.0));
+    }
+
+    #[test]
+    fn for_await_of_destructuring_error_rejects_async_function() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "let _; var reason; async function fn() { for await ([[ _ ]] of [[null]]) {} } let promise = fn(); promise.catch(function(error) { reason = error; });",
+        )
+        .unwrap();
+        let promise = ctx.eval("promise").unwrap();
+        assert_eq!(
+            ctx.eval("promise.constructor === Promise").unwrap(),
+            Value::Boolean(true)
+        );
+        let state = match promise {
+            Value::Object(object) => object
+                .borrow()
+                .promise_data
+                .as_ref()
+                .map(|data| data.state.clone()),
+            _ => None,
+        };
+        assert_eq!(state, Some(crate::value::object::PromiseState::Rejected));
+        assert_eq!(
+            ctx.eval("reason.constructor === TypeError").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn for_await_of_rejection_preserves_microtask_order() {
+        let mut ctx = new_ctx();
+        ctx.eval("var actual = []; var p = Promise.resolve(0); Object.defineProperty(p, 'constructor', { get() { throw new Error(); } }); async function f() { actual.push('start'); for await (var x of [p]); actual.push('never'); } Promise.resolve().then(() => actual.push('tick 1')).then(() => actual.push('tick 2')).then(() => actual.push('after')); f().catch(() => actual.push('catch'));")
+            .unwrap();
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("start,tick 1,tick 2,catch,after".into())
+        );
+    }
+
+    #[test]
+    fn async_generator_nested_destructuring_clears_stale_thrown_value() {
+        let mut ctx = new_ctx();
+        let result = ctx.eval(
+            "async function* fn() { for await ([[ _ ]] of [[null]]) {} } var p = fn().next(); typeof p",
+        );
+        assert_eq!(result.unwrap(), Value::String("object".into()));
+    }
+
+    #[test]
     fn test_get_iterator_array() {
         let mut ctx = new_ctx();
         let arr = ctx.eval("[10, 20, 30]").unwrap();
@@ -926,6 +1088,14 @@ mod tests {
         let mut ctx = new_ctx();
         let result = ctx.eval("var b; for (b of [0]) { 3; }").unwrap();
         assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn for_of_assignment_updates_outer_var() {
+        let mut ctx = new_ctx();
+        ctx.eval("var result; function f() { for (result of [7]); } f();")
+            .unwrap();
+        assert_eq!(ctx.eval("result").unwrap(), Value::Number(7.0));
     }
 
     #[test]

@@ -485,23 +485,11 @@ pub fn register_function(ctx: &mut Context) {
                 )
             })?;
             match this_val {
-                Value::Generator(gen) => {
-                    use crate::value::generator::GeneratorState;
-                    let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                    {
-                        let mut g = gen.borrow_mut();
-                        g.state = GeneratorState::Completed;
-                    }
-                    let proto = crate::builtins::promise::get_promise_proto();
-                    crate::builtins::promise::promise_resolve_impl_static(
-                        vec![crate::value::generator::IteratorResult {
-                            value: arg,
-                            done: true,
-                        }
-                        .to_object()],
-                        proto,
-                    )
-                }
+                Value::Generator(ref gen) => crate::eval::function::call_value_with_this(
+                    crate::value::generator::async_generator_return_fn(Rc::clone(gen)),
+                    args,
+                    this_val,
+                ),
                 _ => Err(JsError(
                     "TypeError: AsyncGenerator.prototype.return called on incompatible receiver"
                         .to_string(),

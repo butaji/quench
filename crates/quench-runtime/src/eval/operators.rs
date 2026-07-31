@@ -11,11 +11,11 @@ use std::rc::Rc;
 pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, JsError> {
     match op {
         BinaryOp::Add => eval_add(left, right),
-        BinaryOp::Sub => Ok(Value::Number(to_number(left) - to_number(right))),
-        BinaryOp::Mul => Ok(Value::Number(to_number(left) * to_number(right))),
-        BinaryOp::Div => Ok(Value::Number(to_number(left) / to_number(right))),
-        BinaryOp::Mod => Ok(Value::Number(to_number(left) % to_number(right))),
-        BinaryOp::Pow => Ok(Value::Number(to_number(left).powf(to_number(right)))),
+        BinaryOp::Sub => eval_numeric_arithmetic(left, right, '-'),
+        BinaryOp::Mul => eval_numeric_arithmetic(left, right, '*'),
+        BinaryOp::Div => eval_numeric_arithmetic(left, right, '/'),
+        BinaryOp::Mod => eval_numeric_arithmetic(left, right, '%'),
+        BinaryOp::Pow => eval_numeric_arithmetic(left, right, '^'),
         BinaryOp::Eq => Ok(Value::Boolean(loose_eq(left, right))),
         BinaryOp::Neq => Ok(Value::Boolean(!loose_eq(left, right))),
         BinaryOp::LooseEq => Ok(Value::Boolean(loose_eq(left, right))),
@@ -38,13 +38,112 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
             right.clone()
         }),
         BinaryOp::NullishCoalescing => eval_nullish(left, right),
-        BinaryOp::BitAnd => bit_op(left, right, |a, b| a & b),
-        BinaryOp::BitOr => bit_op(left, right, |a, b| a | b),
-        BinaryOp::BitXor => bit_op(left, right, |a, b| a ^ b),
-        BinaryOp::Shl => shift_op(left, right, |a, b| a << b),
-        BinaryOp::Shr => shift_op(left, right, |a, b| a >> b),
+        BinaryOp::BitAnd => eval_bigint_bitwise(left, right, '&')
+            .unwrap_or_else(|| bit_op(left, right, |a, b| a & b)),
+        BinaryOp::BitOr => eval_bigint_bitwise(left, right, '|')
+            .unwrap_or_else(|| bit_op(left, right, |a, b| a | b)),
+        BinaryOp::BitXor => eval_bigint_bitwise(left, right, '^')
+            .unwrap_or_else(|| bit_op(left, right, |a, b| a ^ b)),
+        BinaryOp::Shl => eval_bigint_shift(left, right, true)
+            .unwrap_or_else(|| shift_op(left, right, |a, b| a << b)),
+        BinaryOp::Shr => eval_bigint_shift(left, right, false)
+            .unwrap_or_else(|| shift_op(left, right, |a, b| a >> b)),
         BinaryOp::Ushr => shift_op_u(left, right, |a, b| a >> b),
     }
+}
+
+fn eval_bigint_shift(
+    left: &Value,
+    right: &Value,
+    left_shift: bool,
+) -> Option<Result<Value, JsError>> {
+    let left = to_primitive(left, Some("number"));
+    let right = to_primitive(right, Some("number"));
+    let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
+        return None;
+    };
+    let Ok(count) = right.to_string().parse::<usize>() else {
+        return Some(crate::throw!(
+            "RangeError",
+            "BigInt shift count is too large"
+        ));
+    };
+    let result = if left_shift {
+        left.as_ref() << count
+    } else {
+        left.as_ref() >> count
+    };
+    Some(Ok(Value::BigInt(Rc::new(result))))
+}
+
+fn eval_bigint_bitwise(
+    left: &Value,
+    right: &Value,
+    operator: char,
+) -> Option<Result<Value, JsError>> {
+    let left = to_primitive(left, Some("number"));
+    let right = to_primitive(right, Some("number"));
+    let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
+        return None;
+    };
+    let result = match operator {
+        '&' => left.as_ref() & right.as_ref(),
+        '|' => left.as_ref() | right.as_ref(),
+        '^' => left.as_ref() ^ right.as_ref(),
+        _ => unreachable!(),
+    };
+    Some(Ok(Value::BigInt(Rc::new(result))))
+}
+
+fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Result<Value, JsError> {
+    let left = to_primitive(left, None)?;
+    let right = to_primitive(right, None)?;
+    match (&left, &right) {
+        (Value::BigInt(left), Value::BigInt(right)) => {
+            eval_bigint_arithmetic(left, right, operator)
+        }
+        (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+            crate::throw!("TypeError", "Cannot mix BigInt and other types")
+        }
+        _ => {
+            let left = to_number(&left);
+            let right = to_number(&right);
+            let value = match operator {
+                '-' => left - right,
+                '*' => left * right,
+                '/' => left / right,
+                '%' => left % right,
+                '^' => left.powf(right),
+                _ => unreachable!(),
+            };
+            Ok(Value::Number(value))
+        }
+    }
+}
+
+fn eval_bigint_arithmetic(
+    left: &num_bigint::BigInt,
+    right: &num_bigint::BigInt,
+    operator: char,
+) -> Result<Value, JsError> {
+    if matches!(operator, '/' | '%') && right == &0.into() {
+        return crate::throw!("RangeError", "Division by zero");
+    }
+    if operator == '^' && right < &0.into() {
+        return crate::throw!("RangeError", "BigInt negative exponent");
+    }
+    let result = match operator {
+        '-' => left - right,
+        '*' => left * right,
+        '/' => left / right,
+        '%' => left % right,
+        '^' => match right.to_string().parse::<u32>() {
+            Ok(power) => left.pow(power),
+            Err(_) => return crate::throw!("RangeError", "BigInt exponent is too large"),
+        },
+        _ => unreachable!(),
+    };
+    Ok(Value::BigInt(Rc::new(result)))
 }
 
 fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
@@ -131,6 +230,10 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
         let l = to_js_string(left);
         let r = to_js_string(right);
         Ok(Value::String(format!("{}{}", l, r)))
+    } else if let (Value::BigInt(left), Value::BigInt(right)) = (left, right) {
+        Ok(crate::builtins::bigint::bigint_to_value(
+            left.as_ref() + right.as_ref(),
+        ))
     } else {
         if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
             return symbol_conversion_error("number");
@@ -173,11 +276,13 @@ fn eval_relational<F>(left: &Value, right: &Value, num_cmp: F) -> Result<Value, 
 where
     F: Fn(f64, f64) -> bool,
 {
-    if let (Value::String(a), Value::String(b)) = (left, right) {
+    let left = to_primitive(left, None)?;
+    let right = to_primitive(right, None)?;
+    if let (Value::String(a), Value::String(b)) = (&left, &right) {
         let cmp = string_compare(a, b);
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
-    Ok(Value::Boolean(num_cmp(to_number(left), to_number(right))))
+    Ok(Value::Boolean(num_cmp(to_number(&left), to_number(&right))))
 }
 
 fn string_compare(a: &str, b: &str) -> i32 {
@@ -194,14 +299,7 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
     let prop_name = to_js_string(left);
     match right {
         Value::Object(obj) => Ok(Value::Boolean(obj.borrow().has(&prop_name))),
-        Value::String(s) => {
-            if let Ok(idx) = prop_name.parse::<usize>() {
-                Ok(Value::Boolean(idx < s.chars().count()))
-            } else {
-                Ok(Value::Boolean(false))
-            }
-        }
-        _ => Ok(Value::Boolean(false)),
+        _ => crate::throw!("TypeError", "right-hand side of 'in' is not an object"),
     }
 }
 
@@ -261,10 +359,29 @@ fn function_instanceof(
 }
 
 fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
+    match right {
+        Value::Undefined | Value::Null => {
+            return crate::throw!("TypeError", "Right-hand side of instanceof is not callable")
+        }
+        Value::Object(ctor) => {
+            if ctor.borrow().get("prototype").is_none() {
+                return crate::throw!("TypeError", "Right-hand side of instanceof is not callable");
+            }
+        }
+        Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_) => {
+            return crate::throw!("TypeError", "Right-hand side of instanceof is not callable")
+        }
+        _ => {}
+    }
     match (left, right) {
-        (_, Value::Undefined) | (_, Value::Null) => Ok(Value::Boolean(false)),
         (Value::Object(obj), Value::Function(ctor)) => {
-            let ctor_proto = ctor.get_prototype();
+            let ctor_proto = match ctor
+                .get_property("prototype")
+                .or_else(|| Some(Value::Object(ctor.get_prototype())))
+            {
+                Some(Value::Object(proto)) => proto,
+                _ => return crate::throw!("TypeError", "Function has non-object prototype"),
+            };
             let result = has_prototype_in_chain(&obj.borrow(), &ctor_proto);
             Ok(Value::Boolean(result))
         }
@@ -277,7 +394,7 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
                 let result = has_prototype_in_chain(&obj.borrow(), &proto);
                 Ok(Value::Boolean(result))
             } else {
-                Ok(Value::Boolean(false))
+                crate::throw!("TypeError", "Function has non-object prototype")
             }
         }
         (Value::Function(func), Value::NativeConstructor(ctor)) => {
@@ -289,11 +406,17 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
                 let result = function_instanceof(func, &proto);
                 Ok(Value::Boolean(result))
             } else {
-                Ok(Value::Boolean(false))
+                crate::throw!("TypeError", "Function has non-object prototype")
             }
         }
         (Value::Function(func), Value::Function(ctor)) => {
-            let ctor_proto = ctor.get_prototype();
+            let ctor_proto = match ctor
+                .get_property("prototype")
+                .or_else(|| Some(Value::Object(ctor.get_prototype())))
+            {
+                Some(Value::Object(proto)) => proto,
+                _ => return crate::throw!("TypeError", "Function has non-object prototype"),
+            };
             let result = function_instanceof(func, &ctor_proto);
             Ok(Value::Boolean(result))
         }
@@ -304,7 +427,7 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
                 let result = has_prototype_in_chain(&obj.borrow(), &proto);
                 Ok(Value::Boolean(result))
             } else {
-                Ok(Value::Boolean(false))
+                crate::throw!("TypeError", "Right-hand side of instanceof is not callable")
             }
         }
         // Handle class instances: obj instanceof Class
@@ -399,16 +522,22 @@ where
     // Per ES §12.9.3.1 / 12.9.4.1: shift count is masked to 5 bits (0-31).
     // This avoids Rust's panic on shifting by >= bit width.
     let count = (r as i64) & 0x1F;
-    Ok(Value::Number(f(l as i64, count) as f64))
+    let left = to_uint32(l) as u32 as i32 as i64;
+    Ok(Value::Number((f(left, count) as i32) as f64))
 }
 
 fn shift_op_u<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
 where
     F: FnOnce(u64, u64) -> u64,
 {
+    let left_primitive = to_primitive(left, Some("number"))?;
+    let right_primitive = to_primitive(right, Some("number"))?;
+    if matches!(left_primitive, Value::BigInt(_)) || matches!(right_primitive, Value::BigInt(_)) {
+        return crate::throw!("TypeError", "Cannot mix BigInt with unsigned right shift");
+    }
     // Use to_uint32 per JavaScript spec for unsigned right shift
-    let l = to_uint32(to_number(left)) as u64;
-    let r = to_uint32(to_number(right)) as u64;
+    let l = to_uint32(to_number(&left_primitive)) as u64;
+    let r = to_uint32(to_number(&right_primitive)) as u64;
     // Mask shift count to 5 bits (0-31) per ES §12.9.3.1 step 7.
     let count = r & 0x1F;
     let result = f(l, count);
@@ -420,9 +549,18 @@ where
 pub fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
     match op {
         UnaryOp::Not => Ok(Value::Boolean(!to_bool(val))),
-        UnaryOp::Neg => Ok(Value::Number(-to_number(val))),
-        UnaryOp::Plus => Ok(Value::Number(to_number(val))),
-        UnaryOp::BitNot => Ok(Value::Number(!(to_number(val) as i64) as f64)),
+        UnaryOp::Neg => match to_primitive(val, Some("number"))? {
+            Value::BigInt(value) => Ok(Value::BigInt(Rc::new(-value.as_ref()))),
+            primitive => Ok(Value::Number(-to_number(&primitive))),
+        },
+        UnaryOp::Plus => match to_primitive(val, Some("number"))? {
+            Value::BigInt(_) => crate::throw!("TypeError", "Cannot convert BigInt to number"),
+            primitive => Ok(Value::Number(to_number(&primitive))),
+        },
+        UnaryOp::BitNot => match to_primitive(val, Some("number"))? {
+            Value::BigInt(value) => Ok(Value::BigInt(Rc::new(!value.as_ref()))),
+            primitive => Ok(Value::Number(!(to_number(&primitive) as i64) as f64)),
+        },
         UnaryOp::Typeof => eval_typeof(val),
         UnaryOp::Void => Ok(Value::Undefined),
         UnaryOp::Delete => Err(JsError("Delete should be handled specially".to_string())),

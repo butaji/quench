@@ -163,6 +163,20 @@ fn async_script_done_with_error_fails() {
 }
 
 #[test]
+fn strict_async_script_rejects_named_function_reassignment() {
+    let script = format!(
+        "\"use strict\";{}\
+         var result; var ref = async function BindingIdentifier() {{ \
+         (() => {{ BindingIdentifier = 1; }})(); }}; \
+         ref().then(function() {{ result = 'resolved'; }}, function(error) {{ result = error.name; }}); \
+         Promise.resolve().then(function() {{ if (result !== 'TypeError') throw new Error(result); $DONE(); }});",
+        ASYNC_DONE_PRELUDE
+    );
+    let result = run_async_script(&script, false);
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
 fn can_block_is_true_runs_instead_of_skipping() {
     let dir = std::env::temp_dir().join(format!("quench-cbit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -176,7 +176,7 @@ pub(crate) fn lower_statement_list(body: &[ast::Statement]) -> Statement {
                         };
                         let name = id.name.as_str().to_string();
                         statements.push(Statement::VarDeclaration {
-                            kind: VarKind::Let,
+                            kind: VarKind::Const,
                             name: name.clone(),
                             init: binding.init.as_ref().and_then(|expr| lower_expr(expr).ok()),
                         });

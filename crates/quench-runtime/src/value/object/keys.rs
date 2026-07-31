@@ -60,13 +60,13 @@ pub fn own_property_names(obj: &crate::value::Object) -> Vec<String> {
     let mut keys = array_indices(obj);
     let mut seen: std::collections::HashSet<String> = keys.iter().cloned().collect();
     for key in obj.properties.keys() {
-        if as_array_index(key).is_none() && !seen.contains(key) {
+        if as_array_index(key).is_none() && !key.contains('\0') && !seen.contains(key) {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
     }
     for key in obj.getters.keys().chain(obj.setters.keys()) {
-        if !seen.contains(key) {
+        if !key.contains('\0') && !seen.contains(key) {
             seen.insert(key.clone());
             keys.push(key.clone());
         }

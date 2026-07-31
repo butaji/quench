@@ -82,7 +82,13 @@ impl HarnessLoader {
     /// Returns Err if a requested include cannot be loaded — running without
     /// it would produce partial-harness results.
     pub fn build_script(&self, source: &str, includes: &[String]) -> Result<String, String> {
-        let mut out = String::with_capacity(source.len() + 4096);
+        let mut out = self.build_harness(includes)?;
+        out.push_str(source);
+        Ok(out)
+    }
+
+    pub fn build_harness(&self, includes: &[String]) -> Result<String, String> {
+        let mut out = String::with_capacity(4096);
         for inc in includes {
             if inc == "deepEqual.js" {
                 continue;
@@ -109,7 +115,6 @@ impl HarnessLoader {
                 None => return Err(format!("harness include not found: {}", inc)),
             }
         }
-        out.push_str(source);
         Ok(out)
     }
 }
@@ -653,6 +658,10 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
         "assert".to_string(),
         Value::NativeFunction(std::rc::Rc::clone(&assert_fn)),
     );
+    ctx.set_global(
+        "compareArray".to_string(),
+        make_native(assert_helpers::assert_compare_array),
+    );
 
     // STEP 2a: assert.js is not loaded as a JS file (see STEP 3 note), so the
     // helper functions it would define on `assert` are added here. Bodies are
@@ -728,12 +737,10 @@ assert._toString = function (value) {
         "resizableArrayBufferUtils.js",
         "temporalHelpers.js",
         "tcoHelper.js",
-        "atomicsHelper.js",
         "promiseHelper.js",
         "nativeFunctionMatcher.js",
         "assertRelativeDateMs.js",
         "compareIterator.js",
-        "testAtomics.js",
         "testIntl.js",
     ] {
         eval_harness_file(ctx, js_file)?;

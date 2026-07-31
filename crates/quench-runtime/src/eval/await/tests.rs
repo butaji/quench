@@ -114,6 +114,45 @@ mod await_tests {
     }
 
     #[test]
+    fn async_await_plain_value_fulfills_with_value() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; async function f() { return await 42; } f().then(function(value) { result = value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("result"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn async_await_plain_value_in_variable_fulfills_with_value() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; async function f() { var value = await 42; return value; } f().then(function(value) { result = value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("result"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn async_await_super_method_with_done_binding_fulfills_with_string() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var $DONE = function() {}; var sup = { method() { return 'sup'; } }; \
+             var child = { async method() { var x = await super.method(); \
+             globalThis.result = x; } }; Object.setPrototypeOf(child, sup); \
+             child.method().then($DONE, $DONE);",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("sup".to_string()))
+        );
+    }
+
+    #[test]
     fn async_function_finally_await_reject_overrides_return() {
         let mut ctx = Context::new().unwrap();
         let _ = ctx.eval(
@@ -168,6 +207,50 @@ mod await_tests {
     }
 
     #[test]
+    fn async_finally_return_await_overrides_pending_throw() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; async function f() { try { throw 'early'; } finally { return await new Promise(function(resolve) { resolve('override'); }); } } \
+             f().then(function(value) { result = value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("override".into()))
+        );
+    }
+
+    #[test]
+    fn named_async_function_name_reassignment_rejects_in_strict_body() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "'use strict'; var result; var calls = 0; var ref = async function BindingIdentifier() { \
+             calls++; (() => { BindingIdentifier = 1; })(); }; \
+             ref().then(function() { result = 'resolved'; }, function(error) { result = error.name; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("calls"), Some(Value::Number(1.0)));
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("TypeError".into()))
+        );
+    }
+
+    #[test]
+    fn async_await_rejected_promise_enters_catch() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; async function f() { try { await Promise.reject('boom'); } catch (error) { result = error; } } \
+             f();",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("result"), Some(Value::String("boom".into())));
+    }
+
+    #[test]
     fn async_function_finally_await_reject_overrides_throw() {
         let mut ctx = Context::new().unwrap();
         let _ = ctx.eval(
@@ -186,5 +269,22 @@ mod await_tests {
         crate::builtins::promise::execute_pending_microtasks().unwrap();
         let r = ctx.eval("result").unwrap();
         assert_eq!(r, Value::String("rejected:override".to_string()));
+    }
+
+    #[test]
+    fn async_arrow_finally_rejection_reaches_chained_handler() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; var f = async () => { try { throw 'early-throw'; } \
+             finally { await new Promise(function(resolve, reject) { reject('override'); }); } }; \
+             f().then(function() { result = 'wrong'; }, function(value) { result = value; }) \
+             .then(function() { result = result + ':done'; }, function() { result = 'rejected'; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("override:done".into()))
+        );
     }
 }

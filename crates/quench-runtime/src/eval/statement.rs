@@ -27,6 +27,11 @@ thread_local! {
 pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
     match expr {
         Expression::Call { callee, .. } => !callee_is_direct_eval(callee),
+        Expression::Binary {
+            op: BinaryOp::And | BinaryOp::Or | BinaryOp::NullishCoalescing,
+            right,
+            ..
+        } => is_tail_expr(right),
         _ => false,
     }
 }
@@ -278,7 +283,10 @@ fn eval_function_body_impl(
 
         // Check for tail-call return inside a block or do-while at the last position.
         if is_last_stmt {
-            if acc_stack_len() > 0 && has_tail_call_in_statement(stmt, env, in_arrow_function)? {
+            if !matches!(stmt, Statement::Block(_) | Statement::If { .. })
+                && acc_stack_len() > 0
+                && has_tail_call_in_statement(stmt, env, in_arrow_function)?
+            {
                 break;
             }
             if let Statement::Block(inner_stmts) = stmt {
@@ -411,6 +419,21 @@ fn try_handle_tail_call(
     let Some(e) = expr.as_ref() else {
         return Ok(false);
     };
+    if let Expression::Binary { op, left, right } = e.as_ref() {
+        let short_circuits = match op {
+            BinaryOp::And => !to_bool(&eval_expression(left, env, in_arrow_function)?),
+            BinaryOp::Or => to_bool(&eval_expression(left, env, in_arrow_function)?),
+            BinaryOp::NullishCoalescing => {
+                let value = eval_expression(left, env, in_arrow_function)?;
+                !matches!(value, Value::Null | Value::Undefined)
+            }
+            _ => return Ok(false),
+        };
+        if short_circuits || !matches!(right.as_ref(), Expression::Call { .. }) {
+            return Ok(false);
+        }
+        return try_handle_tail_call(&Some(right.clone()), env, in_arrow_function);
+    }
     let Expression::Call { callee, arguments } = e.as_ref() else {
         return Ok(false);
     };
@@ -860,12 +883,13 @@ pub(crate) fn eval_dispose(
     }
     let cache_name = dispose_cache_name(name);
     let method = match env.borrow().get(&cache_name) {
+        Some(Value::Undefined) => return Ok(Value::Undefined),
         Some(method) => method,
         None => resolve_dispose_method(&resource, is_async, env)?,
     };
     let result = crate::eval::function::call_value_with_this(method, Vec::new(), resource)?;
     if is_async {
-        Ok(crate::eval::r#await::eval_await_value(result))
+        crate::eval::r#await::eval_await_value(result)
     } else {
         Ok(result)
     }
@@ -877,13 +901,21 @@ pub(crate) fn eval_register_dispose(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     if is_async {
+        crate::eval::r#await::take_last_pending_await();
         ASYNC_DISPOSAL_EVALUATED.with(|evaluated| evaluated.set(true));
     }
     let resource = env.borrow().get(name).unwrap_or(Value::Undefined);
     let method = if matches!(resource, Value::Null | Value::Undefined) {
         Value::Undefined
     } else {
-        resolve_dispose_method(&resource, is_async, env)?
+        match resolve_dispose_method(&resource, is_async, env) {
+            Ok(method) => method,
+            Err(error) => {
+                env.borrow_mut()
+                    .define(dispose_cache_name(name), Value::Undefined);
+                return Err(error);
+            }
+        }
     };
     env.borrow_mut().define(dispose_cache_name(name), method);
     Ok(Value::Undefined)
@@ -926,7 +958,10 @@ fn resolve_dispose_method(
         method = get_resource_dispose_property(resource, &fallback, env)?;
     }
     if matches!(method, Value::Undefined | Value::Null) {
-        return Err(JsError::new("TypeError: object is not disposable"));
+        return crate::throw!("TypeError", "object is not disposable");
+    }
+    if !method.is_callable() {
+        return crate::throw!("TypeError", "disposal method is not callable");
     }
     Ok(method)
 }
@@ -958,7 +993,7 @@ fn get_resource_dispose_property(
                 .ok_or_else(|| JsError::new("TypeError: object is not disposable"))?;
             crate::eval::member::eval_object_member(&prototype, &name, Some(env))
         }
-        _ => Err(JsError::new("TypeError: object is not disposable")),
+        _ => crate::throw!("TypeError", "object is not disposable"),
     }
 }
 
@@ -1016,14 +1051,6 @@ fn eval_pattern_decl(
         crate::eval::object::assign_to(&target, &value, env)?;
     } else {
         crate::eval::object::init_to(&target, &value, env)?;
-    }
-    if *kind == VarKind::Var {
-        for name in crate::lower::pattern::collect_pattern_identifiers(pattern) {
-            let bound = env.borrow().get(&name);
-            if let Some(bound) = bound {
-                set_on_global_this(env, &name, bound);
-            }
-        }
     }
     Ok(Value::Undefined)
 }
@@ -1715,7 +1742,18 @@ fn eval_try(
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
                     take_control_flow();
-                    eval_disposal_finalizer(fin, thrown_value, env, in_arrow_function)
+                    if finalizer_has_dispose(fin) {
+                        eval_disposal_finalizer(fin, thrown_value, env, in_arrow_function)
+                    } else {
+                        match eval_statement(fin, env, false, in_arrow_function) {
+                            Ok(_) => {
+                                let message = to_js_string(&thrown_value);
+                                set_thrown_value(thrown_value);
+                                Err(JsError(message))
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
                 } else {
                     // No finally, no catch - rethrow
                     let msg = to_js_string(&thrown_value);
@@ -1725,47 +1763,6 @@ fn eval_try(
             }
         }
     }
-}
-
-fn finalizer_has_async_dispose(finalizer: &Statement) -> bool {
-    match finalizer {
-        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements
-            .iter()
-            .any(|statement| matches!(statement, Statement::Dispose { is_async: true, .. })),
-        Statement::Dispose { is_async, .. } => *is_async,
-        _ => false,
-    }
-}
-
-fn defer_disposal_until_pending_await(
-    finalizer: &Statement,
-    env: &Rc<RefCell<Environment>>,
-    in_arrow_function: bool,
-) -> bool {
-    let statements = match finalizer {
-        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements,
-        _ => return false,
-    };
-    if !statements
-        .iter()
-        .all(|statement| matches!(statement, Statement::Dispose { .. }))
-    {
-        return false;
-    }
-    let Some(promise) = crate::eval::r#await::take_last_pending_await() else {
-        return false;
-    };
-    take_async_disposal_evaluated();
-    let finalizer = finalizer.clone();
-    let env = Rc::clone(env);
-    let callback = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
-        eval_statement(&finalizer, &env, false, in_arrow_function)
-    })));
-    let target = crate::builtins::promise::create_resolved_promise(Value::Undefined);
-    let reaction =
-        crate::builtins::promise::create_callback_promise(callback.clone(), callback, target);
-    crate::builtins::promise::queue_callback_on_promise(&promise, reaction);
-    true
 }
 
 fn eval_disposal_finalizer(
@@ -1809,6 +1806,57 @@ fn create_suppressed_error(
         vec![error, suppressed],
         Value::Undefined,
     )
+}
+
+fn finalizer_has_async_dispose(finalizer: &Statement) -> bool {
+    match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements
+            .iter()
+            .any(|statement| matches!(statement, Statement::Dispose { is_async: true, .. })),
+        Statement::Dispose { is_async, .. } => *is_async,
+        _ => false,
+    }
+}
+
+fn finalizer_has_dispose(finalizer: &Statement) -> bool {
+    match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements
+            .iter()
+            .any(|statement| matches!(statement, Statement::Dispose { .. })),
+        Statement::Dispose { .. } => true,
+        _ => false,
+    }
+}
+
+fn defer_disposal_until_pending_await(
+    finalizer: &Statement,
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> bool {
+    let statements = match finalizer {
+        Statement::Block(statements) | Statement::SequenceDecls(statements) => statements,
+        _ => return false,
+    };
+    if !statements
+        .iter()
+        .all(|statement| matches!(statement, Statement::Dispose { .. }))
+    {
+        return false;
+    }
+    let Some(promise) = crate::eval::r#await::take_last_pending_await() else {
+        return false;
+    };
+    take_async_disposal_evaluated();
+    let finalizer = finalizer.clone();
+    let env = Rc::clone(env);
+    let callback = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        eval_statement(&finalizer, &env, false, in_arrow_function)
+    })));
+    let target = crate::builtins::promise::create_resolved_promise(Value::Undefined);
+    let reaction =
+        crate::builtins::promise::create_callback_promise(callback.clone(), callback, target);
+    crate::builtins::promise::queue_callback_on_promise(&promise, reaction);
+    true
 }
 
 fn rejected_promise_reason(value: &Value) -> Option<Value> {
@@ -1860,6 +1908,47 @@ fn eval_import(
 }
 
 /// Get exports from a module (CommonJS-style lookup)
+pub(crate) fn dynamic_import(
+    source: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    match get_module_exports(source, env) {
+        Ok(exports) => {
+            let mut namespace = Object::new(ObjectKind::ModuleNamespace);
+            for key in exports.borrow().own_property_names() {
+                if let Some(value) = exports.borrow().get_own_value(&key) {
+                    namespace.define(
+                        &key,
+                        value,
+                        crate::value::PropertyFlags {
+                            value: None,
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                }
+            }
+            if let Some(Value::Symbol(symbol)) =
+                crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+            {
+                namespace.set_symbol(&symbol.property_key(), Value::String("Module".to_string()));
+            }
+            namespace.extensible = false;
+            let namespace = Rc::new(RefCell::new(namespace));
+            Ok(Value::Object(
+                crate::builtins::promise::create_resolved_promise(Value::Object(namespace)),
+            ))
+        }
+        Err(error) => {
+            let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+            Ok(Value::Object(
+                crate::builtins::promise::create_rejected_promise(reason)?,
+            ))
+        }
+    }
+}
+
 fn get_module_exports(
     source: &str,
     env: &Rc<RefCell<Environment>>,

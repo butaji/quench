@@ -191,48 +191,84 @@ pub fn eval_object_literal(
     if let Some(prototype) = builtins::get_object_prototype() {
         obj.prototype = Some(prototype);
     }
+    let home = Rc::new(RefCell::new(obj));
+    let literal_env = Rc::new(RefCell::new(env.borrow().capture_env()));
+    literal_env
+        .borrow_mut()
+        .set_super_class(Value::Object(Rc::clone(&home)));
     for (key, value) in props {
         match value {
             PropertyValue::Spread(expr) => {
                 let spread_val = after_expr_eval(crate::eval::expression::eval_expression(
                     expr,
-                    env,
+                    &literal_env,
                     in_arrow_function,
                 ))?;
                 if crate::interpreter::peek_generator_yield() {
-                    return Ok(Value::Object(Rc::new(RefCell::new(obj))));
+                    return Ok(Value::Object(Rc::clone(&home)));
                 }
-                copy_spread_into_object(&mut obj, spread_val, env)?;
+                copy_spread_into_object(&mut home.borrow_mut(), spread_val, &literal_env)?;
             }
             _ => {
-                let key_str = eval_property_key(key, env, in_arrow_function)?;
+                let key_str = eval_property_key(key, &literal_env, in_arrow_function)?;
                 match value {
                     PropertyValue::Value(expr) => {
-                        let val =
-                            crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
-                        obj.set(&key_str, val);
+                        let mut val = crate::eval::expression::eval_expression(
+                            expr,
+                            &literal_env,
+                            in_arrow_function,
+                        )?;
+                        crate::eval::class::helpers::set_function_name_for_field_initializer(
+                            &mut val, key, &key_str, expr,
+                        );
+                        if matches!(key, PropertyKey::Computed(_)) && key_str == "__proto__" {
+                            home.borrow_mut().define(
+                                &key_str,
+                                val,
+                                crate::value::object::PropertyFlags {
+                                    value: None,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                },
+                            );
+                        } else if key_str == "__proto__" {
+                            match val {
+                                Value::Object(proto) => home.borrow_mut().prototype = Some(proto),
+                                Value::Null => home.borrow_mut().prototype = None,
+                                _ => {}
+                            }
+                        } else {
+                            home.borrow_mut().set(&key_str, val);
+                        }
                     }
                     PropertyValue::Getter { params: _, body } => {
                         let fn_name = crate::eval::class::helpers::accessor_function_name(
-                            key, &key_str, env, "get",
+                            key,
+                            &key_str,
+                            &literal_env,
+                            "get",
                         )?;
-                        obj.set_getter(
+                        home.borrow_mut().set_getter(
                             &key_str,
                             Rc::new(body.clone()),
-                            crate::eval::expression::capture_env_for_closure(env),
+                            crate::eval::expression::capture_env_for_closure(&literal_env),
                             false,
                             Some(fn_name),
                         );
                     }
                     PropertyValue::Setter { param, body } => {
                         let fn_name = crate::eval::class::helpers::accessor_function_name(
-                            key, &key_str, env, "set",
+                            key,
+                            &key_str,
+                            &literal_env,
+                            "set",
                         )?;
-                        obj.set_setter(
+                        home.borrow_mut().set_setter(
                             &key_str,
                             crate::ast::Param::new(param),
                             Rc::new(body.clone()),
-                            crate::eval::expression::capture_env_for_closure(env),
+                            crate::eval::expression::capture_env_for_closure(&literal_env),
                             false,
                             Some(fn_name),
                         );
@@ -242,7 +278,7 @@ pub fn eval_object_literal(
             }
         }
     }
-    Ok(Value::Object(Rc::new(RefCell::new(obj))))
+    Ok(Value::Object(home))
 }
 
 /// Evaluate a property key (identifier, string, number, or computed)
@@ -254,14 +290,10 @@ pub fn eval_property_key(
     match key {
         PropertyKey::Ident(s) => Ok(s.clone()),
         PropertyKey::String(s) => Ok(s.clone()),
-        PropertyKey::Number(n) => Ok(n.to_string()),
+        PropertyKey::Number(n) => Ok(crate::value::number_to_string(*n)),
         PropertyKey::Computed(e) => {
             let val = crate::eval::expression::eval_expression(e, env, in_arrow_function)?;
-            let result = match &val {
-                Value::Symbol(s) => s.property_key(),
-                _ => crate::value::to_js_string(&val),
-            };
-            Ok(result)
+            crate::eval::ops::to_property_key(&val)
         }
     }
 }
@@ -351,21 +383,33 @@ fn copy_spread_into_object(
         let val = spread_property_value(&source_obj, &key, &src, env)?;
         target.set(&key, val);
     }
-    let mut keys: Vec<String> = src
-        .properties
-        .keys()
-        .chain(src.getters.keys())
-        .filter(|key| crate::value::object::helpers::as_array_index(key).is_none())
-        .cloned()
-        .collect();
-    keys.sort();
-    keys.dedup();
-    for key in keys {
+    for key in crate::value::object::enumerable_own_keys(&src) {
         if !src.is_enumerable(&key) {
             continue;
         }
         let val = spread_property_value(&source_obj, &key, &src, env)?;
         target.set(&key, val);
+    }
+    for key in src
+        .symbol_properties
+        .keys()
+        .chain(src.getters.keys())
+        .chain(src.setters.keys())
+    {
+        if !key.contains('\0') || !src.is_enumerable(key) {
+            continue;
+        }
+        let val = spread_property_value(&source_obj, key, &src, env)?;
+        target.set_symbol(key, val);
+    }
+    for key in src.properties.keys() {
+        if key.contains('\0') && !src.is_enumerable(key) {
+            continue;
+        }
+        if key.contains('\0') {
+            let val = spread_property_value(&source_obj, key, &src, env)?;
+            target.set_symbol(key, val);
+        }
     }
     Ok(())
 }
@@ -378,6 +422,9 @@ fn spread_property_value(
 ) -> Result<Value, JsError> {
     if let Some(getter) = src.get_getter(key) {
         return crate::eval::object::call_getter(obj, getter, env);
+    }
+    if let Some(value) = src.symbol_properties.get(key) {
+        return Ok(value.clone());
     }
     if let Some(idx) = crate::value::object::helpers::as_array_index(key) {
         if idx < src.elements.len() && !src.holes.contains(&idx) {

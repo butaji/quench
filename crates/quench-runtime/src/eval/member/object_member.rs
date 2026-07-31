@@ -121,6 +121,18 @@ fn eval_object_member_inner(
                         &Rc::new(RefCell::new(Environment::new())),
                     );
                 }
+                if obj.get_setter(prop_name).is_some() {
+                    return Ok(Value::Undefined);
+                }
+                if let Some(idx) = as_array_index(prop_name) {
+                    if let (ObjData::Args { mapped }, Some(eval_env)) = (&obj.data, env) {
+                        if !obj.holes.contains(&idx) {
+                            if let Some(name) = mapped.get(&(idx as u32)) {
+                                return Ok(eval_env.borrow().get(name).unwrap_or(Value::Undefined));
+                            }
+                        }
+                    }
+                }
                 // For TypedArrays (ObjData::Idx): always check get_own first for length/byteLength
                 // and indexed elements — get_own computes these dynamically from the buffer.
                 if matches!(obj.data, ObjData::Idx { .. })
@@ -201,6 +213,19 @@ fn eval_object_member_inner_value(
             let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
             while let Some(obj_rc) = current {
                 let obj = obj_rc.borrow();
+                let key = crate::value::to_js_string(prop_name);
+                if let Some(getter_storage) = obj.get_getter(&key) {
+                    let getter_clone = getter_storage.clone();
+                    drop(obj);
+                    return call_getter(
+                        o,
+                        &getter_clone,
+                        &Rc::new(RefCell::new(Environment::new())),
+                    );
+                }
+                if obj.get_setter(&key).is_some() {
+                    return Ok(Value::Undefined);
+                }
                 if let Value::Symbol(sym) = prop_name {
                     let key = sym.property_key();
                     if let Some(getter_storage) = obj.get_getter(&key) {

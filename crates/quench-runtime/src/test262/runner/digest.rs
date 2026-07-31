@@ -456,7 +456,9 @@ fn normalize_comparison_values(s: &str) -> String {
                 lhs -= 1;
             }
 
-            out.push_str(&s[copy_from..lhs]);
+            if lhs >= copy_from {
+                out.push_str(&s[copy_from..lhs]);
+            }
             out.push('N');
             out.push(' ');
             out.push_str(op);
@@ -577,5 +579,11 @@ mod tests {
         assert_eq!(r, "N !== N");
         let r = normalize_comparison_values("0 !== 1 and 2 == 3");
         assert_eq!(r, "N !== N and N == N");
+    }
+
+    #[test]
+    fn normalize_comparison_handles_overlapping_operands() {
+        let result = normalize_comparison_values("a !== b !== c");
+        assert!(!result.is_empty());
     }
 }

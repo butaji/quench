@@ -302,6 +302,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
     Sequence(Vec<Expression>),
+    Parenthesized(Box<Expression>),
     /// Class expression
     Class(Class),
     /// Block expression (for arrow functions with block bodies)
@@ -315,6 +316,7 @@ pub enum Expression {
         variable: Box<Expression>,
         iterable: Box<Expression>,
         body: Box<Statement>,
+        await_of: bool,
         /// Per-iteration lexical binding for `for (let/const x of ...)`.
         loop_binding: Option<VarKind>,
         dispose_async: Option<bool>,

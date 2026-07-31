@@ -3,8 +3,8 @@
 //! Implements `await` for async functions by scheduling continuations
 //! as microtasks using Promise.resolve() semantics.
 
-use crate::builtins::promise::create_resolved_promise;
 use crate::value::{Object, Value};
+use crate::JsError;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -16,27 +16,45 @@ thread_local! {
 /// Evaluator for await expressions within an async function context.
 /// Takes the already-evaluated argument value and returns it wrapped in
 /// Promise.resolve() semantics for chaining.
-pub fn eval_await_value(arg_value: Value) -> Value {
-    // Convert to Promise using Promise.resolve() semantics:
-    // - If value is already a Promise, use it
-    // - Otherwise, wrap in Promise.resolve(value)
-    if is_promise(&arg_value) {
-        if let Value::Object(object) = &arg_value {
-            let pending = object
+pub fn eval_await_value(arg_value: Value) -> Result<Value, JsError> {
+    if let Value::Object(object) = &arg_value {
+        if is_promise(&arg_value) {
+            let state = object
                 .borrow()
                 .promise_data
                 .as_ref()
-                .is_some_and(|data| data.state == crate::value::object::PromiseState::Pending);
+                .map(|data| (data.state.clone(), data.result.clone()));
+            let pending = state
+                .as_ref()
+                .is_some_and(|(state, _)| *state == crate::value::object::PromiseState::Pending);
             if pending {
                 LAST_PENDING_AWAIT.with(|cell| *cell.borrow_mut() = Some(Rc::clone(object)));
+                let _ = crate::builtins::promise::execute_pending_microtasks();
+                let settled = object
+                    .borrow()
+                    .promise_data
+                    .as_ref()
+                    .map(|data| (data.state.clone(), data.result.clone()));
+                if let Some((crate::value::object::PromiseState::Fulfilled, result)) = settled {
+                    return Ok(result);
+                }
+                if let Some((crate::value::object::PromiseState::Rejected, reason)) = settled {
+                    crate::value::error::set_thrown_value(reason);
+                    return Err(JsError("Promise rejected".to_string()));
+                }
             } else {
                 let _ = crate::builtins::promise::execute_pending_microtasks();
             }
+            if let Some((crate::value::object::PromiseState::Fulfilled, result)) = state {
+                return Ok(result);
+            }
+            if let Some((crate::value::object::PromiseState::Rejected, reason)) = state {
+                crate::value::error::set_thrown_value(reason);
+                return Err(JsError("Promise rejected".to_string()));
+            }
         }
-        arg_value
-    } else {
-        Value::Object(create_resolved_promise(arg_value))
     }
+    Ok(arg_value)
 }
 
 pub(crate) fn take_last_pending_await() -> Option<Rc<RefCell<Object>>> {

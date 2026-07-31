@@ -48,6 +48,15 @@ fn strict_assign_undeclared_throws() {
 }
 
 #[test]
+fn strict_arrow_assignment_to_undeclared_is_reference_error() {
+    let mut ctx = Context::new().unwrap();
+    let error = ctx
+        .eval("\"use strict\"; var af = _ => { foo = 1; }; af();")
+        .unwrap_err();
+    assert_eq!(error.to_string(), "ReferenceError: foo is not defined");
+}
+
+#[test]
 fn sloppy_assign_undeclared_no_throw() {
     let mut ctx = Context::new().unwrap();
     let res = ctx.eval("undeclared = 5;");
