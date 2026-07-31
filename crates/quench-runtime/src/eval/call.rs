@@ -306,7 +306,11 @@ pub(crate) fn eval_super_member(
         if let Some(getter_storage) = obj.get_getter(&prop_name) {
             let getter_clone = getter_storage.clone();
             drop(obj);
-            return crate::eval::object::call_getter(&obj_rc, &getter_clone, env);
+            return crate::eval::object::call_getter_with_this(
+                &getter_clone,
+                crate::interpreter::get_this_binding(env),
+                env,
+            );
         }
         // Check regular property
         if let Some(val) = obj.properties.get(&prop_name) {

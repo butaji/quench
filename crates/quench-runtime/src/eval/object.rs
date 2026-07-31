@@ -186,9 +186,16 @@ pub fn eval_callee_with_this(
 pub fn call_getter(
     obj: &Rc<RefCell<Object>>,
     getter_storage: &GetterStorage,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<Value, JsError> {
+    call_getter_with_this(getter_storage, getter_this_value(obj), env)
+}
+
+pub(crate) fn call_getter_with_this(
+    getter_storage: &GetterStorage,
+    this_val: Value,
     _env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
-    let this_val = getter_this_value(obj);
     if let Some(func) = &getter_storage.func {
         let call_site_strict = crate::interpreter::is_strict_mode();
         return crate::eval::function::call_value_impl(

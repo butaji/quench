@@ -1095,6 +1095,23 @@ fn object_method_super_call_returns_super_result() {
     assert_eq!(result, Ok(Value::String("sup".to_string())));
 }
 
+#[test]
+fn class_super_property_uses_current_this_receiver() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval(
+            "class Parent { getThis() { return this; } get This() { return this; } } class C extends Parent { method() { return super.getThis() === this; } } C.prototype.method();",
+        ),
+        Ok(Value::Boolean(true))
+    );
+    assert_eq!(
+        ctx.eval(
+            "class Parent { getThis() { return this; } get This() { return this; } } class C extends Parent { method() { return super.This === C.prototype; } } C.prototype.method();",
+        ),
+        Ok(Value::Boolean(true))
+    );
+}
+
 /// TCO: verify trampoline is working with small depth first.
 #[test]
 fn tco_small_depth() {
