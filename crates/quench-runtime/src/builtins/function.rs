@@ -632,13 +632,30 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_bind))),
     );
     // ES §16.1: caller/arguments accessors throw TypeError for strict/class functions
-    let thrower = Value::NativeFunction(Rc::new(NativeFunction::new(|_: Vec<Value>| {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "'caller' and 'arguments' are restricted properties and cannot be accessed on this function",
-            "TypeError",
+    let thrower = crate::eval::function::throw_type_error();
+    if let Value::NativeFunction(function) = &thrower {
+        function.define_property(
+            "name",
+            Value::String(String::new()),
+            crate::value::PropertyFlags {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                value: Some(Value::String(String::new())),
+            },
         );
-        Err(js_err)
-    })));
+        function.define_property(
+            "length",
+            Value::Number(0.0),
+            crate::value::PropertyFlags {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                value: Some(Value::Number(0.0)),
+            },
+        );
+        function.set_extensible(false);
+    }
     function_proto_rc.borrow_mut().define_accessor(
         "caller",
         Some(thrower.clone()),

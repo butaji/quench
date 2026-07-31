@@ -1612,6 +1612,36 @@ fn strict_function_caller_set_throws_typeerror() {
 }
 
 #[test]
+fn strict_arguments_use_the_intrinsic_throw_type_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "var args = (function() { 'use strict'; return arguments; })();\
+             var getter = Object.getOwnPropertyDescriptor(args, 'callee').get;\
+             var caller = Object.getOwnPropertyDescriptor(Function.prototype, 'caller').get;\
+             [getter === caller, getter.name, getter.length, Object.getPrototypeOf(getter) === Function.prototype, Object.isExtensible(getter), Object.getOwnPropertyDescriptor(getter, 'name').value].join('|')",
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::Value::String("true||0|true|false|".to_string())
+    );
+}
+
+#[test]
+fn non_simple_arguments_use_the_intrinsic_throw_type_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "var strict = Object.getOwnPropertyDescriptor((function() { 'use strict'; return arguments; })(), 'callee').get;\
+             var nonSimple = Object.getOwnPropertyDescriptor((function(a = 0) { return arguments; })(), 'callee').get;\
+             strict === nonSimple",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::Boolean(true));
+}
+
+#[test]
 fn strict_function_arguments_set_throws_typeerror() {
     let mut ctx = Context::new().unwrap();
     let v = ctx

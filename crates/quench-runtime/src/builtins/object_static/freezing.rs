@@ -223,7 +223,11 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
                 proto,
             ))))
         }
-        Value::NativeFunction(nf) => Ok(nf.own_prototype.clone().unwrap_or(Value::Null)),
+        Value::NativeFunction(nf) => Ok(nf
+            .own_prototype
+            .clone()
+            .or_else(|| crate::builtins::function::get_function_prototype().map(Value::Object))
+            .unwrap_or(Value::Null)),
         Value::NativeConstructor(nc) => Ok(Value::Object(nc.prototype.clone())),
         Value::Class(class) => {
             // Object.getPrototypeOf(class) returns the class constructor's own
@@ -302,6 +306,8 @@ pub fn object_prevent_extensions(args: Vec<Value>) -> Result<Value, JsError> {
         o.borrow_mut().extensible = false;
     } else if let Value::Class(class) = &obj {
         class.set_extensible(false);
+    } else if let Value::NativeFunction(function) = &obj {
+        function.set_extensible(false);
     }
     Ok(obj)
 }
@@ -314,7 +320,7 @@ pub fn object_is_extensible(args: Vec<Value>) -> Result<Value, JsError> {
         // extensible by default. Functions are objects even though our Value
         // variant is named `Function`.
         Some(Value::Function(_)) => Ok(Value::Boolean(true)),
-        Some(Value::NativeFunction(_)) => Ok(Value::Boolean(true)),
+        Some(Value::NativeFunction(function)) => Ok(Value::Boolean(function.is_extensible())),
         Some(Value::NativeConstructor(_)) => Ok(Value::Boolean(true)),
         Some(Value::Class(class)) => Ok(Value::Boolean(class.is_extensible())),
         // Primitives are always non-extensible

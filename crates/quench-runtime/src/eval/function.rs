@@ -26,28 +26,18 @@ pub(crate) fn restore_throw_type_error(value: Option<Value>) {
     THROW_TYPE_ERROR.with(|cell| *cell.borrow_mut() = value);
 }
 
-fn throw_type_error() -> Value {
-    let constructor = crate::context::CURRENT_CONTEXT.with(|cell| {
-        cell.borrow()
-            .and_then(|ptr| unsafe { (*ptr).get_global("TypeError") })
-    });
+pub(crate) fn throw_type_error() -> Value {
     THROW_TYPE_ERROR.with(|cell| {
         if let Some(value) = cell.borrow().clone() {
             return value;
         }
         let value = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
-            let Some(constructor) = constructor.clone() else {
-                return Err(JsError(
-                    "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
-                ));
-            };
-            let message =
-                Value::String("'caller' and 'callee' are not allowed in strict mode".into());
-            let error = call_value_with_this(constructor, vec![message], Value::Undefined)?;
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "'caller' and 'callee' are not allowed in strict mode",
+                "TypeError",
+            );
             crate::value::set_thrown_value(error);
-            Err(JsError(
-                "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
-            ))
+            Err(js_error)
         })));
         *cell.borrow_mut() = Some(value.clone());
         value
@@ -677,8 +667,10 @@ fn create_arguments_object(
     }
 
     // Set callee property
-    if strict_mode {
-        obj.set_getter_func("callee", throw_type_error());
+    if strict_mode || !mappable {
+        let thrower = throw_type_error();
+        obj.set_getter_func("callee", thrower.clone());
+        obj.set_setter_func("callee", thrower);
     } else {
         obj.set("callee", Value::Function(f.clone()));
     }

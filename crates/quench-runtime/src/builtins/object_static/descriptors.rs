@@ -1024,7 +1024,13 @@ pub fn get_native_function_property_descriptor(
                 _ => None,
             })
             .unwrap_or_else(|| nf.name.clone());
-        return make_property_descriptor_string(&name, false, false, true);
+        let flags = nf.get_property_flags("name").unwrap_or(PropertyFlags {
+            value: Some(Value::String(name.clone())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        });
+        return Ok(make_descriptor_value(flags, Value::Undefined));
     }
     if prop == "length" {
         if nf.get_property("\0deleted:length").is_some() {
@@ -1037,7 +1043,13 @@ pub fn get_native_function_property_descriptor(
                 _ => None,
             })
             .unwrap_or_else(|| if nf.name == "create" { 2.0 } else { 0.0 });
-        return make_property_descriptor_number(length, false, false, true);
+        let flags = nf.get_property_flags("length").unwrap_or(PropertyFlags {
+            value: Some(Value::Number(length)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        });
+        return Ok(make_descriptor_value(flags, Value::Undefined));
     }
     // Check for custom properties
     if let Some(value) = nf.get_property(prop) {

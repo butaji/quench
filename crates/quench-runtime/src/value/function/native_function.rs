@@ -39,6 +39,7 @@ pub struct NativeFunction {
     /// Only set for special built-ins like Proxy which are constructable but
     /// deliberately have no `.prototype` (so they cannot be `extends`ed).
     pub constructable: bool,
+    extensible: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl NativeFunction {
@@ -58,6 +59,7 @@ impl NativeFunction {
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             constructable: false,
+            extensible: std::rc::Rc::new(std::cell::Cell::new(true)),
         }
     }
 
@@ -77,6 +79,7 @@ impl NativeFunction {
             name: name.to_string(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             constructable: false,
+            extensible: std::rc::Rc::new(std::cell::Cell::new(true)),
         }
     }
 
@@ -96,6 +99,7 @@ impl NativeFunction {
             name: name.to_string(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             constructable: false,
+            extensible: std::rc::Rc::new(std::cell::Cell::new(true)),
         }
     }
 
@@ -115,6 +119,7 @@ impl NativeFunction {
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             constructable: false,
+            extensible: std::rc::Rc::new(std::cell::Cell::new(true)),
         }
     }
 
@@ -144,6 +149,7 @@ impl NativeFunction {
             name: String::new(),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             constructable: false,
+            extensible: std::rc::Rc::new(std::cell::Cell::new(true)),
         }
     }
 
@@ -161,6 +167,14 @@ impl NativeFunction {
     /// Used for built-ins like Proxy which are constructable but lack a .prototype.
     pub fn set_constructable(&mut self, val: bool) {
         self.constructable = val;
+    }
+
+    pub fn set_extensible(&self, value: bool) {
+        self.extensible.set(value);
+    }
+
+    pub fn is_extensible(&self) -> bool {
+        self.extensible.get()
     }
 
     /// Get a property from this native function
@@ -292,6 +306,7 @@ impl Clone for NativeFunction {
             name: self.name.clone(),
             accessors: std::rc::Rc::clone(&self.accessors),
             constructable: self.constructable,
+            extensible: std::rc::Rc::clone(&self.extensible),
         }
     }
 }
