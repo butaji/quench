@@ -2225,20 +2225,6 @@ mod tests {
     use oxc::parser::Parser;
     use oxc::span::SourceType;
 
-    fn test_source(source: &str) -> ast::Program<'_> {
-        let source_type = SourceType::default().with_script(true).with_jsx(true);
-        let allocator = Allocator::default();
-        let ret = Parser::new(&allocator, source, source_type).parse();
-        assert!(
-            ret.diagnostics.is_empty(),
-            "OXC parse errors: {:?}",
-            ret.diagnostics
-        );
-        // Can't return ret.program because it borrows allocator.
-        // Instead just run checks inside.
-        unimplemented!()
-    }
-
     #[test]
     fn async_generator_parameters_reject_await_and_yield() {
         let allocator = Allocator::default();

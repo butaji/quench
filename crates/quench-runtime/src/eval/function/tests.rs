@@ -1104,7 +1104,7 @@ fn async_super_await_fulfills_with_super_result() {
         "var sup = { method() { return 'sup'; } }; var child = { async method() { return await super.method(); } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
     )
     .unwrap();
-    crate::builtins::promise::execute_pending_microtasks();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
     assert_eq!(
         ctx.get_global("result"),
         Some(Value::String("sup".to_string()))
@@ -1118,7 +1118,7 @@ fn async_super_await_variable_fulfills_with_super_result() {
         "\"use strict\"; var sup = { method() { return 'sup'; } }; var child = { async method() { var x = await super.method(); return x; } }; Object.setPrototypeOf(child, sup); var result; child.method().then(function(value) { result = value; });",
     )
     .unwrap();
-    crate::builtins::promise::execute_pending_microtasks();
+    let _ = crate::builtins::promise::execute_pending_microtasks();
     assert_eq!(
         ctx.get_global("result"),
         Some(Value::String("sup".to_string()))

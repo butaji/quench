@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn array_forEach_iterates() {
+    fn array_for_each_iterates() {
         let mut ctx = new_ctx();
         let r = ctx
             .eval(
@@ -712,14 +712,14 @@ mod tests {
     }
 
     #[test]
-    fn array_indexOf_finds_index() {
+    fn array_index_of_finds_index() {
         let mut ctx = new_ctx();
         let r = ctx.eval("[1, 2, 3].indexOf(2) === 1").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
-    fn array_indexOf_not_found() {
+    fn array_index_of_not_found() {
         let mut ctx = new_ctx();
         let r = ctx.eval("[1, 2, 3].indexOf(5) === -1").unwrap();
         assert_eq!(r, Value::Boolean(true));
@@ -815,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn array_reduceRight_reduces_reverse() {
+    fn array_reduce_right_reduces_reverse() {
         let mut ctx = new_ctx();
         let r = ctx
             .eval(

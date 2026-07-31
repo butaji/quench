@@ -76,7 +76,7 @@ fn base_constructor_returns_primitive_throws_typeerror() {
 }
 
 #[test]
-fn valueOf_boxed_primitive_works_in_arithmetic() {
+fn value_of_boxed_primitive_works_in_arithmetic() {
     // This was the original crash: Object(2n) + 1n caused stack overflow
     // because valueOf returned `this` (the Object) instead of the boxed BigInt.
     // The fix: valueOf checks for _value property and returns it.
@@ -93,13 +93,13 @@ fn valueOf_boxed_primitive_works_in_arithmetic() {
 }
 
 #[test]
-fn valueOf_boxed_number_returns_number() {
+fn value_of_boxed_number_returns_number() {
     let r = eval("Object(42).valueOf() === 42").unwrap();
     assert_eq!(r, crate::Value::Boolean(true), "Object(42).valueOf() = 42");
 }
 
 #[test]
-fn valueOf_boxed_string_returns_string() {
+fn value_of_boxed_string_returns_string() {
     let r = eval("Object('hello').valueOf() === 'hello'").unwrap();
     assert_eq!(
         r,
