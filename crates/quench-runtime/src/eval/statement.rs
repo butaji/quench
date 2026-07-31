@@ -1653,7 +1653,12 @@ fn eval_try(
                         }
                         Ok(try_val)
                     }
-                    Err(e) => Err(e), // Finally threw - propagate
+                    Err(e) => {
+                        let thrown =
+                            take_thrown_value().unwrap_or_else(|| Value::String(e.0.clone()));
+                        set_thrown_value(thrown);
+                        Err(e)
+                    }
                 }
             } else {
                 Ok(try_val)
@@ -1725,7 +1730,12 @@ fn eval_try(
                                 }
                             }
                         }
-                        Err(e) => Err(e), // Finally threw
+                        Err(e) => {
+                            let thrown =
+                                take_thrown_value().unwrap_or_else(|| Value::String(e.0.clone()));
+                            set_thrown_value(thrown);
+                            Err(e)
+                        }
                     }
                 } else {
                     match catch_result {
