@@ -188,6 +188,14 @@ pub fn register_reflect(ctx: &mut Context) {
                 if target_obj.borrow().kind == ObjectKind::ModuleNamespace {
                     return Ok(Value::Boolean(false));
                 }
+                if target_obj
+                    .borrow()
+                    .descriptors
+                    .get(&key)
+                    .is_some_and(|flags| !flags.writable)
+                {
+                    return Ok(Value::Boolean(false));
+                }
                 target_obj.borrow_mut().set(&key, value);
                 Ok(Value::Boolean(true))
             },

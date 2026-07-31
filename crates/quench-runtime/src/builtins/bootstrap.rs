@@ -781,13 +781,11 @@ mod tests {
         let mut ctx = new_ctx();
         let r = ctx
             .eval(
-                "var a = [1, 2]; \
-             var b = [3, 4]; \
-             var c = a.concat(b); \
-             c.length === 4 && c[0] === 1 && c[1] === 2 && c[2] === 3 && c[3] === 4",
+                "var a = [1, 2]; var b = [3, 4]; var c = a.concat(b); \
+                 c.length + ':' + c[0] + ':' + c[1] + ':' + c[2] + ':' + c[3]",
             )
             .unwrap();
-        assert_eq!(r, Value::Boolean(true));
+        assert_eq!(r, Value::String("4:1:2:3:4".to_string()));
     }
 
     #[test]

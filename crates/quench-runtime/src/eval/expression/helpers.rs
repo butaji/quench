@@ -170,11 +170,13 @@ pub fn eval_delete(
                     }
                     Ok(Value::Boolean(configurable))
                 }
-                Value::NativeConstructor(_nc) => {
+                Value::NativeConstructor(nc) => {
                     // Per spec: prototype is non-configurable (configurable: false)
                     // so delete returns false. name is also non-configurable.
                     // length IS configurable on most constructors.
-                    if prop_key == "length" {
+                    if nc.delete_static_method(&prop_key) {
+                        Ok(Value::Boolean(true))
+                    } else if prop_key == "length" {
                         Ok(Value::Boolean(true))
                     } else {
                         Ok(Value::Boolean(false))
@@ -184,6 +186,9 @@ pub fn eval_delete(
             }
         }
         Expression::Identifier(name) => {
+            if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
+                return Ok(Value::Boolean(false));
+            }
             if crate::interpreter::is_strict_mode() {
                 return Err(JsError(format!(
                     "SyntaxError: cannot delete property '{}'",

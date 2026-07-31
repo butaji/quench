@@ -380,6 +380,29 @@ pub fn assign_to_member(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
     let cached = DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take());
+    let cached_symbol = cached.as_ref().and_then(|(_, key)| match key {
+        Value::Symbol(symbol) => Some(symbol.clone()),
+        Value::String(key) => {
+            let (desc, id) = key.split_once('\0')?;
+            Some(Rc::new(crate::value::Symbol {
+                desc: (!desc.is_empty()).then(|| Rc::from(desc)),
+                global: false,
+                id: id.parse().ok()?,
+            }))
+        }
+        _ => None,
+    });
+    let evaluated_key = if cached.is_none() && computed {
+        Some(Value::String(extract_property_name(
+            property, computed, env, false,
+        )?))
+    } else {
+        None
+    };
+    let symbol_key = cached_symbol.or_else(|| match evaluated_key.as_ref() {
+        Some(Value::Symbol(symbol)) => Some(symbol.clone()),
+        _ => None,
+    });
     let (prop_name, cached_object) = match cached {
         Some((object, key)) => {
             let name = match key {
@@ -388,7 +411,17 @@ pub fn assign_to_member(
             };
             (name, Some(object))
         }
-        None => (extract_property_name(property, computed, env, false)?, None),
+        None => {
+            let name = if let Some(key) = evaluated_key.as_ref() {
+                match key {
+                    Value::Symbol(symbol) => symbol.property_key(),
+                    value => crate::value::to_js_string(value),
+                }
+            } else {
+                extract_property_name(property, computed, env, false)?
+            };
+            (name, None)
+        }
     };
 
     if let Expression::Identifier(id) = object {
@@ -474,6 +507,16 @@ pub fn assign_to_member(
         // Box primitives per ES §10.2.9 [[Set]] (ToObject coercion).
         Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::String(_) => {
             assign_to_primitive_boxed(&obj_val, &prop_name, value, env)
+        }
+        Value::Object(o) if symbol_key.is_some() => {
+            let key = symbol_key.unwrap().property_key();
+            let setter = { o.borrow().get_setter(&key).cloned() };
+            if let Some(setter) = setter {
+                call_setter(&o, &setter, value.clone(), env)?;
+                Ok(())
+            } else {
+                assign_to_object(&o, &key, value, env)
+            }
         }
         Value::Object(o) => assign_to_object(&o, &prop_name, value, env),
         Value::Function(f) => assign_to_function(&f, &prop_name, value.clone()),
@@ -621,7 +664,7 @@ pub(crate) fn assign_to_object(
         crate::value::object::helpers::ObjData::Args { .. }
     ) {
         if let Some(flags) = o.borrow().get_descriptor(prop_name) {
-            if !flags.writable {
+            if !flags.writable && o.borrow().get_setter(prop_name).is_none() {
                 if crate::interpreter::is_strict_mode() {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         "Cannot assign to read-only property",
@@ -715,7 +758,8 @@ pub(crate) fn assign_to_object(
     }
 
     // Reject inherited non-writable data properties.
-    if has_readonly_prototype_property(o, prop_name) {
+    let readonly_prototype = { has_readonly_prototype_property(o, prop_name) };
+    if readonly_prototype {
         if crate::interpreter::is_strict_mode() {
             let (_, error) = crate::value::error::create_js_error_with_type(
                 "Cannot assign to read only property",
@@ -727,7 +771,8 @@ pub(crate) fn assign_to_object(
     }
 
     // Reject property sets on frozen objects.
-    if crate::builtins::object_static::is_frozen_object(o) {
+    let frozen = { crate::builtins::object_static::is_frozen_object(o) };
+    if frozen {
         if crate::interpreter::is_strict_mode() {
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot assign to read only property",
@@ -743,7 +788,6 @@ pub(crate) fn assign_to_object(
         return assign_private_name(&target, prop_name, value, env);
     }
 
-    // Strict mode checks.
     if crate::interpreter::is_strict_mode() {
         let obj_ref = o.borrow();
         if let Some(flags) = obj_ref.get_descriptor(prop_name) {
@@ -761,6 +805,7 @@ pub(crate) fn assign_to_object(
             );
             return Err(js_err);
         }
+        drop(obj_ref);
     }
 
     if prop_name.contains('\0') {
@@ -905,7 +950,7 @@ fn assign_to_native_function(
     prop_name: &str,
     value: Value,
 ) -> Result<(), JsError> {
-    if crate::interpreter::is_strict_mode() && (prop_name == "length" || prop_name == "name") {
+    if crate::interpreter::is_strict_mode() && prop_name == "name" {
         let (_, error) = crate::value::error::create_js_error_with_type(
             "Cannot assign to read only property",
             "TypeError",

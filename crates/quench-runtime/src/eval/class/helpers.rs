@@ -447,6 +447,9 @@ pub fn body_calls_super_call(body: &[Statement]) -> bool {
 /// Create a simple arguments object
 pub fn create_arguments_object_simple(args: Vec<Value>) -> Value {
     let mut obj = Object::new(ObjectKind::Ordinary);
+    obj.data = crate::value::object::helpers::ObjData::Args {
+        mapped: std::collections::HashMap::new(),
+    };
     for (i, arg) in args.iter().enumerate() {
         obj.set(&i.to_string(), arg.clone());
     }

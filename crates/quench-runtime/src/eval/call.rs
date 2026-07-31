@@ -539,9 +539,16 @@ pub fn eval_new(
     // equal "CustomError" for user-defined constructors.
     if let Value::Function(ref f) = actual_constructor {
         if let Some(name) = &f.name {
-            new_obj_rc
-                .borrow_mut()
-                .set("name", Value::String(name.clone()));
+            new_obj_rc.borrow_mut().define(
+                "name",
+                Value::String(name.clone()),
+                crate::value::PropertyFlags {
+                    enumerable: false,
+                    writable: true,
+                    configurable: true,
+                    value: None,
+                },
+            );
         }
     }
 

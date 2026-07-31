@@ -76,11 +76,11 @@ pub fn register_object(ctx: &mut Context) {
     );
     constructor.set_static_method(
         "assign",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_assign))),
+        Value::NativeFunction(Rc::new(NativeFunction::new_named("assign", object_assign))),
     );
     constructor.set_static_method(
         "create",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_create))),
+        Value::NativeFunction(Rc::new(NativeFunction::new_named("create", object_create))),
     );
     constructor.set_static_method(
         "defineProperty",
@@ -88,7 +88,10 @@ pub fn register_object(ctx: &mut Context) {
     );
     constructor.set_static_method(
         "defineProperties",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_define_properties))),
+        Value::NativeFunction(Rc::new(NativeFunction::new_named(
+            "defineProperties",
+            object_define_properties,
+        ))),
     );
     constructor.set_static_method(
         "getOwnPropertyDescriptor",

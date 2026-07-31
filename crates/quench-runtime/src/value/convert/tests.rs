@@ -388,11 +388,8 @@ fn test_to_object_string() {
         obj.borrow().exotic_kind,
         Some(crate::value::kind::ExoticKind::String)
     ));
-    // String object stores the full string at key "0" and has a length property
-    assert_eq!(
-        obj.borrow().get("0"),
-        Some(Value::String("abc".to_string()))
-    );
+    // String object exposes UTF-16 code units at indexed properties.
+    assert_eq!(obj.borrow().get("0"), Some(Value::String("a".to_string())));
     assert_eq!(obj.borrow().get("length"), Some(Value::Number(3.0)));
 }
 

@@ -163,7 +163,7 @@ pub fn getter_this_value(obj: &Rc<RefCell<Object>>) -> Value {
 
 /// Check if any prototype in the chain has a non-writable property with this name.
 pub fn has_readonly_prototype_property(object: &Rc<RefCell<Object>>, property: &str) -> bool {
-    let mut prototype = object.borrow().prototype.as_ref().map(Rc::clone);
+    let mut prototype = { object.borrow().prototype.clone() };
     while let Some(current) = prototype {
         let borrowed = current.borrow();
         if let Some(descriptor) = borrowed.get_descriptor(property) {

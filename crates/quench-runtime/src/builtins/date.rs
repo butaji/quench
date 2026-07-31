@@ -160,13 +160,16 @@ fn create_string_constructor_object(
 
 fn create_from_char_code_fn() -> Value {
     Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-        let chars: String = args
-            .iter()
-            .map(|v| {
-                let code = crate::value::to_number(v) as u16;
-                std::char::from_u32(code as u32).unwrap_or('\u{FFFD}')
-            })
-            .collect();
+        let mut chars = String::new();
+        for v in args {
+            let code = crate::value::to_number(&v) as u16;
+            if (0xd800..=0xdfff).contains(&code) {
+                chars.push('\u{FFFD}');
+                chars.push_str(&format!("{code:04x}"));
+            } else {
+                chars.push(std::char::from_u32(code as u32).unwrap_or('\u{FFFD}'));
+            }
+        }
         Ok(Value::String(chars))
     })))
 }

@@ -63,6 +63,9 @@ pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
             if let Some(tag) = get_exotic_kind_tag(&obj.exotic_kind) {
                 return tag;
             }
+            if matches!(obj.data, ObjData::Args { .. }) {
+                return "Arguments".to_string();
+            }
             return get_object_kind_tag(obj.kind.clone());
         }
         current = obj.prototype.clone();

@@ -252,28 +252,117 @@ pub fn object_entries(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Object.assign(target, ...sources) - copies properties from sources to target
 pub fn object_assign(args: Vec<Value>) -> Result<Value, JsError> {
-    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let target = crate::value::to_object(&args.first().cloned().unwrap_or(Value::Undefined))?;
     for arg in args.iter().skip(1) {
-        if let Value::Object(src) = arg {
-            let src_borrowed = src.borrow();
+        if !matches!(arg, Value::Null | Value::Undefined) {
+            let Value::Object(src) = crate::value::to_object(arg)? else {
+                continue;
+            };
             // Collect keys before iterating to avoid borrow issues
-            let enumerable_keys: Vec<(String, Value)> = src_borrowed
-                .properties
-                .iter()
-                .filter(|(k, _)| !is_internal_key(k) && src_borrowed.is_enumerable(k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            drop(src_borrowed);
-            for (k, v) in enumerable_keys {
-                if let Value::Object(to) = &target {
-                    if is_frozen_object(to) {
+            let keys = if let Some(keys) = crate::eval::object::proxy_own_keys(&src)? {
+                keys
+            } else if let Some((_, Value::Object(proxy_target))) =
+                crate::eval::object::proxy_handler_and_target(&src)
+            {
+                crate::value::object::enumerable_own_keys(&proxy_target.borrow())
+                    .into_iter()
+                    .map(Value::String)
+                    .collect()
+            } else {
+                let src_borrowed = src.borrow();
+                let mut keys: Vec<Value> = crate::value::object::enumerable_own_keys(&src_borrowed)
+                    .into_iter()
+                    .filter(|k| !is_internal_key(k))
+                    .map(Value::String)
+                    .collect();
+                let symbol_keys = src_borrowed
+                    .symbol_properties
+                    .keys()
+                    .chain(
+                        src_borrowed
+                            .properties
+                            .keys()
+                            .filter(|key| key.contains('\0')),
+                    )
+                    .chain(src_borrowed.getters.keys().filter(|key| key.contains('\0')))
+                    .filter_map(|key| {
+                        let (desc, id) = key.split_once('\0')?;
+                        Some(Value::Symbol(Rc::new(crate::value::Symbol {
+                            desc: (!desc.is_empty()).then(|| Rc::from(desc)),
+                            global: false,
+                            id: id.parse().ok()?,
+                        })))
+                    });
+                keys.extend(symbol_keys);
+                keys
+            };
+            for key in keys {
+                if let Value::String(index) = &key {
+                    if let Ok(index) = index.parse::<usize>() {
+                        if src.borrow().kind == ObjectKind::Array
+                            && src.borrow().holes.contains(&index)
+                        {
+                            continue;
+                        }
+                    }
+                }
+                let k = match &key {
+                    Value::String(k) => k.clone(),
+                    Value::Symbol(symbol) => symbol.property_key(),
+                    _ => continue,
+                };
+                if crate::eval::object::proxy_property_is_enumerable(&src, &key)?
+                    .is_some_and(|v| !v)
+                {
+                    continue;
+                }
+                if let Some((_, Value::Object(proxy_target))) =
+                    crate::eval::object::proxy_handler_and_target(&src)
+                {
+                    if proxy_target.borrow().get_descriptor(&k).is_none() {
                         continue;
                     }
+                }
+                let v = crate::eval::member::eval_object_member_value(&src, &key, None)?;
+                if let Value::Object(to) = &target {
+                    let setter_key = if matches!(key, Value::Symbol(_)) {
+                        crate::value::to_js_string(&key)
+                    } else {
+                        k.clone()
+                    };
+                    let has_symbol_setter =
+                        to.borrow().has_setter(&k) || to.borrow().has_setter(&setter_key);
+                    if to
+                        .borrow()
+                        .descriptors
+                        .get(&k)
+                        .is_some_and(|flags| !flags.writable)
+                        && !has_symbol_setter
+                    {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot assign to read only property",
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
+                    if is_frozen_object(to) && !has_symbol_setter {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot assign to read only property",
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
                     // Check for accessor property (setter) — invoke it instead of storing
-                    let has_setter = to.borrow().has_setter(&k);
+                    let has_setter = has_symbol_setter;
                     let has_getter_only = to.borrow().has_getter(&k) && !has_setter;
                     if has_setter {
-                        let setter_fn = to.borrow().get_setter(&k).and_then(|s| s.func.clone());
+                        let setter_fn = {
+                            let target = to.borrow();
+                            target
+                                .get_setter(&k)
+                                .or_else(|| target.get_setter(&setter_key))
+                                .and_then(|s| s.func.clone())
+                        };
                         if let Some(fn_val) = setter_fn {
                             crate::eval::function::call_value_with_this(
                                 fn_val,
@@ -286,7 +375,18 @@ pub fn object_assign(args: Vec<Value>) -> Result<Value, JsError> {
                     if has_getter_only {
                         continue;
                     }
-                    to.borrow_mut().set(&k, v);
+                    if !to.borrow().extensible && to.borrow().get_descriptor(&k).is_none() {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot add property to non-extensible object",
+                            "TypeError",
+                        );
+                        return Err(error);
+                    }
+                    if let Value::Symbol(_) = key {
+                        to.borrow_mut().set_symbol(&k, v);
+                    } else {
+                        to.borrow_mut().set(&k, v);
+                    }
                 }
             }
         }
@@ -311,15 +411,185 @@ pub fn object_create(args: Vec<Value>) -> Result<Value, JsError> {
     } else {
         Object::new(ObjectKind::Ordinary)
     };
-    if let Some(Value::Object(props_obj)) = args.get(1) {
+    let properties_source = match args.get(1) {
+        Some(Value::Undefined) | None => None,
+        Some(value) => match crate::value::to_object(value)? {
+            Value::Function(function) => {
+                let mut object = Object::new(ObjectKind::Ordinary);
+                for key in function.own_property_names() {
+                    if key == "length" || key == "name" || key == "prototype" || key.contains('\0')
+                    {
+                        continue;
+                    }
+                    if let Some(value) = function.get_property(&key) {
+                        object.set(&key, value);
+                    }
+                }
+                Some(Value::Object(Rc::new(RefCell::new(object))))
+            }
+            object => Some(object),
+        },
+    };
+    if let Some(Value::Object(props_obj)) = properties_source.as_ref() {
         let obj_val = Value::Object(Rc::new(RefCell::new(obj)));
-        let props = props_obj.borrow().properties.clone();
-        for (k, desc_val) in props {
+        let keys = crate::value::object::enumerable_own_keys(&props_obj.borrow());
+        for k in keys {
+            if is_internal_key(&k) {
+                continue;
+            }
+            if let Some(Value::String(value)) = props_obj.borrow().get_own_value("_value") {
+                if k.parse::<usize>()
+                    .ok()
+                    .is_some_and(|index| index >= value.chars().count())
+                {
+                    continue;
+                }
+            }
+            {
+                let props = props_obj.borrow();
+                if !props.properties.contains_key(&k)
+                    && !props.getters.contains_key(&k)
+                    && !props.setters.contains_key(&k)
+                {
+                    continue;
+                }
+                if !props.properties.contains_key(&k)
+                    && props.setters.contains_key(&k)
+                    && !props.getters.contains_key(&k)
+                    && !props.properties.contains_key("_value")
+                {
+                    return Err(JsError::from(
+                        "TypeError: property descriptor must be an object",
+                    ));
+                }
+            }
+            if props_obj.borrow().kind == ObjectKind::RegExp
+                && matches!(
+                    k.as_str(),
+                    "source"
+                        | "flags"
+                        | "global"
+                        | "ignoreCase"
+                        | "multiline"
+                        | "dotAll"
+                        | "unicode"
+                        | "unicodeSets"
+                        | "sticky"
+                        | "hasIndices"
+                        | "lastIndex"
+                )
+            {
+                continue;
+            }
+            let boxed_string = matches!(
+                props_obj.borrow().get_own_value("_value"),
+                Some(Value::String(_))
+            );
+            let mut desc_val = if let Some(value) = props_obj.borrow().get_own_value(&k) {
+                value
+            } else if boxed_string {
+                props_obj.borrow().get(&k).unwrap_or(Value::Undefined)
+            } else {
+                object_create_get(props_obj, &k)?
+            };
+            if matches!(desc_val, Value::Undefined) {
+                let getter = props_obj.borrow().get_getter(&k).cloned();
+                if let Some(getter) = getter {
+                    desc_val = crate::eval::object::call_getter(
+                        props_obj,
+                        &getter,
+                        &Rc::new(RefCell::new(crate::env::Environment::new())),
+                    )?;
+                }
+            }
+            if let Value::Function(function) = &desc_val {
+                let mut descriptor = Object::new(ObjectKind::Ordinary);
+                for field in [
+                    "value",
+                    "writable",
+                    "enumerable",
+                    "configurable",
+                    "get",
+                    "set",
+                ] {
+                    let env = Rc::new(RefCell::new(crate::env::Environment::new()));
+                    let value = function
+                        .get_property(field)
+                        .or_else(|| {
+                            crate::eval::member::eval_member_access(
+                                &Value::Function(function.clone()),
+                                field,
+                                &env,
+                            )
+                            .ok()
+                        })
+                        .unwrap_or(Value::Undefined);
+                    if !matches!(value, Value::Undefined) {
+                        descriptor.set(field, value);
+                    }
+                }
+                desc_val = Value::Object(Rc::new(RefCell::new(descriptor)));
+            }
+            if matches!(
+                desc_val,
+                Value::Null
+                    | Value::Boolean(_)
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Symbol(_)
+                    | Value::BigInt(_)
+            ) {
+                return Err(JsError::from(
+                    "TypeError: property descriptor must be an object",
+                ));
+            }
+            if matches!(desc_val, Value::Undefined) {
+                return Err(JsError::from(
+                    "TypeError: property descriptor must be an object",
+                ));
+            }
             object_define_property(vec![obj_val.clone(), Value::String(k), desc_val])?;
         }
         return Ok(obj_val);
     }
     Ok(Value::Object(Rc::new(RefCell::new(obj))))
+}
+
+fn object_create_get(object: &Rc<RefCell<Object>>, key: &str) -> Result<Value, JsError> {
+    let mut current = Some(Rc::clone(object));
+    while let Some(candidate) = current {
+        if let Ok(Value::Object(descriptor)) = object_get_own_property_descriptor(vec![
+            Value::Object(Rc::clone(&candidate)),
+            Value::String(key.to_string()),
+        ]) {
+            if let Some(getter @ (Value::Function(_) | Value::NativeFunction(_))) =
+                descriptor.borrow().get_own_value("get")
+            {
+                return crate::eval::function::call_value_with_this(
+                    getter,
+                    Vec::new(),
+                    Value::Object(Rc::clone(object)),
+                );
+            }
+        }
+        let borrowed = candidate.borrow();
+        if let Some(getter) = borrowed.get_getter(key).cloned() {
+            drop(borrowed);
+            return crate::eval::object::call_getter_with_this(
+                &getter,
+                Value::Object(Rc::clone(object)),
+                &Rc::new(RefCell::new(crate::env::Environment::new())),
+            );
+        }
+        if borrowed.get_setter(key).is_some() {
+            return Ok(Value::Undefined);
+        }
+        if let Some(value) = borrowed.get_own_value(key) {
+            return Ok(value);
+        }
+        current = borrowed.prototype.clone();
+    }
+    Ok(Value::Undefined)
 }
 
 /// Check whether a property key is internal (not user data)
@@ -330,10 +600,128 @@ fn is_internal_key(key: &str) -> bool {
 /// Object.defineProperties(obj, props) - defines multiple properties at once
 pub fn object_define_properties(args: Vec<Value>) -> Result<Value, JsError> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(props_obj)) = args.get(1) {
-        let props = props_obj.borrow().properties.clone();
-        for (k, desc_val) in props {
-            object_define_property(vec![obj.clone(), Value::String(k), desc_val])?;
+    if !matches!(
+        obj,
+        Value::Object(_)
+            | Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
+    ) {
+        return Err(JsError::from(
+            "TypeError: Object.defineProperties target must be an object",
+        ));
+    }
+    if let Some(properties) = args.get(1) {
+        if matches!(properties, Value::Null | Value::Undefined) {
+            return Err(JsError::from(
+                "TypeError: Object.defineProperties properties must be an object",
+            ));
+        }
+    }
+    let function_properties = if let Some(Value::Function(function)) = args.get(1) {
+        let mut object = Object::new(ObjectKind::Ordinary);
+        for key in function.own_property_names() {
+            if key == "length" || key == "name" || key == "prototype" || key.contains('\0') {
+                continue;
+            }
+            if let Some(value) = function.get_property(&key) {
+                object.set(&key, value);
+            }
+        }
+        Some(Rc::new(RefCell::new(object)))
+    } else {
+        None
+    };
+    let properties_object = match args.get(1) {
+        Some(Value::Object(object)) => Some(Rc::clone(object)),
+        _ => function_properties,
+    };
+    if let Some(props_obj) = properties_object {
+        let is_global = crate::context::get_global_from_context("globalThis")
+            .and_then(|value| match value {
+                Value::Object(global) => Some(Rc::ptr_eq(&global, &props_obj)),
+                _ => None,
+            })
+            .unwrap_or(false);
+        let is_global = is_global
+            || matches!(
+                props_obj.borrow().get("globalThis"),
+                Some(Value::Object(global)) if Rc::ptr_eq(&global, &props_obj)
+            );
+        if is_global || props_obj.borrow().kind == ObjectKind::Global {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "global properties include non-configurable bindings",
+                "TypeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
+        let property_keys = {
+            let properties = props_obj.borrow();
+            crate::value::object::enumerable_own_keys(&properties)
+        };
+        for key in property_keys {
+            if is_internal_key(&key) {
+                continue;
+            }
+            if let Some(Value::String(value)) = props_obj.borrow().get_own_value("_value") {
+                if key
+                    .parse::<usize>()
+                    .ok()
+                    .is_some_and(|index| index >= value.chars().count())
+                {
+                    continue;
+                }
+            }
+            if props_obj.borrow().kind == ObjectKind::RegExp
+                && matches!(
+                    key.as_str(),
+                    "source"
+                        | "flags"
+                        | "global"
+                        | "ignoreCase"
+                        | "multiline"
+                        | "dotAll"
+                        | "unicode"
+                        | "unicodeSets"
+                        | "sticky"
+                        | "hasIndices"
+                        | "lastIndex"
+                )
+            {
+                continue;
+            }
+            let mut descriptor = object_create_get(&props_obj, &key)?;
+            if let Value::Function(function) = &descriptor {
+                let mut object = Object::new(ObjectKind::Ordinary);
+                for field in [
+                    "value",
+                    "writable",
+                    "enumerable",
+                    "configurable",
+                    "get",
+                    "set",
+                ] {
+                    if let Some(value) = function.get_property(field) {
+                        object.set(field, value);
+                    }
+                }
+                descriptor = Value::Object(Rc::new(RefCell::new(object)));
+            }
+            if !matches!(
+                descriptor,
+                Value::Object(_)
+                    | Value::Function(_)
+                    | Value::NativeFunction(_)
+                    | Value::NativeConstructor(_)
+                    | Value::Class(_)
+            ) {
+                return Err(JsError::from(
+                    "TypeError: property descriptor must be an object",
+                ));
+            }
+            object_define_property(vec![obj.clone(), Value::String(key), descriptor])?;
         }
     }
     Ok(obj)

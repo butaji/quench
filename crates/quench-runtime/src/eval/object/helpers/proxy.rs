@@ -22,6 +22,63 @@ pub fn proxy_handler_and_target(
     }
 }
 
+pub fn proxy_own_keys(proxy: &Rc<RefCell<Object>>) -> Result<Option<Vec<Value>>, JsError> {
+    let Some((handler, _)) = proxy_handler_and_target(proxy) else {
+        return Ok(None);
+    };
+    let trap = handler.borrow().get_own_value("ownKeys");
+    let Some(trap) = trap else {
+        return Ok(None);
+    };
+    let result = crate::eval::function::call_value_with_this(
+        trap,
+        Vec::new(),
+        Value::Object(Rc::clone(proxy)),
+    )?;
+    let Value::Object(keys) = result else {
+        return Err(JsError::from(
+            "TypeError: ownKeys trap must return an object",
+        ));
+    };
+    let values = keys.borrow().own_keys();
+    Ok(Some(
+        values
+            .into_iter()
+            .filter_map(|key| keys.borrow().get(&key))
+            .collect(),
+    ))
+}
+
+pub fn proxy_property_is_enumerable(
+    proxy: &Rc<RefCell<Object>>,
+    key: &Value,
+) -> Result<Option<bool>, JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(proxy) else {
+        return Ok(None);
+    };
+    let trap = handler
+        .borrow()
+        .properties
+        .get("getOwnPropertyDescriptor")
+        .cloned();
+    let Some(trap) = trap else {
+        return Ok(None);
+    };
+    let descriptor = crate::eval::function::call_value_with_this(
+        trap,
+        vec![target, key.clone()],
+        Value::Object(Rc::clone(proxy)),
+    )?;
+    let Value::Object(descriptor) = descriptor else {
+        return Ok(Some(false));
+    };
+    let enumerable = descriptor
+        .borrow()
+        .get("enumerable")
+        .is_some_and(|value| crate::value::to_bool(&value));
+    Ok(Some(enumerable))
+}
+
 /// Object that owns private fields/methods — the proxy target when `obj` is a Proxy.
 pub fn private_field_object(
     obj: &Rc<RefCell<crate::value::Object>>,

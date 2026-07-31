@@ -338,6 +338,13 @@ impl ValueFunction {
     /// Per ES spec §16.1, class methods (is_method=true) have restricted
     /// `caller` and `arguments` properties.
     pub fn set_property(&self, key: &str, value: Value) -> Result<(), crate::value::JsError> {
+        if self
+            .properties
+            .borrow()
+            .contains_key(&format!("\0nonwritable:{key}"))
+        {
+            return Ok(());
+        }
         if self.is_method && (key == "caller" || key == "arguments") {
             let (_, err) = crate::value::create_js_error_with_type(
                 "'caller' and 'arguments' are restricted properties and cannot be set on this function",
@@ -366,6 +373,12 @@ impl ValueFunction {
             self.get_prototype().borrow_mut().set(key, property_value);
         }
         Ok(())
+    }
+
+    pub fn mark_nonwritable(&self, key: &str) {
+        self.properties
+            .borrow_mut()
+            .insert(format!("\0nonwritable:{key}"), Value::Undefined);
     }
 
     /// Remove a property. Returns true if it was present.

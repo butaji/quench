@@ -29,6 +29,7 @@ pub(crate) struct IntrinsicSnapshot {
     well_known_symbols: HashMap<&'static str, Value>,
     regex_cache: rustc_hash::FxHashMap<char, Value>,
     harness_global: Proto,
+    throw_type_error: Option<Value>,
 }
 
 impl IntrinsicSnapshot {
@@ -47,6 +48,7 @@ impl IntrinsicSnapshot {
             well_known_symbols: builtins::symbol::save_well_known_symbols(),
             regex_cache: super::helpers::save_regex_cache(),
             harness_global: crate::test262::harness::save_global_object(),
+            throw_type_error: crate::eval::function::save_throw_type_error(),
         }
     }
 
@@ -64,6 +66,7 @@ impl IntrinsicSnapshot {
         builtins::symbol::restore_well_known_symbols(self.well_known_symbols);
         super::helpers::restore_regex_cache(self.regex_cache);
         crate::test262::harness::restore_global_object(self.harness_global);
+        crate::eval::function::restore_throw_type_error(self.throw_type_error);
     }
 }
 
@@ -82,6 +85,7 @@ pub(crate) fn clear_intrinsics() {
         well_known_symbols: HashMap::new(),
         regex_cache: rustc_hash::FxHashMap::default(),
         harness_global: None,
+        throw_type_error: None,
     }
     .restore();
 }

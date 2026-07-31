@@ -629,6 +629,20 @@ fn sloppy_assign_to_nan_no_throw() {
 }
 
 #[test]
+fn sloppy_assign_to_infinity_preserves_global_constant() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("Infinity = true; typeof Infinity").unwrap();
+    assert_eq!(result, crate::value::Value::String("number".into()));
+}
+
+#[test]
+fn sloppy_delete_infinity_returns_false() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("delete Infinity").unwrap();
+    assert_eq!(result, crate::value::Value::Boolean(false));
+}
+
+#[test]
 fn symbol_keyed_accessor_property_getter() {
     // Reproduces verifyProperty-restore-accessor-symbol.js issue
     let mut ctx = Context::new().unwrap();

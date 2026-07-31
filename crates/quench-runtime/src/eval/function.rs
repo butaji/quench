@@ -9,11 +9,50 @@ use crate::interpreter::{
     check_depth, hoist_functions, predeclare_let_const, predeclare_var, release_depth,
 };
 use crate::value::{
-    create_js_error_with_type, JsError, NativeConstructor, NativeFunction, Object, ObjectKind,
-    Value, ValueFunction,
+    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value, ValueFunction,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+thread_local! {
+    static THROW_TYPE_ERROR: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn save_throw_type_error() -> Option<Value> {
+    THROW_TYPE_ERROR.with(|cell| cell.borrow().clone())
+}
+
+pub(crate) fn restore_throw_type_error(value: Option<Value>) {
+    THROW_TYPE_ERROR.with(|cell| *cell.borrow_mut() = value);
+}
+
+fn throw_type_error() -> Value {
+    let constructor = crate::context::CURRENT_CONTEXT.with(|cell| {
+        cell.borrow()
+            .and_then(|ptr| unsafe { (*ptr).get_global("TypeError") })
+    });
+    THROW_TYPE_ERROR.with(|cell| {
+        if let Some(value) = cell.borrow().clone() {
+            return value;
+        }
+        let value = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+            let Some(constructor) = constructor.clone() else {
+                return Err(JsError(
+                    "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
+                ));
+            };
+            let message =
+                Value::String("'caller' and 'callee' are not allowed in strict mode".into());
+            let error = call_value_with_this(constructor, vec![message], Value::Undefined)?;
+            crate::value::set_thrown_value(error);
+            Err(JsError(
+                "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
+            ))
+        })));
+        *cell.borrow_mut() = Some(value.clone());
+        value
+    })
+}
 
 /// Call a value as a function with an explicit "this" binding
 pub fn call_value_with_this(
@@ -581,6 +620,7 @@ fn create_arguments_object(
     obj.descriptors.insert(
         "length".to_string(),
         crate::value::object::helpers::PropertyFlags {
+            value: Some(Value::Number(args.len() as f64)),
             writable: true,
             enumerable: false,
             configurable: true,
@@ -631,24 +671,21 @@ fn create_arguments_object(
         for (i, arg) in args.iter().enumerate() {
             obj.set(&i.to_string(), arg.clone());
         }
+        obj.data = crate::value::object::helpers::ObjData::Args {
+            mapped: std::collections::HashMap::new(),
+        };
     }
 
     // Set callee property
     if strict_mode {
-        let nf = NativeFunction::new(|_| {
-            let (_, js_err) = create_js_error_with_type(
-                "'caller' and 'callee' are not allowed in strict mode",
-                "TypeError",
-            );
-            Err(js_err)
-        });
-        obj.set_getter_func("callee", Value::NativeFunction(Rc::new(nf)));
+        obj.set_getter_func("callee", throw_type_error());
     } else {
         obj.set("callee", Value::Function(f.clone()));
     }
     obj.descriptors.insert(
         "callee".to_string(),
         crate::value::object::helpers::PropertyFlags {
+            value: Some(Value::Function(f.clone())),
             writable: true,
             enumerable: false,
             configurable: !strict_mode,

@@ -18,6 +18,15 @@ fn native_js_eval() {
 }
 
 #[test]
+fn arrow_function_has_function_prototype() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("Object.getPrototypeOf(() => {}) === Function.prototype && !(\"prototype\" in (() => {}))")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn with_unscopables_deleted_binding_read_is_undefined() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

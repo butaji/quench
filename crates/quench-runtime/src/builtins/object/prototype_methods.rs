@@ -53,7 +53,9 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
                 // Check built-in properties (only if they exist in the properties HashMap,
                 // which means they haven't been deleted)
-                if key_str == "name" || key_str == "length" {
+                if (key_str == "name" && nf.get_property("\0deleted:name").is_none())
+                    || key_str == "length" && nf.get_property("\0deleted:length").is_none()
+                {
                     // name and length are always own properties of NativeFunction
                     // unless explicitly deleted (checked via get_property).
                     // If not found in properties HashMap, they're handled by the

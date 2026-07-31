@@ -163,15 +163,20 @@ pub fn make_ops_object() -> Value {
         match &o {
             Value::Object(obj_rc) => {
                 let obj_ref = obj_rc.borrow();
-                let keys: Vec<String> = obj_ref
-                    .properties
-                    .keys()
-                    .filter(|k| obj_ref.is_enumerable(k) && !k.contains('\0'))
-                    .cloned()
+                let mut keys: Vec<Value> = crate::value::object::enumerable_own_keys(&obj_ref)
+                    .into_iter()
+                    .filter(|k| !k.contains('\0'))
+                    .map(Value::String)
                     .collect();
-                let arr = crate::value::object::Object::new_array_from(
-                    keys.into_iter().map(Value::String).collect(),
-                );
+                keys.extend(obj_ref.symbol_properties.keys().filter_map(|key| {
+                    let (desc, id) = key.split_once('\0')?;
+                    Some(Value::Symbol(std::rc::Rc::new(crate::value::Symbol {
+                        desc: (!desc.is_empty()).then(|| std::rc::Rc::from(desc)),
+                        global: false,
+                        id: id.parse().ok()?,
+                    })))
+                }));
+                let arr = crate::value::object::Object::new_array_from(keys);
                 Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
                     arr,
                 ))))
@@ -421,6 +426,25 @@ pub fn make_ops_object() -> Value {
                 } else {
                     // Data descriptor
                     let val = has_value.clone().unwrap_or(Value::Undefined);
+                    if let Some(existing) = obj_rc.borrow().descriptors.get(&key) {
+                        if !existing.configurable {
+                            let value_changed = has_value.as_ref().is_some_and(|next| {
+                                !crate::value::strict_eq(
+                                    existing.value.as_ref().unwrap_or(&Value::Undefined),
+                                    next,
+                                )
+                            });
+                            let writable_changed =
+                                has_writable.as_ref().is_some_and(crate::value::to_bool);
+                            if value_changed || writable_changed {
+                                let (_, err) = crate::value::error::create_js_error_with_type(
+                                    "Cannot redefine non-configurable property",
+                                    "TypeError",
+                                );
+                                return Err(err);
+                            }
+                        }
+                    }
                     let flags = crate::value::object::helpers::PropertyFlags {
                         value: has_value,
                         writable: has_writable.map_or(false, |v| crate::value::to_bool(&v)),

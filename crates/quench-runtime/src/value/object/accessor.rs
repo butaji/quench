@@ -126,9 +126,13 @@ pub fn define_accessor(
 ) {
     if let Some(g) = getter {
         set_getter_func(obj, key, g);
+    } else {
+        obj.getters.shift_remove(key);
     }
     if let Some(s) = setter {
         set_setter_func(obj, key, s);
+    } else {
+        obj.setters.shift_remove(key);
     }
     obj.descriptors.insert(key.to_string(), flags);
 }

@@ -28,7 +28,11 @@ pub fn eval_native_function_member(
             }
         })),
         "prototype" => eval_native_prototype(nf),
-        "length" => Ok(Value::Number(0.0)),
+        "length" => Ok(Value::Number(match nf.name.as_str() {
+            "Object" => 1.0,
+            "create" | "defineProperties" => 2.0,
+            _ => 0.0,
+        })),
         "call" => eval_native_call_method(nf),
         "apply" => eval_native_apply_method(nf),
         "bind" => eval_native_bind_method(nf),
@@ -209,7 +213,7 @@ pub fn eval_native_constructor_member(
     match prop_name {
         "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
         "length" => {
-            if is_function_constructor {
+            if is_function_constructor || nc.name() == "Object" {
                 Ok(Value::Number(1.0))
             } else {
                 Ok(Value::Number(0.0))
@@ -287,9 +291,9 @@ mod tests {
     }
 
     #[test]
-    fn native_constructor_other_length_is_zero() {
+    fn native_constructor_object_length_is_one() {
         let r = eval("Object.length").unwrap();
-        assert_eq!(r, Value::Number(0.0));
+        assert_eq!(r, Value::Number(1.0));
     }
 
     // ─── eval_native_constructor_member: prototype ──────────────────────────

@@ -364,6 +364,9 @@ pub fn eval_expression(
                     );
                     return Err(error);
                 }
+                if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
+                    return Ok(right_val);
+                }
                 // Per ES spec §12.4.5.1, `let` and `const` at global scope do NOT
                 // create properties on the global object. The object_binding_has
                 // check below is meant for `var` bindings whose global property was

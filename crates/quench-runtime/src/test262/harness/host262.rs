@@ -36,6 +36,7 @@ pub fn host_262_detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
 /// persist across eval calls.
 fn realm_eval_script(
     realm_ctx: &RefCell<Option<Context>>,
+    realm_intrinsics: &RefCell<Option<crate::context::intrinsics::IntrinsicSnapshot>>,
     args: Vec<Value>,
 ) -> Result<Value, JsError> {
     let code = args
@@ -49,12 +50,20 @@ fn realm_eval_script(
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     };
+    let caller_intrinsics = crate::context::intrinsics::IntrinsicSnapshot::save();
+    let realm_snapshot = realm_intrinsics.borrow_mut().take();
+    if let Some(snapshot) = realm_snapshot {
+        snapshot.restore();
+    }
     // evalScript runs a NEW script: non-strict unless the source itself
     // declares 'use strict' — never inherit the caller's strictness.
     let was_strict = crate::interpreter::is_strict_mode();
     crate::interpreter::set_strict_mode(false);
     let result = ctx.eval(&code);
     crate::interpreter::set_strict_mode(was_strict);
+    let updated_realm = crate::context::intrinsics::IntrinsicSnapshot::save();
+    *realm_intrinsics.borrow_mut() = Some(updated_realm);
+    caller_intrinsics.restore();
     // Put the context back for the next call
     *realm_ctx.borrow_mut() = Some(ctx);
     result
@@ -78,12 +87,16 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     // Create a shared context storage; we need interior mutability so the
     // realm_eval_script closure (which must be 'static) can mutate it.
     let realm_ctx = Rc::new(RefCell::new(Some(ctx)));
+    let realm_intrinsics = Rc::new(RefCell::new(Some(
+        crate::context::intrinsics::IntrinsicSnapshot::save(),
+    )));
 
     // Set realm's eval to use the shared context
     let eval_ctx = Rc::clone(&realm_ctx);
+    let eval_intrinsics = Rc::clone(&realm_intrinsics);
     global.borrow_mut().set(
         "eval",
-        make_native(move |args| realm_eval_script(&eval_ctx, args)),
+        make_native(move |args| realm_eval_script(&eval_ctx, &eval_intrinsics, args)),
     );
 
     // Create the realm facade object
@@ -91,7 +104,9 @@ fn host_262_create_realm(_args: Vec<Value>) -> Result<Value, JsError> {
     realm.set("global", Value::Object(Rc::clone(&global)));
     realm.set(
         "evalScript",
-        make_native(move |args| realm_eval_script(&Rc::clone(&realm_ctx), args)),
+        make_native(move |args| {
+            realm_eval_script(&Rc::clone(&realm_ctx), &Rc::clone(&realm_intrinsics), args)
+        }),
     );
     realm.set("gc", make_native(host_262_gc));
     realm.set("detachArrayBuffer", make_native(host_262_detach_buffer));

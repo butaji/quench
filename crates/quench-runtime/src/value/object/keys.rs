@@ -60,7 +60,11 @@ pub fn own_property_names(obj: &crate::value::Object) -> Vec<String> {
     let mut keys = array_indices(obj);
     let mut seen: std::collections::HashSet<String> = keys.iter().cloned().collect();
     for key in obj.properties.keys() {
-        if as_array_index(key).is_none() && !key.contains('\0') && !seen.contains(key) {
+        if as_array_index(key).is_none()
+            && key != "_value"
+            && !key.contains('\0')
+            && !seen.contains(key)
+        {
             seen.insert(key.clone());
             keys.push(key.clone());
         }
@@ -77,12 +81,33 @@ pub fn own_property_names(obj: &crate::value::Object) -> Vec<String> {
 /// Collect array index strings from the elements Vec or from numeric properties.
 fn array_indices(obj: &crate::value::Object) -> Vec<String> {
     if obj.kind == crate::value::kind::ObjectKind::Array {
-        (0..obj.elements.len())
+        let mut indices: Vec<usize> = (0..obj.elements.len())
             .filter(|i| !obj.holes.contains(i))
-            .map(|i| i.to_string())
-            .collect()
+            .collect();
+        let property_indices: Vec<usize> = obj
+            .properties
+            .keys()
+            .filter_map(|key| as_array_index(key))
+            .filter(|index| !indices.contains(index))
+            .collect();
+        indices.extend(property_indices);
+        indices.sort_unstable();
+        indices.into_iter().map(|i| i.to_string()).collect()
     } else if let crate::value::ObjData::Idx { length, .. } = obj.data {
         (0..length).map(|i| i.to_string()).collect()
+    } else if matches!(obj.data, crate::value::ObjData::Args { .. }) {
+        let mut indices: Vec<usize> = (0..obj.elements.len())
+            .filter(|i| !obj.holes.contains(i))
+            .collect();
+        let property_indices: Vec<usize> = obj
+            .properties
+            .keys()
+            .filter_map(|key| as_array_index(key))
+            .filter(|index| !indices.contains(index))
+            .collect();
+        indices.extend(property_indices);
+        indices.sort_unstable();
+        indices.into_iter().map(|i| i.to_string()).collect()
     } else {
         let mut numeric: Vec<(usize, String)> = obj
             .properties

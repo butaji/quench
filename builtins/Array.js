@@ -55,7 +55,8 @@ Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
     if (k in O) {
       var kValue = O[k];
       if (callbackfn.call(thisArg, kValue, k, O)) {
-        A[to++] = kValue;
+        A[to] = kValue;
+        to = to + 1;
       }
     }
   }
@@ -175,20 +176,6 @@ Array.prototype.join = function ArrayJoin(separator) {
   return R;
 };
 
-// Array.prototype.push (ES2025 §23.1.3.24)
-Array.prototype.push = function ArrayPush() {
-  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
-  var O = ToObject(this);
-  var len = O.length >>> 0;
-  var argCount = arguments.length;
-  for (var n = 0; n < argCount; n++) {
-    O[len + n] = arguments[n];
-  }
-  var newLen = len + argCount;
-  O.length = newLen;
-  return newLen;
-};
-
 // Array.prototype.pop (ES2025 §23.1.3.23)
 Array.prototype.pop = function ArrayPop() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.pop called on null or undefined");
@@ -240,11 +227,15 @@ Array.prototype.concat = function ArrayConcat() {
       var k = 0;
       var len = E.length >>> 0;
       while (k < len) {
-        if (k in E) A[n++] = E[k];
+        if (k in E) {
+          A[n] = E[k];
+          n = n + 1;
+        }
         k++;
       }
     } else {
-      A[n++] = E;
+      A[n] = E;
+      n = n + 1;
     }
   }
   return A;

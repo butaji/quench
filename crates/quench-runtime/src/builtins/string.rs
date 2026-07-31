@@ -55,8 +55,13 @@ fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
         let mut chars = String::new();
         for v in args.iter() {
             let code = to_number_or_err(v)? as u16;
-            let ch = std::char::from_u32(code as u32).unwrap_or('\u{FFFD}');
-            chars.push(ch);
+            if (0xd800..=0xdfff).contains(&code) {
+                chars.push('\u{FFFD}');
+                chars.push_str(&format!("{code:04x}"));
+            } else {
+                let ch = std::char::from_u32(code as u32).unwrap_or('\u{FFFD}');
+                chars.push(ch);
+            }
         }
         Ok(Value::String(chars))
     });

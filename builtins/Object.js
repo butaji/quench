@@ -19,14 +19,6 @@ var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
 
-// Object.defineProperty (ES2025 §20.1.2.4)
-Object.defineProperty = function ObjectDefineProperty(O, P, Attributes) {
-  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
-  if (Attributes === null || Attributes === undefined) throw ThrowTypeError("Property description must be an object");
-  DefineProp(O, P, Attributes);
-  return O;
-};
-
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
@@ -61,19 +53,6 @@ Object.entries = function ObjectEntries(O) {
   var entries = new Array(len);
   for (var i = 0; i < len; i++) entries[i] = [keys[i], obj[keys[i]]];
   return entries;
-};
-
-// Object.assign (ES2025 §20.1.2.1)
-Object.assign = function ObjectAssign(target, ...sources) {
-  var to = ToObject(target);
-  for (var i = 0; i < sources.length; i++) {
-    var nextSource = sources[i];
-    if (nextSource === null || nextSource === undefined) continue;
-    var from = ToObject(nextSource);
-    var keys = EnumerableOwnKeys(from);
-    for (var j = 0; j < keys.length; j++) to[keys[j]] = from[keys[j]];
-  }
-  return to;
 };
 
 // Object.hasOwn (ES2025 §20.1.2.14)
@@ -146,17 +125,6 @@ Object.isSealed = function ObjectIsSealed(O) {
 Object.isFrozen = function ObjectIsFrozen(O) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   return IsFrozenObject(O);
-};
-
-// Object.defineProperties (ES2025 §20.1.2.3)
-Object.defineProperties = function ObjectDefineProperties(O, Properties) {
-  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
-  var keys = EnumerableOwnKeys(ToObject(Properties));
-  for (var i = 0; i < keys.length; i++) {
-    var key = keys[i];
-    DefineProp(O, key, Properties[key]);
-  }
-  return O;
 };
 
 // Object.getOwnPropertyDescriptors (ES2025 §20.1.2.6)

@@ -4,6 +4,33 @@ use crate::builtins;
 use crate::value::Value;
 use crate::Context;
 
+#[test]
+fn arguments_index_descriptor_is_enumerable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var data = 'data'; Object.defineProperty(Object.prototype, '0', {get: function() { return data; }, set: function() { data = 'changed'; }, configurable: true}); var a = (function() { return arguments; })(1); var d = Object.getOwnPropertyDescriptor(a, '0'); var keys = []; for (var k in a) keys.push(k); [d.value, d.writable, d.enumerable, d.configurable, data, keys.join(',')].join('|')")
+        .unwrap();
+    assert_eq!(result, Value::String("1|true|true|true|data|0".into()));
+}
+
+#[test]
+fn sloppy_arguments_callee_is_writable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("Object.defineProperty(Object.prototype, 'callee', {value: 1, writable: false, configurable: true}); var a = (function() { return arguments; })(1); var d = Object.getOwnPropertyDescriptor(a, 'callee'); a.callee = 2; [d.writable, d.enumerable, d.configurable, a.callee].join('|')")
+        .unwrap();
+    assert_eq!(result, Value::String("true|false|true|2".into()));
+}
+
+#[test]
+fn arguments_length_is_writable_own_data_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("Object.defineProperty(Object.prototype, 'length', {get: function() { return 12; }, set: function() {}, configurable: true}); var a = (function() { return arguments; })(1); var d = Object.getOwnPropertyDescriptor(a, 'length'); a.length = 2; [d.writable, d.enumerable, d.configurable, a.length].join('|')")
+        .unwrap();
+    assert_eq!(result, Value::String("true|false|true|2".into()));
+}
+
 /// ES spec: arguments object with spread call must populate indexed properties.
 /// Regression: mappable arguments (sloppy mode, no params, no rest/default)
 /// stored values only in `elements` but Array.prototype.map's get_this_array

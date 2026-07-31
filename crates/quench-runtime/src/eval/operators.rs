@@ -299,6 +299,12 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
     let prop_name = to_js_string(left);
     match right {
         Value::Object(obj) => Ok(Value::Boolean(obj.borrow().has(&prop_name))),
+        Value::Function(function) => Ok(Value::Boolean(
+            function
+                .own_property_names()
+                .iter()
+                .any(|key| key == &prop_name),
+        )),
         _ => crate::throw!("TypeError", "right-hand side of 'in' is not an object"),
     }
 }

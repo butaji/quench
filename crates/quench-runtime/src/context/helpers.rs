@@ -478,25 +478,25 @@ pub fn register_eval_function(ctx: &mut Context) -> Result<(), JsError> {
         eval_impl(args, ctx)
     });
 
-    // Per spec: eval.length is 1, non-writable, non-configurable, non-enumerable
+    // Per spec: eval.length is 1, non-writable, configurable, non-enumerable
     eval_fn.define_property(
         "length",
         Value::Number(1.0),
         crate::value::object::helpers::PropertyFlags {
             writable: false,
             enumerable: false,
-            configurable: false,
+            configurable: true,
             value: Some(Value::Number(1.0)),
         },
     );
-    // eval.name is "eval", non-writable, non-configurable, non-enumerable
+    // eval.name is "eval", non-writable, configurable, non-enumerable
     eval_fn.define_property(
         "name",
         Value::String("eval".to_string()),
         crate::value::object::helpers::PropertyFlags {
             writable: false,
             enumerable: false,
-            configurable: false,
+            configurable: true,
             value: Some(Value::String("eval".to_string())),
         },
     );

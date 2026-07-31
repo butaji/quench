@@ -34,7 +34,14 @@ impl Object {
 
     /// Get own property value only (string key, no prototype chain).
     pub fn get_own_value(&self, key: &str) -> Option<Value> {
-        self.properties.get(key).cloned()
+        if let Some(value) = self.properties.get(key) {
+            return Some(value.clone());
+        }
+        let index = key.parse::<usize>().ok()?;
+        if self.kind != ObjectKind::Array || self.holes.contains(&index) {
+            return None;
+        }
+        self.elements.get(index).cloned()
     }
 
     /// Set a built-in method (non-enumerable, writable, configurable).
@@ -122,11 +129,23 @@ impl Object {
                 }
             }
             if self.kind == ObjectKind::Array {
+                if idx >= crate::value::object::helpers::MAX_ARRAY_ELEMENTS {
+                    self.properties.insert(key.to_string(), value);
+                    let length = (idx + 1) as f64;
+                    self.properties
+                        .insert("length".to_string(), Value::Number(length));
+                    return;
+                }
+                let old_len = self.elements.len();
                 while self.elements.len() <= idx {
                     self.elements.push(Value::Undefined);
                 }
+                for hole in old_len..idx {
+                    self.holes.insert(hole);
+                }
                 self.elements[idx] = value.clone();
                 self.holes.remove(&idx);
+                self.properties.shift_remove(key);
                 self.properties.insert(
                     "length".to_string(),
                     Value::Number(self.elements.len() as f64),
@@ -150,7 +169,11 @@ impl Object {
                 .retain(|k, _| k.parse::<usize>().map(|i| i < new_len).unwrap_or(true));
             self.holes.retain(|i| *i < new_len);
         } else {
+            let old_len = self.elements.len();
             self.elements.resize(new_len, Value::Undefined);
+            for hole in old_len..new_len {
+                self.holes.insert(hole);
+            }
         }
         self.define_array_length(new_len as f64);
     }

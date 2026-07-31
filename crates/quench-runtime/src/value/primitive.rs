@@ -253,23 +253,49 @@ pub fn to_object(value: &Value) -> Result<Value, JsError> {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Boolean);
+            crate::builtins::object::set_boxed_value(&mut obj, value.clone());
+            obj.prototype = wrapper_prototype("Boolean");
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::Number(_n) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::Number);
+            crate::builtins::object::set_boxed_value(&mut obj, value.clone());
+            obj.prototype = wrapper_prototype("Number");
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::String(s) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::String);
-            obj.properties
-                .insert("0".to_string(), Value::String(s.clone()));
-            obj.elements = vec![Value::String(s.clone())];
+            obj.prototype = crate::builtins::string::get_string_prototype();
+            crate::builtins::object::set_boxed_value(&mut obj, Value::String(s.clone()));
+            obj.elements = s.chars().map(|ch| Value::String(ch.to_string())).collect();
+            for (index, value) in obj.elements.iter().enumerate() {
+                let key = index.to_string();
+                obj.properties.insert(key.clone(), value.clone());
+                obj.descriptors.insert(
+                    key,
+                    crate::value::object::helpers::PropertyFlags {
+                        writable: false,
+                        enumerable: true,
+                        configurable: false,
+                        value: Some(value.clone()),
+                    },
+                );
+            }
             obj.properties
                 .insert("length".to_string(), Value::Number(s.len() as f64));
+            obj.descriptors.insert(
+                "length".to_string(),
+                crate::value::object::helpers::PropertyFlags {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    value: Some(Value::Number(s.len() as f64)),
+                },
+            );
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::Object(_)
@@ -281,21 +307,25 @@ pub fn to_object(value: &Value) -> Result<Value, JsError> {
         Value::Symbol(_s) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
-            if let Some(Value::NativeFunction(symbol)) =
-                crate::context::get_global_from_context("Symbol")
-            {
-                if let Some(Value::Object(prototype)) = symbol.get_property("prototype") {
-                    obj.prototype = Some(prototype);
-                }
-            }
+            crate::builtins::object::set_boxed_value(&mut obj, value.clone());
+            obj.prototype = wrapper_prototype("Symbol");
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
         Value::BigInt(_) => {
             let mut obj =
                 crate::value::object::Object::new(crate::value::kind::ObjectKind::Ordinary);
             obj.exotic_kind = Some(crate::value::kind::ExoticKind::BigInt);
-            obj.properties.insert("_value".to_string(), value.clone());
+            crate::builtins::object::set_boxed_value(&mut obj, value.clone());
+            obj.prototype = wrapper_prototype("BigInt");
             Ok(Value::Object(Rc::new(RefCell::new(obj))))
         }
+    }
+}
+
+fn wrapper_prototype(name: &str) -> Option<Rc<RefCell<crate::value::object::Object>>> {
+    match crate::context::get_global_from_context(name) {
+        Some(Value::NativeConstructor(constructor)) => Some(Rc::clone(&constructor.prototype)),
+        Some(Value::NativeFunction(function)) => function.prototype.borrow().clone(),
+        _ => None,
     }
 }

@@ -35,7 +35,6 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let desc = args
         .get(2)
         .ok_or_else(|| JsError::from("Object.defineProperty: descriptor required"))?;
-
     // Per spec, absent descriptor flags default to false for new properties.
     let mut flags = PropertyFlags {
         value: None,
@@ -48,36 +47,72 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     let mut has_configurable = false;
     let mut getter: Option<Value> = None;
     let mut setter: Option<Value> = None;
+    let descriptor_has_get = matches!(
+        desc,
+        Value::Object(descriptor) if descriptor.borrow().has_own("get")
+    );
+    let descriptor_has_set = matches!(
+        desc,
+        Value::Object(descriptor) if descriptor.borrow().has_own("set")
+    );
+    let descriptor_has_value = matches!(
+        desc,
+        Value::Object(descriptor) if descriptor.borrow().has_own("value")
+    );
 
     if let Value::Object(desc_obj) = desc {
+        let descriptor_value = crate::eval::member::eval_object_member_value(
+            desc_obj,
+            &Value::String("value".to_string()),
+            None,
+        )?;
+        let inherited_configurable = crate::eval::member::eval_object_member_value(
+            desc_obj,
+            &Value::String("configurable".to_string()),
+            None,
+        )?;
+        let inherited_writable = crate::eval::member::eval_object_member_value(
+            desc_obj,
+            &Value::String("writable".to_string()),
+            None,
+        )?;
+        let descriptor_get = crate::eval::member::eval_object_member_value(
+            desc_obj,
+            &Value::String("get".to_string()),
+            None,
+        )?;
+        let mut descriptor_set = crate::eval::member::eval_object_member_value(
+            desc_obj,
+            &Value::String("set".to_string()),
+            None,
+        )?;
+        if desc_obj.borrow().has_setter("set") && !desc_obj.borrow().has_getter("set") {
+            descriptor_set = Value::Undefined;
+        }
+        let source_set_only =
+            desc_obj.borrow().has_setter("set") && !desc_obj.borrow().has_getter("set");
         let desc_borrowed = desc_obj.borrow();
         // Per ES §10.1.6.1 ToPropertyDescriptor: use Get(desc, key) which
         // walks the prototype chain — the descriptor may inherit get/set/etc.
         // from prototype (e.g. using Math as a descriptor after modifying
         // Object.prototype.get).
-        if let Some(val) = desc_borrowed.get("value") {
+        if !matches!(descriptor_value, Value::Undefined) {
+            flags.value = Some(descriptor_value);
+        } else if let Some(val) = desc_borrowed.get("value") {
             flags.value = Some(val);
         }
         // Per spec §10.1.6.1 ToPropertyDescriptor: use Get(desc, key) which
         // invokes getters. For accessor properties, also check getters map.
         // Helper: read a descriptor boolean flag, invoking accessor getter if needed.
         let read_flag = |key: &str, has: &mut bool, flag: &mut bool| {
-            if let Some(val) = desc_borrowed
-                .get(key)
-                .or_else(|| desc_borrowed.properties.get(key).cloned())
-            {
-                *has = true;
-                *flag = to_bool(&val);
-            } else if let Some(g) = desc_borrowed.get_getter(key) {
-                if let Some(ref fn_val) = g.func {
-                    if let Ok(Value::Boolean(b)) = crate::eval::function::call_value_with_this(
-                        fn_val.clone(),
-                        vec![],
-                        Value::Object(desc_obj.clone()),
-                    ) {
-                        *has = true;
-                        *flag = b;
-                    }
+            if let Ok(val) = crate::eval::member::eval_object_member_value(
+                desc_obj,
+                &Value::String(key.to_string()),
+                None,
+            ) {
+                if !matches!(val, Value::Undefined) {
+                    *has = true;
+                    *flag = to_bool(&val);
                 }
             }
         };
@@ -88,12 +123,28 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             &mut has_configurable,
             &mut flags.configurable,
         );
+        if !matches!(inherited_writable, Value::Undefined) {
+            has_writable = true;
+            flags.writable = to_bool(&inherited_writable);
+        }
+        if getter.is_none() && !matches!(descriptor_get, Value::Undefined) {
+            getter = Some(descriptor_get.clone());
+        }
+        if setter.is_none() && !matches!(descriptor_set, Value::Undefined) {
+            setter = Some(descriptor_set.clone());
+        }
+        if source_set_only {
+            setter = None;
+        }
         if let Some(value) = desc_borrowed.get_own("configurable") {
             has_configurable = true;
             flags.configurable = to_bool(&value);
+        } else if !matches!(inherited_configurable, Value::Undefined) {
+            has_configurable = true;
+            flags.configurable = to_bool(&inherited_configurable);
         }
         // Per ES §10.1.6.1 ToPropertyDescriptor: "get" in desc → accessor descriptor.
-        if getter.is_none() {
+        if getter.is_none() && !matches!(descriptor_get, Value::Undefined) {
             if let Some(g) = desc_borrowed.get("get") {
                 match &g {
                     Value::Function(f) => getter = Some(Value::Function(f.clone())),
@@ -104,7 +155,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                 }
             }
         }
-        if setter.is_none() {
+        if setter.is_none() && !matches!(descriptor_set, Value::Undefined) {
             if let Some(s) = desc_borrowed.get("set") {
                 match &s {
                     Value::Function(f) => setter = Some(Value::Function(f.clone())),
@@ -135,7 +186,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                 }
             }
         }
-        if setter.is_none() {
+        if setter.is_none() && !source_set_only {
             if let Some(s) = desc_borrowed.get_setter("set") {
                 if let Some(f) = &s.func {
                     setter = Some(f.clone());
@@ -162,6 +213,97 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         return Ok(obj);
     }
 
+    if getter
+        .as_ref()
+        .is_some_and(|value| !matches!(value, Value::Undefined) && !value.is_callable())
+        || setter
+            .as_ref()
+            .is_some_and(|value| !matches!(value, Value::Undefined) && !value.is_callable())
+    {
+        return Err(JsError::from(
+            "TypeError: getter and setter must be callable",
+        ));
+    }
+    if (getter.is_some() || setter.is_some()) && (flags.value.is_some() || has_writable) {
+        return Err(JsError::from(
+            "TypeError: descriptor cannot mix data and accessor fields",
+        ));
+    }
+
+    if let Value::Function(function) = &obj {
+        if function.get_property(&prop).is_some() {
+            let value_changed = descriptor_has_value
+                && flags.value.as_ref().is_some_and(|value| {
+                    !crate::value::same_value(
+                        &function.get_property(&prop).unwrap_or(Value::Undefined),
+                        value,
+                    )
+                });
+            if has_configurable && flags.configurable
+                || value_changed
+                || (has_writable && flags.writable)
+            {
+                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                    "Cannot redefine non-configurable property",
+                    "TypeError",
+                );
+                crate::value::error::set_thrown_value(error);
+                return Err(js_error);
+            }
+        }
+        if let Some(getter) = getter {
+            let value =
+                crate::eval::function::call_value_with_this(getter, Vec::new(), obj.clone())?;
+            function.set_property(&prop, value)?;
+        }
+        if let Some(setter) = setter {
+            function.set_property(&prop, setter)?;
+        }
+        if let Some(value) = flags.value {
+            function.set_property(&prop, value)?;
+        }
+        if !flags.writable {
+            function.mark_nonwritable(&prop);
+        }
+        return Ok(obj);
+    }
+
+    if prop == "length" {
+        if let Value::Object(o) = &obj {
+            if o.borrow().kind == ObjectKind::Array {
+                if let Some(value) = flags.value.take() {
+                    let primitive = crate::value::to_primitive(&value, None)?;
+                    if matches!(primitive, Value::Object(_)) {
+                        let (error, js_error) = crate::value::error::create_js_error_with_type(
+                            "Cannot convert object to primitive value",
+                            "TypeError",
+                        );
+                        crate::value::error::set_thrown_value(error);
+                        return Err(js_error);
+                    }
+                    let number = crate::value::to_number(&primitive);
+                    if !number.is_finite()
+                        || number < 0.0
+                        || number > 4_294_967_295.0
+                        || number.fract() != 0.0
+                    {
+                        let (error, js_error) = crate::value::error::create_js_error_with_type(
+                            "Invalid array length",
+                            "RangeError",
+                        );
+                        crate::value::error::set_thrown_value(error);
+                        return Err(js_error);
+                    }
+                    flags.value = Some(Value::Number(if number == 0.0 { 0.0 } else { number }));
+                }
+            }
+        }
+    }
+
+    if descriptor_has_value && !descriptor_has_get && !descriptor_has_set {
+        getter = None;
+        setter = None;
+    }
     if let Value::Object(o) = &obj {
         let mapped_non_configurable = as_array_index(&prop).is_some()
             && matches!(
@@ -190,7 +332,39 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             let mapped = matches!(&o.borrow().data, crate::value::object::helpers::ObjData::Args { mapped } if as_array_index(&prop).is_some_and(|idx| mapped.contains_key(&(idx as u32))));
             !mapped && !existing.configurable && (o.borrow().has_getter(&prop) || o.borrow().has_setter(&prop))
         });
-        if accessor_redefinition && (flags.value.is_some() || has_writable) {
+        let data_to_accessor = o.borrow().get_descriptor(&prop).is_some_and(|existing| {
+            !existing.configurable
+                && (getter.is_some() || setter.is_some())
+                && !o.borrow().has_getter(&prop)
+                && !o.borrow().has_setter(&prop)
+        });
+        let setter_changed = o.borrow().get_descriptor(&prop).is_some_and(|existing| {
+            !existing.configurable
+                && descriptor_has_set
+                && !crate::value::same_value(
+                    &o.borrow()
+                        .get_setter(&prop)
+                        .and_then(|setter| setter.func.clone())
+                        .unwrap_or(Value::Undefined),
+                    &setter.clone().unwrap_or(Value::Undefined),
+                )
+        });
+        let getter_changed = o.borrow().get_descriptor(&prop).is_some_and(|existing| {
+            !existing.configurable
+                && descriptor_has_get
+                && !crate::value::same_value(
+                    &o.borrow()
+                        .get_getter(&prop)
+                        .and_then(|getter| getter.func.clone())
+                        .unwrap_or(Value::Undefined),
+                    &getter.clone().unwrap_or(Value::Undefined),
+                )
+        });
+        if (accessor_redefinition && (flags.value.is_some() || has_writable))
+            || data_to_accessor
+            || setter_changed
+            || getter_changed
+        {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
                 "Cannot redefine non-configurable accessor property",
                 "TypeError",
@@ -220,7 +394,82 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
 
+    if getter.is_none() && setter.is_none() && !has_writable && flags.value.is_none() {
+        if let Value::Object(o) = &obj {
+            let mut object = o.borrow_mut();
+            let existing = object.get_descriptor(&prop);
+            let existing_getter = if descriptor_has_get {
+                None
+            } else {
+                object
+                    .get_getter(&prop)
+                    .and_then(|getter| getter.func.clone())
+            };
+            let existing_setter = if descriptor_has_set {
+                None
+            } else {
+                object
+                    .get_setter(&prop)
+                    .and_then(|setter| setter.func.clone())
+            };
+            if let Some(existing) = existing {
+                if existing_setter.is_some() || existing_getter.is_some() {
+                    if has_enumerable
+                        && flags.enumerable != existing.enumerable
+                        && !existing.configurable
+                    {
+                        let (error, js_error) = crate::value::error::create_js_error_with_type(
+                            "Cannot redefine non-configurable property",
+                            "TypeError",
+                        );
+                        crate::value::error::set_thrown_value(error);
+                        return Err(js_error);
+                    }
+                    if !has_enumerable {
+                        flags.enumerable = existing.enumerable;
+                    }
+                    if !has_configurable {
+                        flags.configurable = existing.configurable;
+                    }
+                    object.define_accessor(&prop, existing_getter, existing_setter, flags);
+                    drop(object);
+                    return Ok(obj);
+                }
+            }
+        }
+    }
+
+    if !descriptor_has_value {
+        if let Value::Object(o) = &obj {
+            let object = o.borrow();
+            if object.has_getter(&prop) || object.has_setter(&prop) {
+                if !descriptor_has_get {
+                    getter = object
+                        .get_getter(&prop)
+                        .and_then(|getter| getter.func.clone());
+                }
+                if !descriptor_has_set {
+                    setter = object
+                        .get_setter(&prop)
+                        .and_then(|setter| setter.func.clone());
+                }
+            }
+        }
+    }
+
     if getter.is_some() || setter.is_some() {
+        if prop == "length" {
+            if let Value::Object(o) = &obj {
+                if o.borrow().kind == ObjectKind::Array {
+                    let (error, js_error) = crate::value::error::create_js_error_with_type(
+                        "Array length must be a data property",
+                        "TypeError",
+                    );
+                    crate::value::error::set_thrown_value(error);
+                    return Err(js_error);
+                }
+            }
+        }
         // Accessor descriptor: store the get/set functions themselves so
         // invocation and getOwnPropertyDescriptor see the same values.
         if let Value::Object(o) = &obj {
@@ -257,7 +506,11 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     }
                 }
             }
-            if let Some(idx) = as_array_index(&prop) {
+            if let Some(idx) = as_array_index(&prop).or_else(|| {
+                prop.parse::<usize>()
+                    .ok()
+                    .filter(|index| *index < 4_294_967_295)
+            }) {
                 if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
                     mapped.remove(&(idx as u32));
                     obj.holes.insert(idx);
@@ -265,6 +518,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     obj.getters.shift_remove(&prop);
                     obj.setters.shift_remove(&prop);
                 }
+            }
+            if descriptor_has_get
+                && !descriptor_has_set
+                && matches!(
+                    obj.data,
+                    crate::value::object::helpers::ObjData::Args { .. }
+                )
+            {
+                obj.setters.shift_remove(&prop);
+                setter = None;
             }
             obj.define_accessor(&prop, getter, setter, flags);
         } else if let Value::NativeConstructor(nc) = &obj {
@@ -278,11 +541,115 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Value::Object(o) = &obj {
+        if o.borrow().get_descriptor(&prop).is_none() && !o.borrow().extensible {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot add property to non-extensible object",
+                "TypeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
+        if o.borrow().kind == ObjectKind::Array {
+            let index = as_array_index(&prop).or_else(|| {
+                prop.parse::<usize>()
+                    .ok()
+                    .filter(|index| *index < 4_294_967_295)
+            });
+            if let Some(index) = index {
+                let current_length = o
+                    .borrow()
+                    .get("length")
+                    .and_then(|value| match value {
+                        Value::Number(length) => Some(length as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                if index >= current_length
+                    && o.borrow()
+                        .get_descriptor("length")
+                        .is_some_and(|flags| !flags.writable)
+                {
+                    let (error, js_error) = crate::value::error::create_js_error_with_type(
+                        "Cannot extend array with non-writable length",
+                        "TypeError",
+                    );
+                    crate::value::error::set_thrown_value(error);
+                    return Err(js_error);
+                }
+            }
+        }
+        if prop == "length"
+            && o.borrow().kind == ObjectKind::Array
+            && descriptor_has_value
+            && matches!(flags.value, Some(Value::Undefined))
+        {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Invalid array length",
+                "RangeError",
+            );
+            crate::value::error::set_thrown_value(error);
+            return Err(js_error);
+        }
         if let Some(existing) = o.borrow().get_descriptor(&prop) {
-            if !existing.configurable && has_configurable && flags.configurable {
-                return Err(JsError::from(
-                    "TypeError: Cannot redefine non-configurable property",
-                ));
+            if !existing.configurable
+                && ((has_configurable
+                    && flags.configurable
+                    && !(prop == "length" && o.borrow().kind == ObjectKind::Array))
+                    || (has_enumerable && flags.enumerable != existing.enumerable))
+            {
+                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                    "Cannot redefine non-configurable property",
+                    "TypeError",
+                );
+                crate::value::error::set_thrown_value(error);
+                return Err(js_error);
+            }
+        }
+        if prop == "length" && o.borrow().kind == ObjectKind::Array {
+            if let Some(Value::Number(next_length)) = flags.value.as_ref() {
+                let current_length = o
+                    .borrow()
+                    .get("length")
+                    .and_then(|value| match value {
+                        Value::Number(length) => Some(length as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let next_length = *next_length as usize;
+                if next_length < current_length {
+                    let blocked = (next_length..current_length).find(|index| {
+                        o.borrow()
+                            .get_descriptor(&index.to_string())
+                            .is_some_and(|descriptor| !descriptor.configurable)
+                    });
+                    if let Some(blocked) = blocked {
+                        let partial_length = blocked + 1;
+                        let mut object = o.borrow_mut();
+                        object.elements.truncate(partial_length);
+                        object.holes.retain(|index| *index < partial_length);
+                        object.properties.retain(|key, _| {
+                            key.parse::<usize>()
+                                .map(|index| index < partial_length || key == "length")
+                                .unwrap_or(true)
+                        });
+                        object
+                            .properties
+                            .insert("length".to_string(), Value::Number(partial_length as f64));
+                        if let Some(length_flags) = object.descriptors.get_mut("length") {
+                            length_flags.value = Some(Value::Number(partial_length as f64));
+                            if has_writable && !flags.writable {
+                                length_flags.writable = false;
+                            }
+                        }
+                        drop(object);
+                        let (error, js_error) = crate::value::error::create_js_error_with_type(
+                            "Cannot delete non-configurable array element",
+                            "TypeError",
+                        );
+                        crate::value::error::set_thrown_value(error);
+                        return Err(js_error);
+                    }
+                }
             }
         }
         if let Some(value) = flags.value.clone() {
@@ -340,12 +707,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             .value
             .clone()
             .or(mapped_value)
-            .or_else(|| obj.get(&prop))
+            .or_else(|| obj.get_own_value(&prop))
             .unwrap_or(Value::Undefined);
         // Per ES §9.4.2.1 (Array Exotic Objects): if defining an array index
         // >= length, update length. For ordinary objects this does not apply.
         if obj.kind == ObjectKind::Array {
-            if let Some(idx) = as_array_index(&prop) {
+            if let Some(idx) = as_array_index(&prop).or_else(|| {
+                prop.parse::<usize>()
+                    .ok()
+                    .filter(|index| *index < 4_294_967_295)
+            }) {
                 let current_len = obj
                     .get("length")
                     .and_then(|v| {
@@ -357,7 +728,12 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     })
                     .unwrap_or(0);
                 if idx + 1 > current_len {
-                    obj.set("length", Value::Number((idx + 1) as f64));
+                    let length = Value::Number((idx + 1) as f64);
+                    if idx >= crate::value::object::helpers::MAX_ARRAY_ELEMENTS {
+                        obj.properties.insert("length".to_string(), length);
+                    } else {
+                        obj.set("length", length);
+                    }
                 }
             }
         }
@@ -376,6 +752,55 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
         let removes_mapping =
             !flags.configurable && !flags.writable && (has_writable || has_configurable);
+        if let Some(existing) = obj.get_descriptor(&prop) {
+            let value_changed = descriptor_has_value
+                && flags.value.as_ref().is_some_and(|next| {
+                    !crate::value::same_value(
+                        existing.value.as_ref().unwrap_or(&Value::Undefined),
+                        next,
+                    )
+                });
+            let length_value_change =
+                prop == "length" && obj.kind == ObjectKind::Array && existing.writable;
+            if !existing.configurable
+                && ((value_changed && !length_value_change)
+                    || (has_writable && flags.writable && !existing.writable))
+            {
+                let (error, err) = crate::value::error::create_js_error_with_type(
+                    "Cannot redefine non-configurable property",
+                    "TypeError",
+                );
+                crate::value::error::set_thrown_value(error);
+                return Err(err);
+            }
+        }
+        if prop == "length" && obj.kind == ObjectKind::Array {
+            if let Some(Value::Number(next_length)) = flags.value.as_ref() {
+                let next_length = *next_length as usize;
+                obj.elements.truncate(next_length);
+                obj.holes.retain(|index| *index < next_length);
+                obj.properties.retain(|key, _| {
+                    key.parse::<usize>()
+                        .map(|index| index < next_length || key == "length")
+                        .unwrap_or(true)
+                });
+                obj.descriptors.retain(|key, _| {
+                    key.parse::<usize>()
+                        .map(|index| index < next_length || key == "length")
+                        .unwrap_or(true)
+                });
+                obj.getters.retain(|key, _| {
+                    key.parse::<usize>()
+                        .map(|index| index < next_length)
+                        .unwrap_or(true)
+                });
+                obj.setters.retain(|key, _| {
+                    key.parse::<usize>()
+                        .map(|index| index < next_length)
+                        .unwrap_or(true)
+                });
+            }
+        }
         obj.define(&prop, value, flags);
         if removes_mapping {
             if let Some(idx) = as_array_index(&prop) {
@@ -420,6 +845,25 @@ pub fn get_object_property_descriptor(
     prop: &str,
 ) -> Result<Value, JsError> {
     let obj = o.borrow();
+
+    if prop == "length" && obj.kind == ObjectKind::Array {
+        let writable = obj
+            .get_descriptor(prop)
+            .map(|flags| flags.writable)
+            .unwrap_or(true);
+        let value = obj
+            .get("length")
+            .unwrap_or(Value::Number(obj.elements.len() as f64));
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(value.clone()),
+                writable,
+                enumerable: false,
+                configurable: false,
+            },
+            value,
+        ));
+    }
 
     if prop.contains('\0') {
         if let Some(value) = obj.symbol_properties.get(prop) {
@@ -554,6 +998,17 @@ pub fn get_function_property_descriptor(
             proto,
         ));
     }
+    if let Some(value) = f.get_property(prop) {
+        return Ok(make_descriptor_value(
+            PropertyFlags {
+                value: Some(value.clone()),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+            value,
+        ));
+    }
     Ok(Value::Undefined)
 }
 
@@ -564,10 +1019,30 @@ pub fn get_native_function_property_descriptor(
 ) -> Result<Value, JsError> {
     // Check for special properties before custom properties
     if prop == "name" {
-        return make_property_descriptor_string("anonymous", false, false, false);
+        if nf.get_property("\0deleted:name").is_some() {
+            return Ok(Value::Undefined);
+        }
+        let name = nf
+            .get_property("name")
+            .and_then(|value| match value {
+                Value::String(name) => Some(name),
+                _ => None,
+            })
+            .unwrap_or_else(|| nf.name.clone());
+        return make_property_descriptor_string(&name, false, false, true);
     }
     if prop == "length" {
-        return make_property_descriptor_number(0.0, false, false, true);
+        if nf.get_property("\0deleted:length").is_some() {
+            return Ok(Value::Undefined);
+        }
+        let length = nf
+            .get_property("length")
+            .and_then(|value| match value {
+                Value::Number(length) => Some(length),
+                _ => None,
+            })
+            .unwrap_or_else(|| if nf.name == "create" { 2.0 } else { 0.0 });
+        return make_property_descriptor_number(length, false, false, true);
     }
     // Check for custom properties
     if let Some(value) = nf.get_property(prop) {
@@ -615,7 +1090,11 @@ pub fn get_native_constructor_property_descriptor(
         return make_property_descriptor_string(&name, false, false, false);
     }
     if prop == "length" {
-        let len = if is_function_constructor { 1.0 } else { 0.0 };
+        let len = if is_function_constructor || nc.name() == "Object" {
+            1.0
+        } else {
+            0.0
+        };
         return make_property_descriptor_number(len, false, false, true);
     }
     if prop == "prototype" {
@@ -927,7 +1406,13 @@ pub fn function_own_property_names(f: &ValueFunction) -> Vec<String> {
 }
 
 pub fn native_function_own_property_names(nf: &crate::value::NativeFunction) -> Vec<String> {
-    let mut names = vec!["length".to_string(), "name".to_string()];
+    let mut names = Vec::new();
+    if nf.get_property("\0deleted:length").is_none() {
+        names.push("length".to_string());
+    }
+    if nf.get_property("\0deleted:name").is_none() {
+        names.push("name".to_string());
+    }
     if nf.get_property("prototype").is_some() || nf.prototype.borrow().is_some() {
         names.push("prototype".to_string());
     }

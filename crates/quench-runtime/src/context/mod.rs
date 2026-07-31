@@ -48,6 +48,7 @@ impl Context {
             *cell.borrow_mut() = Some(ctx_ptr);
         });
 
+        intrinsics::clear_intrinsics();
         helpers::init_builtins(&mut ctx)?;
 
         // Clear thread-local after init_builtins
@@ -249,6 +250,22 @@ impl Context {
     {
         let mut nf = crate::value::NativeFunction::new(f);
         nf.name = name.to_string();
+        let length = match name {
+            "parseInt" => 2.0,
+            "parseFloat" | "isNaN" | "isFinite" | "encodeURI" | "encodeURIComponent"
+            | "decodeURI" | "decodeURIComponent" => 1.0,
+            _ => 0.0,
+        };
+        nf.define_property(
+            "length",
+            Value::Number(length),
+            crate::value::PropertyFlags {
+                value: Some(Value::Number(length)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.set_global(name.to_string(), Value::NativeFunction(Rc::new(nf)));
     }
 

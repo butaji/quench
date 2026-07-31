@@ -187,12 +187,29 @@ impl NativeFunction {
         // Check if property is non-writable
         if let Some(flags) = self.property_flags.borrow().get(key) {
             if !flags.writable {
-                let (_, err) = crate::value::error::create_js_error_with_type(
-                    &format!("Cannot assign to read only property '{}'", key),
-                    "TypeError",
-                );
-                return Err(err);
+                if key == "name" {
+                    return Ok(());
+                }
+                return Err(JsError(format!(
+                    "TypeError: Cannot assign to read only property '{}'",
+                    key
+                )));
             }
+        }
+
+        if key == "name" && !self.property_flags.borrow().contains_key(key) {
+            if !self.name.is_empty() {
+                return Ok(());
+            }
+            self.property_flags.borrow_mut().insert(
+                key.to_string(),
+                PropertyFlags {
+                    value: Some(value.clone()),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
         }
 
         if key == "prototype" {
@@ -232,8 +249,11 @@ impl NativeFunction {
             }
         }
         let removed = self.properties.borrow_mut().remove(key).is_some();
+        self.properties
+            .borrow_mut()
+            .insert(format!("\0deleted:{key}"), Value::Undefined);
         self.property_flags.borrow_mut().remove(key);
-        removed
+        removed || key == "name"
     }
 
     /// Define an accessor property (getter/setter) on this native function.

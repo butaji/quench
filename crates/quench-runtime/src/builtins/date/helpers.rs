@@ -250,7 +250,11 @@ fn apply_exponent(chars: &mut std::iter::Peekable<std::str::Chars>, significand:
         1.0
     };
     let exp = parse_exponent(chars);
-    significand * 10.0_f64.powf(exp * exp_sign)
+    let exponent = exp * exp_sign;
+    match format!("{}e{}", significand, exponent).parse::<f64>() {
+        Ok(value) => value,
+        Err(_) => significand * 10.0_f64.powf(exponent),
+    }
 }
 
 fn parse_exponent(chars: &mut std::iter::Peekable<std::str::Chars>) -> f64 {

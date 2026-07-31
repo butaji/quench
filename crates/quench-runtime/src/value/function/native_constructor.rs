@@ -1,5 +1,6 @@
 //! NativeConstructor - Host constructors (Date, Error, etc.).
 
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::value::error::JsError;
@@ -23,6 +24,7 @@ pub struct NativeConstructor {
     /// Static methods on the constructor
     /// Wrapped in RefCell so we can mutate even when shared via Rc
     static_methods: std::cell::RefCell<std::collections::HashMap<String, Value>>,
+    deleted_static_methods: std::cell::RefCell<HashSet<String>>,
     /// Accessor properties (getters/setters) defined via Object.defineProperty
     /// Wrapped in RefCell so we can mutate even when shared via Rc
     accessors:
@@ -41,6 +43,7 @@ impl NativeConstructor {
             func: std::rc::Rc::new(Box::new(f)),
             prototype,
             static_methods: std::cell::RefCell::new(std::collections::HashMap::new()),
+            deleted_static_methods: std::cell::RefCell::new(HashSet::new()),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             name: std::cell::RefCell::new(String::new()),
         }
@@ -58,6 +61,31 @@ impl NativeConstructor {
 
     /// Set a static method on the constructor
     pub fn set_static_method(&self, name: &str, value: Value) {
+        self.deleted_static_methods.borrow_mut().remove(name);
+        if name == "assign" {
+            if let Value::NativeFunction(function) = &value {
+                function.define_property(
+                    "name",
+                    Value::String("assign".to_string()),
+                    crate::value::PropertyFlags {
+                        value: Some(Value::String("assign".to_string())),
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+                function.define_property(
+                    "length",
+                    Value::Number(2.0),
+                    crate::value::PropertyFlags {
+                        value: Some(Value::Number(2.0)),
+                        writable: false,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                );
+            }
+        }
         self.static_methods
             .borrow_mut()
             .insert(name.to_string(), value);
@@ -65,7 +93,20 @@ impl NativeConstructor {
 
     /// Get a static method from the constructor
     pub fn get_static_method(&self, name: &str) -> Option<Value> {
+        if self.deleted_static_methods.borrow().contains(name) {
+            return None;
+        }
         self.static_methods.borrow().get(name).cloned()
+    }
+
+    pub fn delete_static_method(&self, name: &str) -> bool {
+        if self.static_methods.borrow().contains_key(name) {
+            self.deleted_static_methods
+                .borrow_mut()
+                .insert(name.to_string());
+            return true;
+        }
+        false
     }
 
     /// Define an accessor property on this constructor (for Object.defineProperty)
@@ -123,6 +164,9 @@ impl Clone for NativeConstructor {
             func: self.func.clone(),
             prototype: std::rc::Rc::clone(&self.prototype),
             static_methods: std::cell::RefCell::new(self.static_methods.borrow().clone()),
+            deleted_static_methods: std::cell::RefCell::new(
+                self.deleted_static_methods.borrow().clone(),
+            ),
             accessors: std::rc::Rc::clone(&self.accessors),
             name: std::cell::RefCell::new(self.name.borrow().clone()),
         }
