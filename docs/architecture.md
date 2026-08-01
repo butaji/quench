@@ -1,7 +1,7 @@
 # Architecture
 
-**Goal:** 100% of test262 (all 50k+ tests, no skips), staged to 100% per
-stage, with the **minimum possible LOC**.
+**Goal:** 100% of the in-scope test262 suite with the smallest practical Rust
+core. Progress lives only in `tasks/index.json` and the test262 runner.
 
 **Shape:** OXC parser + tree-walking interpreter + self-hosted JS
 builtins. Three layers, each minimal:
@@ -61,7 +61,7 @@ src/
 
 Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
-## JS builtins (R0 in progress)
+## JS builtins
 
 34 `.js` files in `builtins/` (root of repo), loaded by
 `builtins/bootstrap.rs`. `__ops__` is scaffolded in
@@ -137,14 +137,12 @@ Hand-rolled copies — including `chrono_*` helpers that never import
 
 ## Future optimization targets
 
-All tracked in `tasks/refactor-plan.md` — not duplicated here to avoid drift:
+Defer performance work until conformance is complete:
 
 | Target | Ref plan | Timeline |
 |--------|----------|----------|
-| NaN-boxed `JsValue` (single `u64`) | R20 | Phase B, after R0 |
-| `bumpalo` arena allocation | R19 | Phase B, pairs with R20 |
-| String interning / atom table | R21 | Phase B |
-| Profiling (flamegraph/samply/xctrace) | R22, `docs/tools.md` | When loop is the bottleneck |
+| NaN-boxed values, arenas, string interning | Deferred | After 100% |
+| Profiling | Deferred | Only when conformance work requires it |
 
 ## Bootstrap order
 
@@ -168,6 +166,6 @@ verify, leave the test in.
 No file > 500 lines, no function > 40 lines, no function complexity >
 10, no `#[allow(...)]`, no deferrals. Split any offender before adding
 to it. Run `cargo clippy -p quench-runtime --all-targets` to see current offenders.
-Full list in R15, `tasks/refactor-plan.md`.
+Split offenders before adding more code.
 JS files have no enforced limit but should stay under 500 too — split
 per builtin category.

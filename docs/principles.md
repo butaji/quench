@@ -1,7 +1,7 @@
 # Principles — keeping the codebase small and clear
 
 These govern every change to the Rust core and JS builtins. They
-exist to serve the minimum-LOC goal in `tasks/plan.md`; when a choice
+exist to serve the minimum-LOC goal; when a choice
 isn't covered here, prefer the option with less *total* code.
 
 ## Effects live in return types, not in ambient state
