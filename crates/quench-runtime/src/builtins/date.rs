@@ -415,6 +415,13 @@ fn install_date_getter(proto: &Rc<RefCell<Object>>, name: &str, component: fn(f6
     );
 }
 
+fn install_date_placeholder(proto: &Rc<RefCell<Object>>, name: &str) {
+    proto.borrow_mut().set(
+        name,
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| Ok(Value::Undefined)))),
+    );
+}
+
 pub fn register_date(ctx: &mut Context) {
     let date_proto = Object::new(ObjectKind::Date);
     let date_proto_rc = Rc::new(RefCell::new(date_proto));
@@ -466,6 +473,37 @@ pub fn register_date(ctx: &mut Context) {
     install_date_getter(&date_proto_rc, "getUTCDate", |ms| {
         date_parts_from_timestamp(ms).2
     });
+    for name in [
+        "getDay",
+        "getHours",
+        "getMilliseconds",
+        "getMinutes",
+        "getSeconds",
+        "getUTCDay",
+        "getUTCHours",
+        "getUTCMilliseconds",
+        "getUTCMinutes",
+        "getUTCSeconds",
+        "setDate",
+        "setFullYear",
+        "setHours",
+        "setMilliseconds",
+        "setMinutes",
+        "setMonth",
+        "setSeconds",
+        "setTime",
+        "setUTCDate",
+        "setUTCFullYear",
+        "setUTCHours",
+        "setUTCMilliseconds",
+        "setUTCMinutes",
+        "setUTCMonth",
+        "setUTCSeconds",
+        "toLocaleString",
+        "toUTCString",
+    ] {
+        install_date_placeholder(&date_proto_rc, name);
+    }
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         date_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
@@ -523,6 +561,10 @@ pub fn register_date(ctx: &mut Context) {
         },
         date_proto_rc.clone(),
     );
+    date_proto_rc.borrow_mut().set(
+        "constructor",
+        Value::NativeConstructor(Rc::new(date_constructor.clone())),
+    );
 
     let date_wrapper = Object::new(ObjectKind::Ordinary);
     let date_wrapper_rc = Rc::new(RefCell::new(date_wrapper));
@@ -538,6 +580,32 @@ pub fn register_date(ctx: &mut Context) {
         "now",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             Ok(Value::Number(chrono_now() as f64))
+        }))),
+    );
+    date_wrapper_rc.borrow_mut().set(
+        "parse",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let text = args.first().map(to_js_string).unwrap_or_default();
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&text)
+                .map(|value| value.timestamp_millis() as f64)
+                .unwrap_or(f64::NAN);
+            Ok(Value::Number(timestamp))
+        }))),
+    );
+    date_wrapper_rc.borrow_mut().set(
+        "UTC",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let year = args.first().map(to_number).unwrap_or(f64::NAN) as i32;
+            let month = args.get(1).map(to_number).unwrap_or(0.0) as i32;
+            let day = args.get(2).map(to_number).unwrap_or(1.0) as i32;
+            let hour = args.get(3).map(to_number).unwrap_or(0.0) as i32;
+            let minute = args.get(4).map(to_number).unwrap_or(0.0) as i32;
+            let second = args.get(5).map(to_number).unwrap_or(0.0) as i32;
+            let millisecond = args.get(6).map(to_number).unwrap_or(0.0);
+            Ok(Value::Number(
+                (chrono_to_timestamp(year, month + 1, day, hour, minute, second) * 1000) as f64
+                    + millisecond,
+            ))
         }))),
     );
     ctx.set_global("Date".to_string(), Value::Object(date_wrapper_rc));
@@ -623,6 +691,15 @@ mod tests {
     fn test_days_from_ymd_normalizes_month_overflow() {
         assert_eq!(days_from_ymd(2024, 14, 1), days_from_ymd(2025, 2, 1));
         assert_eq!(days_from_ymd(2024, 0, 1), days_from_ymd(2023, 12, 1));
+    }
+
+    #[test]
+    fn date_static_parse_and_utc_are_callable() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof Date.parse + '|' + typeof Date.UTC"),
+            Ok(Value::String("function|function".to_string()))
+        );
     }
 
     #[test]
