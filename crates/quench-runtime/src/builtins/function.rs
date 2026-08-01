@@ -808,6 +808,7 @@ mod tests {
             crate::Value::String("GeneratorFunction|false|false|true".into())
         );
     }
+
     use super::*;
 
     #[test]

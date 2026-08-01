@@ -362,7 +362,9 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
         Value::Function(f) => match f.get_property("prototype") {
             Some(Value::Object(proto)) => Ok(Some(proto)),
             Some(Value::Function(proto)) => Ok(Some(proto.get_prototype())),
-            _ => Ok(Some(f.get_prototype())),
+            Some(Value::Null) => Ok(None),
+            None => Ok(Some(f.get_prototype())),
+            _ => Ok(None),
         },
         Value::NativeConstructor(nc) => Ok(Some(Rc::clone(&nc.prototype))),
         Value::NativeFunction(nf) => {

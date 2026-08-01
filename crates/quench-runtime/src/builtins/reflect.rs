@@ -89,6 +89,11 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
         return Err(JsError::new("TypeError: newTarget is not a constructor"));
     }
     let mut prototype = crate::eval::class::get_constructor_prototype(&new_target)?
+        .or_else(|| {
+            crate::eval::class::get_constructor_prototype(&target)
+                .ok()
+                .flatten()
+        })
         .or_else(crate::builtins::get_object_prototype)
         .ok_or_else(|| JsError::new("Reflect.construct has no default prototype"))?;
     if let (Value::NativeFunction(target_function), Value::Function(new_target_function)) =
