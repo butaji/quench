@@ -246,6 +246,10 @@ impl Scope {
         self.with_environment
     }
 
+    pub fn with_base_object(&self) -> Option<Rc<RefCell<crate::value::Object>>> {
+        self.object_binding.clone()
+    }
+
     pub fn mark_function_name(&mut self, name: String) {
         self.function_names.insert(name);
     }

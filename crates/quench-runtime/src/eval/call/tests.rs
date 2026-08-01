@@ -14,6 +14,15 @@ fn call_does_not_evaluate_arguments_for_non_callable_member() {
 }
 
 #[test]
+fn call_through_with_environment_uses_with_object_as_this() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var obj={method:function(){return this}}; with(obj){objResult=method()} objResult===obj"),
+        Ok(Value::Boolean(true))
+    );
+}
+
+#[test]
 fn arguments_index_descriptor_is_enumerable() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

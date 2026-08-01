@@ -103,6 +103,18 @@ impl Environment {
         self.parent = Some(parent);
     }
 
+    pub fn with_base_object(&self) -> Option<Rc<RefCell<crate::value::Object>>> {
+        for scope in self.scopes.iter().rev() {
+            let scope = scope.borrow();
+            if scope.is_with_environment() {
+                return scope.with_base_object();
+            }
+        }
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.borrow().with_base_object())
+    }
+
     pub fn set_super_class(&mut self, super_class: Value) {
         self.super_class = Some(super_class);
     }

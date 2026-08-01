@@ -177,7 +177,15 @@ pub fn eval_callee_with_this(
             } else {
                 false
             };
-            Ok((func, Value::Undefined, is_direct))
+            let this_val = if matches!(callee, Expression::Identifier(_)) {
+                env.borrow()
+                    .with_base_object()
+                    .map(Value::Object)
+                    .unwrap_or(Value::Undefined)
+            } else {
+                Value::Undefined
+            };
+            Ok((func, this_val, is_direct))
         }
     }
 }
