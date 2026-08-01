@@ -675,20 +675,9 @@ fn async_delegate_return_queued(
     let mut promise = Object::with_prototype(ObjectKind::Promise, Rc::clone(&proto));
     promise.promise_data = Some(crate::value::object::PromiseObjectData::new());
     let promise = Rc::new(RefCell::new(promise));
-    let target = Rc::clone(&promise);
-    let job = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
-        let source = crate::builtins::promise::promise_resolve_impl_static(
-            vec![argument.clone()],
-            Rc::clone(&proto),
-        )?;
-        chain_delegate_argument(
-            source,
-            Rc::clone(&target),
-            Rc::clone(&generator),
-            Rc::clone(&proto),
-        )
-    })));
-    crate::builtins::promise::queue_microtask_impl(job);
+    let source =
+        crate::builtins::promise::promise_resolve_impl_static(vec![argument], proto.clone())?;
+    chain_delegate_argument(source, promise.clone(), generator, proto)?;
     Ok(Value::Object(promise))
 }
 
