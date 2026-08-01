@@ -151,6 +151,21 @@ pub fn eval_callee_with_this(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, Value, bool), JsError> {
     match callee {
+        Expression::Conditional {
+            condition,
+            consequent,
+            alternate,
+        } if matches!(consequent.as_ref(), Expression::Undefined)
+            && matches!(alternate.as_ref(), Expression::Member { .. }) =>
+        {
+            if matches!(
+                eval_expression(condition, env, false)?,
+                Value::Boolean(true)
+            ) {
+                return Ok((Value::Undefined, Value::Undefined, false));
+            }
+            return eval_callee_with_this(alternate, env);
+        }
         Expression::Member {
             object,
             property,

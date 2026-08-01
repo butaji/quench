@@ -137,7 +137,11 @@ fn lower_chain_recursive(
             let callee = lower_expr(&call.callee)?;
             let full_call = Expression::Call {
                 callee: Box::new(if call.optional {
-                    Expression::Parenthesized(Box::new(callee))
+                    if matches!(callee, Expression::Member { .. }) {
+                        callee
+                    } else {
+                        Expression::Parenthesized(Box::new(callee))
+                    }
                 } else {
                     callee
                 }),
