@@ -34,7 +34,10 @@ pub fn get_member_function(
             crate::eval::member::eval_object_member(&proto, prop_name, Some(env))
         }
         Value::Generator(gen) => {
-            let is_async = gen.borrow().is_async;
+            let is_async = gen
+                .try_borrow()
+                .map(|generator| generator.is_async)
+                .unwrap_or(false);
             match prop_name {
                 "next" => {
                     if is_async {

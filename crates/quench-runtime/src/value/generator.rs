@@ -364,6 +364,7 @@ pub struct IteratorResult {
 impl IteratorResult {
     pub fn to_object(&self) -> Value {
         let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.prototype = crate::builtins::get_object_prototype();
         obj.set("value", self.value.clone());
         obj.set("done", Value::Boolean(self.done));
         Value::Object(Rc::new(RefCell::new(obj)))
@@ -390,7 +391,10 @@ pub fn generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
-            let result = gen.borrow_mut().next(arg)?;
+            let result = gen
+                .try_borrow_mut()
+                .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?
+                .next(arg)?;
             Ok(result.to_object())
         },
     )))
@@ -403,10 +407,12 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             let pending_destructuring =
                 crate::eval::iteration::take_pending_destructuring_iterator();
-            let mut g = gen.borrow_mut();
+            let mut g = gen
+                .try_borrow_mut()
+                .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?;
             if g.state == GeneratorState::Completed {
                 return Ok(IteratorResult {
-                    value: Value::Undefined,
+                    value: arg,
                     done: true,
                 }
                 .to_object());

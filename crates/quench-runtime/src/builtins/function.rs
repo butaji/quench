@@ -415,10 +415,46 @@ pub fn register_function(ctx: &mut Context) {
             }))),
         );
     }
+    for name in ["next", "return", "throw"] {
+        let method = generator_proto_rc.borrow().get(name);
+        if let Some(flags) = generator_proto_rc.borrow_mut().descriptors.get_mut(name) {
+            flags.enumerable = false;
+        }
+        if let Some(Value::NativeFunction(function)) = method {
+            function.define_property(
+                "name",
+                Value::String(name.to_string()),
+                crate::value::PropertyFlags {
+                    value: Some(Value::String(name.to_string())),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+            function.define_property(
+                "length",
+                Value::Number(1.0),
+                crate::value::PropertyFlags {
+                    value: Some(Value::Number(1.0)),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+    }
     // Set %GeneratorPrototype%[@@toStringTag] = "Generator"
-    generator_proto_rc
-        .borrow_mut()
-        .set("Symbol.toStringTag", Value::String("Generator".to_string()));
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        let key = symbol.property_key();
+        let mut generator_proto = generator_proto_rc.borrow_mut();
+        generator_proto.set_symbol(&key, Value::String("Generator".to_string()));
+        if let Some(flags) = generator_proto.descriptors.get_mut(&key) {
+            flags.writable = false;
+            flags.enumerable = false;
+        }
+    }
     GENERATOR_PROTOTYPE.with(|gp| {
         *gp.borrow_mut() = Some(Rc::clone(&generator_proto_rc));
     });
@@ -566,6 +602,18 @@ pub fn register_function(ctx: &mut Context) {
             p.borrow_mut().set("constructor", gen_ctor_val.clone());
         }
     });
+    if let Some(generator_proto) = get_generator_prototype() {
+        generator_proto.borrow_mut().define(
+            "constructor",
+            Value::Object(Rc::clone(&generator_function_proto_rc)),
+            crate::value::PropertyFlags {
+                value: Some(Value::Object(Rc::clone(&generator_function_proto_rc))),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     ctx.set_global("GeneratorFunction".to_string(), gen_ctor_val);
 
     let async_gen_func_ctor = make_function_constructor(
@@ -807,6 +855,15 @@ mod tests {
             value,
             crate::Value::String("GeneratorFunction|false|false|true".into())
         );
+    }
+
+    #[test]
+    fn generator_prototype_has_symbol_to_string_tag() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("Object.getPrototypeOf(Object.getPrototypeOf(function*() {}())).getOwnPropertyDescriptor(Symbol.toStringTag)")
+            .unwrap();
+        assert!(matches!(value, crate::Value::Object(_)));
     }
 
     use super::*;
