@@ -196,6 +196,18 @@ fn test_delete_operator() {
 }
 
 #[test]
+fn test_delete_new_target_is_true() {
+    assert_eq!(
+        eval("(function() { return delete (new.target); })()").unwrap(),
+        Value::Boolean(true)
+    );
+    assert_eq!(
+        eval("\"use strict\"; (function() { return delete (new.target); })()").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn test_delete_catch_binding_is_not_configurable() {
     assert_eq!(
         eval(

@@ -235,6 +235,9 @@ pub fn eval_delete(
             if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
                 return Ok(Value::Boolean(false));
             }
+            if name == "new.target" {
+                return Ok(Value::Boolean(true));
+            }
             if crate::interpreter::is_strict_mode() {
                 return Err(JsError(format!(
                     "SyntaxError: cannot delete property '{}'",
