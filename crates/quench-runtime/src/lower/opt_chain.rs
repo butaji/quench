@@ -227,11 +227,8 @@ fn lower_chain_base(object: &ast::Expression) -> Result<Expression, LowerError> 
 /// Extract the base expression from a callee for nullish checking
 fn extract_base_from_callee(callee: &ast::Expression) -> Result<Expression, LowerError> {
     match callee {
-        ast::Expression::StaticMemberExpression(member) => {
-            // For a?.b, the base is a
-            lower_expr(&member.object)
-        }
-        ast::Expression::ComputedMemberExpression(member) => lower_expr(&member.object),
+        ast::Expression::StaticMemberExpression(_)
+        | ast::Expression::ComputedMemberExpression(_) => lower_expr(callee),
         ast::Expression::PrivateFieldExpression(member) => lower_expr(&member.object),
         ast::Expression::Identifier(ident) => {
             // For foo?.(), the base is foo

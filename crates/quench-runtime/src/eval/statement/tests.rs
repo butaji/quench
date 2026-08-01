@@ -2197,6 +2197,17 @@ mod optional_chaining {
         let r = eval("[1,2,3]?.[1]").unwrap();
         assert_eq!(r, Value::Number(2.0));
     }
+
+    #[test]
+    fn optional_super_method_call_preserves_this() {
+        let r = eval("let called = false; let context; class B { method() { called = true; context = this; } } class F extends B { method() { super.method?.(); } } let f = new F(); f.method(); [called, context === f]").unwrap();
+        let object = match r {
+            Value::Object(object) => object,
+            _ => panic!(),
+        };
+        assert_eq!(object.borrow().get("0"), Some(Value::Boolean(true)));
+        assert_eq!(object.borrow().get("1"), Some(Value::Boolean(true)));
+    }
 }
 
 // ─── array spread in literals ──────────────────────────────────────────
