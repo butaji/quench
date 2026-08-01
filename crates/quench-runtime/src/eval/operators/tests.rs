@@ -1,6 +1,14 @@
 use super::*;
 use crate::value::{create_js_error_with_type, set_thrown_value, take_thrown_value};
 
+#[test]
+fn loose_equality_propagates_object_coercion_errors() {
+    let result = crate::Context::new()
+        .unwrap()
+        .eval("({ valueOf: function() { return {}; }, toString: function() { return {}; } } == 1)");
+    assert!(result.is_err());
+}
+
 /// When `valueOf` throws, `eval_add` must surface the error AND leave the
 /// thrown value intact for the surrounding try/catch to retrieve.
 #[test]

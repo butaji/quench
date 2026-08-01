@@ -7,10 +7,9 @@ use std::rc::Rc;
 use crate::value::JsError;
 use crate::value::Value;
 
-/// ToPrimitive for comparison with strict (Result) return — delegates to the
-/// non-strict version since object_to_primitive_for_compare never actually errors.
+/// ToPrimitive for comparison with strict (Result) return.
 pub fn to_primitive_for_compare_strict(v: &Value) -> Result<Value, JsError> {
-    Ok(to_primitive_for_compare(v))
+    crate::value::to_primitive(v, None)
 }
 
 // ─── strict_eq ──────────────────────────────────────────────────────────────

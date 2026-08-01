@@ -16,9 +16,9 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
         BinaryOp::Div => eval_numeric_arithmetic(left, right, '/'),
         BinaryOp::Mod => eval_numeric_arithmetic(left, right, '%'),
         BinaryOp::Pow => eval_numeric_arithmetic(left, right, '^'),
-        BinaryOp::Eq => Ok(Value::Boolean(loose_eq(left, right))),
-        BinaryOp::Neq => Ok(Value::Boolean(!loose_eq(left, right))),
-        BinaryOp::LooseEq => Ok(Value::Boolean(loose_eq(left, right))),
+        BinaryOp::Eq => Ok(Value::Boolean(eval_loose_eq(left, right)?)),
+        BinaryOp::Neq => Ok(Value::Boolean(!eval_loose_eq(left, right)?)),
+        BinaryOp::LooseEq => Ok(Value::Boolean(eval_loose_eq(left, right)?)),
         BinaryOp::In => eval_in_op(left, right),
         BinaryOp::Instanceof => eval_instanceof(left, right),
         BinaryOp::StrictEq => Ok(Value::Boolean(strict_eq(left, right))),
@@ -50,6 +50,14 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
             .unwrap_or_else(|| shift_op(left, right, |a, b| a >> b)),
         BinaryOp::Ushr => shift_op_u(left, right, |a, b| a >> b),
     }
+}
+
+fn eval_loose_eq(left: &Value, right: &Value) -> Result<bool, JsError> {
+    let result = loose_eq(left, right);
+    if let Some(thrown) = get_thrown_value() {
+        return Err(JsError(to_js_string(&thrown)));
+    }
+    Ok(result)
 }
 
 fn eval_bigint_shift(
