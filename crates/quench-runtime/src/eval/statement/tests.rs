@@ -2208,6 +2208,14 @@ mod optional_chaining {
         assert_eq!(object.borrow().get("0"), Some(Value::Boolean(true)));
         assert_eq!(object.borrow().get("1"), Some(Value::Boolean(true)));
     }
+
+    #[test]
+    fn optional_member_after_super_call_evaluates_super_once() {
+        let r =
+            eval("class A {} class B extends A { constructor() { return super()?.a; } } new B()")
+                .unwrap();
+        assert!(matches!(r, Value::Object(_)));
+    }
 }
 
 // ─── array spread in literals ──────────────────────────────────────────

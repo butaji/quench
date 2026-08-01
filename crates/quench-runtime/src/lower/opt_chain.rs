@@ -40,6 +40,12 @@ fn lower_chain_recursive(
                     alternate: Box::new(member_access),
                 })
             } else if member.optional {
+                if is_super_call(&member.object) {
+                    return Ok(Expression::Sequence(vec![
+                        lower_expr(&member.object)?,
+                        Expression::Undefined,
+                    ]));
+                }
                 let undefined = Expression::Undefined;
                 let is_nullish = make_nullish_check(&object_expr);
                 let member_access = Expression::Member {
@@ -222,6 +228,14 @@ fn lower_chain_base(object: &ast::Expression) -> Result<Expression, LowerError> 
         ast::Expression::ChainExpression(chain) => lower_opt_chain(chain),
         _ => lower_expr(object),
     }
+}
+
+fn is_super_call(expression: &ast::Expression) -> bool {
+    matches!(
+        expression,
+        ast::Expression::CallExpression(call)
+            if matches!(call.callee, ast::Expression::Super(_))
+    )
 }
 
 /// Extract the base expression from a callee for nullish checking
