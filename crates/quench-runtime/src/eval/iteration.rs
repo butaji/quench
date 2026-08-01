@@ -322,6 +322,9 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
         } else {
             let (item, done) = take_iterator_step(&run.iterator, &mut run.index, run.env)?;
             if done {
+                if run.await_of {
+                    crate::builtins::promise::execute_pending_microtask()?;
+                }
                 break;
             }
             (item, ForOfResume::default())
@@ -482,7 +485,15 @@ fn await_for_await_of(value: Value) -> Result<Value, JsError> {
     let Value::Object(promise) = promise else {
         return Ok(Value::Undefined);
     };
-    crate::builtins::promise::execute_pending_microtasks()?;
+    let data = promise.borrow().promise_data.clone();
+    if data
+        .as_ref()
+        .is_some_and(|promise| promise.state == crate::value::object::PromiseState::Pending)
+    {
+        crate::builtins::promise::execute_pending_microtasks()?;
+    } else {
+        crate::builtins::promise::execute_pending_microtask()?;
+    }
     let data = promise.borrow().promise_data.clone();
     match data.map(|data| (data.state, data.result)) {
         Some((crate::value::object::PromiseState::Fulfilled, value)) => Ok(value),
@@ -922,6 +933,23 @@ mod tests {
         assert_eq!(
             ctx.eval("actual.join(',')").unwrap(),
             Value::String("start,tick 1,tick 2,catch,after".into())
+        );
+    }
+
+    #[test]
+    fn for_await_of_resolved_promise_with_custom_constructor_completes() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var actual = []; var expected = ['pre', 'tick 1', 'loop', 'tick 2', 'post']; \
+             function toAsyncIterator(iterable) { return { [Symbol.asyncIterator]() { return iterable[Symbol.iterator](); } }; } \
+             async function f() { var p = Promise.resolve(0); actual.push('pre'); for await (var x of toAsyncIterator([p])) { actual.push('loop'); } actual.push('post'); } \
+             Promise.resolve(0).then(() => actual.push('tick 1')).then(() => actual.push('tick 2')).then(() => actual.join(',') === expected.join(',')); \
+             Object.defineProperty(Promise.prototype, 'constructor', { get() { actual.push('constructor'); return Promise; }, configurable: true }); f();",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("pre,constructor,tick 1,loop,tick 2,post".into()),
         );
     }
 

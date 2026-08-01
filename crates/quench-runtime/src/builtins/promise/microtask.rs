@@ -31,6 +31,16 @@ pub fn execute_pending_microtasks() -> Result<(), JsError> {
     Ok(())
 }
 
+pub fn execute_pending_microtask() -> Result<(), JsError> {
+    let task = MICROTASK_QUEUE.with(|queue| queue.borrow_mut().pop_front());
+    if let Some(task) = task {
+        if matches!(task, Value::Function(_) | Value::NativeFunction(_)) {
+            call_value_with_this(task, vec![], Value::Undefined)?;
+        }
+    }
+    Ok(())
+}
+
 /// Queue a microtask callback
 pub fn queue_microtask_impl(callback: Value) -> Value {
     if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {

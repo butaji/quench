@@ -18,7 +18,7 @@ pub use helpers::{
     create_resolved_promise, get_promise_proto, set_promise_proto,
 };
 pub(crate) use helpers::{restore_promise_proto, save_promise_proto};
-pub use microtask::{execute_pending_microtasks, queue_microtask_impl};
+pub use microtask::{execute_pending_microtask, execute_pending_microtasks, queue_microtask_impl};
 pub use static_methods::{
     promise_all_impl, promise_race_impl, promise_reject_impl_static, promise_resolve_impl_static,
 };
