@@ -31,6 +31,75 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn dynamic_import_json_fixture_with_type_text_returns_raw_default() {
+    let dir = std::env::temp_dir().join(format!("quench-json-import-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let test_path = dir.join("test.js");
+    let fixture_path = dir.join("text_FIXTURE.json");
+    std::fs::write(&fixture_path, "\"hello\"").unwrap();
+    std::fs::write(&test_path, "").unwrap();
+
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &test_path)
+        .expect("load fixture modules");
+    ctx.eval("import('./text_FIXTURE.json', { with: { type: 'text' } }).then((module) => { globalThis.__moduleDefault = module.default; })")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+
+    assert_eq!(
+        ctx.eval("globalThis.__moduleDefault").unwrap(),
+        Value::String("\"hello\"".into())
+    );
+}
+
+#[test]
+fn dynamic_import_with_non_object_options_rejects() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("default", Value::Number(42.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name', null).then(() => { result = 'fulfilled'; }, (err) => { result = err instanceof TypeError; })")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn dynamic_import_with_non_string_attribute_value_rejects() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("default", Value::Number(42.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name', { with: { type: 7 } }).then(() => { result = 'fulfilled'; }, (err) => { result = err instanceof TypeError; })")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn dynamic_import_with_non_enumerable_type_and_proxy_own_keys_ignores_attribute() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("default", Value::Number(42.0));
+    ctx.register_module("module-name", exports);
+
+    let script = "var result;\n\
+var withProxy = new Proxy({}, {\n\
+  ownKeys() { return ['type']; },\n\
+  get() { return 'text'; },\n\
+  getOwnPropertyDescriptor(_target, _key) { return { configurable: true, enumerable: false }; }\n\
+});\n\
+import('module-name', { with: withProxy }).then((ns) => { result = ns.default; }, () => { result = 'rejected'; });";
+    ctx.eval(script).unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Number(42.0));
+}
+
+#[test]
 fn dynamic_import_namespace_rejects_set() {
     let mut ctx = crate::Context::new().unwrap();
     let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);

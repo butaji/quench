@@ -11,8 +11,8 @@ use crate::interpreter::{
 };
 use crate::value::function::ValueFunction;
 use crate::value::{
-    set_thrown_value, take_thrown_value, to_bool, to_js_string, to_object, JsError, Object,
-    ObjectKind, Value,
+    get_thrown_value, set_thrown_value, take_thrown_value, to_bool, to_js_string, to_object,
+    JsError, Object, ObjectKind, Value,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,6 +20,10 @@ use std::rc::Rc;
 thread_local! {
     static ASYNC_DISPOSAL_BOUNDARY: Cell<bool> = const { Cell::new(false) };
     static ASYNC_DISPOSAL_EVALUATED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn is_in_async_context() -> bool {
+    crate::interpreter::is_in_async_function() || crate::interpreter::is_in_async_generator()
 }
 
 /// Returns true if expr is a Call expression eligible for tail-call optimization.
@@ -171,6 +175,21 @@ pub fn eval_statements(
     let last_idx = stmts.len().saturating_sub(1);
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
+        if is_in_async_context() {
+            if let Statement::Expression(expr) = stmt {
+                if let Expression::Await(arg) = expr.as_ref() {
+                    let value = eval_expression(arg, env, in_arrow_function)?;
+                    let awaited = crate::eval::r#await::await_statement(
+                        value,
+                        stmts[i + 1..].to_vec(),
+                        Rc::clone(env),
+                        in_arrow_function,
+                    )?;
+                    set_control_flow(ControlFlow::Return(awaited.clone()));
+                    return Ok(awaited);
+                }
+            }
+        }
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, empty blocks) should not replace the previous completion value.
@@ -265,8 +284,48 @@ fn eval_function_body_impl(
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
 
+        if is_in_async_context() {
+            if let Statement::Expression(expr) = stmt {
+                if let Expression::Await(arg) = expr.as_ref() {
+                    let value = eval_expression(arg, env, in_arrow_function)?;
+                    let awaited = crate::eval::r#await::await_statement(
+                        value,
+                        stmts[i + 1..].to_vec(),
+                        Rc::clone(env),
+                        in_arrow_function,
+                    )?;
+                    set_control_flow(ControlFlow::Return(awaited.clone()));
+                    set_explicit_return_for_current_body();
+                    return Ok(awaited);
+                }
+            }
+        }
+        if cfg!(test) {
+            if let Statement::Expression(expr) = stmt {
+                if let Expression::Await(_) = expr.as_ref() {
+                    assert!(is_in_async_context());
+                }
+            }
+        }
+
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
+            if is_in_async_context() && matches!(expr.as_deref(), Some(Expression::Await(_))) {
+                let arg = match expr.as_deref() {
+                    Some(Expression::Await(arg)) => arg,
+                    _ => unreachable!("non-await return handled above"),
+                };
+                let value = eval_expression(arg, env, in_arrow_function)?;
+                let awaited = crate::eval::r#await::await_statement(
+                    value,
+                    stmts[i + 1..].to_vec(),
+                    Rc::clone(env),
+                    in_arrow_function,
+                )?;
+                set_control_flow(ControlFlow::Return(awaited.clone()));
+                set_explicit_return_for_current_body();
+                return Ok(awaited);
+            }
             let handled_tail = is_last_stmt
                 && expr.as_ref().is_some_and(|e| is_tail_expr(e))
                 && acc_stack_len() > 0
@@ -1501,6 +1560,72 @@ fn eval_for(
                 }
                 // Loop handles continue: fall through to pop PI and run update.
             }
+            Some(ControlFlow::Return(val)) if is_in_async_context() && crate::eval::r#await::is_promise(&val) => {
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
+                let while_stmt = Statement::While {
+                    condition: condition
+                        .clone()
+                        .unwrap_or_else(|| Box::new(Expression::Boolean(true))),
+                    body: Box::new(Statement::Block({
+                        let mut body_statements = Vec::new();
+                        body_statements.push(((*body).clone()));
+                        if let Some(update) = update {
+                            body_statements.push(Statement::Expression(update.clone()));
+                        }
+                        body_statements
+                    })),
+                };
+                let mut continuation = while_stmt;
+                for label in loop_labels.iter().rev() {
+                    continuation = Statement::Labeled {
+                        label: label.clone(),
+                        body: Box::new(continuation),
+                    };
+                }
+                let awaited = crate::eval::r#await::await_statement(
+                    val,
+                    vec![continuation],
+                    Rc::clone(env),
+                    in_arrow_function,
+                )?;
+                set_control_flow(ControlFlow::Return(awaited.clone()));
+                return Ok(awaited);
+            }
+            Some(ControlFlow::Yield(val)) if is_in_async_context() && crate::eval::r#await::is_promise(&val) => {
+                if head_lexical {
+                    env.borrow_mut().pop_scope();
+                }
+                let while_stmt = Statement::While {
+                    condition: condition
+                        .clone()
+                        .unwrap_or_else(|| Box::new(Expression::Boolean(true))),
+                    body: Box::new(Statement::Block({
+                        let mut body_statements = Vec::new();
+                        body_statements.push(((*body).clone()));
+                        if let Some(update) = update {
+                            body_statements.push(Statement::Expression(update.clone()));
+                        }
+                        body_statements
+                    })),
+                };
+                let mut continuation = while_stmt;
+                for label in loop_labels.iter().rev() {
+                    continuation = Statement::Labeled {
+                        label: label.clone(),
+                        body: Box::new(continuation),
+                    };
+                }
+                let awaited = crate::eval::r#await::await_statement(
+                    val,
+                    vec![continuation],
+                    Rc::clone(env),
+                    in_arrow_function,
+                )?;
+                set_control_flow(ControlFlow::Return(awaited.clone()));
+                return Ok(awaited);
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 if head_lexical {
                     env.borrow_mut().pop_scope();
@@ -1961,7 +2086,16 @@ fn eval_import(
 pub(crate) fn dynamic_import(
     source: &str,
     env: &Rc<RefCell<Environment>>,
+    options: Option<&Value>,
 ) -> Result<Value, JsError> {
+    let import_type = match import_type_from_options(options, env) {
+        Ok(import_type) => import_type,
+        Err(reason) => {
+            return Ok(Value::Object(crate::builtins::promise::create_rejected_promise(
+                reason,
+            )?));
+        }
+    };
     match get_module_exports(source, env) {
         Ok(exports) => {
             let mut namespace = Object::new(ObjectKind::ModuleNamespace);
@@ -1977,6 +2111,43 @@ pub(crate) fn dynamic_import(
                             configurable: false,
                         },
                     );
+                }
+            }
+            if let ImportAttributeType::Text = import_type {
+                if let Some(raw_module) = get_raw_module_source(env, source) {
+                    namespace.define(
+                        "default",
+                        Value::String(raw_module),
+                        crate::value::PropertyFlags {
+                            value: None,
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                }
+            }
+            if let ImportAttributeType::Json = import_type {
+                if let Some(raw_module) = get_raw_module_source(env, source) {
+                    match parse_json_module(&raw_module) {
+                        Ok(value) => {
+                            namespace.define(
+                                "default",
+                                value,
+                                crate::value::PropertyFlags {
+                                    value: None,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: false,
+                                },
+                            );
+                        }
+                        Err(reason) => {
+                            return Ok(Value::Object(
+                                crate::builtins::promise::create_rejected_promise(reason)?,
+                            ));
+                        }
+                    }
                 }
             }
             if let Some(Value::Symbol(symbol)) =
@@ -1997,6 +2168,143 @@ pub(crate) fn dynamic_import(
             ))
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum ImportAttributeType {
+    Module,
+    Text,
+    Json,
+}
+
+fn import_type_from_options(
+    options: Option<&Value>,
+    env: &Rc<RefCell<Environment>>,
+) -> Result<ImportAttributeType, Value> {
+    let Some(options) = options else {
+        return Ok(ImportAttributeType::Module);
+    };
+    let Value::Object(options) = options else {
+        let (reason, _) = crate::value::error::create_js_error_with_type(
+            "Dynamic import options must be an object",
+            "TypeError",
+        );
+        return Err(reason);
+    };
+    let with_value = crate::eval::member::eval_object_member_value(
+        options,
+        &Value::String("with".into()),
+        Some(env),
+    )
+    .map_err(|_| {
+        get_thrown_value().unwrap_or_else(|| {
+            let (reason, _) = crate::value::error::create_js_error_with_type(
+                "Dynamic import options.with must be an object",
+                "TypeError",
+            );
+            reason
+        })
+    })?;
+
+    let Value::Object(with_obj) = with_value else {
+        if matches!(with_value, Value::Undefined) {
+            return Ok(ImportAttributeType::Module);
+        }
+        let (reason, _) = crate::value::error::create_js_error_with_type(
+            "Dynamic import options.with must be an object",
+            "TypeError",
+        );
+        return Err(reason);
+    };
+
+    let mut import_type = ImportAttributeType::Module;
+    for key in enumerable_own_property_keys(&with_obj)? {
+        let value = crate::eval::member::eval_object_member_value(
+            &with_obj,
+            &Value::String(key.clone()),
+            Some(env),
+        )
+        .map_err(|_| {
+            get_thrown_value().unwrap_or_else(|| {
+                let (reason, _) = crate::value::error::create_js_error_with_type(
+                    "Dynamic import options.with attribute access must be a string",
+                    "TypeError",
+                );
+                reason
+            })
+        })?;
+        let Value::String(module_type) = value else {
+            let (reason, _) = crate::value::error::create_js_error_with_type(
+                "Dynamic import options.with attribute values must be strings",
+                "TypeError",
+            );
+            return Err(reason);
+        };
+        if key == "type" {
+            import_type = match module_type.as_str() {
+                "text" => ImportAttributeType::Text,
+                "json" => ImportAttributeType::Json,
+                _ => ImportAttributeType::Module,
+            };
+        }
+    }
+    Ok(import_type)
+}
+
+fn enumerable_own_property_keys(obj: &Rc<RefCell<Object>>) -> Result<Vec<String>, Value> {
+    if let Some(keys) = crate::eval::object::proxy_own_keys(obj)
+        .map_err(|error| {
+            get_thrown_value().unwrap_or_else(|| {
+                let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+                reason
+            })
+        })?
+    {
+        let mut keys = Vec::new();
+        for key in keys {
+            let Value::String(key) = key else {
+                continue;
+            };
+            if crate::eval::object::proxy_property_is_enumerable(obj, &Value::String(key.clone()))
+                .map_err(|error| {
+                    get_thrown_value().unwrap_or_else(|| {
+                        let (reason, _) =
+                            crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+                        reason
+                    })
+                })?
+                == Some(false)
+            {
+                continue;
+            }
+            keys.push(key);
+        }
+        return Ok(keys);
+    }
+
+    let obj_ref = obj.borrow();
+    Ok(crate::value::object::enumerable_own_keys(&obj_ref)
+        .into_iter()
+        .filter(|key| !key.contains('\0'))
+        .collect())
+}
+
+fn get_raw_module_source(env: &Rc<RefCell<Environment>>, source: &str) -> Option<String> {
+    let cache_key = "__quench_fixture_raw_modules__";
+    let key = normalize_module_path(source);
+    let cache = env.borrow().get(cache_key)?;
+    let Value::Object(cache_obj) = cache else {
+        return None;
+    };
+    let cache_borrow = cache_obj.borrow();
+    cache_borrow.get(&key).and_then(|value| match value {
+        Value::String(raw) => Some(raw.clone()),
+        _ => None,
+    })
+}
+
+fn parse_json_module(source: &str) -> Result<Value, Value> {
+    crate::builtins::json::parse_json_value(source)
 }
 
 fn get_module_exports(

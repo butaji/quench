@@ -253,6 +253,21 @@ fn from_serde_value(v: serde_json::Value) -> Result<Value, JsError> {
     }
 }
 
+/// Convert serde_json::Value to runtime Value with error surfaced as JS value.
+pub(crate) fn parse_json_value(source: &str) -> Result<Value, Value> {
+    let parsed: serde_json::Value = serde_json::from_str(source).map_err(|error| {
+        let (reason, _) = crate::value::error::create_js_error_with_type(
+            &format!("Cannot parse JSON module source: {error}"),
+            "SyntaxError",
+        );
+        reason
+    })?;
+    from_serde_value(parsed).map_err(|error| {
+        let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "SyntaxError");
+        reason
+    })
+}
+
 /// Walk a value and apply reviver.
 /// Returns `None` if the reviver returned `undefined` for a non-root key,
 /// signaling that the property should be deleted.
