@@ -31,26 +31,21 @@ fn lower_class_member(member: &ast::ClassElement) -> Result<ClassMember, LowerEr
 }
 
 fn lower_constructor(constructor: &ast::MethodDefinition) -> Result<ClassMember, LowerError> {
-    let ps: Vec<String> = constructor
-        .value
-        .params
-        .items
-        .iter()
-        .filter_map(|p| match &p.pattern {
-            ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str().to_string()),
-            _ => None,
-        })
-        .collect();
+    let mut ps = super::super::stmt::lower_formal_params(&constructor.value.params);
     // Handle rest parameter: stored separately in FormalParameters.rest
     // For constructors, we need to capture the rest param name even though
     // build_constructor_env doesn't yet handle rest semantics. The parameter
     // must at least be defined so it's accessible (even if as an empty array
     // until rest parameter handling is implemented for constructors).
-    let mut ps = ps;
     let mut has_rest = false;
     if let Some(rest) = &constructor.value.params.rest {
         if let ast::BindingPattern::BindingIdentifier(ident) = &rest.rest.argument {
-            ps.push(ident.name.as_str().to_string());
+            ps.push(crate::ast::Param {
+                name: ident.name.as_str().to_string(),
+                default: None,
+                pattern: None,
+                rest: true,
+            });
             has_rest = true;
         }
     }

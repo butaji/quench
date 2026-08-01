@@ -432,7 +432,7 @@ pub struct Class {
 pub enum ClassMember {
     /// Constructor
     Constructor {
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Vec<Statement>,
         has_rest_param: bool,
     },

@@ -143,6 +143,7 @@ pub fn instantiate_simple(
     let call_env = Rc::new(RefCell::new(build_constructor_env(
         class, &args, &this_val, env,
     )?));
+    initialize_constructor_defaults(class, &args, &call_env)?;
 
     if should_auto_super(class) {
         let sv = resolve_super_class_value(class, env)?;
@@ -266,6 +267,7 @@ pub fn instantiate_with_fields(
     let call_env = Rc::new(RefCell::new(build_constructor_env(
         class, &args, &this_val, env,
     )?));
+    initialize_constructor_defaults(class, &args, &call_env)?;
 
     if should_auto_super(class) {
         let sv = resolve_super_class_value(class, env)?;
@@ -373,12 +375,12 @@ pub fn build_constructor_env(
             let rest_args: Vec<Value> = args[non_rest_count..].to_vec();
             let rest_arr = Object::new_array_from(rest_args);
             call_env.define(
-                param.clone(),
+                param.name.clone(),
                 Value::Object(Rc::new(RefCell::new(rest_arr))),
             );
         } else {
             let arg = args.get(i).cloned().unwrap_or(Value::Undefined);
-            call_env.define(param.clone(), arg);
+            call_env.define(param.name.clone(), arg);
         }
     }
 
@@ -386,6 +388,22 @@ pub fn build_constructor_env(
     call_env.define("arguments".to_string(), args_obj);
 
     Ok(call_env)
+}
+
+fn initialize_constructor_defaults(
+    class: &ClassValue,
+    args: &[Value],
+    env: &Rc<RefCell<Environment>>,
+) -> Result<(), JsError> {
+    for (index, param) in class.constructor_params.iter().enumerate() {
+        if let Some(default) = &param.default {
+            if matches!(args.get(index), None | Some(Value::Undefined)) {
+                let value = crate::eval::eval_expression(default, env, false)?;
+                env.borrow_mut().define(param.name.clone(), value);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Handle constructor return value (constructors return `this` by default)

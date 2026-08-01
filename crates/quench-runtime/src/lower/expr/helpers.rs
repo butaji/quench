@@ -157,20 +157,25 @@ fn lower_object_prop(
     if prop.kind == ast::PropertyKind::Set
         && matches!(&prop.value, ast::Expression::FunctionExpression(_))
     {
-        let param = match &prop.value {
+        let (param, default) = match &prop.value {
             ast::Expression::FunctionExpression(func) => func
                 .params
                 .items
                 .first()
                 .and_then(|p| {
                     if let ast::BindingPattern::BindingIdentifier(ident) = &p.pattern {
-                        Some(ident.name.as_str().to_string())
+                        Some((
+                            ident.name.as_str().to_string(),
+                            p.initializer
+                                .as_ref()
+                                .and_then(|init| lower_expr(init).ok()),
+                        ))
                     } else {
                         None
                     }
                 })
-                .unwrap_or_else(|| "value".to_string()),
-            _ => "value".to_string(),
+                .unwrap_or_else(|| ("value".to_string(), None)),
+            _ => ("value".to_string(), None),
         };
         let body = match &prop.value {
             ast::Expression::FunctionExpression(func) => func
@@ -192,6 +197,26 @@ fn lower_object_prop(
                 }
             }
             _ => vec![],
+        };
+        let body = if let Some(default) = default {
+            let condition = Expression::Binary {
+                op: crate::ast::BinaryOp::StrictEq,
+                left: Box::new(Expression::Identifier(param.clone())),
+                right: Box::new(Expression::Undefined),
+            };
+            let assignment = Expression::Assignment {
+                left: Box::new(Expression::Identifier(param.clone())),
+                right: Box::new(default),
+            };
+            std::iter::once(crate::ast::Statement::If {
+                condition: Box::new(condition),
+                consequent: Box::new(crate::ast::Statement::Expression(Box::new(assignment))),
+                alternate: None,
+            })
+            .chain(body)
+            .collect()
+        } else {
+            body
         };
         return Ok((key, PropertyValue::Setter { param, body }));
     }

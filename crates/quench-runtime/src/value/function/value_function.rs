@@ -465,7 +465,7 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     .map(stmt_to_string)
                     .collect::<Vec<_>>()
                     .join("; ");
-                format!("constructor({}) {{{}}}", params.join(", "), body_str)
+                format!("constructor({}) {{{}}}", fmt_params(params), body_str)
             }
             crate::ast::ClassMember::Method {
                 name,

@@ -167,7 +167,7 @@ pub struct ClassValue {
     /// Class name (optional, for named class expressions)
     pub name: Option<String>,
     /// Constructor parameters
-    pub constructor_params: Vec<String>,
+    pub constructor_params: Vec<crate::ast::Param>,
     /// Constructor body statements
     pub constructor_body: Vec<crate::ast::Statement>,
     /// True when the class AST had an explicit `constructor` member.
@@ -656,7 +656,7 @@ impl ClassValue {
 #[allow(clippy::too_many_arguments)]
 fn fill_members_from_ast(
     members: &[ClassMember],
-    constructor_params: &mut Vec<String>,
+    constructor_params: &mut Vec<crate::ast::Param>,
     constructor_body: &mut Vec<crate::ast::Statement>,
     has_explicit_constructor: &mut bool,
     has_rest_param: &mut bool,

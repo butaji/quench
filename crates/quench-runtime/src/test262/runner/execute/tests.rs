@@ -59,6 +59,18 @@ fn optional_eval_call_is_indirect() {
 }
 
 #[test]
+fn static_block_nested_constructor_resolves_await_as_binding() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path =
+        PathBuf::from(&root).join("test/language/expressions/class/static-init-await-reference.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn compound_assignment_deleted_object_binding_throws() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
