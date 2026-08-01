@@ -331,6 +331,10 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
                 .iter()
                 .any(|key| key == &prop_name),
         )),
+        Value::NativeConstructor(constructor) => Ok(Value::Boolean(
+            matches!(prop_name.as_str(), "length" | "name" | "prototype")
+                || constructor.get_static_method(&prop_name).is_some(),
+        )),
         _ => crate::throw!("TypeError", "right-hand side of 'in' is not an object"),
     }
 }

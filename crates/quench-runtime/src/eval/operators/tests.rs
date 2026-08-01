@@ -460,6 +460,15 @@ fn binary_in_primitive_rhs_throws_type_error() {
     assert!(ctx.eval("'foo' in 42").is_err());
 }
 
+#[test]
+fn binary_in_native_constructor_checks_static_properties() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("'MAX_VALUE' in Number"),
+        Ok(crate::value::Value::Boolean(true))
+    );
+}
+
 // =====================================================================
 // eval_instanceof
 // =====================================================================
