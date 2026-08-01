@@ -212,19 +212,21 @@ fn decode_percent_triplet_sequence(
         _ => return None,
     };
 
-    if let Some(ch) = char::from_u32(cp) {
-        result.push(ch);
-        return Some(Ok(result));
+    if let Some(ch) = std::char::from_u32(cp) {
+        if cp <= 0xFFFF {
+            result.push(ch);
+            return Some(Ok(result));
+        }
     }
-    if cp <= 0x10FFFF {
-        let value = cp - 0x10000;
-        let high = 0xD800 + ((value >> 10) & 0x3FF);
-        let low = 0xDC00 + (value & 0x3FF);
-        append_wtf8_surrogate(&mut result, high as u16);
-        append_wtf8_surrogate(&mut result, low as u16);
-        return Some(Ok(result));
+    if cp > 0x10FFFF {
+        return Some(Err(uri_error("URI malformed")));
     }
-    Some(Err(uri_error("URI malformed")))
+    let value = cp - 0x10000;
+    let high = 0xD800 + ((value >> 10) & 0x3FF);
+    let low = 0xDC00 + (value & 0x3FF);
+    append_wtf8_surrogate(&mut result, high as u16);
+    append_wtf8_surrogate(&mut result, low as u16);
+    Some(Ok(result))
 }
 
 fn ensure_valid_percent_encoding(s: &str) -> Result<(), crate::JsError> {

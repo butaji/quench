@@ -473,7 +473,8 @@ pub fn take_iterator_step(
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
-    take_iterator_step_with_args(iterator, index, env, vec![], false, false)
+    take_iterator_step_with_args(iterator, index, env, vec![], false, false, false)
+        .and_then(|result| to_iterator_tuple(result, env, false, index))
 }
 
 pub fn take_iterator_step_with_mode(
@@ -481,8 +482,23 @@ pub fn take_iterator_step_with_mode(
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
     async_from_sync: bool,
-) -> Result<(Value, bool), JsError> {
-    take_iterator_step_with_args(iterator, index, env, vec![], false, async_from_sync)
+    await_result: bool,
+) -> Result<IteratorStepResult, JsError> {
+    take_iterator_step_with_args(
+        iterator,
+        index,
+        env,
+        vec![],
+        false,
+        async_from_sync,
+        await_result,
+    )
+}
+
+#[derive(Debug, Clone)]
+pub enum IteratorStepResult {
+    Ready((Value, bool)),
+    Pending(Rc<RefCell<Object>>),
 }
 
 pub fn take_iterator_step_with_value(
@@ -491,7 +507,8 @@ pub fn take_iterator_step_with_value(
     env: &Rc<RefCell<Environment>>,
     value: Value,
 ) -> Result<(Value, bool), JsError> {
-    take_iterator_step_with_args(iterator, index, env, vec![value], true, false)
+    take_iterator_step_with_args(iterator, index, env, vec![value], true, false, true)
+        .and_then(|result| to_iterator_tuple(result, env, true, index))
 }
 
 fn take_iterator_step_with_args(
@@ -501,7 +518,8 @@ fn take_iterator_step_with_args(
     args: Vec<Value>,
     read_done_value: bool,
     async_from_sync: bool,
-) -> Result<(Value, bool), JsError> {
+    await_result: bool,
+) -> Result<IteratorStepResult, JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
         let value = {
             let borrowed = iterator.borrow();
@@ -512,10 +530,13 @@ fn take_iterator_step_with_args(
             }
         };
         if value.is_none() && *index >= iterator.borrow().elements.len() {
-            return Ok((Value::Undefined, true));
+            return Ok(IteratorStepResult::Ready((Value::Undefined, true)));
         }
         *index += 1;
-        return Ok((value.unwrap_or(Value::Undefined), false));
+        return Ok(IteratorStepResult::Ready((
+            value.unwrap_or(Value::Undefined),
+            false,
+        )));
     }
     let next_fn = cached_iterator_next_method(iterator, env)?;
     if !next_fn.is_callable() {
@@ -584,14 +605,78 @@ fn take_iterator_step_with_args(
                 Value::Undefined
             };
             *index += 1;
-            return Ok((value, true));
+            return Ok(IteratorStepResult::Ready((value, true)));
         }
         // The unwrap hop: wait for the value-wrapper to settle.
         let value = crate::eval::iteration::await_for_await_of_promise(value_wrapper)?;
         *index += 1;
-        return Ok((value, false));
+        return Ok(IteratorStepResult::Ready((value, false)));
     }
-    let result = await_async_iterator_result(result)?;
+    let result = if await_result
+        && (crate::interpreter::is_in_async_generator() || crate::interpreter::is_in_async_function())
+    {
+        let next_result = result.clone();
+        let promise = crate::builtins::promise::promise_resolve_impl_static(
+            vec![next_result.clone()],
+            crate::builtins::promise::get_promise_proto(),
+        )?;
+        let Value::Object(promise) = promise else {
+            return Ok(IteratorStepResult::Ready((next_result, false)));
+        };
+        let status = {
+            let data = promise.borrow();
+            data.promise_data
+                .as_ref()
+                .map(|state| (state.state.clone(), state.result.clone()))
+        };
+        match status {
+            Some((crate::value::object::PromiseState::Pending, _)) => {
+                return Ok(IteratorStepResult::Pending(promise));
+            }
+            Some((crate::value::object::PromiseState::Fulfilled, value)) => {
+                value
+            }
+            Some((crate::value::object::PromiseState::Rejected, reason)) => {
+                crate::value::set_thrown_value(reason);
+                return Err(JsError("Async iterator result rejected".to_string()));
+            }
+            _ => result,
+        }
+    } else {
+        result
+    };
+    let tuple = iterator_result_to_tuple(
+        result,
+        env,
+        index,
+        read_done_value,
+    )?;
+    Ok(IteratorStepResult::Ready(tuple))
+}
+
+fn to_iterator_tuple(
+    result: IteratorStepResult,
+    env: &Rc<RefCell<Environment>>,
+    read_done_value: bool,
+    index: &mut usize,
+) -> Result<(Value, bool), JsError> {
+    match result {
+        IteratorStepResult::Ready(value) => Ok(value),
+        IteratorStepResult::Pending(promise) => iterator_result_to_tuple(
+            crate::eval::iteration::await_for_await_of_promise(Value::Object(promise))?,
+            env,
+            index,
+            read_done_value,
+        ),
+    }
+}
+
+fn iterator_result_to_tuple(
+    result: Value,
+    env: &Rc<RefCell<Environment>>,
+    index: &mut usize,
+    read_done_value: bool,
+) -> Result<(Value, bool), JsError> {
     let Value::Object(result_obj) = result else {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
             "Iterator result interface is not an object",
