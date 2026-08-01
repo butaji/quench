@@ -328,7 +328,11 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                 run.await_values,
             )?;
             if done {
-                if run.await_of {
+                // The Async-from-Sync fallback path consumes an extra microtask
+                // to settle the value-wrapper hop before the loop completes.
+                // Custom async iterators (await_values == false) have no such
+                // hop — their await continuation runs before the next tick.
+                if run.await_of && run.await_values {
                     crate::builtins::promise::execute_pending_microtask()?;
                 }
                 break;
@@ -474,11 +478,10 @@ fn deferred_for_await_rejection(error: JsError) -> Result<Value, JsError> {
     Ok(promise)
 }
 
-pub(crate) fn await_for_await_of(value: Value) -> Result<Value, JsError> {
-    let promise = crate::builtins::promise::promise_resolve_impl_static(
-        vec![value],
-        crate::builtins::promise::get_promise_proto(),
-    )?;
+/// Pump microtasks until `promise` (the result of a prior `PromiseResolve`)
+/// settles, then return its value. The constructor lookup has already fired
+/// during that `PromiseResolve`.
+pub(crate) fn await_for_await_of_promise(promise: Value) -> Result<Value, JsError> {
     let Value::Object(promise) = promise else {
         return Ok(Value::Undefined);
     };
@@ -685,7 +688,10 @@ pub fn eval_for_of(
         }
         Value::Generator(gen) => (
             crate::value::generator::generator_as_iterator_object(Rc::clone(gen)),
-            await_of,
+            // Async generators already await their values inside next()
+            // (async_generator_next_fn); only sync generators need the
+            // Async-from-Sync value-await simulation.
+            await_of && !gen.borrow().is_async,
         ),
         Value::Object(o) if await_of => {
             let (iterator, sync_fallback) = obtain_async_iterator(o, env)?;
@@ -961,6 +967,66 @@ mod tests {
         assert_eq!(
             ctx.eval("actual.join(',')").unwrap(),
             Value::String("pre,constructor,tick 1,loop,constructor,tick 2,post".into())
+        );
+    }
+
+    #[test]
+    fn for_await_of_tick_order_sync_records_matches_test262() {
+        // test262: ticks-with-async-iter-resolved-promise-and-constructor-lookup.js
+        // The loop completion ("post") must land before the assert microtask.
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var actual = []; var observed = null; \
+             function toAsyncIterator(iterable) { return { [Symbol.asyncIterator]() { return iterable[Symbol.iterator](); } }; } \
+             async function f() { var p = Promise.resolve(0); actual.push('pre'); for await (var x of toAsyncIterator([p])) { actual.push('loop'); } actual.push('post'); } \
+             Promise.resolve(0).then(() => actual.push('tick 1')).then(() => actual.push('tick 2')).then(() => { observed = actual.join(','); }); \
+             Object.defineProperty(Promise.prototype, 'constructor', { get() { actual.push('constructor'); return Promise; }, configurable: true }); f();",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("observed").unwrap(),
+            Value::String("pre,tick 1,loop,tick 2,post".into()),
+        );
+    }
+
+    #[test]
+    fn for_await_of_tick_order_promise_records_matches_test262() {
+        // test262: ticks-with-async-iter-resolved-promise-and-constructor-lookup-two.js
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var actual = []; var observed = null; \
+             function toAsyncIterator(iterable) { return { [Symbol.asyncIterator]() { var iter = iterable[Symbol.iterator](); return { next() { return Promise.resolve(iter.next()); } }; } }; } \
+             async function f() { var p = Promise.resolve(0); actual.push('pre'); for await (var x of toAsyncIterator([p])) { actual.push('loop'); } actual.push('post'); } \
+             Promise.resolve(0).then(() => actual.push('tick 1')).then(() => actual.push('tick 2')).then(() => { observed = actual.join(','); }); \
+             Object.defineProperty(Promise.prototype, 'constructor', { get() { actual.push('constructor'); return Promise; }, configurable: true }); f();",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("observed").unwrap(),
+            Value::String("pre,constructor,tick 1,loop,constructor,tick 2,post".into()),
+        );
+    }
+
+    #[test]
+    fn for_await_of_tick_order_async_from_sync_matches_test262() {
+        // test262: ticks-with-sync-iter-resolved-promise-and-constructor-lookup.js
+        // Async-from-Sync iterator: the constructor lookup fires once inside
+        // next() (PromiseResolve on the value) and once per Await, all before
+        // the corresponding ticks.
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var actual = []; var observed = null; \
+             async function f() { var p = Promise.resolve(0); actual.push('pre'); for await (var x of [p]) { actual.push('loop'); } actual.push('post'); } \
+             Promise.resolve(0).then(() => actual.push('tick 1')).then(() => actual.push('tick 2')).then(() => actual.push('tick 3')).then(() => actual.push('tick 4')).then(() => { observed = actual.join(','); }); \
+             Object.defineProperty(Promise.prototype, 'constructor', { get() { actual.push('constructor'); return Promise; }, configurable: true }); f();",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("observed").unwrap(),
+            Value::String(
+                "pre,constructor,constructor,tick 1,tick 2,loop,constructor,tick 3,tick 4,post"
+                    .into()
+            ),
         );
     }
 

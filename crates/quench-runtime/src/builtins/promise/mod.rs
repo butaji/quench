@@ -121,6 +121,24 @@ mod tests {
     }
 
     #[test]
+    fn test_callback_throw_rejects_chain_and_continues() {
+        // A throwing .then callback must reject its result promise (so the
+        // next .then's onRejected fires) and must not kill the microtask queue
+        // or leak the thrown value into later microtasks.
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var state = 'none'; \
+             var p = Promise.resolve(0).then(function() { throw new Error('boom'); }); \
+             p.then(function() { state = 'fulfilled'; }, function() { state = 'rejected'; }); \
+             Promise.resolve().then(function() { state = state + ':after'; });",
+        )
+        .unwrap();
+        // Both later microtasks run; the rejection handler fires last.
+        let result = ctx.eval("state").unwrap();
+        assert_eq!(result, crate::value::Value::String("rejected".to_string()));
+    }
+
+    #[test]
     fn test_promise_race_resolved_input() {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval("var r = 0; Promise.race([Promise.resolve(1)]).then(v => r = v);")

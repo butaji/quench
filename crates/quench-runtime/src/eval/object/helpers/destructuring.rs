@@ -536,6 +536,61 @@ fn take_iterator_step_with_args(
     if crate::value::take_thrown_value().is_some() {
         return Err(JsError("TypeError: iterator threw".to_string()));
     }
+    // Async-from-Sync fallback: mirror AsyncFromSyncIteratorContinuation.
+    // PromiseResolve the value first (fires the constructor lookup on promise
+    // values, inside next() in V8), then await the record wrapped in a promise
+    // so the result-await's PromiseResolve also sees a promise.
+    if async_from_sync {
+        let Value::Object(result_obj) = &result else {
+            let (_, js_err) = crate::value::error::create_js_error_with_type(
+                "Iterator result interface is not an object",
+                "TypeError",
+            );
+            return Err(js_err);
+        };
+        let done = crate::eval::member::eval_object_member(result_obj, "done", Some(env))?;
+        let value = crate::eval::member::eval_object_member(result_obj, "value", Some(env))?;
+        // Await the record through a promise so the result-await's
+        // PromiseResolve sees a promise (constructor lookup fires). Created
+        // pending and settled AFTER the value-wrapper lookup, so an abrupt
+        // completion there can reject it (IfAbruptRejectPromise).
+        let wrapped = Rc::new(RefCell::new(crate::value::Object::with_prototype(
+            crate::value::ObjectKind::Promise,
+            crate::builtins::promise::get_promise_proto(),
+        )));
+        wrapped.borrow_mut().promise_data = Some(crate::value::object::PromiseObjectData::new());
+        // The value-wrapper PromiseResolve fires the constructor lookup on
+        // promise values (inside next() in V8).
+        let value_wrapper = match crate::builtins::promise::promise_resolve_impl_static(
+            vec![value.clone()],
+            crate::builtins::promise::get_promise_proto(),
+        ) {
+            Ok(wrapper) => {
+                crate::builtins::promise::settle_resolve(&wrapped, result);
+                wrapper
+            }
+            Err(error) => {
+                let reason = crate::value::take_thrown_value()
+                    .unwrap_or_else(|| Value::String(error.to_string()));
+                crate::builtins::promise::settle_reject(&wrapped, reason);
+                Value::Undefined
+            }
+        };
+        await_async_iterator_result(Value::Object(wrapped))?;
+        if crate::value::to_bool(&done) {
+            let value = if read_done_value {
+                value
+            } else {
+                Value::Undefined
+            };
+            *index += 1;
+            return Ok((value, true));
+        }
+        // The unwrap hop: wait for the value-wrapper to settle.
+        let value = crate::eval::iteration::await_for_await_of_promise(value_wrapper)?;
+        *index += 1;
+        return Ok((value, false));
+    }
     let result = await_async_iterator_result(result)?;
     let Value::Object(result_obj) = result else {
         let (_, js_err) = crate::value::error::create_js_error_with_type(
@@ -554,11 +609,6 @@ fn take_iterator_step_with_args(
         return Ok((value, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
-    let value = if async_from_sync {
-        crate::eval::iteration::await_for_await_of(value)?
-    } else {
-        value
-    };
     *index += 1;
     Ok((value, false))
 }
