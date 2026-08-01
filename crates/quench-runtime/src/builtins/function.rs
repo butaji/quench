@@ -862,7 +862,7 @@ mod tests {
     fn generator_prototype_has_symbol_to_string_tag() {
         let mut context = crate::Context::new().unwrap();
         let value = context
-            .eval("Object.getPrototypeOf(Object.getPrototypeOf(function*() {}())).getOwnPropertyDescriptor(Symbol.toStringTag)")
+            .eval("Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Object.getPrototypeOf(function*() {}())), Symbol.toStringTag)")
             .unwrap();
         assert!(matches!(value, crate::Value::Object(_)));
     }
