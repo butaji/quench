@@ -53,6 +53,17 @@ fn bigint_string_relational_comparison_rejects_number_only_strings() {
     assert_eq!(ctx.eval("0n < '1n'").unwrap(), Value::Boolean(false));
 }
 
+#[test]
+fn instanceof_propagates_object_has_instance_getter_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval(
+        "var F = {}; Object.defineProperty(F, Symbol.hasInstance, { get: function() { throw 7; } }); 0 instanceof F;",
+    );
+    assert!(result.is_err());
+    let error = crate::value::take_thrown_value().unwrap();
+    assert_eq!(crate::value::to_js_string(&error), "7");
+}
+
 /// When `valueOf` throws, `eval_add` must surface the error AND leave the
 /// thrown value intact for the surrounding try/catch to retrieve.
 #[test]

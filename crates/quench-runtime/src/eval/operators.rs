@@ -489,6 +489,16 @@ fn function_instanceof(
 }
 
 fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
+    if let Value::Object(ctor) = right {
+        if let Some(symbol) = crate::builtins::symbol::get_has_instance_symbol() {
+            let method = crate::eval::member::eval_object_member_value(ctor, &symbol, None)?;
+            if !matches!(method, Value::Undefined | Value::Null) {
+                let result =
+                    crate::eval::call_value_with_this(method, vec![left.clone()], right.clone())?;
+                return Ok(Value::Boolean(crate::value::to_bool(&result)));
+            }
+        }
+    }
     match right {
         Value::Undefined | Value::Null => {
             return crate::throw!("TypeError", "Right-hand side of instanceof is not callable")
