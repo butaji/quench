@@ -4,7 +4,7 @@
 
 use super::expr::lower_expr;
 use super::helpers::LowerError;
-use crate::ast::Expression;
+use crate::ast::{Expression, PropertyKey, PropertyValue};
 use oxc::ast::ast;
 
 /// Lower a template literal expression
@@ -63,13 +63,37 @@ pub fn lower_tagged_template(
 ) -> Result<Expression, LowerError> {
     let callee = lower_expr(&tagged.tag)?;
     let mut arguments = Vec::with_capacity(tagged.quasi.expressions.len() + 1);
-    let strings: Vec<Expression> = tagged
-        .quasi
-        .quasis
-        .iter()
-        .map(|q| Expression::String(q.value.raw.to_string()))
-        .collect();
-    arguments.push(Expression::Array(strings));
+    let cooked = tagged.quasi.quasis.iter().enumerate().map(|(index, q)| {
+        (
+            PropertyKey::String(index.to_string()),
+            PropertyValue::Value(Expression::String(
+                q.value
+                    .cooked
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| q.value.raw.to_string()),
+            )),
+        )
+    });
+    let mut strings = cooked.collect::<Vec<_>>();
+    strings.push((
+        PropertyKey::String("raw".to_string()),
+        PropertyValue::Value(Expression::Object(
+            tagged
+                .quasi
+                .quasis
+                .iter()
+                .enumerate()
+                .map(|(index, q)| {
+                    (
+                        PropertyKey::String(index.to_string()),
+                        PropertyValue::Value(Expression::String(q.value.raw.to_string())),
+                    )
+                })
+                .collect(),
+        )),
+    ));
+    arguments.push(Expression::Object(strings));
     for expr in &tagged.quasi.expressions {
         arguments.push(lower_expr(expr)?);
     }

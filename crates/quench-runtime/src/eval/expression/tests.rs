@@ -26,6 +26,14 @@ fn test_logical_and_short_circuits() {
 }
 
 #[test]
+fn tagged_template_exposes_cooked_and_raw_values() {
+    assert_eq!(
+        eval("(function(s) { return s[0] + '|' + s.raw[0]; })`\\u0062`").unwrap(),
+        Value::String("b|\\u0062".to_string())
+    );
+}
+
+#[test]
 fn test_logical_compound_assign_targets_left() {
     assert_eq!(eval("let x = 0; x ||= 5; x").unwrap(), Value::Number(5.0));
     assert_eq!(eval("let y = 3; y &&= 7; y").unwrap(), Value::Number(7.0));
