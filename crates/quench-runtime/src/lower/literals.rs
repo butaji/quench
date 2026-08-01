@@ -66,38 +66,57 @@ pub fn lower_tagged_template(
 ) -> Result<Expression, LowerError> {
     let callee = lower_expr(&tagged.tag)?;
     let mut arguments = Vec::with_capacity(tagged.quasi.expressions.len() + 1);
-    let cooked = tagged.quasi.quasis.iter().enumerate().map(|(index, q)| {
-        (
-            PropertyKey::String(index.to_string()),
-            PropertyValue::Value(Expression::String(
-                q.value
-                    .cooked
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| q.value.raw.to_string()),
-            )),
-        )
-    });
-    let mut strings = cooked.collect::<Vec<_>>();
-    let raw = Expression::Object(
+    let cooked = Expression::Array(
         tagged
             .quasi
             .quasis
             .iter()
-            .enumerate()
-            .map(|(index, q)| {
-                (
-                    PropertyKey::String(index.to_string()),
-                    PropertyValue::Value(Expression::String(q.value.raw.to_string())),
+            .map(|q| {
+                Expression::String(
+                    q.value
+                        .cooked
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| q.value.raw.to_string()),
                 )
             })
             .collect(),
     );
-    strings.push((
-        PropertyKey::String("raw".to_string()),
-        PropertyValue::Value(freeze_object(raw)),
-    ));
-    arguments.push(freeze_object(Expression::Object(strings)));
+    let raw = Expression::Array(
+        tagged
+            .quasi
+            .quasis
+            .iter()
+            .map(|q| Expression::String(q.value.raw.to_string()))
+            .collect(),
+    );
+    let descriptor = Expression::Object(vec![
+        (
+            PropertyKey::Ident("value".to_string()),
+            PropertyValue::Value(freeze_object(raw)),
+        ),
+        (
+            PropertyKey::Ident("enumerable".to_string()),
+            PropertyValue::Value(Expression::Boolean(false)),
+        ),
+        (
+            PropertyKey::Ident("writable".to_string()),
+            PropertyValue::Value(Expression::Boolean(false)),
+        ),
+        (
+            PropertyKey::Ident("configurable".to_string()),
+            PropertyValue::Value(Expression::Boolean(false)),
+        ),
+    ]);
+    let template = Expression::Call {
+        callee: Box::new(Expression::Member {
+            object: Box::new(Expression::Identifier("Object".to_string())),
+            property: PropertyKey::Ident("defineProperty".to_string()),
+            computed: false,
+        }),
+        arguments: vec![cooked, Expression::String("raw".to_string()), descriptor],
+    };
+    arguments.push(freeze_object(template));
     for expr in &tagged.quasi.expressions {
         arguments.push(lower_expr(expr)?);
     }

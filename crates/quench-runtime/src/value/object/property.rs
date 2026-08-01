@@ -528,11 +528,12 @@ impl Object {
         }
         if let Some(idx) = as_array_index(key) {
             if self.kind == ObjectKind::Array && idx < self.elements.len() {
+                let flags = self.descriptors.get(key).cloned().unwrap_or_default();
                 return Some(PropertyDescriptor {
                     value: Some(self.elements[idx].clone()),
-                    writable: Some(true),
+                    writable: Some(flags.writable),
                     enumerable: Some(true),
-                    configurable: Some(true),
+                    configurable: Some(flags.configurable),
                     ..Default::default()
                 });
             }

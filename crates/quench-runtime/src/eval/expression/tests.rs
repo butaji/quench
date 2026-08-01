@@ -279,6 +279,22 @@ fn computed_member_update_evaluates_property_key_once() {
 }
 
 #[test]
+fn tagged_template_cooked_and_raw_values_are_arrays() {
+    assert_eq!(
+        eval("var value; (function(tag) { value = tag`x${1}y`; })(function(strings) { return [Array.isArray(strings), Array.isArray(strings.raw)]; }); value[0] && value[1]").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn freezing_array_makes_element_descriptors_read_only() {
+    assert_eq!(
+        eval("var descriptor = Object.getOwnPropertyDescriptor(Object.freeze([1]), '0'); descriptor.writable === false && descriptor.configurable === false").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn logical_assignment_infers_anonymous_function_name() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(

@@ -55,6 +55,22 @@ pub fn object_freeze(args: Vec<Value>) -> Result<Value, JsError> {
                 },
             );
         }
+        if obj_mut.kind == crate::value::ObjectKind::Array {
+            for (index, value) in obj_mut.elements.clone().into_iter().enumerate() {
+                if obj_mut.holes.contains(&index) {
+                    continue;
+                }
+                obj_mut.descriptors.insert(
+                    index.to_string(),
+                    PropertyFlags {
+                        value: Some(value),
+                        writable: false,
+                        enumerable: true,
+                        configurable: false,
+                    },
+                );
+            }
+        }
     }
     Ok(obj)
 }
