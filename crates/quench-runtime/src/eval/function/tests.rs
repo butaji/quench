@@ -1798,6 +1798,15 @@ fn constructor_prototype_isprototype_of_instance() {
 }
 
 #[test]
+fn constructed_instance_keeps_original_prototype_after_reassignment() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var F = Function('this.prop=1;'); F.prototype.name = 'fairy'; var instance = new F(); F.prototype = void 0; [instance.constructor === F, instance.name].join('|')")
+        .unwrap();
+    assert_eq!(result, Value::String("true|fairy".to_string()));
+}
+
+#[test]
 fn function_prototype_isprototype_of_constructed_instance() {
     let mut ctx = Context::new().unwrap();
     let value = ctx
