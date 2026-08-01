@@ -88,7 +88,16 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
     if !crate::eval::class::helpers::is_constructor_value(&new_target) {
         return Err(JsError::new("TypeError: newTarget is not a constructor"));
     }
+    let realm_default = match &new_target {
+        Value::Function(function) => function.closure.borrow().get("Object").and_then(|object| {
+            crate::eval::class::get_constructor_prototype(&object)
+                .ok()
+                .flatten()
+        }),
+        _ => None,
+    };
     let mut prototype = crate::eval::class::get_constructor_prototype(&new_target)?
+        .or(realm_default)
         .or_else(|| {
             crate::eval::class::get_constructor_prototype(&target)
                 .ok()
@@ -121,7 +130,19 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
     ))));
     let previous = crate::interpreter::get_new_target();
     crate::interpreter::set_new_target(Some(new_target));
-    let result = crate::eval::function::call_value_with_this(target, list, this.clone());
+    let result = match &target {
+        Value::Class(class) => {
+            let env = crate::context::get_current_env()
+                .unwrap_or_else(|| Rc::new(RefCell::new(crate::env::Environment::new())));
+            crate::eval::class::call_super_constructor(
+                class.as_ref().clone(),
+                list,
+                this.clone(),
+                &env,
+            )
+        }
+        _ => crate::eval::function::call_value_with_this(target, list, this.clone()),
+    };
     crate::interpreter::set_new_target(previous);
     match result? {
         value @ (Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)) => Ok(value),
