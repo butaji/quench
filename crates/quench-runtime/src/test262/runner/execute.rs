@@ -298,28 +298,60 @@ fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<()
         }
         let source = std::fs::read_to_string(&path).map_err(|e| format!("fixture read: {}", e))?;
         let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+        let mut values = std::collections::HashMap::new();
         for line in source.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("export var ") {
-                if let Some(export_name) = rest.split(';').next().map(str::trim) {
-                    exports.set(export_name, crate::Value::Undefined);
+            let line = line.trim().trim_end_matches(';');
+            let declaration = line
+                .strip_prefix("export var ")
+                .or_else(|| line.strip_prefix("var "));
+            if let Some(rest) = declaration {
+                if let Some((name, value)) = rest.split_once('=') {
+                    if let Some(value) = fixture_literal(value.trim()) {
+                        values.insert(name.trim().to_string(), value.clone());
+                        if line.starts_with("export var ") {
+                            exports.set(name.trim(), value);
+                        }
+                    }
                 }
             } else if let Some(rest) = line.strip_prefix("export {") {
                 if let Some(specifiers) = rest.split('}').next() {
                     for specifier in specifiers.split(',') {
                         let mut names = specifier.trim().split(" as ");
-                        let exported = names.nth(1).or_else(|| names.next());
-                        if let Some(exported) = exported.map(str::trim) {
-                            exports.set(exported, crate::Value::Undefined);
+                        let local = names.next().map(str::trim);
+                        let exported = names.next().map(str::trim).or(local);
+                        if let (Some(local), Some(exported)) = (local, exported) {
+                            exports.set(
+                                exported,
+                                values
+                                    .get(local)
+                                    .cloned()
+                                    .unwrap_or(crate::Value::Undefined),
+                            );
                         }
                     }
                 }
+            } else if let Some(value) = line.strip_prefix("export default ") {
+                exports.set(
+                    "default",
+                    fixture_literal(value.trim()).unwrap_or(crate::Value::Undefined),
+                );
             }
         }
         let module_name = format!("./{}", name);
         ctx.register_module(&module_name, exports);
     }
     Ok(())
+}
+
+fn fixture_literal(source: &str) -> Option<crate::Value> {
+    let source = source.trim();
+    if let Some(value) = source.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        return Some(crate::Value::String(value.to_string()));
+    }
+    if let Some(value) = source.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        return Some(crate::Value::String(value.to_string()));
+    }
+    source.parse::<f64>().ok().map(crate::Value::Number)
 }
 
 /// Verify the async $DONE count recorded by `ASYNC_DONE_PRELUDE` is exactly 1.
