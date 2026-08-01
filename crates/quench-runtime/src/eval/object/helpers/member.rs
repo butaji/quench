@@ -69,7 +69,9 @@ pub fn get_member_function(
                 _ => Ok(Value::Undefined),
             }
         }
-        _ => Ok(Value::Undefined),
+        Value::Null | Value::Undefined => {
+            crate::eval::member::eval_member_access(obj_val, prop_name, env)
+        }
     }
 }
 
