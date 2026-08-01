@@ -507,7 +507,7 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
             return crate::throw!("TypeError", "Right-hand side of instanceof is not callable")
         }
         Value::Object(ctor) => {
-            if ctor.borrow().get("prototype").is_none() {
+            if !ctor.borrow().is_callable() {
                 return crate::throw!("TypeError", "Right-hand side of instanceof is not callable");
             }
         }
@@ -564,9 +564,12 @@ fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
             Ok(Value::Boolean(result))
         }
         (Value::Object(obj), Value::Object(ctor)) => {
-            let ctor_ref = ctor.borrow();
-            if let Some(Value::Object(proto)) = ctor_ref.get("prototype") {
-                drop(ctor_ref);
+            let proto = crate::eval::member::eval_object_member_value(
+                ctor,
+                &Value::String("prototype".to_string()),
+                None,
+            )?;
+            if let Value::Object(proto) = proto {
                 let result = has_prototype_in_chain(&obj.borrow(), &proto);
                 Ok(Value::Boolean(result))
             } else {

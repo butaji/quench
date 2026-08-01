@@ -635,6 +635,7 @@ pub fn register_function(ctx: &mut Context) {
 fn make_function_prototype() -> Rc<RefCell<Object>> {
     let function_proto = Object::new(ObjectKind::Function);
     let function_proto_rc = Rc::new(RefCell::new(function_proto));
+    function_proto_rc.borrow_mut().callable = true;
 
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         function_proto_rc.borrow_mut().prototype = Some(object_proto);
