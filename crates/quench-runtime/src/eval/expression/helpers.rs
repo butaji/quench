@@ -140,14 +140,7 @@ pub fn eval_delete(
                     }
                     Ok(Value::Boolean(deleted))
                 }
-                Value::Function(f) => {
-                    if matches!(prop_key.as_str(), "length" | "name") {
-                        let removed = f.remove_property(&prop_key);
-                        Ok(Value::Boolean(removed))
-                    } else {
-                        Ok(Value::Boolean(false))
-                    }
-                }
+                Value::Function(f) => Ok(Value::Boolean(f.remove_property(&prop_key))),
                 Value::Class(c) => {
                     if prop_key == "name" {
                         c.deleted_properties.borrow_mut().insert(prop_key.clone());
@@ -536,6 +529,12 @@ mod tests {
     fn delete_object_property() {
         let r = eval("var o = {p: 42}; delete o.p").unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_function_property() {
+        let r = eval("function f() {}; f.p = 42; delete f.p; f.p").unwrap();
+        assert_eq!(r, Value::Undefined);
     }
 
     #[test]
