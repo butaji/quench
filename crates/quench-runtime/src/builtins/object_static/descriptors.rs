@@ -1406,9 +1406,12 @@ pub fn class_own_property_names(c: &crate::value::ClassValue) -> Vec<String> {
             push_static_key(&mut names, &k);
         }
     }
-    for (key, _) in &c.static_fields {
-        if let Ok(k) = prop_key_to_string(key, &eval_env, false) {
-            push_static_key(&mut names, &k);
+    for index in 0.. {
+        let Some(key) = c.static_field_key(index) else {
+            break;
+        };
+        if !deleted.contains(&key) {
+            push_static_key(&mut names, &key);
         }
     }
     ordinary_key_order(names)

@@ -88,7 +88,10 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
             }
         } else if let Value::Class(c) = &this_val {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
-                if c.has_static_own_property(&key_str) || c.get_static_field(&key_str).is_some() {
+                if !c.deleted_properties.borrow().contains(&key_str)
+                    && (c.has_static_own_property(&key_str)
+                        || c.get_static_field(&key_str).is_some())
+                {
                     return Ok(Value::Boolean(true));
                 }
             }

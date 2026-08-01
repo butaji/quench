@@ -1801,6 +1801,12 @@ mod tests {
     }
 
     #[test]
+    fn static_class_fields_are_visible_to_for_in() {
+        let r = eval("class C { static field; } let keys = []; for (let k in C) keys.push(k); keys.includes('field')").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn static_private_method_function_name_is_hash_method() {
         let name = eval(
             "class C { static #method() { return 'Test262'; } \

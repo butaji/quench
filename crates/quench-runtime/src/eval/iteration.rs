@@ -68,6 +68,20 @@ pub fn get_enumerable_keys(value: &Value) -> Result<Vec<String>, JsError> {
     match value {
         Value::Object(o) => Ok(enumerate_for_in_keys(o)),
         Value::String(s) => Ok((0..s.len()).map(|i| i.to_string()).collect()),
+        Value::Class(class) => Ok(
+            crate::builtins::object_static::class_own_property_names(class)
+                .into_iter()
+                .filter(|name| {
+                    crate::builtins::object_static::get_class_property_descriptor(class, name)
+                        .ok()
+                        .and_then(|descriptor| match descriptor {
+                            Value::Object(object) => object.borrow().get("enumerable"),
+                            _ => None,
+                        })
+                        == Some(Value::Boolean(true))
+                })
+                .collect(),
+        ),
         _ => Ok(vec![]),
     }
 }
@@ -737,6 +751,15 @@ fn key_still_enumerable(value: &Value, key: &str) -> bool {
             false
         }
         Value::String(s) => key.parse::<usize>().ok().is_some_and(|i| i < s.len()),
+        Value::Class(class) => {
+            crate::builtins::object_static::get_class_property_descriptor(class, key)
+                .ok()
+                .and_then(|descriptor| match descriptor {
+                    Value::Object(object) => object.borrow().get("enumerable"),
+                    _ => None,
+                })
+                == Some(Value::Boolean(true))
+        }
         _ => false,
     }
 }
