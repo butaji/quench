@@ -408,10 +408,11 @@ pub fn lower_prop_name_stmt(key: &ast::PropertyKey) -> Option<PropertyKey> {
         ast::PropertyKey::PrivateIdentifier(i) => Some(PropertyKey::Ident(format!("#{}", i.name))),
         ast::PropertyKey::StringLiteral(s) => Some(PropertyKey::String(s.value.to_string())),
         ast::PropertyKey::NumericLiteral(n) => Some(PropertyKey::Number(n.value)),
-        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(format!(
-            "{}n",
+        ast::PropertyKey::BigIntLiteral(b) => Some(PropertyKey::String(
             crate::lower::helpers::bigint_raw(b)
-        ))),
+                .trim_end_matches('n')
+                .to_string(),
+        )),
         ast::PropertyKey::BooleanLiteral(b) => Some(PropertyKey::String(b.value.to_string())),
         ast::PropertyKey::NullLiteral(_) => Some(PropertyKey::String("null".to_string())),
         // TemplateLiterals with expressions and computed keys: lower as runtime-evaluated

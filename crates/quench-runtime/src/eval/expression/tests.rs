@@ -26,6 +26,11 @@ fn test_logical_and_short_circuits() {
 }
 
 #[test]
+fn bigint_literal_property_name_uses_decimal_digits() {
+    assert_eq!(eval("({ 1n: true })['1']").unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn tagged_template_exposes_cooked_and_raw_values() {
     assert_eq!(
         eval("(function(s) { return s[0] + '|' + s.raw[0]; })`\\u0062`").unwrap(),
