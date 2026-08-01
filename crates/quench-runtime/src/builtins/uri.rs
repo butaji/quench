@@ -609,6 +609,33 @@ mod tests {
     }
 
     #[test]
+    fn encode_uri_rejects_lone_high_surrogate() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("try { encodeURI(String.fromCharCode(0xD800)); false } catch (e) { e instanceof URIError }").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn encode_uri_component_rejects_lone_high_surrogate() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("try { encodeURIComponent(String.fromCharCode(0xD800)); false } catch (e) { e instanceof URIError }").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn encode_uri_component_rejects_truncated_surrogate_pair() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("try { encodeURIComponent(String.fromCharCode(0xD800, 0x0041)); false } catch (e) { e instanceof URIError }").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
     fn encode_uri_encodes_surrogate_pair() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
