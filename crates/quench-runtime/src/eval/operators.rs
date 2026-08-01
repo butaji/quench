@@ -70,13 +70,16 @@ fn eval_bigint_shift(
     let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
         return None;
     };
-    let Ok(count) = right.to_string().parse::<usize>() else {
+    let right_text = right.to_string();
+    let negative = right_text.starts_with('-');
+    let count_text = right_text.strip_prefix('-').unwrap_or(&right_text);
+    let Ok(count) = count_text.parse::<usize>() else {
         return Some(crate::throw!(
             "RangeError",
             "BigInt shift count is too large"
         ));
     };
-    let result = if left_shift {
+    let result = if left_shift != negative {
         left.as_ref() << count
     } else {
         left.as_ref() >> count

@@ -18,6 +18,15 @@ fn loose_equality_propagates_object_coercion_errors() {
     assert!(result.is_err());
 }
 
+#[test]
+fn bigint_shift_accepts_negative_shift_counts() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("0b101n << -1n").unwrap(),
+        Value::BigInt(std::rc::Rc::new(2.into()))
+    );
+}
+
 /// When `valueOf` throws, `eval_add` must surface the error AND leave the
 /// thrown value intact for the surrounding try/catch to retrieve.
 #[test]
