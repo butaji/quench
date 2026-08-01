@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use url::percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
 use crate::value::wtf8::append_wtf8_surrogate;
 use crate::value::{to_js_string, to_number, try_to_number, Value};
@@ -145,6 +145,13 @@ fn uri_error(msg: impl Into<String>) -> crate::JsError {
 }
 
 fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
+    if !keep_reserved {
+        return percent_decode_str(s)
+            .decode_utf8()
+            .map(|decoded| decoded.into_owned())
+            .map_err(|_| uri_error("URI malformed"));
+    }
+
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut pending = Vec::with_capacity(bytes.len());
