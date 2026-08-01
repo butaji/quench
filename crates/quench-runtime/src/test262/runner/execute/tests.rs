@@ -59,6 +59,18 @@ fn optional_eval_call_is_indirect() {
 }
 
 #[test]
+fn super_assignment_checks_this_before_computed_key() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root)
+        .join("test/language/expressions/super/prop-expr-uninitialized-this-putvalue.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn instanceof_propagates_prototype_getter_error() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

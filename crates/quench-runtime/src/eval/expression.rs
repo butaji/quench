@@ -552,6 +552,9 @@ pub fn eval_expression(
                 computed,
             } = left.as_ref()
             {
+                if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
+                    crate::eval::class::helpers::check_this_access_allowed(env)?;
+                }
                 let object_value = eval_expression(object, env, in_arrow_function)?;
                 if matches!(object_value, Value::Null | Value::Undefined) {
                     if let PropertyKey::Computed(expression) = property {
@@ -652,6 +655,9 @@ pub fn eval_expression(
                 computed,
             } = left.as_ref()
             {
+                if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
+                    crate::eval::class::helpers::check_this_access_allowed(env)?;
+                }
                 let object_value = eval_expression(object, env, in_arrow_function)?;
                 if matches!(object_value, Value::Null | Value::Undefined) {
                     if let PropertyKey::Computed(expression) = property {

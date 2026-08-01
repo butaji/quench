@@ -342,6 +342,7 @@ pub fn set_super_property(
     let super_val = get_super_value(env).ok_or_else(|| {
         JsError("ReferenceError: super is only valid in class methods".to_string())
     })?;
+    crate::eval::class::helpers::check_this_access_allowed(env)?;
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     // Check if we're in a static context (static method, static init block).

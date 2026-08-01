@@ -324,6 +324,9 @@ pub(crate) fn touch_assignment_target(
             property,
             computed: true,
         } => {
+            if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
+                crate::eval::class::helpers::check_this_access_allowed(env)?;
+            }
             let object_value = eval_expression(object, env, false)?;
             // Per ES §13.15.5.3 IteratorDestructuringAssignmentEvaluation step 1,
             // the DestructuringAssignmentTarget evaluation includes evaluating
@@ -390,6 +393,9 @@ pub fn assign_to_member(
     value: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(), JsError> {
+    if matches!(object, Expression::Identifier(name) if name == "super") {
+        crate::eval::class::helpers::check_this_access_allowed(env)?;
+    }
     let cached = DESTRUCTURING_MEMBER_REFERENCE.with(|cell| cell.borrow_mut().take());
     let cached = computed.then_some(cached).flatten();
     let cached_symbol = cached.as_ref().and_then(|(_, key)| match key {
