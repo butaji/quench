@@ -5,6 +5,20 @@ fn eval(src: &str) -> Result<Value, crate::value::JsError> {
 }
 
 #[test]
+fn try_without_catch_finally_preserves_try_completion() {
+    assert_eq!(eval("1; try { } finally { }").unwrap(), Value::Undefined);
+    assert_eq!(
+        eval("2; try { 3; } finally { }").unwrap(),
+        Value::Number(3.0)
+    );
+    assert_eq!(eval("4; try { } finally { 5; }").unwrap(), Value::Undefined);
+    assert_eq!(
+        eval("6; try { 7; } finally { 8; }").unwrap(),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
 fn generator_assignment_defers_write_until_yield_resumes() {
     let value = eval("var obj = {foo: 'initial'}; function* g() { obj.foo = yield; } var iter = g(); iter.next(); var before = obj.foo; iter.next('resumed'); [before, obj.foo].join('|')").unwrap();
     assert_eq!(value, Value::String("initial|resumed".into()));

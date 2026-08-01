@@ -1590,7 +1590,13 @@ fn eval_try(
     }
 
     // Evaluate the try body
-    let try_result = eval_statement(body, env, false, in_arrow_function);
+    let try_result = eval_statement(body, env, false, in_arrow_function).map(|value| {
+        if matches!(body, Statement::Block(stmts) if stmts.is_empty()) {
+            Value::Undefined
+        } else {
+            value
+        }
+    });
 
     // Handle the result
     match try_result {
