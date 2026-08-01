@@ -212,10 +212,10 @@ fn try_method(
     obj: &Rc<RefCell<crate::value::object::Object>>,
     method_name: &str,
 ) -> Result<Option<Value>, JsError> {
-    let method = obj.borrow().get(method_name);
-    let Some(method) = method else {
+    let method = crate::eval::member::eval_object_member(obj, method_name, None)?;
+    if matches!(method, Value::Undefined | Value::Null) {
         return Ok(None);
-    };
+    }
     let this_val = Value::Object(Rc::clone(obj));
     match &method {
         Value::NativeFunction(nf) => {

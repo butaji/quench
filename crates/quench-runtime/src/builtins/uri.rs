@@ -184,9 +184,7 @@ fn decode_percent_triplet_sequence(
             if b0 < 0xE0 || b0 > 0xEF || (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
                 return Some(Err(uri_error("URI malformed")));
             }
-            let code = ((b0 as u32 & 0x0F) << 12)
-                | ((b1 as u32 & 0x3F) << 6)
-                | (b2 as u32 & 0x3F);
+            let code = ((b0 as u32 & 0x0F) << 12) | ((b1 as u32 & 0x3F) << 6) | (b2 as u32 & 0x3F);
             if code < 0x0800 || (0xD800..=0xDFFF).contains(&code) || (b0 == 0xE0 && b1 < 0xA0) {
                 return Some(Err(uri_error("URI malformed")));
             }
@@ -196,14 +194,22 @@ fn decode_percent_triplet_sequence(
             let b1 = decoded[1];
             let b2 = decoded[2];
             let b3 = decoded[3];
-            if b0 < 0xF0 || b0 > 0xF4 || (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
+            if b0 < 0xF0
+                || b0 > 0xF4
+                || (b1 & 0xC0) != 0x80
+                || (b2 & 0xC0) != 0x80
+                || (b3 & 0xC0) != 0x80
+            {
                 return Some(Err(uri_error("URI malformed")));
             }
             let code = ((b0 as u32 & 0x07) << 18)
                 | ((b1 as u32 & 0x3F) << 12)
                 | ((b2 as u32 & 0x3F) << 6)
                 | (b3 as u32 & 0x3F);
-            if code < 0x10000 || code > 0x10FFFF || (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F)
+            if code < 0x10000
+                || code > 0x10FFFF
+                || (b0 == 0xF0 && b1 < 0x90)
+                || (b0 == 0xF4 && b1 > 0x8F)
             {
                 return Some(Err(uri_error("URI malformed")));
             }
@@ -260,7 +266,6 @@ fn uri_error(msg: impl Into<String>) -> crate::JsError {
     js_err
 }
 
-
 fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
     if !s.contains('%') {
         return Ok(s.to_string());
@@ -312,8 +317,8 @@ fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
             if keep_reserved && is_uri_reserved_byte(decoded) {
                 if i > segment_start {
                     let decoded = percent_decode(&bytes[segment_start..i])
-                    .decode_utf8()
-                    .map_err(|_| uri_error("URI malformed"))?;
+                        .decode_utf8()
+                        .map_err(|_| uri_error("URI malformed"))?;
                     append_wtf8_string(&mut out, &decoded);
                 }
                 out.push('%');
@@ -356,7 +361,6 @@ fn decode_uri_component_raw(s: &str) -> Result<String, crate::JsError> {
 fn decode_uri_component(s: &str) -> Result<String, crate::JsError> {
     decode_uri_component_raw(s)
 }
-
 
 fn uri_argument(value: Option<&Value>) -> Result<String, crate::JsError> {
     let value = value.unwrap_or(&Value::Undefined);

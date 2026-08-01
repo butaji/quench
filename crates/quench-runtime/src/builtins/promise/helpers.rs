@@ -57,6 +57,18 @@ pub fn create_resolved_promise(value: Value) -> Rc<RefCell<Object>> {
     promise_rc
 }
 
+/// Create an unresolved promise with no settlement.
+pub fn create_pending_promise() -> Rc<RefCell<Object>> {
+    let mut promise_obj = Object::new(ObjectKind::Promise);
+    set_promise_prototype(&mut promise_obj);
+    let promise_rc = Rc::new(RefCell::new(promise_obj));
+    promise_rc
+        .borrow_mut()
+        .promise_data
+        .replace(PromiseObjectData::new());
+    promise_rc
+}
+
 /// Create rejected promise with given reason
 pub fn create_rejected_promise(reason: Value) -> Result<Rc<RefCell<Object>>, JsError> {
     let mut promise_obj = Object::new(ObjectKind::Promise);
@@ -76,6 +88,11 @@ fn set_promise_prototype(object: &mut Object) {
     let Some(Value::NativeConstructor(constructor)) =
         crate::context::get_global_from_context("Promise")
     else {
+        PROMISE_PROTO.with(|proto_slot| {
+            if let Some(proto) = proto_slot.borrow().as_ref() {
+                object.prototype = Some(Rc::clone(proto));
+            }
+        });
         return;
     };
     object.prototype = Some(Rc::clone(&constructor.prototype));

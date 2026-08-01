@@ -184,18 +184,19 @@ pub fn is_readonly_constructor_property(constructor: &str, property: &str) -> bo
     if matches!(property, "length" | "name") {
         return true;
     }
-    constructor == "Number"
-        && matches!(
-            property,
-            "MAX_VALUE"
-                | "MIN_VALUE"
-                | "NaN"
-                | "NEGATIVE_INFINITY"
-                | "POSITIVE_INFINITY"
-                | "MAX_SAFE_INTEGER"
-                | "MIN_SAFE_INTEGER"
-                | "EPSILON"
-        )
+    (constructor == "BigInt" && property == "prototype")
+        || (constructor == "Number"
+            && matches!(
+                property,
+                "MAX_VALUE"
+                    | "MIN_VALUE"
+                    | "NaN"
+                    | "NEGATIVE_INFINITY"
+                    | "POSITIVE_INFINITY"
+                    | "MAX_SAFE_INTEGER"
+                    | "MIN_SAFE_INTEGER"
+                    | "EPSILON"
+            ))
 }
 
 #[cfg(test)]

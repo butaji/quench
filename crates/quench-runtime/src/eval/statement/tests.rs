@@ -2678,13 +2678,6 @@ mod labeled_statement {
     }
 }
 
-#[test]
-fn test_block_const_scope() {
-    let mut ctx = crate::Context::new().unwrap();
-    let r = ctx.eval("function fn() { const u = 3; { const v = 6; return u + v; } } fn()");
-    eprintln!("block const scope: {:?}", r);
-}
-
 mod class_name_in_const {
     use super::*;
 

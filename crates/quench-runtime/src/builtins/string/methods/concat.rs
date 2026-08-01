@@ -50,7 +50,13 @@ fn string_split_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
 fn string_concat_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
     match super::this_js_string() {
         Some(s) => {
-            let rest: String = args.iter().map(to_js_string).collect();
+            let rest: String = args
+                .iter()
+                .map(|value| {
+                    crate::value::to_primitive(value, Some("string"))
+                        .map(|primitive| to_js_string(&primitive))
+                })
+                .collect::<Result<_, _>>()?;
             Ok(Value::String(format!("{}{}", s, rest)))
         }
         _ => Ok(Value::Undefined),

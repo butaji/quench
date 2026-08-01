@@ -101,7 +101,7 @@ pub fn settle_reject(promise_rc: &Rc<RefCell<Object>>, reason: Value) {
 }
 
 /// Enqueue the reactions of a settled promise onto the microtask queue.
-pub fn enqueue_promise_reactions(promise_rc: &Rc<RefCell<Object>>) {
+pub(crate) fn enqueue_promise_reactions(promise_rc: &Rc<RefCell<Object>>) {
     let (state, result, callbacks) = {
         let mut obj = promise_rc.borrow_mut();
         if let Some(ref mut data) = obj.promise_data {

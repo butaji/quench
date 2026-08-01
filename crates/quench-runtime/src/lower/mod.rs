@@ -72,6 +72,23 @@ mod tests {
     }
 
     #[test]
+    fn lower_dynamic_import_with_options_passes_second_arg() {
+        let stmt = first_stmt("import('module-name', { with: { type: 'text' } })");
+        assert!(matches!(
+            stmt,
+            Statement::Expression(expr)
+                if matches!(
+                    *expr,
+                    Expression::Call {
+                        callee: ref callee,
+                        arguments: ref args,
+                    } if matches!(**callee, Expression::Identifier(ref name) if name == "__dynamic_import__")
+                        && args.len() == 2
+                )
+        ));
+    }
+
+    #[test]
     fn lower_object_assignment_default_keeps_member_target_binding() {
         let stmt = first_stmt("({ p: target[key] = 0 } = source);");
         let Statement::Expression(expr) = stmt else {

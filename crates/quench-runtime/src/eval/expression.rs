@@ -281,6 +281,31 @@ pub fn eval_expression(
                 }
                 _ => {}
             }
+            {
+                let await_arg = match right.as_ref() {
+                    Expression::Await(await_arg) => Some(await_arg.as_ref()),
+                    Expression::Parenthesized(inner)
+                        if matches!(inner.as_ref(), Expression::Await(_)) =>
+                    {
+                        match inner.as_ref() {
+                            Expression::Await(await_arg) => Some(await_arg.as_ref()),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(await_arg) = await_arg {
+                    let awaited = eval_expression(await_arg, env, in_arrow_function)?;
+                    let left_for_continuation = left_val.clone();
+                    let op = *op;
+                    return crate::eval::r#await::await_with_continuation(
+                        awaited,
+                        Rc::new(move |right_value| {
+                            eval_binary_op(op, &left_for_continuation, &right_value)
+                        }),
+                    );
+                }
+            }
             let right_val = if let (Expression::Identifier(name), Expression::Class(class)) =
                 (left.as_ref(), right.as_ref())
             {
@@ -764,7 +789,19 @@ pub fn eval_expression(
             env,
             in_arrow_function,
         ),
-        Expression::Await(arg) => eval_await(arg, env, in_arrow_function),
+        Expression::Await(arg) => {
+            if let Expression::Binary { op, left, right } = arg.as_ref() {
+                let left_value = eval_expression(left, env, in_arrow_function)?;
+                let right_value = eval_expression(right, env, in_arrow_function)?;
+                let operation = *op;
+                let left_value = Rc::new(left_value);
+                return crate::eval::r#await::await_with_continuation(
+                    right_value,
+                    Rc::new(move |value| eval_binary_op(operation, left_value.as_ref(), &value)),
+                );
+            }
+            eval_await(arg, env, in_arrow_function)
+        }
         Expression::ForIn {
             variable,
             object,

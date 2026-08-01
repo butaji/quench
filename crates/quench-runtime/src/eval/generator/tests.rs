@@ -316,4 +316,32 @@ mod generator_tests {
         .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
+
+    #[test]
+    fn async_generator_await_resumes_and_completes() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; \
+             async function* g() { await Promise.resolve(); return 2; } \
+             g().next().then(function(value) { result = String(value.done) + ':' + String(value.value); });",
+        )
+        .unwrap();
+        let r = ctx.eval("result").unwrap();
+        assert_eq!(r, Value::String("true:2".to_string()));
+    }
+
+    #[test]
+    fn async_generator_await_interleaves_with_promise_jobs() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var actual = []; \
+             async function pushAwait() { actual.push('await'); } \
+             async function* callAsync() { for (var i = 0; i < 2; i++) { await pushAwait(); } } \
+             callAsync().next(); \
+             new Promise(function(resolve) { actual.push(1); resolve(); }).then(function() { actual.push(2); });",
+        )
+        .unwrap();
+        let r = ctx.eval("actual.join(',')").unwrap();
+        assert_eq!(r, Value::String("await,1,await,2".to_string()));
+    }
 }

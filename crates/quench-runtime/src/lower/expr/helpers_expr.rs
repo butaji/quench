@@ -155,9 +155,13 @@ fn lower_private_field_expr(
 fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError> {
     let callee = match &call.callee {
         ast::Expression::ImportExpression(import) => {
+            let mut arguments = vec![lower_expr_inner(&import.source)?];
+            if let Some(options) = &import.options {
+                arguments.push(lower_expr_inner(options)?);
+            }
             return Ok(Expression::Call {
                 callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
-                arguments: vec![lower_expr_inner(&import.source)?],
+                arguments,
             });
         }
         ast::Expression::Super(_) => Expression::Identifier("super".to_string()),

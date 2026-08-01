@@ -148,6 +148,22 @@ struct ForOfIteratorRun<'a> {
     pending: ForOfPending,
 }
 
+#[derive(Clone)]
+struct ForOfIteratorRunOwned {
+    iterator: Rc<RefCell<Object>>,
+    variable: Expression,
+    body: Statement,
+    loop_binding: Option<VarKind>,
+    dispose_async: Option<bool>,
+    await_of: bool,
+    await_values: bool,
+    env: Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+    index: usize,
+    pending: ForOfPending,
+    per_iteration: bool,
+}
+
 pub(crate) fn stage_stored_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
     PENDING_FOR_OF.with(|cell| *cell.borrow_mut() = Some(state));
 }
@@ -330,41 +346,102 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
     let per_iteration = run
         .loop_binding
         .is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
+    let owned = ForOfIteratorRunOwned {
+        iterator: Rc::clone(&run.iterator),
+        variable: run.variable.clone(),
+        body: run.body.clone(),
+        loop_binding: run.loop_binding,
+        dispose_async: run.dispose_async,
+        await_of: run.await_of,
+        await_values: run.await_values,
+        env: Rc::clone(run.env),
+        in_arrow_function: run.in_arrow_function,
+        index: run.index,
+        pending: run.pending.clone(),
+        per_iteration,
+    };
+    eval_for_of_iterator_owned(owned)
+}
+
+fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, JsError> {
     let mut completion = Value::Undefined;
     loop {
         let (item, resume) = if let Some((item, resume)) = run.pending.take() {
             (item, resume)
         } else {
-            let (item, done) = crate::eval::object::take_iterator_step_with_mode(
+            match crate::eval::object::take_iterator_step_with_mode(
                 &run.iterator,
                 &mut run.index,
-                run.env,
+                &run.env,
                 run.await_values,
-            )?;
-            if done {
-                // The Async-from-Sync fallback path consumes an extra microtask
-                // to settle the value-wrapper hop before the loop completes.
-                // Custom async iterators (await_values == false) have no such
-                // hop — their await continuation runs before the next tick.
-                if run.await_of && run.await_values {
-                    crate::builtins::promise::execute_pending_microtask()?;
+                false,
+            )? {
+                crate::eval::object::IteratorStepResult::Ready((item, done)) => {
+                    if done {
+                        // The Async-from-Sync fallback path consumes an extra microtask
+                        // to settle the value-wrapper hop before the loop completes.
+                        // Custom async iterators (await_values == false) have no such
+                        // hop — their await continuation runs before the next tick.
+                        if run.await_of && run.await_values {
+                            crate::builtins::promise::execute_pending_microtask()?;
+                        }
+                        break;
+                    }
+                    (item, ForOfResume::default())
                 }
-                break;
+                crate::eval::object::IteratorStepResult::Pending(promise) => {
+                    let pending = crate::builtins::promise::create_pending_promise();
+                    let state_for_fulfill = Rc::new(RefCell::new(run.clone()));
+                    let env_fulfill = Rc::clone(&run.env);
+                    let fulfill = Value::NativeFunction(Rc::new(
+                        crate::value::NativeFunction::new(move |args| {
+                            let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                            let mut state = state_for_fulfill.borrow_mut();
+                            let result = iterator_result_to_for_of_tuple(
+                                arg,
+                                &env_fulfill,
+                                &mut state.index,
+                            )?;
+                            let settled = if result.1 {
+                                Value::Undefined
+                            } else {
+                                state.pending = Some((result.0, ForOfResume::default()));
+                                eval_for_of_iterator_owned(state.clone())?
+                            };
+                            Ok(settled)
+                        }),
+                    ));
+                    let reject = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+                        move |args| {
+                            let reason = args.first().cloned().unwrap_or(Value::Undefined);
+                            crate::value::set_thrown_value(reason.clone());
+                            Err(JsError("for-await iterator rejected".to_string()))
+                        },
+                    )));
+                    let reaction = crate::builtins::promise::create_callback_promise(
+                        fulfill,
+                        reject,
+                        Rc::clone(&pending),
+                    );
+                    crate::builtins::promise::queue_callback_on_promise(&promise, reaction);
+                    let result = Value::Object(pending);
+                    crate::interpreter::set_control_flow(ControlFlow::Return(result.clone()));
+                    return Ok(result);
+                }
             }
-            (item, ForOfResume::default())
         };
         let item = item;
         let step = ForOfStep {
-            variable: run.variable,
+            variable: &run.variable,
             item: &item,
-            body: run.body,
+            body: &run.body,
             loop_binding: run.loop_binding,
             dispose_async: run.dispose_async,
-            env: run.env,
+            env: &run.env,
             in_arrow_function: run.in_arrow_function,
             resume,
         };
-        match run_for_of_iteration(step, per_iteration) {
+        match run_for_of_iteration(step, run.per_iteration) {
             Ok(ForOfIterResult::Done(val)) => return abrupt_close(&run.iterator, Ok(val)),
             Ok(ForOfIterResult::Break(val)) => {
                 let closed = abrupt_close(&run.iterator, Ok(val));
@@ -387,7 +464,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                 let body_tail = if suspend_init {
                     None
                 } else {
-                    crate::value::generator_replay::body_tail_after_yield(run.body, true)
+                    crate::value::generator_replay::body_tail_after_yield(&run.body, true)
                 };
                 // If we yielded during init/assign, run.pending is None (not yet set).
                 // Capture the current item so on resume we use the same item, not a new iter.next().
@@ -425,7 +502,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     dispose_async: run.dispose_async,
                     await_of: run.await_of,
                     await_values: run.await_values,
-                    per_iteration,
+                    per_iteration: run.per_iteration,
                     in_arrow_function: run.in_arrow_function,
                     pending: run.pending.clone(),
                 });
@@ -459,6 +536,27 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
     } else {
         Ok(completion)
     }
+}
+
+fn iterator_result_to_for_of_tuple(
+    result: Value,
+    env: &Rc<RefCell<Environment>>,
+    index: &mut usize,
+) -> Result<(Value, bool), JsError> {
+    let Value::Object(result_obj) = result else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "Iterator result interface is not an object",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
+    if crate::value::to_bool(&done) {
+        return Ok((Value::Undefined, true));
+    }
+    let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
+    *index += 1;
+    Ok((value, false))
 }
 
 fn deferred_for_await_rejection(error: JsError) -> Result<Value, JsError> {
@@ -705,7 +803,7 @@ pub fn eval_for_of(
             // Async generators already await their values inside next()
             // (async_generator_next_fn); only sync generators need the
             // Async-from-Sync value-await simulation.
-            await_of && !gen.borrow().is_async,
+            await_of,
         ),
         Value::Object(o) if await_of => {
             let (iterator, sync_fallback) = obtain_async_iterator(o, env)?;
@@ -1051,6 +1149,110 @@ mod tests {
                     .into()
             ),
         );
+    }
+
+    #[test]
+    fn async_generator_yield_star_with_empty_async_iterator_sets_result() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "(async function*() {\
+             yield* (async function*() {})();\
+            })().next().then(function(result) {\
+             __result = result;\
+            });",
+        )
+        .unwrap();
+        assert_eq!(ctx.eval("__result.done").unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn async_generator_yield_star_with_non_empty_async_iterator_sets_result() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var iterCount = 0;\
+             (async function*() {\
+               yield* (async function*() {\
+                 iterCount += 1;\
+                 yield 1;\
+               })();\
+             })().next().then(function(result) {\
+               __result = result;\
+             });",
+        )
+        .unwrap();
+        assert_eq!(ctx.eval("iterCount").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("__result.done").unwrap(), Value::Boolean(false));
+        assert_eq!(ctx.eval("__result.value").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn async_generator_for_await_of_async_generator_with_rejected_promise() {
+        let mut ctx = new_ctx();
+        ctx.eval(
+            "var error = new Error();\
+             var firstReasonIsError = false;\
+             var secondDone = false;\
+             var secondValueIsUndefined = false;\
+             var firstSettledResolve = false;\
+             var firstSettledReject = false;\
+             var firstResultDone = null;\
+             var firstResultValueIsError = false;\
+             async function *readFile() {\
+               yield Promise.reject(error);\
+               yield 'unreachable';\
+             }\
+             async function *gen() {\
+               for await (let line of readFile()) {\
+               yield line;\
+               }\
+             }\
+             var iter = gen();\
+             var firstPromise = iter.next();\
+             firstPromise.then(function(result) {\
+               firstSettledResolve = true;\
+               firstResultDone = result.done;\
+               firstResultValueIsError = result.value === error;\
+               if (result.value === error) {\
+                 firstReasonIsError = true;\
+               }\
+             }, function(reason) {\
+               firstSettledReject = true;\
+               firstReasonIsError = reason === error;\
+               var secondPromise = iter.next();\
+               secondPromise.then(function(result) {\
+                 secondDone = result.done === true;\
+                 secondValueIsUndefined = result.value === undefined;\
+               }, function(reason) {\
+                 throw reason;\
+               });\
+             });",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("firstSettledReject").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("firstSettledResolve").unwrap(),
+            Value::Boolean(false)
+        );
+        assert_eq!(
+            ctx.eval("firstReasonIsError").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("firstResultValueIsError").unwrap(),
+            Value::Boolean(false)
+        );
+        assert_eq!(ctx.eval("secondDone").unwrap(), Value::Boolean(true));
+        assert_eq!(
+            ctx.eval("secondValueIsUndefined").unwrap(),
+            Value::Boolean(true)
+        );
+        let first_settled = ctx
+            .eval("firstSettledResolve || firstSettledReject")
+            .unwrap();
+        assert_eq!(first_settled, Value::Boolean(true));
     }
 
     #[test]

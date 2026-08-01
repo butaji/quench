@@ -823,25 +823,25 @@
       "id": 67,
       "path": "test/built-ins/encodeURI",
       "tests": 31,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 15,
-      "pass_rate": "51.6%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 68,
       "path": "test/built-ins/encodeURIComponent",
       "tests": 31,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 16,
-      "pass_rate": "48.4%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 69,

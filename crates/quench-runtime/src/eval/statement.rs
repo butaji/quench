@@ -175,21 +175,6 @@ pub fn eval_statements(
     let last_idx = stmts.len().saturating_sub(1);
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last_stmt = i == last_idx;
-        if is_in_async_context() {
-            if let Statement::Expression(expr) = stmt {
-                if let Expression::Await(arg) = expr.as_ref() {
-                    let value = eval_expression(arg, env, in_arrow_function)?;
-                    let awaited = crate::eval::r#await::await_statement(
-                        value,
-                        stmts[i + 1..].to_vec(),
-                        Rc::clone(env),
-                        in_arrow_function,
-                    )?;
-                    set_control_flow(ControlFlow::Return(awaited.clone()));
-                    return Ok(awaited);
-                }
-            }
-        }
         let val = eval_statement(stmt, env, is_expr_body, in_arrow_function)?;
         // Per ES spec §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, empty blocks) should not replace the previous completion value.
@@ -294,38 +279,14 @@ fn eval_function_body_impl(
                         Rc::clone(env),
                         in_arrow_function,
                     )?;
-                    set_control_flow(ControlFlow::Return(awaited.clone()));
-                    set_explicit_return_for_current_body();
+                    take_control_flow();
                     return Ok(awaited);
-                }
-            }
-        }
-        if cfg!(test) {
-            if let Statement::Expression(expr) = stmt {
-                if let Expression::Await(_) = expr.as_ref() {
-                    assert!(is_in_async_context());
                 }
             }
         }
 
         // Check for tail-call return at top level.
         if let Statement::Return(ref expr) = stmt {
-            if is_in_async_context() && matches!(expr.as_deref(), Some(Expression::Await(_))) {
-                let arg = match expr.as_deref() {
-                    Some(Expression::Await(arg)) => arg,
-                    _ => unreachable!("non-await return handled above"),
-                };
-                let value = eval_expression(arg, env, in_arrow_function)?;
-                let awaited = crate::eval::r#await::await_statement(
-                    value,
-                    stmts[i + 1..].to_vec(),
-                    Rc::clone(env),
-                    in_arrow_function,
-                )?;
-                set_control_flow(ControlFlow::Return(awaited.clone()));
-                set_explicit_return_for_current_body();
-                return Ok(awaited);
-            }
             let handled_tail = is_last_stmt
                 && expr.as_ref().is_some_and(|e| is_tail_expr(e))
                 && acc_stack_len() > 0
@@ -393,6 +354,19 @@ fn eval_function_body_impl(
         }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
+        let suspended_await = is_in_async_context()
+            && crate::eval::r#await::is_promise(&stmt_val)
+            && crate::eval::r#await::take_last_pending_await().is_some();
+        if suspended_await {
+            let resumed = crate::eval::r#await::await_statement(
+                stmt_val,
+                stmts[i + 1..].to_vec(),
+                Rc::clone(env),
+                in_arrow_function,
+            )?;
+            take_control_flow();
+            return Ok(resumed);
+        }
         // Per ES §8.3.2, empty completions (var/let/const/function declarations,
         // empty statements, break/continue, empty blocks) should not replace the previous
         // completion value.
@@ -795,6 +769,21 @@ pub fn eval_statement(
             };
             set_control_flow(ControlFlow::Return(val));
             Ok(Value::Undefined)
+        }
+        Statement::Expression(expr)
+            if crate::interpreter::is_in_async_generator()
+                && matches!(expr.as_ref(), Expression::Await(_)) =>
+        {
+            let Expression::Await(arg) = expr.as_ref() else {
+                unreachable!()
+            };
+            let value = eval_expression(arg, env, in_arrow_function)?;
+            let awaited = crate::builtins::promise::promise_resolve_impl_static(
+                vec![value],
+                crate::builtins::promise::get_promise_proto(),
+            )?;
+            set_control_flow(ControlFlow::Return(awaited.clone()));
+            Ok(awaited)
         }
         Statement::Expression(expr) => eval_expression(expr, env, in_arrow_function),
         Statement::Empty => Ok(Value::Undefined),
@@ -1560,7 +1549,9 @@ fn eval_for(
                 }
                 // Loop handles continue: fall through to pop PI and run update.
             }
-            Some(ControlFlow::Return(val)) if is_in_async_context() && crate::eval::r#await::is_promise(&val) => {
+            Some(ControlFlow::Return(val))
+                if is_in_async_context() && crate::eval::r#await::is_promise(&val) =>
+            {
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                 }
@@ -1593,7 +1584,9 @@ fn eval_for(
                 set_control_flow(ControlFlow::Return(awaited.clone()));
                 return Ok(awaited);
             }
-            Some(ControlFlow::Yield(val)) if is_in_async_context() && crate::eval::r#await::is_promise(&val) => {
+            Some(ControlFlow::Yield(val))
+                if is_in_async_context() && crate::eval::r#await::is_promise(&val) =>
+            {
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                 }
@@ -2091,9 +2084,9 @@ pub(crate) fn dynamic_import(
     let import_type = match import_type_from_options(options, env) {
         Ok(import_type) => import_type,
         Err(reason) => {
-            return Ok(Value::Object(crate::builtins::promise::create_rejected_promise(
-                reason,
-            )?));
+            return Ok(Value::Object(
+                crate::builtins::promise::create_rejected_promise(reason)?,
+            ));
         }
     };
     match get_module_exports(source, env) {
@@ -2255,34 +2248,31 @@ fn import_type_from_options(
 }
 
 fn enumerable_own_property_keys(obj: &Rc<RefCell<Object>>) -> Result<Vec<String>, Value> {
-    if let Some(keys) = crate::eval::object::proxy_own_keys(obj)
-        .map_err(|error| {
-            get_thrown_value().unwrap_or_else(|| {
-                let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
-                reason
-            })
-        })?
-    {
-        let mut keys = Vec::new();
+    if let Some(keys) = crate::eval::object::proxy_own_keys(obj).map_err(|error| {
+        get_thrown_value().unwrap_or_else(|| {
+            let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+            reason
+        })
+    })? {
+        let mut enumerable_keys = Vec::new();
         for key in keys {
             let Value::String(key) = key else {
                 continue;
             };
             if crate::eval::object::proxy_property_is_enumerable(obj, &Value::String(key.clone()))
                 .map_err(|error| {
-                    get_thrown_value().unwrap_or_else(|| {
-                        let (reason, _) =
-                            crate::value::error::create_js_error_with_type(&error.0, "TypeError");
-                        reason
-                    })
-                })?
-                == Some(false)
+                get_thrown_value().unwrap_or_else(|| {
+                    let (reason, _) =
+                        crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+                    reason
+                })
+            })? == Some(false)
             {
                 continue;
             }
-            keys.push(key);
+            enumerable_keys.push(key);
         }
-        return Ok(keys);
+        return Ok(enumerable_keys);
     }
 
     let obj_ref = obj.borrow();

@@ -26,6 +26,7 @@ serde_json = "1"
 
 # URL/URI encoding and decoding
 url = "2"
+percent-encoding = "2"
 
 # Tracing/logging
 tracing = "0.1"

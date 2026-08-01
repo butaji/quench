@@ -30,6 +30,56 @@ pub fn eval_call(
         }
     }
     let (func, this_val, is_direct_eval) = crate::eval::object::eval_callee_with_this(callee, env)?;
+    if crate::interpreter::is_in_async_function() && arguments.len() == 1 {
+        let Some(Expression::Binary { op, left, right }) = arguments.first() else {
+            return eval_call_after_special_case(
+                func,
+                this_val,
+                is_direct_eval,
+                arguments,
+                env,
+                in_arrow_function,
+            );
+        };
+        let Expression::Await(await_arg) = right.as_ref() else {
+            return eval_call_after_special_case(
+                func,
+                this_val,
+                is_direct_eval,
+                arguments,
+                env,
+                in_arrow_function,
+            );
+        };
+        let left_value = crate::eval::expression::eval_expression(left, env, in_arrow_function)?;
+        let awaited = crate::eval::expression::eval_expression(await_arg, env, in_arrow_function)?;
+        let operation = *op;
+        return crate::eval::r#await::await_with_continuation(
+            awaited,
+            Rc::new(move |right_value| {
+                let argument = crate::eval::eval_binary_op(operation, &left_value, &right_value)?;
+                call_value_with_this(func.clone(), vec![argument], this_val.clone())
+            }),
+        );
+    }
+    eval_call_after_special_case(
+        func,
+        this_val,
+        is_direct_eval,
+        arguments,
+        env,
+        in_arrow_function,
+    )
+}
+
+fn eval_call_after_special_case(
+    func: Value,
+    this_val: Value,
+    is_direct_eval: bool,
+    arguments: &[Expression],
+    env: &Rc<RefCell<Environment>>,
+    in_arrow_function: bool,
+) -> Result<Value, JsError> {
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     // Save the previous DIRECT_EVAL flag, then set for this call.
     // This ensures nested eval calls don't clobber the outer eval's flag.

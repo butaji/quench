@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::ast::Statement;
+use crate::ast::{Expression, Statement};
 use crate::env::Environment;
 use crate::value::{Object, ObjectKind, Value};
 use crate::JsError;
@@ -80,6 +80,7 @@ pub struct GeneratorObject {
     /// Mid-yield* delegation state.
     pub yield_delegate_suspend: Option<YieldDelegateSuspend>,
     pub await_completion: bool,
+    pub await_resume: bool,
 }
 
 /// Saved yield* delegation iterator position across `.next()` calls.
@@ -118,6 +119,7 @@ impl GeneratorObject {
             for_of_suspend: None,
             yield_delegate_suspend: None,
             await_completion: false,
+            await_resume: false,
         }
     }
 
@@ -237,6 +239,32 @@ impl GeneratorObject {
         let start = self.pending_stmt.unwrap_or(0);
         let mut completion = Value::Undefined;
         for (i, stmt) in self.body.iter().enumerate().skip(start) {
+            if self.is_async
+                && matches!(stmt, Statement::Expression(expr) if matches!(expr.as_ref(), Expression::Await(_)))
+            {
+                let arg = match stmt {
+                    Statement::Expression(expr) => match expr.as_ref() {
+                        Expression::Await(arg) => arg,
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                };
+                let value = crate::eval::eval_expression(arg, &call_env, false)?;
+                let awaited = crate::builtins::promise::promise_resolve_impl_static(
+                    vec![value],
+                    crate::builtins::promise::get_promise_proto(),
+                )?;
+                self.pending_stmt = Some(i + 1);
+                self.await_completion = true;
+                self.await_resume = true;
+                crate::value::generator_replay::set_resuming_pending_yield(false);
+                crate::interpreter::set_current_eval_env(previous_eval_env);
+                crate::interpreter::set_strict_mode(prev_strict);
+                return Ok(IteratorResult {
+                    value: awaited,
+                    done: false,
+                });
+            }
             crate::value::generator_replay::set_resuming_pending_yield(self.pending_stmt.is_some());
             crate::value::generator_replay::begin_stmt_run(
                 self.yields_to_replay,
@@ -331,6 +359,17 @@ impl GeneratorObject {
                         crate::interpreter::take_control_flow()
                     {
                         completion = ret;
+                        if self.is_async && crate::eval::r#await::is_promise(&completion) {
+                            self.await_completion = true;
+                            self.state = GeneratorState::Suspended;
+                            crate::value::generator_replay::set_resuming_pending_yield(false);
+                            crate::interpreter::set_current_eval_env(previous_eval_env);
+                            crate::interpreter::set_strict_mode(prev_strict);
+                            return Ok(IteratorResult {
+                                value: completion,
+                                done: false,
+                            });
+                        }
                         break;
                     }
                     crate::value::generator_replay::commit_completed_yields(
@@ -589,9 +628,44 @@ fn resolve_async_result_later(
     let fulfilled_target = Rc::clone(&promise);
     let rejected_target = Rc::clone(&promise);
     let done = result.done;
+    let generator_for_fulfilled = Rc::clone(&generator);
     let fulfilled =
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |args| {
             let value = args.first().cloned().unwrap_or(Value::Undefined);
+            let should_resume = {
+                let mut generator_ref = generator_for_fulfilled.borrow_mut();
+                let should_resume = generator_ref.await_resume;
+                generator_ref.await_resume = false;
+                should_resume
+            };
+            if should_resume {
+                let (next_result, await_completion) = {
+                    let mut generator_ref = generator_for_fulfilled.borrow_mut();
+                    crate::interpreter::enter_async_generator();
+                    let next_result = generator_ref.next(value);
+                    let await_completion = generator_ref.await_completion;
+                    crate::interpreter::leave_async_generator();
+                    (next_result, await_completion)
+                };
+                let next_value = match next_result {
+                    Ok(next) if await_completion => resolve_async_result_later(
+                        next,
+                        Rc::clone(&proto),
+                        Rc::clone(&generator_for_fulfilled),
+                    )?,
+                    Ok(next) => crate::builtins::promise::promise_resolve_impl_static(
+                        vec![next.to_object()],
+                        Rc::clone(&proto),
+                    )?,
+                    Err(error) => crate::builtins::promise::promise_reject_impl_static(
+                        vec![crate::value::take_thrown_value()
+                            .unwrap_or_else(|| Value::String(error.to_string()))],
+                        Rc::clone(&proto),
+                    )?,
+                };
+                crate::builtins::promise::settle_resolve(&fulfilled_target, next_value);
+                return Ok(Value::Undefined);
+            }
             let result = IteratorResult { value, done }.to_object();
             crate::builtins::promise::settle_resolve(&fulfilled_target, result);
             Ok(Value::Undefined)
@@ -1454,6 +1528,35 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_next_rejects_with_yielded_rejected_promise() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var error = new Error(); \
+             var firstValue; var firstReason; var secondResult; \
+             var iter = (async function*() { yield Promise.reject(error); yield 'unreachable'; })(); \
+             iter.next().then(() => { firstValue = true; }, (reason) => { \
+               firstReason = reason; \
+               iter.next().then((result) => { secondResult = result; }); \
+             });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.eval("firstValue === undefined").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("firstReason === error").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("secondResult.done && secondResult.value === undefined")
+                .unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
     fn async_generator_yield_in_destructuring_keeps_iterator_suspend() {
         let mut ctx = crate::Context::new().unwrap();
         ctx.eval(
@@ -1538,6 +1641,53 @@ mod tests {
         assert_eq!(
             result,
             Value::String("tick 1,implicit,tick 2,explicit".into())
+        );
+    }
+
+    #[test]
+    fn async_generator_await_interleaves_with_builtin_promises() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var actual = []; \
+            async function pushAwait() { actual.push('await'); } \
+            async function* callAsync() { \
+              for (let i = 0; i < 2; i++) { \
+                await pushAwait(); \
+              } \
+              return 0; \
+            } \
+             var gen = callAsync(); \
+             var result = gen.next(); \
+             result.then(function(v) { first = v; }); \
+             new Promise(function (resolve) { \
+               actual.push(1); \
+               resolve(); \
+              }).then(function () { \
+               actual.push(2); \
+              });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        let first_done = ctx
+            .eval(
+                "String(first !== undefined) + ',' + String(first && first.done) + ',' + String(first && first.value instanceof Promise)",
+            )
+            .unwrap();
+        assert_eq!(first_done, Value::String("true,false,true".into()));
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("await,1,await,2".to_string())
+        );
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.eval("String(first !== undefined) + ',' + String(first.done) + ',' + String(first && first.value instanceof Promise)")
+                .unwrap(),
+            Value::String("true,false,true".into())
+        );
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("await,1,await,2".to_string())
         );
     }
 

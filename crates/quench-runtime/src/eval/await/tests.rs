@@ -18,6 +18,63 @@ mod await_tests {
     }
 
     #[test]
+    fn await_binary_operand_is_lowered_as_right_operand() {
+        let crate::ast::Program::Script(statements) = crate::parser::parse_script(
+            "async function f() { actual.push('Await: ' + await patched); }",
+        )
+        .unwrap();
+        let crate::ast::Statement::FunctionDeclaration { body, .. } = &statements[0] else {
+            panic!("expected function declaration");
+        };
+        let crate::ast::Statement::Expression(expression) = &body[0] else {
+            panic!("expected expression statement");
+        };
+        let crate::ast::Expression::Call { arguments, .. } = expression.as_ref() else {
+            panic!("expected call expression");
+        };
+        assert!(matches!(
+            &arguments[0],
+            crate::ast::Expression::Binary {
+                right,
+                ..
+            } if matches!(right.as_ref(), crate::ast::Expression::Await(_))
+        ));
+    }
+
+    #[test]
+    fn await_call_suspension_preserves_following_statement() {
+        let crate::ast::Program::Script(statements) =
+            crate::parser::parse_script("async function f() { a(); b(); }").unwrap();
+        let crate::ast::Statement::FunctionDeclaration { body, .. } = &statements[0] else {
+            panic!("expected function declaration");
+        };
+        assert_eq!(body.len(), 2);
+        let crate::ast::Program::Script(statements) = crate::parser::parse_script(
+            "async function f() { a.push('x' + await p); a.push('y' + await p); }",
+        )
+        .unwrap();
+        let crate::ast::Statement::FunctionDeclaration { body, .. } = &statements[0] else {
+            panic!("expected function declaration");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn await_call_suspension_runs_following_await() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var count = 0; var result = []; var p = {}; p.then = function(resolve) { count++; resolve(count); }; \
+             async function f() { result.push(await p); result.push(await p); } \
+             f().then(function() { result.push('done'); });",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("result.join(',')").unwrap(),
+            Value::String("1,2,done".into())
+        );
+    }
+
+    #[test]
     fn is_promise_plain_object_false() {
         // Plain objects are not Promises
         let r = eval("var o = {}; o.then !== undefined;").unwrap();
@@ -231,10 +288,53 @@ mod await_tests {
     fn async_await_thenable_throw_enters_catch_with_same_error() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var error={}; var caught=false; var same=false; var thenable={then:function(resolve,reject){throw error;}}; async function f(){try{await thenable;}catch(e){caught=true;same=e===error;}} f();")
-        .unwrap();
+            .unwrap();
         let _ = crate::builtins::promise::execute_pending_microtasks();
         assert_eq!(ctx.get_global("caught"), Some(Value::Boolean(true)));
         assert_eq!(ctx.get_global("same"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn async_await_monkey_patched_promise_then_is_not_called() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var thenCallCount = 0; \
+             const value = 42; \
+             const actual = []; \
+             const patched = Promise.resolve(value); \
+             patched.then = function(...args) { \
+                 thenCallCount += 1; \
+                 Promise.prototype.then.apply(this, args); \
+             }; \
+             var result; \
+             async function trigger() { \
+                 actual.push('Await: ' + await patched); \
+             } \
+             trigger().then(function() { result = 'done'; }, function(error) { result = error; }); \
+             new Promise(function (resolve) { \
+                 actual.push('Promise: 1'); \
+                 resolve(); \
+             }).then(function () { \
+                 actual.push('Promise: 2'); \
+             });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("thenCallCount"), Some(Value::Number(0.0)));
+        assert_eq!(ctx.get_global("result"), Some(Value::String("done".into())));
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("Promise: 1,Await: 42,Promise: 2".to_string())
+        );
+        let then_count = ctx.get_global("thenCallCount").unwrap();
+        assert_eq!(then_count, Value::Number(0.0));
+        let result = ctx.eval("result").unwrap();
+        return if let Value::String(result) = result {
+            assert_eq!(result, "done");
+            ()
+        } else {
+            panic!("unexpected result: {result:?}");
+        };
     }
 
     #[test]
@@ -273,5 +373,196 @@ mod await_tests {
             ctx.get_global("result"),
             Some(Value::String("override:done".into()))
         );
+    }
+
+    #[test]
+    fn async_arrow_try_reject_finally_reject_overrides_throw() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; \
+             var f = async() => { \
+               try { \
+                 await new Promise(function(resolve, reject) { reject('early-reject'); }); \
+               } finally { \
+                 await new Promise(function(resolve, reject) { reject('override'); }); \
+               } \
+             }; \
+             f().then(function() { result = 'resolved'; }, function(value) { result = value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("override".into()))
+        );
+    }
+
+    #[test]
+    fn async_function_await_in_try_catch_catches_rejection() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "'use strict'; \
+             var callCount = 0; \
+             var ref = async function BindingIdentifier() { \
+               callCount++; \
+               (() => { BindingIdentifier = 1; })(); \
+             }; \
+             async function f() { \
+               var catchCount = 0; \
+               try { \
+                 await ref(); \
+               } catch (error) { \
+                 catchCount += 1; \
+               } \
+               return [catchCount, callCount]; \
+             } \
+             var result; \
+             f().then(function(value) { result = value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.eval("result[0]").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("result[1]").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn named_async_function_reassignment_in_arrow_rejects_in_strict_awaited_call() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "'use strict'; \
+             let callCount = 0; \
+             var result; \
+             var ref = async function BindingIdentifier() { \
+               callCount++; \
+               (() => { BindingIdentifier = 1; })(); \
+               return BindingIdentifier; \
+             }; \
+             async function f() { \
+               let catchCount = 0; \
+               try { \
+                 await ref(); \
+               } catch (error) { \
+                 catchCount += 1; \
+               } \
+               result = catchCount + ',' + callCount; \
+             } \
+             f();",
+        )
+        .unwrap();
+        for _ in 0..8 {
+            let _ = crate::builtins::promise::execute_pending_microtasks();
+        }
+        assert_eq!(
+            ctx.get_global("result"),
+            Some(Value::String("1,1".to_string()))
+        );
+    }
+
+    #[test]
+    fn async_await_bare_expression_interleaves_with_promises() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var actual = [];\
+             async function pushAwait(value) {\
+               actual.push('Await: ' + value);\
+             }\
+             async function callAsync() {\
+               await pushAwait(1);\
+               await pushAwait(2);\
+             }\
+             callAsync();\
+             Promise.resolve().then(function() { actual.push('Promise: 1'); })\
+               .then(function() { actual.push('Promise: 2'); });",
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("Await: 1".to_string())
+        );
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("Await: 1,Promise: 1,Await: 2,Promise: 2".to_string())
+        );
+    }
+
+    #[test]
+    fn async_await_then_promises_interleave_without_refcell_panic() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var actual = [];\
+             async function pushAwait(value) { actual.push('Await: ' + value); }\
+             async function callAsync() {\
+               await pushAwait(1);\
+               await pushAwait(2);\
+             }\
+             callAsync();\
+             new Promise(function(resolve) { actual.push('Promise: 1'); resolve(); })\
+               .then(function() { actual.push('Promise: 2'); });",
+        )
+        .unwrap();
+
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("Await: 1,Promise: 1,Await: 2,Promise: 2".to_string())
+        );
+    }
+
+    #[test]
+    fn async_function_call_returns_marked_promise() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "async function f() { return 42; }\
+             f();",
+            )
+            .unwrap();
+        assert!(
+            matches!(result, Value::Object(_)),
+            "async function should return a promise-like object"
+        );
+        assert!(
+            crate::eval::r#await::is_promise(&result),
+            "promise marker should be visible"
+        );
+    }
+
+    #[test]
+    fn async_generator_next_first_step_is_promise() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "async function pushAwait() { return 1; }\
+             async function* callAsync() {\
+               await pushAwait();\
+             }\
+             var gen = callAsync();\
+             var result = gen.next();",
+        )
+        .unwrap();
+        let result = ctx.eval("result").unwrap();
+        assert!(crate::eval::r#await::is_promise(&result));
+    }
+
+    #[test]
+    fn async_generator_for_loop_next_is_promise_then_completion() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "async function pushAwait() { }\
+             async function* callAsync() {\
+               for (let i = 0; i < 2; i++) {\
+                 await pushAwait();\
+               }\
+               return 0;\
+             }\
+             var gen = callAsync();\
+             var result = gen.next();",
+        )
+        .unwrap();
+        let first = ctx.eval("result").unwrap();
+        assert!(crate::eval::r#await::is_promise(&first));
     }
 }

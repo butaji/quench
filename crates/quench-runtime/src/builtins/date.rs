@@ -20,7 +20,6 @@ use crate::Context;
 pub fn register_global_functions(ctx: &mut Context) {
     register_timer_functions(ctx);
     register_parse_functions(ctx);
-    register_uri_functions(ctx);
     register_type_converters(ctx);
 }
 
@@ -65,18 +64,6 @@ fn register_parse_functions(ctx: &mut Context) {
     });
 }
 
-fn register_uri_functions(ctx: &mut Context) {
-    ctx.register_native("encodeURIComponent", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
-        Ok(Value::String(urlencoding::encode(&s).to_string()))
-    });
-    ctx.register_native("decodeURIComponent", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
-        let decoded = urlencoding::decode(&s).map(|d| d.to_string()).unwrap_or(s);
-        Ok(Value::String(decoded))
-    });
-}
-
 fn register_type_converters(ctx: &mut Context) {
     register_string_converter(ctx);
     register_boolean_converter(ctx);
@@ -109,7 +96,11 @@ fn create_string_prototype() -> Rc<RefCell<Object>> {
 fn create_string_constructor_fn(string_proto_clone: Rc<RefCell<Object>>) -> Value {
     Value::NativeFunction(Rc::new(NativeFunction::new_with_prototype(
         move |args| {
-            let s = args.first().map(to_js_string).unwrap_or_default();
+            let s = match args.first() {
+                Some(value) => crate::value::to_primitive(value, Some("string"))
+                    .map(|primitive| to_js_string(&primitive))?,
+                None => String::new(),
+            };
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
                 this_obj.borrow_mut().set("0", Value::String(s.clone()));

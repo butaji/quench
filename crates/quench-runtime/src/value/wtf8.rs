@@ -13,6 +13,23 @@
 
 use crate::value::Value;
 
+const HEX: [u8; 16] = *b"0123456789abcdef";
+
+fn nibble_to_hex(value: u8) -> char {
+    HEX[(value & 0x0F) as usize] as char
+}
+
+/// Append a UTF-8 representation of a UTF-16 surrogate unit encoded as
+/// `\u{FFFD}XXXX`, matching oxc's WTF-8 encoding convention for JavaScript
+/// strings.
+pub fn append_wtf8_surrogate(out: &mut String, code_unit: u16) {
+    out.push('\u{FFFD}');
+    out.push(nibble_to_hex((code_unit >> 12) as u8));
+    out.push(nibble_to_hex((code_unit >> 8) as u8 & 0x0F));
+    out.push(nibble_to_hex((code_unit >> 4) as u8 & 0x0F));
+    out.push(nibble_to_hex(code_unit as u8));
+}
+
 /// oxc 0.142 encodes lone surrogates as U+FFFD followed by 4 hex digits.
 /// U+FFFD in UTF-8 is 0xEF 0xBF 0xBD.
 const U_FFFD_BYTES: [u8; 3] = [0xEF, 0xBF, 0xBD];

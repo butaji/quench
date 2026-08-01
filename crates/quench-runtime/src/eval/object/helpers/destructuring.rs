@@ -613,7 +613,8 @@ fn take_iterator_step_with_args(
         return Ok(IteratorStepResult::Ready((value, false)));
     }
     let result = if await_result
-        && (crate::interpreter::is_in_async_generator() || crate::interpreter::is_in_async_function())
+        && (crate::interpreter::is_in_async_generator()
+            || crate::interpreter::is_in_async_function())
     {
         let next_result = result.clone();
         let promise = crate::builtins::promise::promise_resolve_impl_static(
@@ -633,9 +634,7 @@ fn take_iterator_step_with_args(
             Some((crate::value::object::PromiseState::Pending, _)) => {
                 return Ok(IteratorStepResult::Pending(promise));
             }
-            Some((crate::value::object::PromiseState::Fulfilled, value)) => {
-                value
-            }
+            Some((crate::value::object::PromiseState::Fulfilled, value)) => value,
             Some((crate::value::object::PromiseState::Rejected, reason)) => {
                 crate::value::set_thrown_value(reason);
                 return Err(JsError("Async iterator result rejected".to_string()));
@@ -645,12 +644,7 @@ fn take_iterator_step_with_args(
     } else {
         result
     };
-    let tuple = iterator_result_to_tuple(
-        result,
-        env,
-        index,
-        read_done_value,
-    )?;
+    let tuple = iterator_result_to_tuple(result, env, index, read_done_value)?;
     Ok(IteratorStepResult::Ready(tuple))
 }
 

@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::value::wtf8::append_wtf8_surrogate;
 use crate::value::{to_primitive, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 use crate::JsError;
@@ -56,8 +57,7 @@ fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
         for v in args.iter() {
             let code = to_number_or_err(v)? as u16;
             if (0xd800..=0xdfff).contains(&code) {
-                chars.push('\u{FFFD}');
-                chars.push_str(&format!("{code:04x}"));
+                append_wtf8_surrogate(&mut chars, code);
             } else {
                 let ch = std::char::from_u32(code as u32).unwrap_or('\u{FFFD}');
                 chars.push(ch);

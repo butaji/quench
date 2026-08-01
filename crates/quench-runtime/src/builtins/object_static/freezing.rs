@@ -228,7 +228,9 @@ pub fn object_get_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
             .clone()
             .or_else(|| crate::builtins::function::get_function_prototype().map(Value::Object))
             .unwrap_or(Value::Null)),
-        Value::NativeConstructor(nc) => Ok(Value::Object(nc.prototype.clone())),
+        Value::NativeConstructor(_) => Ok(crate::builtins::function::get_function_prototype()
+            .map(Value::Object)
+            .unwrap_or(Value::Null)),
         Value::Class(class) => {
             // Object.getPrototypeOf(class) returns the class constructor's own
             // [[Prototype]] — i.e., the superclass VALUE (or null for extends null).

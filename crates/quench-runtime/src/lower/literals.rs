@@ -30,7 +30,10 @@ pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, 
             exprs.push(Expression::String(s));
         }
         if i < expr_count {
-            exprs.push(lower_template_expr(&tpl.expressions[i])?);
+            exprs.push(Expression::Call {
+                callee: Box::new(Expression::Identifier("String".to_string())),
+                arguments: vec![lower_template_expr(&tpl.expressions[i])?],
+            });
         }
     }
 

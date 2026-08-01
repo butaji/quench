@@ -241,11 +241,7 @@ fn eval_add(left: &Value, right: &Value) -> Result<Value, JsError> {
             let l_is_bigint = matches!(&lp, Value::BigInt(_));
             let r_is_bigint = matches!(&rp, Value::BigInt(_));
             if l_is_bigint != r_is_bigint {
-                let (_, js_err) = crate::value::error::create_js_error_with_type(
-                    "Cannot mix BigInt and other types",
-                    "TypeError",
-                );
-                return Err(js_err);
+                return crate::throw!("TypeError", "Cannot mix BigInt and other types");
             }
             if l_is_bigint && r_is_bigint {
                 // BigInt addition
@@ -354,13 +350,23 @@ where
     Some(num_cmp(cmp as f64, 0.0))
 }
 
-fn parse_bigint_string(text: &str) -> Option<num_bigint::BigInt> {
+pub(crate) fn parse_bigint_string(text: &str) -> Option<num_bigint::BigInt> {
     let text = text.trim();
     if text.is_empty() {
         return Some(num_bigint::BigInt::from(0));
     }
     let (sign, digits) = match text.as_bytes().first() {
-        Some(b'-') => (-1, &text[1..]),
+        Some(b'-')
+            if text.len() < 3
+                || !text[1..].starts_with("0x")
+                    && !text[1..].starts_with("0X")
+                    && !text[1..].starts_with("0o")
+                    && !text[1..].starts_with("0O")
+                    && !text[1..].starts_with("0b")
+                    && !text[1..].starts_with("0B") =>
+        {
+            (-1, &text[1..])
+        }
         Some(b'+') => return None,
         _ => (1, text),
     };

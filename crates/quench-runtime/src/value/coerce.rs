@@ -14,13 +14,15 @@ pub fn to_js_string(v: &Value) -> String {
     }
     match v {
         Value::Object(o) => {
-            let obj = o.borrow();
+            let own_to_string = {
+                let obj = o.borrow();
+                obj.get_own_value("toString")
+            };
             if let Some(
                 Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_),
-            ) = obj.get("toString")
+            ) = own_to_string
             {
                 let o_clone = Rc::clone(o);
-                drop(obj);
                 let to_string_val = o_clone.borrow().get("toString").unwrap();
                 if let Ok(result) =
                     call_value_with_this(to_string_val, vec![], Value::Object(Rc::clone(&o_clone)))
@@ -36,7 +38,30 @@ pub fn to_js_string(v: &Value) -> String {
                     .unwrap_or_else(|| "[object Object]".to_string());
                 return fallback;
             }
-            object_to_js_string(&obj)
+            let has_null_prototype = { o.borrow().prototype.is_none() };
+            if has_null_prototype {
+                let own_value_of = {
+                    let obj = o.borrow();
+                    obj.get_own_value("valueOf")
+                };
+                if let Some(
+                    Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_),
+                ) = own_value_of
+                {
+                    let o_clone = Rc::clone(o);
+                    let value_of_val = o_clone.borrow().get("valueOf").unwrap();
+                    if let Ok(result) = call_value_with_this(
+                        value_of_val,
+                        vec![],
+                        Value::Object(Rc::clone(&o_clone)),
+                    ) {
+                        if let Some(s) = simple_string_value(&result) {
+                            return s;
+                        }
+                    }
+                }
+            }
+            object_to_js_string(&o.borrow())
         }
         Value::Function(f) => f.source_text(),
         Value::NativeFunction(_)

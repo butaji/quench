@@ -219,7 +219,11 @@ pub fn eval_native_constructor_member(
             if is_function_constructor
                 || matches!(
                     nc.name().as_str(),
-                    "Object" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+                    "Object"
+                        | "BigInt"
+                        | "GeneratorFunction"
+                        | "AsyncFunction"
+                        | "AsyncGeneratorFunction"
                 )
             {
                 Ok(Value::Number(1.0))

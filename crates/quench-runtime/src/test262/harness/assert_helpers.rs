@@ -783,6 +783,31 @@ if (threw === false) {
     }
 
     #[test]
+    fn test_assert_throws_mixed_bigint_after_accessor_mutation() {
+        let mut ctx = harness_ctx();
+        let result = ctx.eval(
+            r#"
+            let BigIntToString = BigInt.prototype.toString;
+            let toStringFunction = function() { return `${BigIntToString.call(this)}foo`; };
+            Object.defineProperty(BigInt.prototype, "toString", { get: () => toStringFunction });
+            assert.sameValue("" + Object(1n), "1");
+            assert.throws(TypeError, () => { +Object(1n); });
+            assert.sameValue(`${Object(1n)}`, "1foo");
+            let BigIntValueOf = BigInt.prototype.valueOf;
+            let valueOfFunction = function() { return BigIntValueOf.call(this) * 2n; };
+            Object.defineProperty(BigInt.prototype, "valueOf", { get: () => valueOfFunction });
+            assert(Object(1n) == 2n);
+            assert.sameValue(Object(1n) + 1n, 3n);
+            assert.sameValue({ "1foo": 1, "2": 2 }[Object(1n)], 1);
+            toStringFunction = undefined;
+            assert.throws(TypeError, () => { 1 + Object(1n); });
+            "ok"
+            "#,
+        );
+        assert_eq!(result, Ok(Value::String("ok".to_string())));
+    }
+
+    #[test]
     fn test_check_error_instance_local_ctor() {
         let mut ctx = harness_ctx();
         let result = ctx.eval(

@@ -426,6 +426,12 @@ fn test_to_js_string_objects() {
     assert_eq!(to_js_string(&f), "function () {}");
 }
 
+#[test]
+fn test_to_js_string_uses_value_of_for_string_hint_only_when_prototype_is_null() {
+    let o = eval_val("Object.create(null, { valueOf: { value: function() { return 42; } } })");
+    assert_eq!(to_js_string(&o), "42");
+}
+
 // ── to_object additional edge cases ─────────────────────────────────────────
 
 #[test]

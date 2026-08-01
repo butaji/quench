@@ -53,7 +53,13 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::CallExpression(call) => expr_helpers::lower_call_expr_pub(call),
         ast::Expression::ImportExpression(import) => Ok(Expression::Call {
             callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
-            arguments: vec![lower_expr(&import.source)?],
+            arguments: {
+                let mut arguments = vec![lower_expr(&import.source)?];
+                if let Some(options) = &import.options {
+                    arguments.push(lower_expr(options)?);
+                }
+                arguments
+            },
         }),
         ast::Expression::NewExpression(new_expr) => expr_helpers::lower_new_expr_pub(new_expr),
         ast::Expression::SequenceExpression(seq) => expr_helpers::lower_seq_expr_pub(seq),

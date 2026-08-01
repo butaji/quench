@@ -357,9 +357,10 @@ fn register_dynamic_import(ctx: &mut Context) {
             .first()
             .map(crate::value::to_js_string)
             .unwrap_or_default();
+        let options = args.get(1);
         let env = crate::context::get_current_env()
             .ok_or_else(|| JsError::new("TypeError: no current context"))?;
-        crate::eval::statement::dynamic_import(&source, &env)
+        crate::eval::statement::dynamic_import(&source, &env, options)
     });
     ctx.set_global(
         "__dynamic_import__".to_string(),

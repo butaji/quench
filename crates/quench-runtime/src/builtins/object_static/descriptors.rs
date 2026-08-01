@@ -1185,7 +1185,7 @@ pub fn get_native_constructor_property_descriptor(
         };
         let configurable = matches!(
             nc.name().as_str(),
-            "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+            "BigInt" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
         );
         return make_property_descriptor_string(&name, false, false, configurable);
     }
@@ -1193,7 +1193,11 @@ pub fn get_native_constructor_property_descriptor(
         let len = if is_function_constructor
             || matches!(
                 nc.name().as_str(),
-                "Object" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+                "Object"
+                    | "BigInt"
+                    | "GeneratorFunction"
+                    | "AsyncFunction"
+                    | "AsyncGeneratorFunction"
             ) {
             1.0
         } else {

@@ -53,9 +53,12 @@ incremental collection timing becomes necessary.
 - **Why:** Snapshot/dump support and structured test fixtures. Not on the
   hot path.
 
-## URL encoding — `url`
+## URL encoding — `url`, `percent-encoding`
 
-- **Crate:** `url = "2"`, using `url::percent_encoding`.
+- **Crates:** `url = "2"`, `percent-encoding = "2"`.
+  URI builtins use `percent-encoding` for `NON_ALPHANUMERIC`,
+  `utf8_percent_encode`, and `percent_decode`; `url` remains in use for
+  module/import URL work.
 - **Why:** Focused RFC 3986 percent-encoding primitives (`NON_ALPHANUMERIC`,
   `utf8_percent_encode`, `percent_decode`) used by `encodeURI`,
   `encodeURIComponent`, `decodeURI`, and `decodeURIComponent`.

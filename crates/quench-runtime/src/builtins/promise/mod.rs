@@ -11,10 +11,12 @@ mod static_methods;
 pub use static_methods::{capability, promise_all, promise_race};
 
 // Re-export public APIs
-pub(crate) use callbacks::{queue_callback_on_promise, settle_reject, settle_resolve};
+pub(crate) use callbacks::{
+    enqueue_promise_reactions, queue_callback_on_promise, settle_reject, settle_resolve,
+};
 pub use constructor::{create_promise_constructor, register_promise};
 pub use helpers::{
-    create_callback_promise, create_promise_proto, create_rejected_promise,
+    create_callback_promise, create_pending_promise, create_promise_proto, create_rejected_promise,
     create_resolved_promise, get_promise_proto, set_promise_proto,
 };
 pub(crate) use helpers::{restore_promise_proto, save_promise_proto};
