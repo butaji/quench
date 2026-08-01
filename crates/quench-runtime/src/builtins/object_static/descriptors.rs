@@ -264,6 +264,13 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         return Ok(obj);
     }
 
+    if let Value::NativeConstructor(nc) = &obj {
+        if let Some(value) = flags.value {
+            nc.set_static_method(&prop, value);
+        }
+        return Ok(obj);
+    }
+
     if prop == "length" {
         if let Value::Object(o) = &obj {
             if o.borrow().kind == ObjectKind::Array {
@@ -1084,6 +1091,9 @@ pub fn get_native_constructor_property_descriptor(
     nc: &crate::value::NativeConstructor,
     prop: &str,
 ) -> Result<Value, JsError> {
+    if nc.is_property_deleted(prop) {
+        return Ok(Value::Undefined);
+    }
     // Check for custom static methods first
     if let Some(value) = nc.get_static_method(prop) {
         return Ok(make_descriptor_value(
@@ -1107,7 +1117,11 @@ pub fn get_native_constructor_property_descriptor(
         } else {
             nc.name().to_string()
         };
-        return make_property_descriptor_string(&name, false, false, false);
+        let configurable = matches!(
+            nc.name().as_str(),
+            "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+        );
+        return make_property_descriptor_string(&name, false, false, configurable);
     }
     if prop == "length" {
         let len = if is_function_constructor
@@ -1444,10 +1458,11 @@ pub fn native_function_own_property_names(nf: &crate::value::NativeFunction) -> 
 }
 
 pub fn native_constructor_own_property_names(nc: &crate::value::NativeConstructor) -> Vec<String> {
-    let _ = nc;
-    vec![
-        "length".to_string(),
-        "name".to_string(),
-        "prototype".to_string(),
-    ]
+    let mut names = Vec::new();
+    if !nc.is_property_deleted("length") {
+        names.push("length".to_string());
+    }
+    names.push("name".to_string());
+    names.push("prototype".to_string());
+    names
 }

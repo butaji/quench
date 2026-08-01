@@ -787,6 +787,27 @@ mod tests {
             .unwrap();
         assert_eq!(value, crate::Value::String("1|false|false|true".into()));
     }
+
+    #[test]
+    fn generator_function_length_delete_and_restore_tracks_configurability() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var C = Object.getPrototypeOf(function*() {}).constructor; var deleted = delete C.length; var absent = Object.getOwnPropertyDescriptor(C, 'length') === undefined; Object.defineProperty(C, 'length', {value: 1, writable: false, enumerable: false, configurable: true}); [deleted, absent, C.length].join('|')")
+            .unwrap();
+        assert_eq!(value, crate::Value::String("true|true|1".into()));
+    }
+
+    #[test]
+    fn generator_function_name_is_configurable() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var C = Object.getPrototypeOf(function*() {}).constructor; var d = Object.getOwnPropertyDescriptor(C, 'name'); [d.value, d.writable, d.enumerable, d.configurable].join('|')")
+            .unwrap();
+        assert_eq!(
+            value,
+            crate::Value::String("GeneratorFunction|false|false|true".into())
+        );
+    }
     use super::*;
 
     #[test]

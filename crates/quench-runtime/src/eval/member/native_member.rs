@@ -189,6 +189,9 @@ pub fn eval_native_constructor_member(
     nc: &Rc<NativeConstructor>,
     prop_name: &str,
 ) -> Result<Value, JsError> {
+    if nc.is_property_deleted(prop_name) {
+        return Ok(Value::Undefined);
+    }
     // Check accessor (getter/setter) first - Object.defineProperty can override
     if let Some(accessor) = nc.get_accessor(prop_name) {
         if let Some(getter) = accessor.getter {

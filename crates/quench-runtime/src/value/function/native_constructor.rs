@@ -99,8 +99,12 @@ impl NativeConstructor {
         self.static_methods.borrow().get(name).cloned()
     }
 
+    pub fn is_property_deleted(&self, name: &str) -> bool {
+        self.deleted_static_methods.borrow().contains(name)
+    }
+
     pub fn delete_static_method(&self, name: &str) -> bool {
-        if self.static_methods.borrow().contains_key(name) {
+        if self.static_methods.borrow().contains_key(name) || matches!(name, "length" | "name") {
             self.deleted_static_methods
                 .borrow_mut()
                 .insert(name.to_string());

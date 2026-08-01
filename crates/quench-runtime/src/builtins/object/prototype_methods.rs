@@ -73,7 +73,10 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
             }
         } else if let Value::NativeConstructor(nc) = &this_val {
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
-                if key_str == "prototype" || key_str == "length" || key_str == "name" {
+                if key_str == "prototype"
+                    || key_str == "name" && !nc.is_property_deleted("name")
+                    || key_str == "length" && !nc.is_property_deleted("length")
+                {
                     return Ok(Value::Boolean(true));
                 }
                 if nc.get_static_method(&key_str).is_some() {
