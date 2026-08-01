@@ -779,6 +779,14 @@ fn make_function_constructor(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generator_function_constructor_has_standard_length_descriptor() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var C = Object.getPrototypeOf(function*() {}).constructor; var d = Object.getOwnPropertyDescriptor(C, 'length'); [d.value, d.writable, d.enumerable, d.configurable].join('|')")
+            .unwrap();
+        assert_eq!(value, crate::Value::String("1|false|false|true".into()));
+    }
     use super::*;
 
     #[test]

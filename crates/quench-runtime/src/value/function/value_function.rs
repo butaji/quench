@@ -285,9 +285,14 @@ impl ValueFunction {
         if let Some(obj_proto) = crate::builtins::get_object_prototype() {
             proto.prototype = Some(obj_proto);
         }
-        if self.is_async && self.is_generator {
-            if let Some(async_proto) = crate::builtins::function::get_async_generator_prototype() {
-                proto.prototype = Some(async_proto);
+        if self.is_generator {
+            let generator_proto = if self.is_async {
+                crate::builtins::function::get_async_generator_prototype()
+            } else {
+                crate::builtins::function::get_generator_prototype()
+            };
+            if let Some(generator_proto) = generator_proto {
+                proto.prototype = Some(generator_proto);
             }
         }
         proto

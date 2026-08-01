@@ -1110,7 +1110,11 @@ pub fn get_native_constructor_property_descriptor(
         return make_property_descriptor_string(&name, false, false, false);
     }
     if prop == "length" {
-        let len = if is_function_constructor || nc.name() == "Object" {
+        let len = if is_function_constructor
+            || matches!(
+                nc.name().as_str(),
+                "Object" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+            ) {
             1.0
         } else {
             0.0

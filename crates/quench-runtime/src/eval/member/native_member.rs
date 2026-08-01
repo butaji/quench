@@ -213,7 +213,12 @@ pub fn eval_native_constructor_member(
     match prop_name {
         "prototype" => Ok(Value::Object(Rc::clone(&nc.prototype))),
         "length" => {
-            if is_function_constructor || nc.name() == "Object" {
+            if is_function_constructor
+                || matches!(
+                    nc.name().as_str(),
+                    "Object" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
+                )
+            {
                 Ok(Value::Number(1.0))
             } else {
                 Ok(Value::Number(0.0))
