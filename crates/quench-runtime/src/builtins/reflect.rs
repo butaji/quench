@@ -4,7 +4,9 @@
 //! the handler omits them). Tests that require the full Reflect or Proxy
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
-use crate::builtins::object_static::{object_define_property, to_property_key};
+use crate::builtins::object_static::{
+    object_define_property, object_is_extensible, object_prevent_extensions, to_property_key,
+};
 use crate::context::Context;
 use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
 use std::cell::RefCell;
@@ -352,6 +354,18 @@ pub fn register_reflect(ctx: &mut Context) {
             },
         ))),
     );
+    reflect.set(
+        "preventExtensions",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| object_prevent_extensions(args).map(|_| Value::Boolean(true)),
+        ))),
+    );
+    reflect.set(
+        "isExtensible",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            object_is_extensible,
+        ))),
+    );
     ctx.set_global(
         "Reflect".to_string(),
         Value::Object(Rc::new(RefCell::new(reflect))),
@@ -532,6 +546,14 @@ JSON.stringify([target.p, log]);
     #[test]
     fn reflect_has_own_property() {
         let result = eval_ok_with_builtins("Reflect.has({a: 1}, 'a')");
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_prevent_extensions_returns_true() {
+        let result = eval_ok_with_builtins(
+            "var o = {}; Reflect.preventExtensions(o) && !Reflect.isExtensible(o)",
+        );
         assert_eq!(result, Value::Boolean(true));
     }
 
