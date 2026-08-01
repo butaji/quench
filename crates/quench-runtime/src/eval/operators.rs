@@ -568,7 +568,9 @@ pub fn eval_unary_op(op: UnaryOp, val: &Value) -> Result<Value, JsError> {
         },
         UnaryOp::BitNot => match to_primitive(val, Some("number"))? {
             Value::BigInt(value) => Ok(Value::BigInt(Rc::new(!value.as_ref()))),
-            primitive => Ok(Value::Number(!(to_number(&primitive) as i64) as f64)),
+            primitive => Ok(Value::Number(
+                (!(to_uint32(to_number(&primitive)) as i32)) as f64,
+            )),
         },
         UnaryOp::Typeof => eval_typeof(val),
         UnaryOp::Void => Ok(Value::Undefined),

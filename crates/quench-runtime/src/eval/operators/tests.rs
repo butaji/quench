@@ -807,6 +807,10 @@ fn unary_bitnot() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(ctx.eval("~0").unwrap(), crate::value::Value::Number(-1.0));
     assert_eq!(ctx.eval("~(-1)").unwrap(), crate::value::Value::Number(0.0));
+    assert_eq!(
+        ctx.eval("~-2147483649").unwrap(),
+        crate::value::Value::Number(-2147483648.0)
+    );
 }
 
 #[test]
