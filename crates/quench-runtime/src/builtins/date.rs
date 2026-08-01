@@ -512,6 +512,12 @@ pub fn register_date(ctx: &mut Context) {
     let date_proto_clone = Rc::clone(&date_proto_rc);
     let date_constructor = NativeConstructor::new(
         move |args| {
+            if matches!(
+                crate::builtins::get_native_this(),
+                Some(Value::Undefined) | None
+            ) {
+                return Ok(Value::String(format!("Date @ {}", chrono_now())));
+            }
             let timestamp = if args.is_empty() {
                 chrono_now() as f64
             } else if args.len() == 1 {
@@ -615,6 +621,15 @@ pub fn register_date(ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_called_without_new_returns_string() {
+        let mut context = Context::new().unwrap();
+        assert_eq!(
+            context.eval("typeof Date() ").unwrap(),
+            Value::String("string".to_string())
+        );
+    }
 
     #[test]
     fn boolean_constructor_has_length_and_is_constructable() {
