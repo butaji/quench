@@ -466,7 +466,7 @@ pub fn is_constructor_value(val: &Value) -> bool {
             if let Some(target) = nf.get_property("__quench_bound_target") {
                 return is_constructor_value(&target);
             }
-            nf.prototype.borrow().is_some()
+            nf.constructable || nf.prototype.borrow().is_some()
         }
         Value::Function(f) => !f.is_arrow && !f.is_async && !f.is_generator,
         Value::Object(o) => {

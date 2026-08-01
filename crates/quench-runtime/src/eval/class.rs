@@ -371,7 +371,7 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
             if let Some(Value::Object(proto_obj)) = nf.get_property("prototype") {
                 Ok(Some(proto_obj))
             } else {
-                Ok(None)
+                Ok(nf.prototype.borrow().as_ref().map(Rc::clone))
             }
         }
         _ => Ok(None),

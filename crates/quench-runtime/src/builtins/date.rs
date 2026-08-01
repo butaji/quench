@@ -213,7 +213,7 @@ fn register_boolean_converter(ctx: &mut Context) {
     );
 
     let boolean_proto_clone = Rc::clone(&boolean_proto_rc);
-    let boolean_fn = Value::NativeFunction(Rc::new(NativeFunction::new_with_prototype(
+    let mut boolean_native = NativeFunction::new_with_prototype(
         move |args| {
             let b = args.first().map(to_bool).unwrap_or(false);
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -232,7 +232,9 @@ fn register_boolean_converter(ctx: &mut Context) {
             }
         },
         boolean_proto_rc.clone(),
-    )));
+    );
+    boolean_native.set_constructable(true);
+    let boolean_fn = Value::NativeFunction(Rc::new(boolean_native));
 
     // Set Boolean.prototype.constructor after boolean_fn exists
     boolean_proto_rc
@@ -242,7 +244,26 @@ fn register_boolean_converter(ctx: &mut Context) {
     // Set Boolean.prototype as the "prototype" property of boolean_fn
     // so constructor_prototype("Boolean") can find it.
     if let Value::NativeFunction(ref bf) = boolean_fn {
-        let _ = bf.set_property("prototype", Value::Object(Rc::clone(&boolean_proto_rc)));
+        bf.define_property(
+            "prototype",
+            Value::Object(Rc::clone(&boolean_proto_rc)),
+            PropertyFlags {
+                value: Some(Value::Object(Rc::clone(&boolean_proto_rc))),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+        );
+        bf.define_property(
+            "length",
+            Value::Number(1.0),
+            PropertyFlags {
+                value: Some(Value::Number(1.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
     }
 
     // Register Boolean as a NativeFunction (callable), not a plain Object.
@@ -468,6 +489,15 @@ pub fn register_date(ctx: &mut Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boolean_constructor_has_length_and_is_constructable() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval("[Boolean.length, __ops__.IsConstructor(Boolean), (() => { try { Reflect.construct(function(){}, [], Boolean); return true; } catch (e) { return false; } })()].join('|')")
+            .unwrap();
+        assert_eq!(result, crate::Value::String("1|true|true".to_string()));
+    }
 
     #[test]
     fn test_days_from_ymd_before_1970_is_negative() {

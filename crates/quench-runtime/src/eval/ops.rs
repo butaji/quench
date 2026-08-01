@@ -125,8 +125,7 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "IsConstructor", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let is_ctor = matches!(v, Value::NativeConstructor(_) | Value::Class(_))
-            || matches!(&v, Value::Function(f) if !f.is_arrow);
+        let is_ctor = crate::eval::class::helpers::is_constructor_value(&v);
         Ok(Value::Boolean(is_ctor))
     });
 

@@ -69,6 +69,42 @@ fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
     }
 }
 
+fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
+    let target = args
+        .first()
+        .cloned()
+        .ok_or_else(|| JsError::new("Reflect.construct requires target"))?;
+    let list = args
+        .get(1)
+        .and_then(|value| match value {
+            Value::Object(object) => Some(object.borrow().elements.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| JsError::new("Reflect.construct requires an argument list"))?;
+    if !crate::eval::class::helpers::is_constructor_value(&target) {
+        return Err(JsError::new("TypeError: target is not a constructor"));
+    }
+    let new_target = args.get(2).cloned().unwrap_or_else(|| target.clone());
+    if !crate::eval::class::helpers::is_constructor_value(&new_target) {
+        return Err(JsError::new("TypeError: newTarget is not a constructor"));
+    }
+    let prototype = crate::eval::class::get_constructor_prototype(&new_target)?
+        .or_else(crate::builtins::get_object_prototype)
+        .ok_or_else(|| JsError::new("Reflect.construct has no default prototype"))?;
+    let this = Value::Object(Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        prototype,
+    ))));
+    let previous = crate::interpreter::get_new_target();
+    crate::interpreter::set_new_target(Some(new_target));
+    let result = crate::eval::function::call_value_with_this(target, list, this.clone());
+    crate::interpreter::set_new_target(previous);
+    match result? {
+        value @ (Value::Object(_) | Value::Function(_) | Value::NativeFunction(_)) => Ok(value),
+        _ => Ok(this),
+    }
+}
+
 pub fn register_reflect(ctx: &mut Context) {
     let mut reflect = Object::new(ObjectKind::Ordinary);
     if let Some(proto) = crate::builtins::get_object_prototype() {
@@ -251,6 +287,12 @@ pub fn register_reflect(ctx: &mut Context) {
                 }
                 Ok(Value::Boolean(object.borrow_mut().delete(&key)))
             },
+        ))),
+    );
+    reflect.set(
+        "construct",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            reflect_construct,
         ))),
     );
     reflect.set(
