@@ -217,6 +217,8 @@ impl<'a> Visit<'a> for DuplicateProtoPropertyChecker {
         for property in &object.properties {
             if let ast::ObjectPropertyKind::ObjectProperty(property) = property {
                 if property.kind == ast::PropertyKind::Init
+                    && !property.method
+                    && !property.shorthand
                     && !property.computed
                     && property_key_is_proto(&property.key)
                 {

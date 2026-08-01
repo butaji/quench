@@ -213,6 +213,8 @@ pub enum VarKind {
 pub enum PropertyValue {
     /// Regular value expression
     Value(Expression),
+    /// Shorthand property: `{ name }`
+    Shorthand(Expression),
     /// Getter property: { get x() { return 42; } }
     Getter {
         params: Vec<String>,

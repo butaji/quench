@@ -207,7 +207,11 @@ fn lower_object_prop(
     }
 
     let value = lower_expr(&prop.value)?;
-    Ok((key, PropertyValue::Value(value)))
+    if prop.shorthand {
+        Ok((key, PropertyValue::Shorthand(value)))
+    } else {
+        Ok((key, PropertyValue::Value(value)))
+    }
 }
 
 fn lower_method_prop_from_value(

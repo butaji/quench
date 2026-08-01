@@ -212,7 +212,7 @@ pub fn eval_object_literal(
             _ => {
                 let key_str = eval_property_key(key, &literal_env, in_arrow_function)?;
                 match value {
-                    PropertyValue::Value(expr) => {
+                    PropertyValue::Value(expr) | PropertyValue::Shorthand(expr) => {
                         let mut val = crate::eval::expression::eval_expression(
                             expr,
                             &literal_env,
@@ -243,7 +243,8 @@ pub fn eval_object_literal(
                                     configurable: true,
                                 },
                             );
-                        } else if key_str == "__proto__" {
+                        } else if key_str == "__proto__" && matches!(value, PropertyValue::Value(_))
+                        {
                             match val {
                                 Value::Object(proto) => home.borrow_mut().prototype = Some(proto),
                                 Value::Null => home.borrow_mut().prototype = None,
