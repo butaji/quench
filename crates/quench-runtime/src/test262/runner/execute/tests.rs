@@ -59,6 +59,19 @@ fn optional_eval_call_is_indirect() {
 }
 
 #[test]
+fn dynamic_import_namespace_fixture_exports_uninitialized_bindings() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/expressions/dynamic-import/namespace/await-ns-get-nested-namespace-props-nrml.js",
+    );
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn static_block_nested_constructor_resolves_await_as_binding() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

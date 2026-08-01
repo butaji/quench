@@ -306,18 +306,41 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         let mut values = std::collections::HashMap::new();
         for line in source.lines() {
             let line = line.trim().trim_end_matches(';');
+            let exported_declaration = line.starts_with("export ");
             let declaration = line
                 .strip_prefix("export var ")
-                .or_else(|| line.strip_prefix("var "));
+                .or_else(|| line.strip_prefix("export let "))
+                .or_else(|| line.strip_prefix("export const "))
+                .or_else(|| line.strip_prefix("var "))
+                .or_else(|| line.strip_prefix("let "))
+                .or_else(|| line.strip_prefix("const "));
             if let Some(rest) = declaration {
                 if let Some((name, value)) = rest.split_once('=') {
                     if let Some(value) = fixture_literal(value.trim()) {
                         values.insert(name.trim().to_string(), value.clone());
-                        if line.starts_with("export var ") {
+                        if exported_declaration {
                             exports.set(name.trim(), value);
                         }
                     }
+                } else {
+                    let name = rest.trim();
+                    values.insert(name.to_string(), crate::Value::Undefined);
+                    if exported_declaration {
+                        exports.set(name, crate::Value::Undefined);
+                    }
                 }
+            } else if let Some(rest) = line.strip_prefix("export function ") {
+                let name = rest.split(['(', ' ']).next().unwrap_or(rest);
+                values.insert(name.to_string(), crate::Value::Undefined);
+                exports.set(name, crate::Value::Undefined);
+            } else if let Some(rest) = line.strip_prefix("export function* ") {
+                let name = rest.split(['(', ' ']).next().unwrap_or(rest);
+                values.insert(name.to_string(), crate::Value::Undefined);
+                exports.set(name, crate::Value::Undefined);
+            } else if let Some(rest) = line.strip_prefix("export class ") {
+                let name = rest.split(['{', ' ']).next().unwrap_or(rest);
+                values.insert(name.to_string(), crate::Value::Undefined);
+                exports.set(name, crate::Value::Undefined);
             } else if let Some(rest) = line.strip_prefix("export {") {
                 if let Some(specifiers) = rest.split('}').next() {
                     for specifier in specifiers.split(',') {
