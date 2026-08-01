@@ -284,11 +284,9 @@ mod with_statement {
                 with (scope) {
                     (function() {
                         "use strict";
-                        assert.throws(ReferenceError, () => {
-                            count++;
-                            x += 1;
-                            count++;
-                        });
+                        try { count++; x += 1; count++; } catch (e) {
+                            if (!(e instanceof ReferenceError)) throw e;
+                        }
                         count++;
                     })();
                 }
@@ -317,7 +315,7 @@ mod with_statement {
     #[test]
     fn strict_compound_assignment_after_with_getter_deletion_throws() {
         let result = eval(
-            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { count++; x += 1; count++; } catch (e) { if (!String(e).includes('ReferenceError')) throw e; } count++; })(); } count",
+            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { count++; x += 1; count++; } catch (e) { if (!(e instanceof ReferenceError)) throw e; } count++; })(); } count",
         )
         .unwrap();
         assert_eq!(result, Value::Number(2.0));
@@ -326,7 +324,7 @@ mod with_statement {
     #[test]
     fn strict_arrow_callback_inside_with_preserves_outer_count() {
         let result = eval(
-            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { (() => { count++; x += 1; count++; })(); } catch (e) { if (!String(e).includes('ReferenceError')) throw e; } count++; })(); } count",
+            "var count = 0; var scope = { get x() { delete this.x; return 2; } }; with (scope) { (function() { 'use strict'; try { (() => { count++; x += 1; count++; })(); } catch (e) { if (!(e instanceof ReferenceError)) throw e; } count++; })(); } count",
         )
         .unwrap();
         assert_eq!(result, Value::Number(2.0));
