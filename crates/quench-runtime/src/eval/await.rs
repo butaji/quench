@@ -17,8 +17,16 @@ thread_local! {
 /// Takes the already-evaluated argument value and returns it wrapped in
 /// Promise.resolve() semantics for chaining.
 pub fn eval_await_value(arg_value: Value) -> Result<Value, JsError> {
-    if let Value::Object(object) = &arg_value {
-        if is_promise(&arg_value) {
+    let promise = if is_promise(&arg_value) {
+        arg_value
+    } else {
+        crate::builtins::promise::promise_resolve_impl_static(
+            vec![arg_value],
+            crate::builtins::promise::get_promise_proto(),
+        )?
+    };
+    if let Value::Object(object) = &promise {
+        if is_promise(&promise) {
             let state = object
                 .borrow()
                 .promise_data
@@ -54,7 +62,7 @@ pub fn eval_await_value(arg_value: Value) -> Result<Value, JsError> {
             }
         }
     }
-    Ok(arg_value)
+    Ok(promise)
 }
 
 pub(crate) fn take_last_pending_await() -> Option<Rc<RefCell<Object>>> {

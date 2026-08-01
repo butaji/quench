@@ -228,6 +228,16 @@ mod await_tests {
     }
 
     #[test]
+    fn async_await_thenable_throw_enters_catch_with_same_error() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var error={}; var caught=false; var same=false; var thenable={then:function(resolve,reject){throw error;}}; async function f(){try{await thenable;}catch(e){caught=true;same=e===error;}} f();")
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("caught"), Some(Value::Boolean(true)));
+        assert_eq!(ctx.get_global("same"), Some(Value::Boolean(true)));
+    }
+
+    #[test]
     fn async_function_finally_await_reject_overrides_throw() {
         let mut ctx = Context::new().unwrap();
         let _ = ctx.eval(
