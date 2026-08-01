@@ -1801,6 +1801,24 @@ mod is_tail_expr {
         };
         assert!(is_tail_expr(&expr));
     }
+
+    #[test]
+    fn conditional_and_sequence_tail_calls_are_tail() {
+        let conditional = Expression::Conditional {
+            condition: Box::new(Expression::Boolean(true)),
+            consequent: Box::new(Expression::Call {
+                callee: Box::new(Expression::Identifier("f".into())),
+                arguments: vec![],
+            }),
+            alternate: Box::new(Expression::Call {
+                callee: Box::new(Expression::Identifier("g".into())),
+                arguments: vec![],
+            }),
+        };
+        assert!(is_tail_expr(&conditional));
+        let sequence = Expression::Sequence(vec![Expression::Number(0.0), conditional]);
+        assert!(is_tail_expr(&sequence));
+    }
 }
 
 // ─── acc_stack thread-local ────────────────────────────────────────────────

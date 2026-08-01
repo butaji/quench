@@ -32,6 +32,13 @@ pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
             right,
             ..
         } => is_tail_expr(right),
+        Expression::Conditional {
+            consequent,
+            alternate,
+            ..
+        } => is_tail_expr(consequent) || is_tail_expr(alternate),
+        Expression::Sequence(expressions) => expressions.last().is_some_and(is_tail_expr),
+        Expression::Parenthesized(inner) => is_tail_expr(inner),
         _ => false,
     }
 }
@@ -429,6 +436,31 @@ fn try_handle_tail_call(
             return Ok(false);
         }
         return try_handle_tail_call(&Some(right.clone()), env, in_arrow_function);
+    }
+    if let Expression::Conditional {
+        condition,
+        consequent,
+        alternate,
+    } = e.as_ref()
+    {
+        let branch = if to_bool(&eval_expression(condition, env, in_arrow_function)?) {
+            consequent
+        } else {
+            alternate
+        };
+        return try_handle_tail_call(&Some(branch.clone()), env, in_arrow_function);
+    }
+    if let Expression::Sequence(expressions) = e.as_ref() {
+        let Some(last) = expressions.last() else {
+            return Ok(false);
+        };
+        for expression in &expressions[..expressions.len() - 1] {
+            eval_expression(expression, env, in_arrow_function)?;
+        }
+        return try_handle_tail_call(&Some(Box::new(last.clone())), env, in_arrow_function);
+    }
+    if let Expression::Parenthesized(inner) = e.as_ref() {
+        return try_handle_tail_call(&Some(inner.clone()), env, in_arrow_function);
     }
     let Expression::Call { callee, arguments } = e.as_ref() else {
         return Ok(false);
