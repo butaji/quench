@@ -1794,6 +1794,13 @@ mod tests {
     }
 
     #[test]
+    fn instance_numeric_class_field_is_an_own_property() {
+        let r = eval("class C { 0 = 'bar'; } Object.prototype.hasOwnProperty.call(new C(), 0)")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn static_private_method_function_name_is_hash_method() {
         let name = eval(
             "class C { static #method() { return 'Test262'; } \

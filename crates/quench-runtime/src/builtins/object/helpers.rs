@@ -171,6 +171,7 @@ fn get_object_kind_tag(kind: ObjectKind) -> String {
 pub fn get_property_key(arg: &Value) -> Option<String> {
     match arg {
         Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(crate::value::number_to_string(*n)),
         // For symbols, return the raw symbol string (e.g., "Symbol():123")
         // Note: to_js_string wraps this as "Symbol(...)" for display purposes,
         // but the raw string is what's stored in properties
