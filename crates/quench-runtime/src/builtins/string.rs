@@ -364,4 +364,43 @@ mod tests {
             Value::String("String Iterator|𝌆|a|true".to_string())
         );
     }
+
+    #[test]
+    fn string_iterator_prototype_matches_intrinsic_iterator_ancestry() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var itrProto = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())); \
+                 var strItrProto = Object.getPrototypeOf(''[Symbol.iterator]()); \
+                 Object.getPrototypeOf(strItrProto) === itrProto",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_iterator_preserves_surrogate_pair_identity() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var pair = '\\uD834\\uDF06'; \
+                 pair === pair[Symbol.iterator]().next().value",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn string_iterator_preserves_surrogate_pair_inside_string() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var lo = '\\uD834'; var hi = '\\uDF06'; var pair = lo + hi; \
+                 var string = 'a' + pair + 'b'; \
+                 var iterator = string[Symbol.iterator](); \
+                 iterator.next(); iterator.next().value === pair",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
 }

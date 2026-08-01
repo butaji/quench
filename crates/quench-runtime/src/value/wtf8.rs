@@ -102,21 +102,17 @@ pub fn wtf8_for_of_iterate(s: &str) -> Vec<Value> {
     let mut i = 0;
     while i < bytes.len() {
         // Check for oxc-encoded surrogate
-        if let Some((mut cp, consumed)) = try_decode_escape(bytes, i) {
+        if let Some((cp, consumed)) = try_decode_escape(bytes, i) {
             // Check if this is a high surrogate (U+D800..U+DBFF) followed by
             // a low surrogate escape (U+DC00..U+DFFF) — a surrogate pair.
             if (0xD800..=0xDBFF).contains(&cp) {
                 let next_i = i + consumed;
                 if let Some((low_cp, _)) = try_decode_escape(bytes, next_i) {
                     if (0xDC00..=0xDFFF).contains(&low_cp) {
-                        // Valid surrogate pair — combine into astral code point
-                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low_cp - 0xDC00);
-                        // Encode as 4-byte UTF-8 (valid - astral code points)
-                        let encoded = encode_utf8(cp);
-                        result.push(Value::String(
-                            // SAFETY: astral code points produce valid UTF-8
-                            unsafe { String::from_utf8_unchecked(encoded) },
-                        ));
+                        let encoded = bytes[i..next_i + 7].to_vec();
+                        result.push(Value::String(unsafe {
+                            String::from_utf8_unchecked(encoded)
+                        }));
                         i = next_i + 7; // second escape also 7 bytes
                         continue;
                     }
@@ -154,28 +150,6 @@ pub fn wtf8_for_of_iterate(s: &str) -> Vec<Value> {
         i = end;
     }
     result
-}
-
-/// Encode a Unicode code point to 1-4 byte UTF-8 sequence.
-fn encode_utf8(cp: u32) -> Vec<u8> {
-    if cp <= 0x7F {
-        vec![cp as u8]
-    } else if cp <= 0x7FF {
-        vec![0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
-    } else if cp <= 0xFFFF {
-        vec![
-            0xE0 | (cp >> 12) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]
-    } else {
-        vec![
-            0xF0 | (cp >> 18) as u8,
-            0x80 | ((cp >> 12) & 0x3F) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]
-    }
 }
 
 /// Convert a string index (code unit offset) to the corresponding `Value`.

@@ -293,7 +293,13 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
         }
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     });
-    let mut iter = Object::new(ObjectKind::Ordinary);
+    let iterator_proto = crate::builtins::iterator::get_iterator_prototype()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+    let array_iterator_proto = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        iterator_proto,
+    )));
+    let mut iter = Object::with_prototype(ObjectKind::Ordinary, array_iterator_proto);
     iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
     Value::Object(Rc::new(RefCell::new(iter)))
 }
