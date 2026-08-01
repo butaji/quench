@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use url::percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
 use crate::value::wtf8::append_wtf8_surrogate;
 use crate::value::{to_js_string, to_number, try_to_number, Value};
@@ -146,10 +146,14 @@ fn uri_error(msg: impl Into<String>) -> crate::JsError {
 
 fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
     if !keep_reserved {
-        return percent_decode_str(s)
-            .decode_utf8()
-            .map(|decoded| decoded.into_owned())
-            .map_err(|_| uri_error("URI malformed"));
+        if is_all_percent_escaped(s) {
+            return decode_percent_bytes(s, false);
+        }
+        return decode_uri_component_raw(s);
+    }
+
+    if is_all_percent_escaped(s) {
+        return decode_percent_bytes(s, true);
     }
 
     let bytes = s.as_bytes();
@@ -189,6 +193,97 @@ fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
     }
     let decoded = std::str::from_utf8(&pending).map_err(|_| uri_error("URI malformed"))?;
     append_wtf8_string(&mut out, decoded);
+    Ok(out)
+}
+
+fn decode_uri_component_raw(s: &str) -> Result<String, crate::JsError> {
+    let bytes = s.as_bytes();
+    if !bytes.iter().any(|&b| b == b'%') {
+        return Ok(s.to_string());
+    }
+
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err(uri_error("URI malformed"));
+            }
+            let h1 = hex_digit(bytes[i + 1]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h2 = hex_digit(bytes[i + 2]).ok_or_else(|| uri_error("URI malformed"))?;
+            out.push((h1 << 4) | h2);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+
+    let decoded = std::str::from_utf8(&out).map_err(|_| uri_error("URI malformed"))?;
+    let mut result = String::with_capacity(decoded.len());
+    append_wtf8_string(&mut result, decoded);
+    Ok(result)
+}
+
+fn is_all_percent_escaped(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() || !bytes.len().is_multiple_of(3) {
+        return false;
+    }
+    if bytes.first().copied() != Some(b'%') {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            return false;
+        }
+        if i + 2 >= bytes.len() {
+            return false;
+        }
+        if hex_digit(bytes[i + 1]).is_none() || hex_digit(bytes[i + 2]).is_none() {
+            return false;
+        }
+        i += 3;
+    }
+    true
+}
+
+fn decode_percent_bytes(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut decoded = Vec::with_capacity(bytes.len() / 3);
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let h1 = hex_digit(bytes[i + 1]).ok_or_else(|| uri_error("URI malformed"))?;
+        let h2 = hex_digit(bytes[i + 2]).ok_or_else(|| uri_error("URI malformed"))?;
+        let byte = (h1 << 4) | h2;
+
+        if keep_reserved && is_uri_reserved_byte(byte) {
+            if !decoded.is_empty() {
+                let chunk =
+                    std::str::from_utf8(&decoded).map_err(|_| uri_error("URI malformed"))?;
+                append_wtf8_string(&mut out, chunk);
+                decoded.clear();
+            }
+            out.push('%');
+            out.push(bytes[i + 1] as char);
+            out.push(bytes[i + 2] as char);
+            i += 3;
+            continue;
+        }
+
+        decoded.push(byte);
+        i += 3;
+    }
+
+    if !decoded.is_empty() {
+        let chunk =
+            std::str::from_utf8(&decoded).map_err(|_| uri_error("URI malformed"))?;
+        append_wtf8_string(&mut out, chunk);
+    }
+
     Ok(out)
 }
 
