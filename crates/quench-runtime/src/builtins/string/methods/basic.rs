@@ -5,13 +5,6 @@ use std::rc::Rc;
 
 use crate::value::{to_number, NativeFunction, Object, Value};
 
-fn string_length_impl(_args: &[Value]) -> Value {
-    match super::this_js_string() {
-        Some(s) => Value::Number(s.encode_utf16().count() as f64),
-        _ => Value::Undefined,
-    }
-}
-
 fn char_at_impl(args: &[Value], s: &str) -> Value {
     let idx = args.first().map(|v| to_number(v) as usize).unwrap_or(0);
     // ES spec §21.1.3.1: charAt returns a string of length 1 (one UTF-16 code unit).
@@ -41,15 +34,9 @@ fn char_code_at_impl(args: &[Value], s: &str) -> Value {
     )
 }
 
-/// Install basic string methods (length, charAt, charCodeAt)
+/// Install basic string methods (charAt, charCodeAt)
 pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
-    proto_clone.borrow_mut().set(
-        "length",
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
-            Ok(string_length_impl(&args))
-        }))),
-    );
     proto_clone.borrow_mut().set(
         "charAt",
         Value::NativeFunction(Rc::new(NativeFunction::new(

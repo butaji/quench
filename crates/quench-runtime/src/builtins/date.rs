@@ -88,9 +88,7 @@ fn register_string_converter(ctx: &mut Context) {
     let string_fn = create_string_constructor_fn(string_proto_clone);
 
     let string_obj = create_string_constructor_object(string_proto.clone(), string_fn.clone());
-    string_proto
-        .borrow_mut()
-        .set("constructor", Value::Object(Rc::clone(&string_obj)));
+    string_proto.borrow_mut().set("constructor", string_fn);
     ctx.set_global("String".to_string(), Value::Object(string_obj));
 }
 
@@ -101,6 +99,9 @@ fn create_string_prototype() -> Rc<RefCell<Object>> {
         string_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
     crate::builtins::string::methods::install_string_methods(&string_proto_rc);
+    string_proto_rc
+        .borrow_mut()
+        .set("length", Value::Number(0.0));
     crate::builtins::string::register_string_iterator(&string_proto_rc);
     string_proto_rc
 }
@@ -700,6 +701,21 @@ mod tests {
             ctx.eval("typeof Date.parse + '|' + typeof Date.UTC"),
             Ok(Value::String("function|function".to_string()))
         );
+    }
+
+    #[test]
+    fn string_prototype_constructor_is_callable() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof String.prototype.constructor"),
+            Ok(Value::String("function".to_string()))
+        );
+    }
+
+    #[test]
+    fn string_prototype_length_is_zero() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(ctx.eval("String.prototype.length"), Ok(Value::Number(0.0)));
     }
 
     #[test]
