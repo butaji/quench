@@ -122,6 +122,19 @@ pub fn eval_delete(
             property,
             computed,
         } => {
+            if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
+                let _ = crate::eval::get_super_value(env).ok_or_else(|| {
+                    JsError("ReferenceError: super is only valid in class methods".to_string())
+                })?;
+                crate::eval::class::helpers::check_this_access_allowed(env)?;
+                let _ = extract_property_name(property.clone(), *computed, env, in_arrow_function)?;
+                let (thrown, error) = crate::value::error::create_js_error_with_type(
+                    "Cannot delete super property",
+                    "ReferenceError",
+                );
+                crate::value::error::set_thrown_value(thrown);
+                return Err(error);
+            }
             let obj_val = crate::eval::expression::eval_expression(object, env, in_arrow_function)?;
             let prop_key =
                 extract_property_name(property.clone(), *computed, env, in_arrow_function)?;
@@ -567,6 +580,12 @@ mod tests {
     #[test]
     fn delete_primitive_member_returns_true() {
         let r = eval("delete 'Test262'[100]").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_super_property_throws_reference_error() {
+        let r = eval("class C extends Object { method(){ try { delete super.x; return false; } catch(e) { return e instanceof ReferenceError; } } } new C().method()").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
