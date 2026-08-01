@@ -2037,6 +2037,7 @@ pub fn check_super_outside_class(program: &ast::Program) -> Result<(), JsError> 
     let mut checker = SuperChecker {
         is_class_method: Vec::new(),
         in_class_body: false,
+        in_object_method: false,
         error: None,
     };
     checker.visit_program(program);
@@ -2051,10 +2052,27 @@ struct SuperChecker {
     is_class_method: Vec<bool>,
     /// Whether we are currently inside a ClassBody (before entering a method).
     in_class_body: bool,
+    in_object_method: bool,
     error: Option<JsError>,
 }
 
 impl<'a> Visit<'a> for SuperChecker {
+    fn visit_call_expression(&mut self, call: &ast::CallExpression<'a>) {
+        if self.error.is_some() {
+            return;
+        }
+        if self.in_object_method && matches!(&call.callee, ast::Expression::Super(_)) {
+            self.error = Some(JsError(
+                "SyntaxError: super() is not allowed in an object method".into(),
+            ));
+            return;
+        }
+        self.visit_expression(&call.callee);
+        for argument in &call.arguments {
+            self.visit_argument(argument);
+        }
+    }
+
     fn visit_super(&mut self, _it: &ast::Super) {
         if self.error.is_some() {
             return;
@@ -2115,6 +2133,8 @@ impl<'a> Visit<'a> for SuperChecker {
         if self.error.is_some() {
             return;
         }
+        let previous_object = self.in_object_method;
+        self.in_object_method = false;
         let prev = self.in_class_body;
         self.in_class_body = true;
         self.is_class_method.push(true);
@@ -2123,6 +2143,7 @@ impl<'a> Visit<'a> for SuperChecker {
         }
         self.is_class_method.pop();
         self.in_class_body = prev;
+        self.in_object_method = previous_object;
     }
 
     fn visit_object_expression(&mut self, object: &ast::ObjectExpression<'a>) {
@@ -2138,8 +2159,11 @@ impl<'a> Visit<'a> for SuperChecker {
                     ast::PropertyKind::Get | ast::PropertyKind::Set
                 );
             let previous = self.in_class_body;
+            let previous_object = self.in_object_method;
             self.in_class_body = method;
+            self.in_object_method = method;
             self.visit_expression(&property.value);
+            self.in_object_method = previous_object;
             self.in_class_body = previous;
         }
     }
@@ -3226,6 +3250,12 @@ mod tests {
     fn parse_script_rejects_strict_arguments_update() {
         use crate::parser::parse_script;
         assert!(parse_script("'use strict'; arguments--; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_super_call_in_object_method() {
+        use crate::parser::parse_script;
+        assert!(parse_script("({ method() { super(); } });").is_err());
     }
 
     #[test]
