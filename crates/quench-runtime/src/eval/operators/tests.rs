@@ -45,6 +45,14 @@ fn bigint_number_relational_comparison_preserves_precision() {
     );
 }
 
+#[test]
+fn bigint_string_relational_comparison_rejects_number_only_strings() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(ctx.eval("'0.' < 1n").unwrap(), Value::Boolean(false));
+    assert_eq!(ctx.eval("'0x10' < 17n").unwrap(), Value::Boolean(true));
+    assert_eq!(ctx.eval("0n < '1n'").unwrap(), Value::Boolean(false));
+}
+
 /// When `valueOf` throws, `eval_add` must surface the error AND leave the
 /// thrown value intact for the surrounding try/catch to retrieve.
 #[test]

@@ -321,11 +321,65 @@ where
         let cmp = a.as_ref().cmp(b.as_ref()) as i8;
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
+    if let Some(result) = bigint_string_relational(&left, &right, &num_cmp) {
+        return Ok(Value::Boolean(result));
+    }
     if let Some((bigint, number)) = bigint_number_pair(&left, &right) {
         let cmp = bigint.cmp(&number) as i8;
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
     Ok(Value::Boolean(num_cmp(to_number(&left), to_number(&right))))
+}
+
+fn bigint_string_relational<F>(left: &Value, right: &Value, num_cmp: &F) -> Option<bool>
+where
+    F: Fn(f64, f64) -> bool,
+{
+    let (bigint, text, bigint_left) = match (left, right) {
+        (Value::BigInt(bigint), Value::String(text)) => (bigint, text, true),
+        (Value::String(text), Value::BigInt(bigint)) => (bigint, text, false),
+        _ => return None,
+    };
+    let Some(parsed) = parse_bigint_string(text) else {
+        return Some(false);
+    };
+    let cmp = if bigint_left {
+        bigint.as_ref().cmp(&parsed) as i8
+    } else {
+        parsed.cmp(bigint.as_ref()) as i8
+    };
+    Some(num_cmp(cmp as f64, 0.0))
+}
+
+fn parse_bigint_string(text: &str) -> Option<num_bigint::BigInt> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(num_bigint::BigInt::from(0));
+    }
+    let (sign, digits) = match text.as_bytes().first() {
+        Some(b'-') => (-1, &text[1..]),
+        Some(b'+') => return None,
+        _ => (1, text),
+    };
+    let (radix, digits) = if digits.len() > 2 {
+        match &digits[..2] {
+            "0x" | "0X" => (16, &digits[2..]),
+            "0o" | "0O" => (8, &digits[2..]),
+            "0b" | "0B" => (2, &digits[2..]),
+            _ => (10, digits),
+        }
+    } else {
+        (10, digits)
+    };
+    if digits.is_empty()
+        || !digits
+            .chars()
+            .all(|character| character.to_digit(radix).is_some())
+    {
+        return None;
+    }
+    let value = num_bigint::BigInt::parse_bytes(digits.as_bytes(), radix)?;
+    Some(if sign < 0 { -value } else { value })
 }
 
 fn bigint_number_pair(
