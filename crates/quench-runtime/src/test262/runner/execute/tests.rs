@@ -47,6 +47,18 @@ fn isolated_message_extracts_reason_line() {
 }
 
 #[test]
+fn optional_eval_call_is_indirect() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root)
+        .join("test/language/expressions/optional-chaining/eval-optional-call.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn check_outcome_pass_and_fail() {
     let meta = Test262Metadata::default();
     assert_eq!(check_outcome(&meta, Ok(()), None), TestOutcome::Pass);

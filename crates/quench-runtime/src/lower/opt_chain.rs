@@ -134,8 +134,13 @@ fn lower_chain_recursive(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
+            let callee = lower_expr(&call.callee)?;
             let full_call = Expression::Call {
-                callee: Box::new(lower_expr(&call.callee)?),
+                callee: Box::new(if call.optional {
+                    Expression::Parenthesized(Box::new(callee))
+                } else {
+                    callee
+                }),
                 arguments: args,
             };
 
