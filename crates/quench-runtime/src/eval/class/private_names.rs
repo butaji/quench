@@ -438,6 +438,10 @@ fn scope_expression(expr: &mut Expression, class_id: usize) {
             scope_expression(left, class_id);
             scope_expression(right, class_id);
         }
+        Expression::PrivateIn { name, right } => {
+            scope_private_name(name, class_id);
+            scope_expression(right, class_id);
+        }
         Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
             scope_expression(argument, class_id);
         }
@@ -511,15 +515,19 @@ fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
 
 fn scope_property_key(key: &mut PropertyKey, class_id: usize) {
     if let PropertyKey::Ident(s) = key {
-        if is_unscoped_private(s) {
-            let bare = bare_private_name(s);
-            let target_id = if DECLARED_PRIVATE.with(|d| d.borrow().contains(&bare)) {
-                class_id
-            } else {
-                PARENT_CLASS_ID.with(|p| p.get().unwrap_or(class_id))
-            };
-            *s = crate::value::scoped_private_name_key(target_id, s);
-        }
+        scope_private_name(s, class_id);
+    }
+}
+
+fn scope_private_name(name: &mut String, class_id: usize) {
+    if is_unscoped_private(name) {
+        let bare = bare_private_name(name);
+        let target_id = if DECLARED_PRIVATE.with(|d| d.borrow().contains(&bare)) {
+            class_id
+        } else {
+            PARENT_CLASS_ID.with(|p| p.get().unwrap_or(class_id))
+        };
+        *name = crate::value::scoped_private_name_key(target_id, name);
     }
 }
 

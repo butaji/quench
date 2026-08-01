@@ -238,6 +238,25 @@ pub fn eval_expression(
             func.is_generator = *is_generator;
             Ok(Value::Function(func))
         }
+        Expression::PrivateIn { name, right } => {
+            let value = eval_expression(right, env, in_arrow_function)?;
+            let object = match value {
+                Value::Object(object) => object,
+                _ => {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        "right-hand side is not an object",
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
+            };
+            let object = object.borrow();
+            Ok(Value::Boolean(
+                object.properties.contains_key(name)
+                    || object.getters.contains_key(name)
+                    || object.setters.contains_key(name),
+            ))
+        }
         Expression::Binary { op, left, right } => {
             let left_val = eval_expression(left, env, in_arrow_function)?;
             match op {

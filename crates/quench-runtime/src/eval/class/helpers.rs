@@ -860,6 +860,15 @@ mod tests {
         Context::new().unwrap().eval(src)
     }
 
+    #[test]
+    fn private_in_checks_class_brand() {
+        let value = eval(
+            "class C { #field; static has(value) { return #field in value; } } [C.has({}), C.has(new C())].join('|')",
+        )
+        .unwrap();
+        assert_eq!(value, Value::String("false|true".to_string()));
+    }
+
     // ─── String(f) diagnostic ────────────────────────────────────────────────
 
     #[test]

@@ -259,6 +259,10 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    PrivateIn {
+        name: String,
+        right: Box<Expression>,
+    },
     Unary {
         op: UnaryOp,
         argument: Box<Expression>,

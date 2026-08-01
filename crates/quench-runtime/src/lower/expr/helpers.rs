@@ -28,6 +28,10 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ))),
         ast::Expression::ParenthesizedExpression(paren) => lower_expr(&paren.expression),
         ast::Expression::BinaryExpression(bin) => expr_helpers::lower_bin_expr_pub(bin),
+        ast::Expression::PrivateInExpression(expr) => Ok(Expression::PrivateIn {
+            name: format!("#{}", expr.left.name),
+            right: Box::new(lower_expr(&expr.right)?),
+        }),
         ast::Expression::LogicalExpression(logical) => {
             expr_helpers::lower_logical_expr_pub(logical)
         }

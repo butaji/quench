@@ -845,6 +845,9 @@ fn generate_source_text(f: &ValueFunction) -> String {
                     expr_to_string(right)
                 )
             }
+            Expression::PrivateIn { name, right } => {
+                format!("{} in {}", name, expr_to_string(right))
+            }
             Expression::Unary { op, argument } => {
                 let op_str = match op {
                     crate::ast::UnaryOp::Not => "!",
