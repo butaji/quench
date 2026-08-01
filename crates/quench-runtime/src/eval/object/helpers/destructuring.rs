@@ -473,7 +473,16 @@ pub fn take_iterator_step(
     index: &mut usize,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<(Value, bool), JsError> {
-    take_iterator_step_with_args(iterator, index, env, vec![], false)
+    take_iterator_step_with_args(iterator, index, env, vec![], false, false)
+}
+
+pub fn take_iterator_step_with_mode(
+    iterator: &Rc<RefCell<Object>>,
+    index: &mut usize,
+    env: &Rc<RefCell<Environment>>,
+    async_from_sync: bool,
+) -> Result<(Value, bool), JsError> {
+    take_iterator_step_with_args(iterator, index, env, vec![], false, async_from_sync)
 }
 
 pub fn take_iterator_step_with_value(
@@ -482,7 +491,7 @@ pub fn take_iterator_step_with_value(
     env: &Rc<RefCell<Environment>>,
     value: Value,
 ) -> Result<(Value, bool), JsError> {
-    take_iterator_step_with_args(iterator, index, env, vec![value], true)
+    take_iterator_step_with_args(iterator, index, env, vec![value], true, false)
 }
 
 fn take_iterator_step_with_args(
@@ -491,6 +500,7 @@ fn take_iterator_step_with_args(
     env: &Rc<RefCell<Environment>>,
     args: Vec<Value>,
     read_done_value: bool,
+    async_from_sync: bool,
 ) -> Result<(Value, bool), JsError> {
     if iterator.borrow().kind == ObjectKind::Array {
         let value = {
@@ -544,6 +554,11 @@ fn take_iterator_step_with_args(
         return Ok((value, true));
     }
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
+    let value = if async_from_sync {
+        crate::eval::iteration::await_for_await_of(value)?
+    } else {
+        value
+    };
     *index += 1;
     Ok((value, false))
 }
@@ -552,18 +567,12 @@ pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsErro
     if !crate::interpreter::is_in_async_generator() && !crate::interpreter::is_in_async_function() {
         return Ok(result);
     }
-    let promise = match result {
-        Value::Object(object) if object.borrow().promise_data.is_some() => object,
-        value => {
-            let Value::Object(promise) = crate::builtins::promise::promise_resolve_impl_static(
-                vec![value],
-                crate::builtins::promise::get_promise_proto(),
-            )?
-            else {
-                return Ok(Value::Undefined);
-            };
-            promise
-        }
+    let promise = crate::builtins::promise::promise_resolve_impl_static(
+        vec![result],
+        crate::builtins::promise::get_promise_proto(),
+    )?;
+    let Value::Object(promise) = promise else {
+        return Ok(Value::Undefined);
     };
     let mut data = promise.borrow().promise_data.clone();
     if data
@@ -572,6 +581,8 @@ pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsErro
     {
         crate::builtins::promise::execute_pending_microtasks()?;
         data = promise.borrow().promise_data.clone();
+    } else {
+        crate::builtins::promise::execute_pending_microtask()?;
     }
     match data.map(|data| (data.state, data.result)) {
         Some((crate::value::object::PromiseState::Fulfilled, value)) => Ok(value),

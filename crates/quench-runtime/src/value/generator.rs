@@ -26,6 +26,7 @@ pub struct ForOfSuspend {
     pub loop_binding: Option<crate::ast::VarKind>,
     pub dispose_async: Option<bool>,
     pub await_of: bool,
+    pub await_values: bool,
     pub per_iteration: bool,
     pub in_arrow_function: bool,
     /// The pending (item, resume) from the current iteration — must be restored

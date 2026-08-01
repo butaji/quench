@@ -153,6 +153,16 @@ fn async_script_with_done_once_passes() {
 }
 
 #[test]
+fn for_await_async_iterator_completion_reaches_done() {
+    let script = format!(
+        "{}{}",
+        ASYNC_DONE_PRELUDE,
+        include_str!("../../../../../../tests/test262/test/language/statements/for-await-of/ticks-with-async-iter-resolved-promise-and-constructor-lookup-two.js")
+    );
+    assert_eq!(run_async_script(&script, false), Ok(()));
+}
+
+#[test]
 fn async_script_done_with_error_fails() {
     let script = format!(
         "{}Promise.resolve().then(function() {{ $DONE(new Error('boom')); }});",

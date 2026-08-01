@@ -127,6 +127,7 @@ struct ForOfIteratorRun<'a> {
     loop_binding: Option<VarKind>,
     dispose_async: Option<bool>,
     await_of: bool,
+    await_values: bool,
     env: &'a Rc<RefCell<Environment>>,
     in_arrow_function: bool,
     index: usize,
@@ -320,7 +321,12 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
         let (item, resume) = if let Some((item, resume)) = run.pending.take() {
             (item, resume)
         } else {
-            let (item, done) = take_iterator_step(&run.iterator, &mut run.index, run.env)?;
+            let (item, done) = crate::eval::object::take_iterator_step_with_mode(
+                &run.iterator,
+                &mut run.index,
+                run.env,
+                run.await_values,
+            )?;
             if done {
                 if run.await_of {
                     crate::builtins::promise::execute_pending_microtask()?;
@@ -329,17 +335,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
             }
             (item, ForOfResume::default())
         };
-        let item = if run.await_of {
-            match await_for_await_of(item) {
-                Ok(value) => value,
-                Err(error) if crate::interpreter::is_in_async_generator() => {
-                    return Err(error);
-                }
-                Err(error) => return deferred_for_await_rejection(error),
-            }
-        } else {
-            item
-        };
+        let item = item;
         let step = ForOfStep {
             variable: run.variable,
             item: &item,
@@ -410,6 +406,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
                     loop_binding: run.loop_binding,
                     dispose_async: run.dispose_async,
                     await_of: run.await_of,
+                    await_values: run.await_values,
                     per_iteration,
                     in_arrow_function: run.in_arrow_function,
                     pending: run.pending.clone(),
@@ -477,7 +474,7 @@ fn deferred_for_await_rejection(error: JsError) -> Result<Value, JsError> {
     Ok(promise)
 }
 
-fn await_for_await_of(value: Value) -> Result<Value, JsError> {
+pub(crate) fn await_for_await_of(value: Value) -> Result<Value, JsError> {
     let promise = crate::builtins::promise::promise_resolve_impl_static(
         vec![value],
         crate::builtins::promise::get_promise_proto(),
@@ -660,6 +657,7 @@ pub fn eval_for_of(
             loop_binding: suspend.loop_binding,
             dispose_async: suspend.dispose_async,
             await_of: suspend.await_of,
+            await_values: suspend.await_values,
             env,
             in_arrow_function: suspend.in_arrow_function,
             index: suspend.index,
@@ -679,20 +677,21 @@ pub fn eval_for_of(
         env.borrow_mut().pop_scope();
     }
 
-    let iterator = match &iter_value {
+    let (iterator, await_values) = match &iter_value {
         Value::String(s) => {
             let items: Vec<Value> = crate::value::wtf8::wtf8_for_of_iterate(s);
             let arr = Object::new_array_from(items);
-            Rc::new(RefCell::new(arr))
+            (Rc::new(RefCell::new(arr)), await_of)
         }
-        Value::Generator(gen) => {
-            crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
-        }
+        Value::Generator(gen) => (
+            crate::value::generator::generator_as_iterator_object(Rc::clone(gen)),
+            await_of,
+        ),
         Value::Object(o) if await_of => {
-            let (iterator, _) = obtain_async_iterator(o, env)?;
-            iterator
+            let (iterator, sync_fallback) = obtain_async_iterator(o, env)?;
+            (iterator, sync_fallback)
         }
-        Value::Object(o) => obtain_iterator(o)?,
+        Value::Object(o) => (obtain_iterator(o)?, false),
         _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
     };
     eval_for_of_iterator(ForOfIteratorRun {
@@ -702,6 +701,7 @@ pub fn eval_for_of(
         loop_binding,
         dispose_async,
         await_of,
+        await_values,
         env,
         in_arrow_function,
         index: 0,
@@ -949,7 +949,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             ctx.eval("actual.join(',')").unwrap(),
-            Value::String("pre,constructor,tick 1,loop,tick 2,post".into()),
+            Value::String("pre,tick 1,loop,tick 2,post".into()),
         );
     }
 
@@ -960,7 +960,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             ctx.eval("actual.join(',')").unwrap(),
-            Value::String("pre,constructor,tick 1,loop,tick 2,post".into())
+            Value::String("pre,constructor,tick 1,loop,constructor,tick 2,post".into())
         );
     }
 
