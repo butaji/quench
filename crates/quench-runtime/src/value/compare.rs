@@ -207,21 +207,32 @@ pub fn parse_number_string(s: &str) -> Option<f64> {
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
-        return u64::from_str_radix(rest, 16).ok().map(|n| n as f64);
+        return parse_radix_number(rest, 16);
     }
     if let Some(rest) = trimmed
         .strip_prefix("0b")
         .or_else(|| trimmed.strip_prefix("0B"))
     {
-        return u64::from_str_radix(rest, 2).ok().map(|n| n as f64);
+        return parse_radix_number(rest, 2);
     }
     if let Some(rest) = trimmed
         .strip_prefix("0o")
         .or_else(|| trimmed.strip_prefix("0O"))
     {
-        return u64::from_str_radix(rest, 8).ok().map(|n| n as f64);
+        return parse_radix_number(rest, 8);
     }
     trimmed.parse::<f64>().ok()
+}
+
+fn parse_radix_number(source: &str, radix: u32) -> Option<f64> {
+    if source.is_empty() {
+        return None;
+    }
+    source.chars().try_fold(0.0, |value, character| {
+        character
+            .to_digit(radix)
+            .map(|digit| value * radix as f64 + digit as f64)
+    })
 }
 
 /// ToPrimitive for object comparison — returns Result so we can propagate

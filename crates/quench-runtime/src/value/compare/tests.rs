@@ -384,6 +384,14 @@ fn loose_eq_bigint_empty_string_is_zero() {
     assert!(loose_eq(&Value::String("  ".into()), &zero));
 }
 
+#[test]
+fn parse_number_string_accepts_large_hex_values() {
+    assert_eq!(
+        super::parse_number_string("0x10000000000000000"),
+        Some(18446744073709551616.0)
+    );
+}
+
 // ─── primitive_for_compare ────────────────────────────────────────────────────
 
 #[test]
