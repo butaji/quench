@@ -175,6 +175,7 @@ pub fn eval_expression(
             }
 
             crate::interpreter::set_generator_yield(value.clone());
+            crate::eval::generator::mark_assignment_yield();
             crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
             Ok(resume_val)
         }
@@ -267,8 +268,20 @@ pub fn eval_expression(
                 };
                 crate::eval::class::eval_class_expr(class, env, inferred_name)?
             } else {
+                crate::eval::generator::begin_assignment_rhs();
                 eval_expression(right, env, in_arrow_function)?
             };
+            if crate::eval::generator::take_assignment_yield() {
+                return Ok(right_val);
+            }
+            if crate::eval::generator::take_suspended_assignment()
+                && crate::eval::generator::take_pending_return()
+            {
+                if let Some(control) = crate::interpreter::take_control_flow() {
+                    crate::interpreter::set_control_flow(control);
+                    return Ok(right_val);
+                }
+            }
             eval_binary_op(*op, &left_val, &right_val)
         }
         Expression::Unary { op, argument } => {
@@ -300,8 +313,20 @@ pub fn eval_expression(
                 };
                 eval_class_expr(class, env, inferred_name)?
             } else {
+                crate::eval::generator::begin_assignment_rhs();
                 eval_expression(right, env, in_arrow_function)?
             };
+            if crate::eval::generator::take_assignment_yield() {
+                return Ok(right_val);
+            }
+            if crate::eval::generator::take_suspended_assignment()
+                && crate::eval::generator::take_pending_return()
+            {
+                if let Some(control) = crate::interpreter::take_control_flow() {
+                    crate::interpreter::set_control_flow(control);
+                    return Ok(right_val);
+                }
+            }
             if matches!(
                 right.as_ref(),
                 Expression::Yield(_) | Expression::YieldDelegate(_)

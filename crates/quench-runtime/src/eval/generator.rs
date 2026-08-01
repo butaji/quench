@@ -47,6 +47,52 @@ thread_local! {
     static CURRENT_GENERATOR: RefCell<Option<Rc<RefCell<GeneratorState>>>> = const { RefCell::new(None) };
     static YIELD_IN_FINALLY: Cell<bool> = const { Cell::new(false) };
     static PENDING_RETURN: Cell<bool> = const { Cell::new(false) };
+    static ASSIGNMENT_RHS: Cell<bool> = const { Cell::new(false) };
+    static ASSIGNMENT_YIELD: Cell<bool> = const { Cell::new(false) };
+    static SUSPENDED_ASSIGNMENT: Cell<bool> = const { Cell::new(false) };
+    static IN_VALUE_GENERATOR: Cell<bool> = const { Cell::new(false) };
+}
+
+pub struct GeneratorEvalGuard;
+
+impl Drop for GeneratorEvalGuard {
+    fn drop(&mut self) {
+        IN_VALUE_GENERATOR.with(|cell| cell.set(false));
+    }
+}
+
+pub fn enter_value_generator() -> GeneratorEvalGuard {
+    IN_VALUE_GENERATOR.with(|cell| cell.set(true));
+    GeneratorEvalGuard
+}
+
+pub fn begin_assignment_rhs() {
+    if IN_VALUE_GENERATOR.with(|cell| cell.get()) {
+        ASSIGNMENT_RHS.with(|cell| cell.set(true));
+    }
+}
+
+pub fn mark_assignment_yield() {
+    if ASSIGNMENT_RHS.with(|cell| cell.get()) {
+        ASSIGNMENT_YIELD.with(|cell| cell.set(true));
+        SUSPENDED_ASSIGNMENT.with(|cell| cell.set(true));
+    }
+}
+
+pub fn take_assignment_yield() -> bool {
+    ASSIGNMENT_RHS.with(|cell| cell.set(false));
+    ASSIGNMENT_YIELD.with(|cell| cell.replace(false))
+}
+
+pub fn take_suspended_assignment() -> bool {
+    SUSPENDED_ASSIGNMENT.with(|cell| cell.replace(false))
+}
+
+pub fn reset_assignment_state() {
+    ASSIGNMENT_RHS.with(|cell| cell.set(false));
+    ASSIGNMENT_YIELD.with(|cell| cell.set(false));
+    SUSPENDED_ASSIGNMENT.with(|cell| cell.set(false));
+    PENDING_RETURN.with(|cell| cell.set(false));
 }
 
 pub fn mark_pending_return() {

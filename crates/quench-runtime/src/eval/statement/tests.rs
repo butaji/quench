@@ -5,6 +5,12 @@ fn eval(src: &str) -> Result<Value, crate::value::JsError> {
 }
 
 #[test]
+fn generator_assignment_defers_write_until_yield_resumes() {
+    let value = eval("var obj = {foo: 'initial'}; function* g() { obj.foo = yield; } var iter = g(); iter.next(); var before = obj.foo; iter.next('resumed'); [before, obj.foo].join('|')").unwrap();
+    assert_eq!(value, Value::String("initial|resumed".into()));
+}
+
+#[test]
 fn dynamic_import_returns_promise_for_missing_module() {
     let value = eval("typeof import('missing-module').then").unwrap();
     assert_eq!(value, Value::String("function".into()));

@@ -170,6 +170,10 @@ impl GeneratorObject {
 
     /// Advance the generator by one step.
     pub fn next(&mut self, value: Value) -> Result<IteratorResult, JsError> {
+        let _generator_guard = crate::eval::generator::enter_value_generator();
+        if self.pending_stmt.is_none() {
+            crate::eval::generator::reset_assignment_state();
+        }
         if self.state == GeneratorState::Completed {
             return Ok(IteratorResult {
                 value: Value::Undefined,
@@ -471,7 +475,10 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(
                 arg.clone(),
             ));
-            let result = g.next(Value::Undefined)?;
+            crate::eval::generator::mark_pending_return();
+            let result = g.next(Value::Undefined);
+            crate::eval::generator::take_pending_return();
+            let result = result?;
             Ok(result.to_object())
         },
     )))
@@ -482,13 +489,12 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
-            let mut g = gen.borrow_mut();
+            let mut g = gen
+                .try_borrow_mut()
+                .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?;
             if g.state == GeneratorState::Completed {
-                return Ok(IteratorResult {
-                    value: Value::Undefined,
-                    done: true,
-                }
-                .to_object());
+                crate::value::set_thrown_value(arg);
+                return Err(JsError("Generator threw".to_string()));
             }
             let suspended_start = g.state == GeneratorState::Suspended
                 && g.yield_index == 0
@@ -496,6 +502,7 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             if suspended_start {
                 g.state = GeneratorState::Completed;
                 g.call_env = None;
+                crate::value::set_thrown_value(arg.clone());
                 return Err(JsError(format!(
                     "Generator threw: {}",
                     crate::value::to_js_string(&arg)
