@@ -162,6 +162,10 @@ fn binary_multiply() {
         ctx.eval("6 * 7").unwrap(),
         crate::value::Value::Number(42.0)
     );
+    assert_eq!(
+        ctx.eval("Number.MIN_VALUE * 0.1").unwrap(),
+        crate::value::Value::Number(0.0)
+    );
 }
 
 #[test]

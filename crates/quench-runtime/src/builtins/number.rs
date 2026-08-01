@@ -211,8 +211,8 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
     number_obj.borrow_mut().define(
         "MIN_VALUE",
-        Value::Number(f64::MIN_POSITIVE),
-        constant_flags(f64::MIN_POSITIVE),
+        Value::Number(f64::from_bits(1)),
+        constant_flags(f64::from_bits(1)),
     );
     number_obj
         .borrow_mut()
@@ -330,7 +330,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     number_ctor.set_static_method("parseInt", number_obj.borrow().get("parseInt").unwrap());
     number_ctor.set_static_method("parseFloat", number_obj.borrow().get("parseFloat").unwrap());
     number_ctor.set_static_method("MAX_VALUE", Value::Number(f64::MAX));
-    number_ctor.set_static_method("MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
+    number_ctor.set_static_method("MIN_VALUE", Value::Number(f64::from_bits(1)));
     number_ctor.set_static_method("NaN", Value::Number(f64::NAN));
     number_ctor.set_static_method("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY));
     number_ctor.set_static_method("POSITIVE_INFINITY", Value::Number(f64::INFINITY));
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn test_number_constants() {
         assert_eq!(eval_num("Number.MAX_VALUE"), f64::MAX);
-        assert_eq!(eval_num("Number.MIN_VALUE"), f64::MIN_POSITIVE);
+        assert_eq!(eval_num("Number.MIN_VALUE"), f64::from_bits(1));
         let nan: f64 = eval_num("Number.NaN");
         assert!(nan.is_nan());
         assert_eq!(eval_num("Number.POSITIVE_INFINITY"), f64::INFINITY);
