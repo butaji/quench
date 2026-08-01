@@ -151,6 +151,9 @@ pub fn make_ops_object() -> Value {
             .unwrap_or_default();
         let val = args.get(2).cloned().unwrap_or(Value::Undefined);
         if let Value::Object(obj_rc) = &o {
+            if !obj_rc.borrow().extensible {
+                return Ok(Value::Boolean(false));
+            }
             obj_rc.borrow_mut().set(&key, val);
             Ok(Value::Boolean(true))
         } else {
@@ -849,6 +852,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_create_data_property_rejects_frozen_object() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var CreateDataProperty = __ops__.CreateDataProperty; \
+                 var o = Object.freeze({}); \
+                 !CreateDataProperty(o, 'x', 1) && !Object.prototype.hasOwnProperty.call(o, 'x')",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
