@@ -181,6 +181,11 @@ pub fn eval_delete(
                         Ok(Value::Boolean(false))
                     }
                 }
+                Value::String(_)
+                | Value::Number(_)
+                | Value::Boolean(_)
+                | Value::Symbol(_)
+                | Value::BigInt(_) => Ok(Value::Boolean(true)),
                 _ => Ok(Value::Boolean(false)),
             }
         }
@@ -216,7 +221,10 @@ pub fn eval_delete(
             let _ = env.borrow_mut().delete_binding(name);
             Ok(Value::Boolean(true))
         }
-        _ => Ok(Value::Boolean(true)),
+        _ => {
+            crate::eval::expression::eval_expression(expr, env, in_arrow_function)?;
+            Ok(Value::Boolean(true))
+        }
     }
 }
 
@@ -546,6 +554,19 @@ mod tests {
     #[test]
     fn delete_non_reference_expression_returns_true() {
         let r = eval("delete 1 && delete new Object()").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_non_reference_expression_evaluates_side_effects() {
+        let r =
+            eval("var called = false; function f() { called = true; } delete f(); called").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_primitive_member_returns_true() {
+        let r = eval("delete 'Test262'[100]").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
