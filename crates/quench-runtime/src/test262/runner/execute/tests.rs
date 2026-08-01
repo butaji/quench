@@ -195,6 +195,18 @@ fn dynamic_import_fixture_exports_values() {
 }
 
 #[test]
+fn object_rest_proxy_skips_excluded_symbol_descriptors() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let path = std::path::PathBuf::from(default_test262_dir()).join(
+        "test/language/expressions/object/dstr/object-rest-proxy-gopd-not-called-on-excluded-keys.js",
+    );
+    let harness = HarnessLoader::new(&default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn strict_async_script_rejects_named_function_reassignment() {
     let script = format!(
         "\"use strict\";{}\

@@ -1063,7 +1063,10 @@ pub fn compute_property_key(
         PropertyKey::Number(n) => Ok(n.to_string()),
         PropertyKey::Computed(expr) => {
             let value = eval_expression(expr, env, false)?;
-            Ok(crate::value::to_js_string(&value))
+            Ok(match value {
+                crate::Value::Symbol(symbol) => symbol.property_key(),
+                value => crate::value::to_js_string(&value),
+            })
         }
     }
 }
@@ -1077,9 +1080,13 @@ pub fn extract_destructure_key(
         PropertyKey::Ident(s) => Ok(s.clone()),
         PropertyKey::String(s) => Ok(s.clone()),
         PropertyKey::Number(n) => Ok(n.to_string()),
-        PropertyKey::Computed(expr) => Ok(crate::value::to_js_string(&eval_expression(
-            expr, env, false,
-        )?)),
+        PropertyKey::Computed(expr) => {
+            let value = eval_expression(expr, env, false)?;
+            Ok(match value {
+                crate::Value::Symbol(symbol) => symbol.property_key(),
+                value => crate::value::to_js_string(&value),
+            })
+        }
     }
 }
 
