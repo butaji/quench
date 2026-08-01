@@ -429,13 +429,8 @@ pub fn register_function(ctx: &mut Context) {
 
     // Create %AsyncGeneratorPrototype% — the intrinsic prototype of async generator instances.
     let async_generator_proto_rc = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-    if let Some(obj_proto) = crate::builtins::get_object_prototype() {
-        let async_iterator_proto = Rc::new(RefCell::new(Object::with_prototype(
-            ObjectKind::Ordinary,
-            obj_proto,
-        )));
-        async_generator_proto_rc.borrow_mut().prototype = Some(async_iterator_proto);
-    }
+    async_generator_proto_rc.borrow_mut().prototype =
+        crate::builtins::iterator::get_async_iterator_prototype();
     ASYNC_GENERATOR_PROTOTYPE.with(|gp| {
         *gp.borrow_mut() = Some(Rc::clone(&async_generator_proto_rc));
     });

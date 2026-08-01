@@ -1276,6 +1276,19 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_inherits_async_iterator_prototype() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval(
+                "async function* generator() {} \
+                 var proto = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype)); \
+                 typeof proto[Symbol.asyncIterator]",
+            )
+            .unwrap();
+        assert_eq!(result, Value::String("function".to_string()));
+    }
+
+    #[test]
     fn async_generator_prototype_next_returns_promise() {
         let mut ctx = new_ctx();
         let r = ctx

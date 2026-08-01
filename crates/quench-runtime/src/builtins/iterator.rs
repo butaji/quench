@@ -17,11 +17,47 @@ use crate::Context;
 thread_local! {
     static ITERATOR_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
         const { RefCell::new(None) };
+    static ASYNC_ITERATOR_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> =
+        const { RefCell::new(None) };
 }
 
 /// Get %IteratorPrototype% (for use by other builtins and interpreter).
 pub fn get_iterator_prototype() -> Option<Rc<RefCell<Object>>> {
     ITERATOR_PROTOTYPE.with(|p| p.borrow().clone())
+}
+
+pub fn get_async_iterator_prototype() -> Option<Rc<RefCell<Object>>> {
+    ASYNC_ITERATOR_PROTOTYPE.with(|p| p.borrow().clone())
+}
+
+fn async_iterator_dispose(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().ok_or_else(|| {
+        JsError(
+            "TypeError: AsyncIterator.prototype[Symbol.asyncDispose] called without this"
+                .to_string(),
+        )
+    })?;
+    let Value::Object(object) = this.clone() else {
+        return Err(JsError(
+            "TypeError: async iterator is not an object".to_string(),
+        ));
+    };
+    let return_method = crate::eval::member::eval_object_member(&object, "return", None)?;
+    let result = if matches!(return_method, Value::Undefined | Value::Null) {
+        Value::Undefined
+    } else {
+        crate::eval::function::call_value_with_this(return_method, vec![Value::Undefined], this)?
+    };
+    let promise = crate::builtins::promise::promise_resolve_impl_static(
+        vec![result],
+        crate::builtins::promise::get_promise_proto(),
+    )?;
+    let on_fulfilled =
+        Value::NativeFunction(Rc::new(NativeFunction::new(|_| Ok(Value::Undefined))));
+    crate::interpreter::set_native_this(promise);
+    let result = crate::builtins::promise::promise_then_impl(vec![on_fulfilled, Value::Undefined]);
+    crate::interpreter::take_native_this();
+    result
 }
 
 /// Save/restore for realm snapshots.
@@ -41,6 +77,83 @@ pub fn register_iterator(ctx: &mut Context) {
     }
     let proto_rc = Rc::new(RefCell::new(proto));
     ITERATOR_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&proto_rc)));
+
+    let mut async_proto = Object::new(ObjectKind::Ordinary);
+    async_proto.prototype = proto_rc.borrow().prototype.clone();
+    let async_proto_rc = Rc::new(RefCell::new(async_proto));
+    ASYNC_ITERATOR_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&async_proto_rc)));
+    if let Some(Value::Symbol(key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("asyncIterator")
+    {
+        let method = NativeFunction::new(|_args| {
+            Ok(crate::builtins::get_native_this().unwrap_or(Value::Undefined))
+        });
+        method.define_property(
+            "name",
+            Value::String("[Symbol.asyncIterator]".to_string()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String("[Symbol.asyncIterator]".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        method.define_property(
+            "length",
+            Value::Number(0.0),
+            crate::value::PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        async_proto_rc.borrow_mut().define(
+            &key.property_key(),
+            Value::NativeFunction(Rc::new(method)),
+            crate::value::PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+    }
+    if let Some(Value::Symbol(key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("asyncDispose")
+    {
+        let method = NativeFunction::new(async_iterator_dispose);
+        method.define_property(
+            "name",
+            Value::String("[Symbol.asyncDispose]".to_string()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String("[Symbol.asyncDispose]".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        method.define_property(
+            "length",
+            Value::Number(0.0),
+            crate::value::PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        async_proto_rc.borrow_mut().define(
+            &key.property_key(),
+            Value::NativeFunction(Rc::new(method)),
+            crate::value::PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+    }
 
     // ---- %IteratorPrototype% methods ----
     register_proto_method(&proto_rc, "map", iterator_map);
