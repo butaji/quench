@@ -129,6 +129,9 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
     if let Some(result) = bigint_string_eq(a, b) {
         return result;
     }
+    if let Some(result) = bigint_number_eq(a, b) {
+        return result;
+    }
     if let Some(result) = boolean_coercion_eq(a, b) {
         return result;
     }
@@ -147,6 +150,20 @@ fn bigint_string_eq(a: &Value, b: &Value) -> Option<bool> {
             .parse::<num_bigint::BigInt>()
             .is_ok_and(|parsed| parsed == bigint.as_ref().clone()),
     )
+}
+
+fn bigint_number_eq(a: &Value, b: &Value) -> Option<bool> {
+    let (bigint, number) = match (a, b) {
+        (Value::BigInt(value), Value::Number(number)) => (value, *number),
+        (Value::Number(number), Value::BigInt(value)) => (value, *number),
+        _ => return None,
+    };
+    if !number.is_finite() || number.fract() != 0.0 {
+        return Some(false);
+    }
+    let text = format!("{number:.0}");
+    let parsed = num_bigint::BigInt::parse_bytes(text.as_bytes(), 10)?;
+    Some(parsed == bigint.as_ref().clone())
 }
 
 fn null_undefined_eq(a: &Value, b: &Value) -> bool {

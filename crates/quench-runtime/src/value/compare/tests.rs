@@ -369,6 +369,14 @@ fn loose_eq_same_type_numbers() {
     assert!(!loose_eq(&Value::Number(1.0), &Value::Number(2.0)));
 }
 
+#[test]
+fn loose_eq_bigint_number_preserves_precision() {
+    assert!(loose_eq(
+        &Value::BigInt(std::rc::Rc::new(9007199254740992_i64.into())),
+        &Value::Number(9007199254740992.0)
+    ));
+}
+
 // ─── primitive_for_compare ────────────────────────────────────────────────────
 
 #[test]
