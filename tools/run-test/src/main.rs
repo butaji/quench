@@ -23,6 +23,7 @@ use std::process::ExitCode;
 use quench_runtime::test262::harness::try_inject_harness;
 use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
 use quench_runtime::test262::metadata::Test262Metadata;
+use quench_runtime::test262::runner::execute::load_fixture_modules;
 use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
 use quench_runtime::test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
@@ -180,6 +181,12 @@ fn main() -> ExitCode {
             if let Some(te) = ctx.get_global("Test262Error") {
                 quench_runtime::value::error::set_main_realm_test262_error(te);
             }
+            if is_async {
+                if let Err(e) = load_fixture_modules(&mut ctx, &path) {
+                    eprintln!("{}: fixture load failed: {}", label, e);
+                    return 4;
+                }
+            }
         }
 
         let run_result = if module || is_module_meta {
@@ -286,11 +293,7 @@ struct JudgeCtx<'a> {
 }
 
 /// Judge one run's result against the metadata. Returns the exit code.
-fn judge(
-    ctx: &mut Context,
-    jc: &JudgeCtx,
-    result: Result<Value, JsError>,
-) -> i32 {
+fn judge(ctx: &mut Context, jc: &JudgeCtx, result: Result<Value, JsError>) -> i32 {
     if let Some(neg) = &jc.meta.negative {
         return judge_negative(neg, jc.label, result, jc.test_path);
     }

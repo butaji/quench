@@ -283,7 +283,7 @@ fn run_async_script_with_path(
     async_done_probe(&mut ctx)
 }
 
-fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
+pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
     let directory = test_path
         .parent()
         .ok_or_else(|| "test has no parent directory".to_string())?;
