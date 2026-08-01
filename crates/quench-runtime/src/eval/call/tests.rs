@@ -5,6 +5,15 @@ use crate::value::Value;
 use crate::Context;
 
 #[test]
+fn call_does_not_evaluate_arguments_for_non_callable_member() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var called=false; function foo(){called=true} var o={}; try { o.bar.gar(foo()) } catch(e) {} called"),
+        Ok(Value::Boolean(false))
+    );
+}
+
+#[test]
 fn arguments_index_descriptor_is_enumerable() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
