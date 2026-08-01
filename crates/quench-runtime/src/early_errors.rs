@@ -1400,6 +1400,15 @@ impl<'a> Visit<'a> for StrictAssignmentChecker {
             self.0 = true;
         }
     }
+
+    fn visit_update_expression(&mut self, expr: &ast::UpdateExpression<'a>) {
+        if let ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = &expr.argument
+        {
+            if matches!(identifier.name.as_str(), "eval" | "arguments") {
+                self.0 = true;
+            }
+        }
+    }
 }
 
 struct StrictReservedAssignmentChecker {
@@ -3211,6 +3220,12 @@ mod tests {
     fn parse_script_rejects_delete_identifier_in_strict_mode() {
         use crate::parser::parse_script;
         assert!(parse_script("'use strict'; delete identifier; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_strict_arguments_update() {
+        use crate::parser::parse_script;
+        assert!(parse_script("'use strict'; arguments--; ").is_err());
     }
 
     #[test]
