@@ -317,6 +317,10 @@ where
         let cmp = string_compare(a, b);
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
+    if let (Value::BigInt(a), Value::BigInt(b)) = (&left, &right) {
+        let cmp = a.as_ref().cmp(b.as_ref()) as i8;
+        return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
+    }
     Ok(Value::Boolean(num_cmp(to_number(&left), to_number(&right))))
 }
 

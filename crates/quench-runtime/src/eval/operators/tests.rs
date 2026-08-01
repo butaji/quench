@@ -27,6 +27,15 @@ fn bigint_shift_accepts_negative_shift_counts() {
     );
 }
 
+#[test]
+fn bigint_relational_comparison_preserves_precision() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("9007199254740993n > 9007199254740992n").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
 /// When `valueOf` throws, `eval_add` must surface the error AND leave the
 /// thrown value intact for the surrounding try/catch to retrieve.
 #[test]
