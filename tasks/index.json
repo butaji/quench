@@ -1,6 +1,6 @@
 {
   "$schema": "quench stages v1",
-  "current_stage": 38,
+  "current_stage": 44,
   "goal": "100% of the in-scope test262 suite with the smallest practical Rust core and self-hosted JS builtins.",
   "scope": {
     "includes": [
@@ -499,13 +499,13 @@
       "id": 40,
       "path": "test/language/statements/for-await-of",
       "tests": 1234,
-      "status": "pending",
+      "status": "done",
       "difficulty": 7,
       "impl": "rust",
       "rust_loc": "400\u2013800",
       "js_loc": "0\u20130",
-      "failed": 2,
-      "pass_rate": "99.8%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 41,
