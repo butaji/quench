@@ -288,6 +288,7 @@ fn register_boolean_converter(ctx: &mut Context) {
         },
         boolean_proto_rc.clone(),
     );
+    boolean_native.name = "Boolean".into();
     boolean_native.set_constructable(true);
     let boolean_fn = Value::NativeFunction(Rc::new(boolean_native));
 
@@ -578,6 +579,33 @@ mod tests {
         let result = ctx
             .eval(
                 "(function() { 'use strict'; try { delete Boolean.prototype; return false; } catch (e) { return e instanceof TypeError; } })()",
+            )
+            .unwrap();
+        assert_eq!(result, crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn boolean_construct_uses_constructor_realm_default_prototype() {
+        let mut ctx = crate::Context::new().unwrap();
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let result = ctx
+            .eval(
+                "var other = $262.createRealm().global; \
+                 var C = new other.Function(); C.prototype = null; \
+                 Object.getPrototypeOf(Reflect.construct(Boolean, [], C)) === other.Boolean.prototype",
+            )
+            .unwrap();
+        assert_eq!(result, crate::Value::Boolean(true));
+    }
+
+    #[test]
+    fn function_constructor_keeps_realm_global_environment() {
+        let mut ctx = crate::Context::new().unwrap();
+        crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+        let result = ctx
+            .eval(
+                "var other = $262.createRealm().global; \
+                 (new other.Function('return Boolean'))() === other.Boolean",
             )
             .unwrap();
         assert_eq!(result, crate::Value::Boolean(true));

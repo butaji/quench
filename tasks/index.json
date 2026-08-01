@@ -895,13 +895,13 @@
       "id": 73,
       "path": "test/built-ins/Boolean",
       "tests": 51,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 1,
-      "pass_rate": "98.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 74,

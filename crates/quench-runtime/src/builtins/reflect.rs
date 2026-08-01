@@ -88,9 +88,28 @@ fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
     if !crate::eval::class::helpers::is_constructor_value(&new_target) {
         return Err(JsError::new("TypeError: newTarget is not a constructor"));
     }
-    let prototype = crate::eval::class::get_constructor_prototype(&new_target)?
+    let mut prototype = crate::eval::class::get_constructor_prototype(&new_target)?
         .or_else(crate::builtins::get_object_prototype)
         .ok_or_else(|| JsError::new("Reflect.construct has no default prototype"))?;
+    if let (Value::NativeFunction(target_function), Value::Function(new_target_function)) =
+        (&target, &new_target)
+    {
+        if target_function.name == "Boolean"
+            && matches!(
+                new_target_function.get_property("prototype"),
+                Some(Value::Null)
+            )
+        {
+            if let Some(Value::NativeFunction(boolean)) =
+                new_target_function.closure.borrow().get("Boolean")
+            {
+                prototype =
+                    crate::eval::class::get_constructor_prototype(&Value::NativeFunction(boolean))?
+                        .or_else(crate::builtins::get_object_prototype)
+                        .ok_or_else(|| JsError::new("Reflect.construct has no realm prototype"))?;
+            }
+        }
+    }
     let this = Value::Object(Rc::new(RefCell::new(Object::with_prototype(
         ObjectKind::Ordinary,
         prototype,
