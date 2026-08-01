@@ -248,6 +248,9 @@ pub fn eval_update(
         }
         _ => {
             let current_num = to_number(&current);
+            if let Some(thrown) = crate::value::get_thrown_value() {
+                return Err(JsError(crate::value::to_js_string(&thrown)));
+            }
             let new_num = match op {
                 UpdateOp::Increment => current_num + 1.0,
                 UpdateOp::Decrement => current_num - 1.0,
@@ -501,6 +504,15 @@ mod tests {
     fn pre_increment() {
         let r = eval("var x = 5; ++x").unwrap();
         assert_eq!(r, Value::Number(6.0));
+    }
+
+    #[test]
+    fn update_propagates_value_of_throw() {
+        let r = eval(
+            "var object = {valueOf: function() {throw 'error'}, toString: function() {return 1}}; try { ++object; 'none'; } catch (e) { e; }",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("error".to_string()));
     }
 
     #[test]
