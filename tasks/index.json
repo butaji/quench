@@ -859,13 +859,13 @@
       "id": 70,
       "path": "test/built-ins/ThrowTypeError",
       "tests": 14,
-      "status": "pending",
+      "status": "done",
       "difficulty": 2,
       "impl": "rust",
       "rust_loc": "50\u2013100",
       "js_loc": "0\u20130",
-      "failed": 1,
-      "pass_rate": "92.9%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 71,

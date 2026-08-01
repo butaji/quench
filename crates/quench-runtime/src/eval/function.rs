@@ -96,15 +96,33 @@ fn constructor_key(value: &Value) -> usize {
 }
 
 fn throw_type_error_for_env(env: &Rc<RefCell<Environment>>) -> Value {
+    if let Some(Value::NativeConstructor(function)) = env.borrow().get_global_property("Function") {
+        if let Some(getter) = function.prototype.borrow().get_getter("caller") {
+            if let Some(thrower) = getter.func.clone() {
+                return thrower;
+            }
+        }
+    }
     let constructor = env.borrow().get_global_property("TypeError");
+    let realm_global = env.borrow().get_global_property("globalThis");
     let current = crate::context::CURRENT_CONTEXT.with(|cell| {
         cell.borrow()
             .and_then(|ptr| unsafe { (*ptr).get_global("TypeError") })
     });
-    if same_constructor(current.as_ref(), constructor.as_ref()) {
+    let current_global = crate::context::CURRENT_CONTEXT.with(|cell| {
+        cell.borrow()
+            .and_then(|ptr| unsafe { (*ptr).get_global("globalThis") })
+    });
+    if same_constructor(current.as_ref(), constructor.as_ref())
+        || same_object(realm_global.as_ref(), current_global.as_ref())
+    {
         return throw_type_error();
     }
     throw_type_error_for_constructor(constructor)
+}
+
+fn same_object(left: Option<&Value>, right: Option<&Value>) -> bool {
+    matches!((left, right), (Some(Value::Object(left)), Some(Value::Object(right))) if Rc::ptr_eq(left, right))
 }
 
 fn same_constructor(left: Option<&Value>, right: Option<&Value>) -> bool {
