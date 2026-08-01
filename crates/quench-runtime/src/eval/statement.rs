@@ -1612,6 +1612,9 @@ fn eval_try(
                 let pending_cf = take_control_flow();
 
                 let fin_result = eval_statement(fin, env, false, in_arrow_function);
+                if crate::interpreter::peek_generator_yield() {
+                    crate::eval::generator::mark_yield_in_finally();
+                }
                 if fin_result.is_ok()
                     && crate::interpreter::is_in_async_function()
                     && finalizer_has_async_dispose(fin)
@@ -1756,6 +1759,9 @@ fn eval_try(
                     } else {
                         match eval_statement(fin, env, false, in_arrow_function) {
                             Ok(fin_val) => {
+                                if crate::interpreter::peek_generator_yield() {
+                                    crate::eval::generator::mark_yield_in_finally();
+                                }
                                 if crate::interpreter::peek_generator_yield() {
                                     return Ok(fin_val);
                                 }

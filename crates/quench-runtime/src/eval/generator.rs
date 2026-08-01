@@ -4,7 +4,7 @@
 //! When a generator function is called, it returns a generator object that can
 //! be resumed with .next(), .throw(), or .return().
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -45,6 +45,15 @@ impl GeneratorState {
 
 thread_local! {
     static CURRENT_GENERATOR: RefCell<Option<Rc<RefCell<GeneratorState>>>> = const { RefCell::new(None) };
+    static YIELD_IN_FINALLY: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn mark_yield_in_finally() {
+    YIELD_IN_FINALLY.with(|cell| cell.set(true));
+}
+
+pub fn take_yield_in_finally() -> bool {
+    YIELD_IN_FINALLY.with(|cell| cell.replace(false))
 }
 
 /// Set the current generator state (called when entering generator evaluation)

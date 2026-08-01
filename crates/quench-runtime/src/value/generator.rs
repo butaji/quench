@@ -215,6 +215,17 @@ impl GeneratorObject {
             }
         }
 
+        if crate::eval::generator::take_yield_in_finally() {
+            if let Some(crate::interpreter::ControlFlow::Return(value)) = pending_cf {
+                self.state = GeneratorState::Completed;
+                self.pending_stmt = None;
+                self.call_env = None;
+                crate::interpreter::set_current_eval_env(previous_eval_env);
+                crate::interpreter::set_strict_mode(prev_strict);
+                return Ok(IteratorResult { value, done: true });
+            }
+        }
+
         let start = self.pending_stmt.unwrap_or(0);
         let mut completion = Value::Undefined;
         for (i, stmt) in self.body.iter().enumerate().skip(start) {
