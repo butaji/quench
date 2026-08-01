@@ -1125,6 +1125,17 @@ fn bigint_shift_with_number_throws_type_error() {
 }
 
 #[test]
+fn arithmetic_symbol_conversion_throws_type_error_after_operand_evaluation() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval(
+            "var trace = ''; try { (function() { trace += '1'; return { valueOf: function() { trace += '3'; return Symbol('1'); } }; })() / (function() { trace += '2'; return 1; })(); } catch (error) { trace + ':' + (error instanceof TypeError); }"
+        ),
+        Ok(crate::value::Value::String("123:true".to_string()))
+    );
+}
+
+#[test]
 fn function_prototype_is_callable() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(

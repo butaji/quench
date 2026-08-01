@@ -149,6 +149,12 @@ fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Resul
             crate::throw!("TypeError", "Cannot mix BigInt and other types")
         }
         _ => {
+            if matches!(
+                (&left, &right),
+                (Value::Symbol(_), _) | (_, Value::Symbol(_))
+            ) {
+                return crate::throw!("TypeError", "Cannot convert Symbol to number");
+            }
             let left = to_number(&left);
             let right = to_number(&right);
             if operator == '^' && right.is_infinite() && left.abs() == 1.0 {
