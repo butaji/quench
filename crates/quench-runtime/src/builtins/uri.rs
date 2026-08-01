@@ -251,8 +251,7 @@ fn is_all_percent_escaped(s: &str) -> bool {
 
 fn decode_percent_bytes(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
     let bytes = s.as_bytes();
-    let mut out = String::with_capacity(bytes.len());
-    let mut decoded = Vec::with_capacity(bytes.len() / 3);
+    let mut out = String::with_capacity(bytes.len() / 3);
     let mut i = 0;
 
     while i < bytes.len() {
@@ -261,12 +260,6 @@ fn decode_percent_bytes(s: &str, keep_reserved: bool) -> Result<String, crate::J
         let byte = (h1 << 4) | h2;
 
         if keep_reserved && is_uri_reserved_byte(byte) {
-            if !decoded.is_empty() {
-                let chunk =
-                    std::str::from_utf8(&decoded).map_err(|_| uri_error("URI malformed"))?;
-                append_wtf8_string(&mut out, chunk);
-                decoded.clear();
-            }
             out.push('%');
             out.push(bytes[i + 1] as char);
             out.push(bytes[i + 2] as char);
@@ -274,14 +267,117 @@ fn decode_percent_bytes(s: &str, keep_reserved: bool) -> Result<String, crate::J
             continue;
         }
 
-        decoded.push(byte);
-        i += 3;
-    }
+        if byte < 0x80 {
+            out.push(byte as char);
+            i += 3;
+            continue;
+        }
 
-    if !decoded.is_empty() {
-        let chunk =
-            std::str::from_utf8(&decoded).map_err(|_| uri_error("URI malformed"))?;
-        append_wtf8_string(&mut out, chunk);
+        if byte & 0xE0 == 0xC0 {
+            if byte < 0xC2 {
+                return Err(uri_error("URI malformed"));
+            }
+            if i + 5 >= bytes.len() {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let h1 = hex_digit(bytes[i + 4]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h2 = hex_digit(bytes[i + 5]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b2 = (h1 << 4) | h2;
+            if b2 & 0xC0 != 0x80 {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let code_point = (u32::from(byte & 0x1F) << 6) | u32::from(b2 & 0x3F);
+            if let Some(ch) = std::char::from_u32(code_point) {
+                out.push(ch);
+            }
+            i += 6;
+            continue;
+        }
+
+        if byte & 0xF0 == 0xE0 {
+            if i + 8 >= bytes.len() {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let b1 = byte;
+
+            let h1 = hex_digit(bytes[i + 4]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h2 = hex_digit(bytes[i + 5]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b2 = (h1 << 4) | h2;
+
+            let h3 = hex_digit(bytes[i + 7]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h4 = hex_digit(bytes[i + 8]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b3 = (h3 << 4) | h4;
+
+            if b2 & 0xC0 != 0x80 || b3 & 0xC0 != 0x80 {
+                return Err(uri_error("URI malformed"));
+            }
+            if b1 == 0xE0 && b2 < 0xA0 {
+                return Err(uri_error("URI malformed"));
+            }
+            if b1 == 0xED && b2 > 0x9F {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let code_point =
+                (u32::from(byte & 0x0F) << 12) | (u32::from(b2 & 0x3F) << 6) | u32::from(b3 & 0x3F);
+            if (0xD800..=0xDFFF).contains(&code_point) {
+                return Err(uri_error("URI malformed"));
+            }
+            if let Some(ch) = std::char::from_u32(code_point) {
+                out.push(ch);
+                i += 9;
+                continue;
+            }
+            return Err(uri_error("URI malformed"));
+        }
+
+        if byte & 0xF8 == 0xF0 {
+            if i + 11 >= bytes.len() {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let h1 = hex_digit(bytes[i + 4]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h2 = hex_digit(bytes[i + 5]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b2 = (h1 << 4) | h2;
+
+            let h3 = hex_digit(bytes[i + 7]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h4 = hex_digit(bytes[i + 8]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b3 = (h3 << 4) | h4;
+
+            let h5 = hex_digit(bytes[i + 10]).ok_or_else(|| uri_error("URI malformed"))?;
+            let h6 = hex_digit(bytes[i + 11]).ok_or_else(|| uri_error("URI malformed"))?;
+            let b4 = (h5 << 4) | h6;
+
+            if b2 & 0xC0 != 0x80 || b3 & 0xC0 != 0x80 || b4 & 0xC0 != 0x80 {
+                return Err(uri_error("URI malformed"));
+            }
+            if byte == 0xF0 && b2 < 0x90 {
+                return Err(uri_error("URI malformed"));
+            }
+            if byte == 0xF4 && b2 > 0x8F {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let value =
+                (u32::from(byte & 0x07) << 18)
+                    | (u32::from(b2 & 0x3F) << 12)
+                    | (u32::from(b3 & 0x3F) << 6)
+                    | u32::from(b4 & 0x3F);
+            if value > 0x10FFFF {
+                return Err(uri_error("URI malformed"));
+            }
+
+            let value = value - 0x10000;
+            append_wtf8_surrogate(&mut out, 0xD800 + ((value >> 10) & 0x3FF) as u16);
+            append_wtf8_surrogate(&mut out, 0xDC00 + (value & 0x3FF) as u16);
+            i += 12;
+            continue;
+        }
+
+        return Err(uri_error("URI malformed"));
     }
 
     Ok(out)
