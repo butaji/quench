@@ -501,7 +501,7 @@ mod tests {
         assert!(
             matches!(
                 val,
-                PropertyValue::Value(Expression::FunctionExpression { .. })
+                PropertyValue::Method(Expression::FunctionExpression { .. })
             ),
             "{{get()}} must be a Value property (concise method), got {:?}",
             val,
@@ -542,7 +542,7 @@ mod tests {
         assert!(
             matches!(
                 props[0].1,
-                PropertyValue::Value(Expression::FunctionExpression { .. })
+                PropertyValue::Method(Expression::FunctionExpression { .. })
             ),
             "{{set(v)}} must be a Value property (concise method), got {:?}",
             props[0].1,
