@@ -892,6 +892,15 @@ mod tests {
     }
 
     #[test]
+    fn super_call_accepts_function_constructor() {
+        let value = eval(
+            "let custom = {}; let result; function Parent() { return custom; } class Child extends Parent { constructor() { result = super(); } } new Child(); result === custom",
+        )
+        .unwrap();
+        assert_eq!(value, Value::Boolean(true));
+    }
+
+    #[test]
     fn super_constructor_inherits_new_target() {
         let value = eval(
             "let seen; class Base { constructor() { seen = new.target; } } class Parent extends Base { constructor() { super(); } } class Child extends Parent {} new Child(); seen === Child",
