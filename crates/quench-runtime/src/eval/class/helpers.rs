@@ -346,6 +346,10 @@ pub fn build_constructor_env(
         .current_scope()
         .borrow_mut()
         .set_this_value(this_val.clone());
+    call_env.define(
+        "new.target".to_string(),
+        crate::interpreter::get_new_target().unwrap_or(Value::Undefined),
+    );
 
     if class.super_class.is_some() {
         let sv = resolve_super_class_value(class, env)?;
@@ -885,6 +889,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(value, Value::String("true|false".to_string()));
+    }
+
+    #[test]
+    fn super_constructor_inherits_new_target() {
+        let value = eval(
+            "let seen; class Base { constructor() { seen = new.target; } } class Parent extends Base { constructor() { super(); } } class Child extends Parent {} new Child(); seen === Child",
+        )
+        .unwrap();
+        assert_eq!(value, Value::Boolean(true));
     }
 
     // ─── String(f) diagnostic ────────────────────────────────────────────────
