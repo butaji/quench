@@ -178,8 +178,8 @@
       "impl": "rust",
       "rust_loc": "0\u20130",
       "js_loc": "0\u20130",
-      "failed": 1,
-      "pass_rate": "98.6%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 14,

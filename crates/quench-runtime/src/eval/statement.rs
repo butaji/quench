@@ -1755,7 +1755,23 @@ fn eval_try(
                         eval_disposal_finalizer(fin, thrown_value, env, in_arrow_function)
                     } else {
                         match eval_statement(fin, env, false, in_arrow_function) {
-                            Ok(_) => {
+                            Ok(fin_val) => {
+                                if let Some(cf) = take_control_flow() {
+                                    let cf = cf.clone();
+                                    set_control_flow(cf.clone());
+                                    return match cf {
+                                        ControlFlow::Return(value) => Ok(value),
+                                        ControlFlow::Break(_) | ControlFlow::Continue(_) => {
+                                            Ok(fin_val)
+                                        }
+                                        ControlFlow::Yield(value)
+                                        | ControlFlow::YieldDelegate(value) => Ok(value),
+                                        ControlFlow::Throw(value) => {
+                                            set_thrown_value(value.clone());
+                                            Err(JsError(to_js_string(&value)))
+                                        }
+                                    };
+                                }
                                 let message = to_js_string(&thrown_value);
                                 set_thrown_value(thrown_value);
                                 Err(JsError(message))
