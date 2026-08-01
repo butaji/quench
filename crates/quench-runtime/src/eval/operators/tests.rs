@@ -1116,6 +1116,15 @@ fn bigint_addition_with_string_uses_string_concatenation() {
 }
 
 #[test]
+fn bigint_shift_with_number_throws_type_error() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("try { 1n << 1; false; } catch (error) { error instanceof TypeError; }"),
+        Ok(crate::value::Value::Boolean(true))
+    );
+}
+
+#[test]
 fn function_prototype_is_callable() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(

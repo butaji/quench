@@ -67,6 +67,14 @@ fn eval_bigint_shift(
 ) -> Option<Result<Value, JsError>> {
     let left = to_primitive(left, Some("number"));
     let right = to_primitive(right, Some("number"));
+    let left_bigint = matches!(&left, Ok(Value::BigInt(_)));
+    let right_bigint = matches!(&right, Ok(Value::BigInt(_)));
+    if left_bigint != right_bigint {
+        return Some(crate::throw!(
+            "TypeError",
+            "Cannot mix BigInt and other types"
+        ));
+    }
     let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
         return None;
     };
