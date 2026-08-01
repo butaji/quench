@@ -207,6 +207,17 @@ fn dynamic_import_fixture_exports_nested_namespace() {
 }
 
 #[test]
+fn exponentiation_one_to_infinity_is_nan() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let path = std::path::PathBuf::from(default_test262_dir())
+        .join("test/language/expressions/exponentiation/applying-the-exp-operator_A7.js");
+    let harness = HarnessLoader::new(&default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn reflect_construct_invokes_class_target_with_new_target() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

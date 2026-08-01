@@ -143,6 +143,9 @@ fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Resul
         _ => {
             let left = to_number(&left);
             let right = to_number(&right);
+            if operator == '^' && right.is_infinite() && left.abs() == 1.0 {
+                return Ok(Value::Number(f64::NAN));
+            }
             let value = match operator {
                 '-' => left - right,
                 '*' => left * right,
