@@ -721,6 +721,24 @@ fn binary_bit_xor() {
     );
 }
 
+#[test]
+fn binary_bitwise_mixed_bigint_and_number_throws() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("try { 1n & 1; 'no throw' } catch (e) { e instanceof TypeError }"),
+        Ok(crate::value::Value::Boolean(true))
+    );
+}
+
+#[test]
+fn binary_bitwise_symbol_left_does_not_coerce_right() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var trace=''; try { ({valueOf(){trace+='1';return Symbol()}}) & ({valueOf(){trace+='2';return 1}}) } catch(e) {} trace"),
+        Ok(crate::value::Value::String("1".into()))
+    );
+}
+
 // =====================================================================
 // shift operators
 // =====================================================================

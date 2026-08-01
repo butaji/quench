@@ -81,18 +81,42 @@ fn eval_bigint_bitwise(
     right: &Value,
     operator: char,
 ) -> Option<Result<Value, JsError>> {
-    let left = to_primitive(left, Some("number"));
-    let right = to_primitive(right, Some("number"));
-    let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
-        return None;
+    let left = match to_primitive(left, Some("number")) {
+        Ok(value) => value,
+        Err(error) => return Some(Err(error)),
     };
-    let result = match operator {
-        '&' => left.as_ref() & right.as_ref(),
-        '|' => left.as_ref() | right.as_ref(),
-        '^' => left.as_ref() ^ right.as_ref(),
-        _ => unreachable!(),
+    if matches!(left, Value::Symbol(_)) {
+        return Some(crate::throw!(
+            "TypeError",
+            "Cannot convert Symbol to number"
+        ));
+    }
+    let right = match to_primitive(right, Some("number")) {
+        Ok(value) => value,
+        Err(error) => return Some(Err(error)),
     };
-    Some(Ok(Value::BigInt(Rc::new(result))))
+    if matches!(right, Value::Symbol(_)) {
+        return Some(crate::throw!(
+            "TypeError",
+            "Cannot convert Symbol to number"
+        ));
+    }
+    match (&left, &right) {
+        (Value::BigInt(left), Value::BigInt(right)) => {
+            let result = match operator {
+                '&' => left.as_ref() & right.as_ref(),
+                '|' => left.as_ref() | right.as_ref(),
+                '^' => left.as_ref() ^ right.as_ref(),
+                _ => unreachable!(),
+            };
+            Some(Ok(Value::BigInt(Rc::new(result))))
+        }
+        (Value::BigInt(_), _) | (_, Value::BigInt(_)) => Some(crate::throw!(
+            "TypeError",
+            "Cannot mix BigInt and other types"
+        )),
+        _ => None,
+    }
 }
 
 fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Result<Value, JsError> {
