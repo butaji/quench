@@ -2,6 +2,15 @@ use super::*;
 use crate::value::{create_js_error_with_type, set_thrown_value, take_thrown_value};
 
 #[test]
+fn typeof_callable_object_is_function() {
+    let value = crate::Context::new()
+        .unwrap()
+        .eval("typeof String")
+        .unwrap();
+    assert_eq!(value, Value::String("function".to_string()));
+}
+
+#[test]
 fn loose_equality_propagates_object_coercion_errors() {
     let result = crate::Context::new()
         .unwrap()

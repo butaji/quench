@@ -628,7 +628,9 @@ fn eval_typeof(val: &Value) -> Result<Value, JsError> {
         Value::Generator(_) => "object",
         Value::BigInt(_) => "bigint",
         Value::Object(object) => {
-            if object.borrow().kind == crate::value::ObjectKind::Function {
+            if object.borrow().kind == crate::value::ObjectKind::Function
+                || object.borrow().is_callable()
+            {
                 "function"
             } else {
                 "object"
