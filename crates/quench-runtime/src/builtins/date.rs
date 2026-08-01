@@ -101,6 +101,7 @@ fn create_string_prototype() -> Rc<RefCell<Object>> {
         string_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
     crate::builtins::string::methods::install_string_methods(&string_proto_rc);
+    crate::builtins::string::register_string_iterator(&string_proto_rc);
     string_proto_rc
 }
 

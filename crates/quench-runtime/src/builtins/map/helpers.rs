@@ -107,7 +107,13 @@ pub fn make_iterator(items: Vec<Value>) -> Value {
         }
         Ok(Value::Object(Rc::new(RefCell::new(obj))))
     });
-    let mut iter = Object::new(ObjectKind::Ordinary);
+    let iterator_proto = crate::builtins::iterator::get_iterator_prototype()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+    let array_iterator_proto = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        iterator_proto,
+    )));
+    let mut iter = Object::with_prototype(ObjectKind::Ordinary, array_iterator_proto);
     iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
     Value::Object(Rc::new(RefCell::new(iter)))
 }

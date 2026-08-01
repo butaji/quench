@@ -128,9 +128,103 @@ pub fn register_string(_ctx: &mut Context) {
     STRING_PROTOTYPE.with(|sp| {
         *sp.borrow_mut() = Some(Rc::clone(&string_proto_rc));
     });
+    register_string_iterator(&string_proto_rc);
 
     // Note: String global is registered by date::register_type_converters
     // with proper constructor behavior for new String()
+}
+
+pub(crate) fn register_string_iterator(string_proto: &Rc<RefCell<Object>>) {
+    let Some(Value::Symbol(iterator_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    else {
+        return;
+    };
+    let Some(Value::Symbol(tag_key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    else {
+        return;
+    };
+    let iterator_proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    iterator_proto.borrow_mut().prototype = crate::builtins::iterator::get_iterator_prototype();
+    iterator_proto.borrow_mut().define(
+        &tag_key.property_key(),
+        Value::String("String Iterator".into()),
+        PropertyFlags {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            ..Default::default()
+        },
+    );
+    let next = NativeFunction::new(move |_args| {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        let Value::Object(object) = this_val else {
+            return Err(JsError::new("TypeError: not a String Iterator"));
+        };
+        let Some(Value::Object(state)) = object.borrow().get_own("\0stringIteratorState") else {
+            return Err(JsError::new("TypeError: not a String Iterator"));
+        };
+        let mut index = match state.borrow().get("index") {
+            Some(Value::Number(index)) => index as usize,
+            _ => return Err(JsError::new("TypeError: not a String Iterator")),
+        };
+        let chars = match state.borrow().get("string") {
+            Some(Value::String(string)) => crate::value::wtf8::wtf8_for_of_iterate(&string),
+            _ => return Err(JsError::new("TypeError: not a String Iterator")),
+        };
+        let mut result = Object::new(ObjectKind::Ordinary);
+        if let Some(character) = chars.get(index) {
+            index += 1;
+            state.borrow_mut().set("index", Value::Number(index as f64));
+            result.set("value", character.clone());
+            result.set("done", Value::Boolean(false));
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    next.define_property(
+        "name",
+        Value::String("next".into()),
+        PropertyFlags {
+            value: Some(Value::String("next".into())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    next.define_property(
+        "length",
+        Value::Number(0.0),
+        PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    iterator_proto
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next)));
+    string_proto.borrow_mut().set_symbol(
+        &iterator_key.property_key(),
+        Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            let string = crate::value::to_js_string(&this_val);
+            let mut state = Object::new(ObjectKind::Ordinary);
+            state.set("string", Value::String(string));
+            state.set("index", Value::Number(0.0));
+            let mut iterator =
+                Object::with_prototype(ObjectKind::Ordinary, Rc::clone(&iterator_proto));
+            iterator.set(
+                "\0stringIteratorState",
+                Value::Object(Rc::new(RefCell::new(state))),
+            );
+            Ok(Value::Object(Rc::new(RefCell::new(iterator))))
+        }))),
+    );
 }
 
 #[cfg(test)]
@@ -254,5 +348,20 @@ mod tests {
             }
             other => panic!("expected Array, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn string_iterator_exposes_spec_prototype_and_next() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var iterator = '𝌆a'[Symbol.iterator](); \
+                 [Object.getPrototypeOf(iterator)[Symbol.toStringTag], iterator.next().value, iterator.next().value, iterator.next().done].join('|')",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::String("String Iterator|𝌆|a|true".to_string())
+        );
     }
 }
