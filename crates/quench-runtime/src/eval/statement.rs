@@ -1750,12 +1750,19 @@ fn eval_try(
             } else {
                 // No catch - run finally if present, then rethrow
                 if let Some(fin) = finalizer {
-                    take_control_flow();
+                    let pending_cf = take_control_flow();
                     if finalizer_has_dispose(fin) {
                         eval_disposal_finalizer(fin, thrown_value, env, in_arrow_function)
                     } else {
                         match eval_statement(fin, env, false, in_arrow_function) {
                             Ok(fin_val) => {
+                                if crate::interpreter::peek_generator_yield() {
+                                    return Ok(fin_val);
+                                }
+                                if let Some(ControlFlow::Return(value)) = pending_cf {
+                                    set_control_flow(ControlFlow::Return(value.clone()));
+                                    return Ok(value);
+                                }
                                 if let Some(cf) = take_control_flow() {
                                     let cf = cf.clone();
                                     set_control_flow(cf.clone());
