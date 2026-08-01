@@ -785,6 +785,24 @@ assert._toString = function (value) {
     if ctx.get_global("isConstructor").is_none() {
         ctx.set_global("isConstructor".to_string(), make_native(is_constructor));
     }
+    if ctx.get_global("isPrimitive").is_none() {
+        ctx.set_global(
+            "isPrimitive".to_string(),
+            make_native(|args| {
+                let value = args.first().cloned().unwrap_or(Value::Undefined);
+                let primitive = !matches!(
+                    value,
+                    Value::Object(_)
+                        | Value::Function(_)
+                        | Value::NativeFunction(_)
+                        | Value::NativeConstructor(_)
+                        | Value::Class(_)
+                        | Value::Generator(_)
+                );
+                Ok(Value::Boolean(primitive))
+            }),
+        );
+    }
 
     // $262 host API
     host262::inject(ctx);
@@ -1864,5 +1882,15 @@ if (opd.configurable !== true) throw new Error('FAIL: configurable should be tru
         assert!(ctx.get_global("Test262Error").is_some());
         assert!(ctx.get_global("$262").is_some());
         assert!(ctx.get_global("fnGlobalObject").is_some());
+    }
+
+    #[test]
+    fn test_harness_exposes_is_primitive() {
+        let mut ctx = Context::new().unwrap();
+        try_inject_harness(&mut ctx).expect("harness ok");
+        assert_eq!(
+            ctx.eval("isPrimitive(1) && !isPrimitive({})").unwrap(),
+            Value::Boolean(true)
+        );
     }
 }
