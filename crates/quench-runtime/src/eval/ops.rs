@@ -87,7 +87,9 @@ pub fn make_ops_object() -> Value {
     set_op(&mut obj, "SameValueZero", |args| {
         let x = args.first().cloned().unwrap_or(Value::Undefined);
         let y = args.get(1).cloned().unwrap_or(Value::Undefined);
-        Ok(Value::Boolean(crate::value::same_value(&x, &y)))
+        Ok(Value::Boolean(crate::value::compare::same_value_zero(
+            &x, &y,
+        )))
     });
 
     set_op(&mut obj, "TypeOf", |args| {
@@ -151,7 +153,9 @@ pub fn make_ops_object() -> Value {
             .map(crate::value::to_js_string)
             .unwrap_or_default();
         if let Value::Object(obj_rc) = &o {
-            Ok(Value::Boolean(obj_rc.borrow().has_own(&key)))
+            Ok(Value::Boolean(
+                crate::eval::object::proxy_has_property(obj_rc, &key).unwrap_or(false),
+            ))
         } else {
             Ok(Value::Boolean(false))
         }
@@ -793,6 +797,20 @@ mod tests {
             .eval(
                 "var SameValue = __ops__.SameValue; \
              SameValue(42, 42)",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_same_value_zero_and_inherited_property() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx
+            .eval(
+                "var SameValueZero = __ops__.SameValueZero; \
+             var HasProperty = __ops__.HasProperty; \
+             var proto = { inherited: 1 }; var o = Object.create(proto); \
+             SameValueZero(-0, +0) && HasProperty(o, 'inherited')",
             )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
