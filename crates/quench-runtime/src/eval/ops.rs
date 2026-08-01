@@ -154,6 +154,13 @@ pub fn make_ops_object() -> Value {
             if !obj_rc.borrow().extensible {
                 return Ok(Value::Boolean(false));
             }
+            if obj_rc
+                .borrow()
+                .get_descriptor(&key)
+                .is_some_and(|descriptor| !descriptor.writable)
+            {
+                return Ok(Value::Boolean(false));
+            }
             obj_rc.borrow_mut().set(&key, val);
             Ok(Value::Boolean(true))
         } else {
@@ -862,6 +869,19 @@ mod tests {
                 "var CreateDataProperty = __ops__.CreateDataProperty; \
                  var o = Object.freeze({}); \
                  !CreateDataProperty(o, 'x', 1) && !Object.prototype.hasOwnProperty.call(o, 'x')",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_create_data_property_rejects_non_writable_property() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var CreateDataProperty = __ops__.CreateDataProperty; \
+                 var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: false }); \
+                 !CreateDataProperty(o, 'x', 2) && o.x === 1",
             )
             .unwrap();
         assert_eq!(result, Value::Boolean(true));
