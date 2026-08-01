@@ -16,6 +16,24 @@ pub use crate::value::primitive::PrimitiveHint;
 use crate::value::{JsError, Value};
 use std::rc::Rc;
 
+fn is_callable_value(value: &Value) -> bool {
+    if matches!(
+        value,
+        Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
+    ) {
+        return true;
+    }
+    if let Value::Object(object) = value {
+        return crate::eval::object::proxy_handler_and_target(object)
+            .map(|(_, target)| is_callable_value(&target))
+            .unwrap_or(false);
+    }
+    false
+}
+
 /// Build the `__ops__` frozen object — the Rust↔JS bridge for spec abstract ops.
 /// JS builtins destructure this at parse time: `const { IsCallable, ToObject } = __ops__;`
 pub fn make_ops_object() -> Value {
@@ -43,13 +61,7 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "IsCallable", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        Ok(Value::Boolean(matches!(
-            v,
-            Value::Function(_)
-                | Value::NativeFunction(_)
-                | Value::NativeConstructor(_)
-                | Value::Class(_)
-        )))
+        Ok(Value::Boolean(is_callable_value(&v)))
     });
 
     set_op(&mut obj, "ToObject", |args| {
@@ -814,6 +826,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_is_callable_proxy() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval("__ops__.IsCallable(new Proxy(function() {}, {}))")
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]
