@@ -109,10 +109,9 @@ pub fn wtf8_for_of_iterate(s: &str) -> Vec<Value> {
                 let next_i = i + consumed;
                 if let Some((low_cp, _)) = try_decode_escape(bytes, next_i) {
                     if (0xDC00..=0xDFFF).contains(&low_cp) {
-                        let encoded = bytes[i..next_i + 7].to_vec();
-                        result.push(Value::String(unsafe {
-                            String::from_utf8_unchecked(encoded)
-                        }));
+                        let code_point = 0x10000 + ((cp - 0xD800) << 10) + (low_cp - 0xDC00);
+                        let character = char::from_u32(code_point).unwrap_or('\u{FFFD}');
+                        result.push(Value::String(character.to_string()));
                         i = next_i + 7; // second escape also 7 bytes
                         continue;
                     }
