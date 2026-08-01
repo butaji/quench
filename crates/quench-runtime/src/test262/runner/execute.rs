@@ -203,7 +203,7 @@ fn run_with_timeout(
         .stack_size(TEST_THREAD_STACK)
         .spawn(move || {
             let is_async = meta.flags.iter().any(|f| f == "async");
-            let result = execute_script(&script, is_module, is_async);
+            let result = execute_script(&script, is_module, is_async, &tp);
             // Pass test_path for source context capture in check_outcome.
             let _ = tx.send(check_outcome(&meta, result, Some(&tp)));
         });
@@ -225,9 +225,14 @@ fn run_with_timeout(
 }
 
 /// Execute a prepared script; async tests get the $DONE invocation check.
-fn execute_script(script: &str, is_module: bool, is_async: bool) -> Result<(), String> {
+fn execute_script(
+    script: &str,
+    is_module: bool,
+    is_async: bool,
+    test_path: &Path,
+) -> Result<(), String> {
     if is_async {
-        return run_async_script(script, is_module);
+        return run_async_script_with_path(script, is_module, Some(test_path));
     }
     let mut inner = crate::test262::host::QuenchHost::new();
     if is_module {
@@ -239,7 +244,16 @@ fn execute_script(script: &str, is_module: bool, is_async: bool) -> Result<(), S
 
 /// Run an async-flag test: eval (which drains microtasks), then verify $DONE
 /// was invoked exactly once.
+#[cfg(test)]
 fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
+    run_async_script_with_path(source, is_module, None)
+}
+
+fn run_async_script_with_path(
+    source: &str,
+    is_module: bool,
+    test_path: Option<&Path>,
+) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
     crate::builtins::register_builtins(&mut ctx);
     let strict = source.trim_start().starts_with("\"use strict\";")
@@ -249,6 +263,9 @@ fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
         .map_err(|e| format!("harness load failure: {}", e))?;
     if let Some(te) = ctx.get_global("Test262Error") {
         crate::value::error::set_main_realm_test262_error(te);
+    }
+    if let Some(test_path) = test_path {
+        load_fixture_modules(&mut ctx, test_path)?;
     }
     crate::interpreter::set_strict_mode(strict);
     let result = if is_module {
@@ -264,6 +281,45 @@ fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
     // otherwise see the stale thrown_value and fail spuriously.
     crate::value::take_thrown_value();
     async_done_probe(&mut ctx)
+}
+
+fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
+    let directory = test_path
+        .parent()
+        .ok_or_else(|| "test has no parent directory".to_string())?;
+    let entries = std::fs::read_dir(directory).map_err(|e| format!("fixture directory: {}", e))?;
+    for entry in entries {
+        let path = entry.map_err(|e| format!("fixture entry: {}", e))?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.ends_with("_FIXTURE.js") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).map_err(|e| format!("fixture read: {}", e))?;
+        let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+        for line in source.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("export var ") {
+                if let Some(export_name) = rest.split(';').next().map(str::trim) {
+                    exports.set(export_name, crate::Value::Undefined);
+                }
+            } else if let Some(rest) = line.strip_prefix("export {") {
+                if let Some(specifiers) = rest.split('}').next() {
+                    for specifier in specifiers.split(',') {
+                        let mut names = specifier.trim().split(" as ");
+                        let exported = names.nth(1).or_else(|| names.next());
+                        if let Some(exported) = exported.map(str::trim) {
+                            exports.set(exported, crate::Value::Undefined);
+                        }
+                    }
+                }
+            }
+        }
+        let module_name = format!("./{}", name);
+        ctx.register_module(&module_name, exports);
+    }
+    Ok(())
 }
 
 /// Verify the async $DONE count recorded by `ASYNC_DONE_PRELUDE` is exactly 1.
