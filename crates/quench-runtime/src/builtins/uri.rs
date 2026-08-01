@@ -38,6 +38,8 @@ fn is_oxc_utf16_surrogate_text(s: &str) -> bool {
         && bytes[4].is_ascii_hexdigit()
         && bytes[5].is_ascii_hexdigit()
         && bytes[6].is_ascii_hexdigit()
+        && u32::from_str_radix(std::str::from_utf8(&bytes[3..7]).unwrap_or(""), 16)
+            .is_ok_and(|code_point| (0xD800..=0xDFFF).contains(&code_point))
 }
 
 fn normalize_for_uri_encoding(s: &str) -> Result<String, crate::JsError> {
@@ -613,6 +615,15 @@ mod tests {
             ctx.eval("encodeURI(String.fromCharCode(0xD83D, 0xDE00))")
                 .unwrap(),
             Value::String("%F0%9F%98%80".into())
+        );
+    }
+
+    #[test]
+    fn encode_uri_leaves_regular_ufffd_hex_text_unchanged() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("encodeURI('\\u{FFFD}d801')").unwrap(),
+            Value::String("%EF%BF%BDd801".into())
         );
     }
 
