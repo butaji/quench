@@ -321,7 +321,32 @@ where
         let cmp = a.as_ref().cmp(b.as_ref()) as i8;
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
+    if let Some((bigint, number)) = bigint_number_pair(&left, &right) {
+        let cmp = bigint.cmp(&number) as i8;
+        return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
+    }
     Ok(Value::Boolean(num_cmp(to_number(&left), to_number(&right))))
+}
+
+fn bigint_number_pair(
+    left: &Value,
+    right: &Value,
+) -> Option<(num_bigint::BigInt, num_bigint::BigInt)> {
+    let (bigint, number) = match (left, right) {
+        (Value::BigInt(bigint), Value::Number(number)) => (bigint, *number),
+        (Value::Number(number), Value::BigInt(bigint)) => (bigint, *number),
+        _ => return None,
+    };
+    if !number.is_finite() || number.fract() != 0.0 {
+        return None;
+    }
+    let number = format!("{number:.0}");
+    let number = num_bigint::BigInt::parse_bytes(number.as_bytes(), 10)?;
+    if matches!((left, right), (Value::BigInt(_), Value::Number(_))) {
+        Some((bigint.as_ref().clone(), number))
+    } else {
+        Some((number, bigint.as_ref().clone()))
+    }
 }
 
 fn string_compare(a: &str, b: &str) -> i32 {
