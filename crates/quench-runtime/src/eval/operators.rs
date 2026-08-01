@@ -286,9 +286,11 @@ where
 }
 
 fn string_compare(a: &str, b: &str) -> i32 {
-    if a < b {
+    let a_units: Vec<u16> = a.encode_utf16().collect();
+    let b_units: Vec<u16> = b.encode_utf16().collect();
+    if a_units < b_units {
         -1
-    } else if a > b {
+    } else if a_units > b_units {
         1
     } else {
         0

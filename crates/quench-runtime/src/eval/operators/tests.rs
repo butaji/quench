@@ -403,6 +403,10 @@ fn binary_relational_string_vs_string() {
         ctx.eval("'' <= ''").unwrap(),
         crate::value::Value::Boolean(true)
     );
+    assert_eq!(
+        ctx.eval("'\\u{10000}' < '\\uFFFF'").unwrap(),
+        crate::value::Value::Boolean(true)
+    );
 }
 
 #[test]
