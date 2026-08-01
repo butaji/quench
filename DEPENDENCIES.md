@@ -5,8 +5,8 @@ by covering spec semantics no hand-rolled code can match. A hand-rolled copy
 —including a thinly-disguised `chrono_*` helper that never imports the crate—is
 forbidden. A new crate needs a row here in the same diff.
 
-Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
-`urlencoding`, `indexmap`, `rustc-hash`, `phf`, `tracing`, `anyhow`,
+Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`, `url`,
+`indexmap`, `rustc-hash`, `phf`, `tracing`, `anyhow`,
 `walkdir`, `tempfile`, `serial_test`.
 
 ---
@@ -20,7 +20,7 @@ Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 | `chrono` | 0.4 | Date math, timestamp conversion | `Cargo.toml` |
 | `num-bigint` | 0.4 | BigInt arithmetic | `Cargo.toml` |
 | `serde_json` | 1 | JSON parse/stringify | `Cargo.toml` |
-| `urlencoding` | 2 | URI encoding/decoding (see note) | `Cargo.toml` |
+| `url` | 2 | URL stack for resolution + `percent_encoding` re-export (`encode*` / `decode*`) | `Cargo.toml` |
 | `indexmap` | 2 | Ordered property storage (`IndexMap<Key, Prop>`) | `Cargo.toml` |
 | `rustc-hash` | 2 | Fast `FxHashMap` for internal slots | `Cargo.toml` |
 | `phf` | 0.14 | Compile-time static maps | `Cargo.toml` |
@@ -30,12 +30,10 @@ Confirmed crates: `oxc`, `regress`, `chrono`, `num-bigint`, `serde_json`,
 | `tempfile` | 3 | Temp files in tests | `Cargo.toml` |
 | `serial_test` | 3 | Serialized test execution | `Cargo.toml` |
 
-### Note on `urlencoding`
+### Note on `url`
 
-`urlencoding` only handles `%`-encoding/decoding. The ECMAScript `import`
-spec requires full URL resolution (scheme parsing, path normalization,
-`data:` URLs, bare specifiers). Consider upgrading to `url` (rust-url) which
-implements the URL Standard and covers `data:` URLs natively.
+`url` is now the active URL stack for module/import resolution and intended for
+ES module URL-resolution work (`url`-scheme and absolute/relative resolution).
 
 ---
 
@@ -49,7 +47,6 @@ run before landing.
 | Crate | Stage | Difficulty | Why | Risk |
 |---|---|---|---|---|
 | `bumpalo` | R0 | HIGH | Arena allocator for self-hosted builtins. 244.6M+ downloads, stable API. Eliminates per-allocation overhead; bulk dealloc via arena reset. 2–4× speedup on allocation-heavy code (serde, JS builtins). Fits `builtins/core/` pattern perfectly. MSRV 1.71.1; `allocator-api2` feature enables stable use with std collections. | Low. Add to `Cargo.toml` in same diff as first R0 builtin. |
-| `url` | 53 `modules` | 5 | Supersedes `urlencoding` for URL Standard compliance. Covers `import "https://..."`, bare specifier resolution, and `data:` URLs. | Low. Drop-in upgrade. |
 | `oxc_semantic` | R17 | 4 | Language early errors (duplicate `let`, TDZ violations, redeclaration) via `oxc_semantic::SemanticAnalysis`. Replaces thousands of LOC of hand-rolled checks in `lower/`. | Low. Already using oxc. Add `oxc_semantic` feature if available, or use existing `oxc` re-exports. Verify `ctx.semantic()` hook in `parser.rs`. |
 | `temporal_rs` | 120 `Temporal` | 9 | Stage 4 ECMAScript spec. Powers Boa (94.12% test262), Kiesel, and **V8/Chrome 144**. 8 types via ICU4X + Diplomat. | Low-medium. Evaluate API surface vs. ES spec version. Spec was stable as of 2025-09. Evaluate before committing. |
 | `regex` + `unicode-perl` | 84 `RegExp` | 7 | `regress` (ES2018) does NOT support Unicode property escapes `\p{}`. `regex` with `unicode-perl` covers `\p{Script}`, `\p{Emoji}`, etc. | Low. Evaluate replacing `regress` if `regex` covers ES2018 backreferences + lookbehind too. |

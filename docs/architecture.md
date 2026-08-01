@@ -152,7 +152,7 @@ to non-writable/non-extensible targets throw in strict mode.
 | Date math      | `chrono`      | `builtins/date.rs`        |
 | BigInt         | `num-bigint`  | `builtins/bigint.rs`      |
 | JSON parse/str | `serde_json`  | `builtins/json.rs`        |
-| URI            | `urlencoding` | `builtins/uri.rs`         |
+| URI            | `url::percent_encoding` (+ `url` for resolution) | `builtins/uri.rs` |
 | Parsing        | `oxc`         | `parser.rs`              |
 
 Each exposes a tiny primitive; the surrounding `.prototype.*` is JS.

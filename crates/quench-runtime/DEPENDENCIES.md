@@ -53,11 +53,12 @@ incremental collection timing becomes necessary.
 - **Why:** Snapshot/dump support and structured test fixtures. Not on the
   hot path.
 
-## URL encoding — `urlencoding`
+## URL encoding — `url`
 
-- **Crate:** `urlencoding = "2"`.
-- **Why:** Small, focused. Implements `encodeURI`, `encodeURIComponent`,
-  and friends.
+- **Crate:** `url = "2"`, using `url::percent_encoding`.
+- **Why:** Focused RFC 3986 percent-encoding primitives (`NON_ALPHANUMERIC`,
+  `utf8_percent_encode`, `percent_decode`) used by `encodeURI`,
+  `encodeURIComponent`, `decodeURI`, and `decodeURIComponent`.
 
 ## Tracing — `tracing`
 
