@@ -302,6 +302,16 @@ pub fn eval_expression(
             } else {
                 eval_expression(right, env, in_arrow_function)?
             };
+            if matches!(
+                right.as_ref(),
+                Expression::Yield(_) | Expression::YieldDelegate(_)
+            ) && crate::eval::generator::take_pending_return()
+            {
+                if let Some(control) = crate::interpreter::take_control_flow() {
+                    crate::interpreter::set_control_flow(control);
+                    return Ok(right_val);
+                }
+            }
             if let (Expression::Identifier(name), Value::Function(function)) =
                 (left.as_ref(), &right_val)
             {

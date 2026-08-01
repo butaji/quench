@@ -209,6 +209,9 @@ impl GeneratorObject {
             match cf {
                 crate::interpreter::ControlFlow::Return(_)
                 | crate::interpreter::ControlFlow::Throw(_) => {
+                    if matches!(cf, crate::interpreter::ControlFlow::Return(_)) {
+                        crate::eval::generator::mark_pending_return();
+                    }
                     crate::interpreter::set_control_flow(cf.clone());
                 }
                 _ => {}

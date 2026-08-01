@@ -46,6 +46,15 @@ impl GeneratorState {
 thread_local! {
     static CURRENT_GENERATOR: RefCell<Option<Rc<RefCell<GeneratorState>>>> = const { RefCell::new(None) };
     static YIELD_IN_FINALLY: Cell<bool> = const { Cell::new(false) };
+    static PENDING_RETURN: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn mark_pending_return() {
+    PENDING_RETURN.with(|cell| cell.set(true));
+}
+
+pub fn take_pending_return() -> bool {
+    PENDING_RETURN.with(|cell| cell.replace(false))
 }
 
 pub fn mark_yield_in_finally() {
