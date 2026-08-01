@@ -91,15 +91,44 @@ pub fn eval_unary_expr(
                 return Err(JsError(format!("ReferenceError: {} is not defined", name)));
             }
             if name != "this" {
-                if !env.borrow().has(name) {
-                    return Ok(Value::String("undefined".to_string()));
-                }
-                if env.borrow().is_tdz(name) {
+                let is_tdz = { env.borrow().is_tdz(name) };
+                if is_tdz {
                     return Err(JsError(format!(
                         "ReferenceError: cannot access '{}' before initialization",
                         name
                     )));
                 }
+                let has_binding = env.borrow().has(name);
+                let global = { env.borrow().get("globalThis") };
+                let has_global_property = global
+                    .as_ref()
+                    .and_then(|value| match value {
+                        crate::Value::Object(object) => {
+                            crate::eval::object::proxy_has_property(object, name).ok()
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                if !has_binding && !has_global_property {
+                    return Ok(Value::String("undefined".to_string()));
+                }
+                if !has_binding {
+                    if let Some(crate::Value::Object(global)) = global {
+                        let value = crate::eval::member::eval_object_member_value(
+                            &global,
+                            &crate::Value::String(name.to_string()),
+                            None,
+                        )?;
+                        return crate::eval::operators::eval_unary_op(op, &value);
+                    }
+                }
+                return match crate::eval::literal::eval_identifier(name, env, in_arrow_function) {
+                    Ok(value) => crate::eval::operators::eval_unary_op(op, &value),
+                    Err(error) if error.0.contains("is not defined") => {
+                        Ok(Value::String("undefined".to_string()))
+                    }
+                    Err(error) => Err(error),
+                };
             }
         }
     }
@@ -420,6 +449,13 @@ mod tests {
     fn typeof_undefined() {
         let r = eval("typeof undefinedVar").unwrap();
         assert_eq!(r, Value::String("undefined".into()));
+    }
+
+    #[test]
+    fn typeof_global_accessor_performs_get_value() {
+        let r = eval("Object.defineProperty(this, 'value', { get() { return 1; } }); typeof value")
+            .unwrap();
+        assert_eq!(r, Value::String("number".into()));
     }
 
     #[test]
