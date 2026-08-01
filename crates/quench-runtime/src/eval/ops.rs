@@ -183,6 +183,19 @@ pub fn make_ops_object() -> Value {
         }
     });
 
+    set_op(&mut obj, "HasOwnProperty", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        let key = args
+            .get(1)
+            .map(crate::value::to_js_string)
+            .unwrap_or_default();
+        if let Value::Object(object) = value {
+            Ok(Value::Boolean(object.borrow().has_own(&key)))
+        } else {
+            Ok(Value::Boolean(false))
+        }
+    });
+
     set_op(&mut obj, "EnumerableOwnKeys", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         match &o {

@@ -7,6 +7,7 @@ var ToObject = ops.ToObject;
 var IsExtensible = ops.IsExtensible;
 var IsCallable = ops.IsCallable;
 var HasProperty = ops.HasProperty;
+var HasOwnProperty = ops.HasOwnProperty;
 var GetPrototypeOf = ops.GetPrototypeOf;
 var SetPrototypeOf = ops.SetPrototypeOf;
 var PreventExtensions = ops.PreventExtensions;
@@ -57,7 +58,7 @@ Object.entries = function ObjectEntries(O) {
 
 // Object.hasOwn (ES2025 §20.1.2.14)
 Object.hasOwn = function ObjectHasOwn(O, P) {
-  return HasProperty(ToObject(O), P);
+  return HasOwnProperty(ToObject(O), P);
 };
 
 // Object.isExtensible (ES2025 §20.1.2.16)
