@@ -324,7 +324,10 @@ pub fn register_reflect(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| match object_define_property(args) {
                 Ok(_) => Ok(Value::Boolean(true)),
-                Err(_) => Ok(Value::Boolean(false)),
+                Err(_) => {
+                    crate::value::take_thrown_value();
+                    Ok(Value::Boolean(false))
+                }
             },
         ))),
     );
@@ -580,6 +583,14 @@ JSON.stringify([target.p, log]);
     fn reflect_own_keys_non_object_throws() {
         assert!(eval_err("Reflect.ownKeys(null)"));
         assert!(eval_err("Reflect.ownKeys(42)"));
+    }
+
+    #[test]
+    fn reflect_define_property_converts_nonextensible_error_to_false() {
+        assert_eq!(
+            eval_ok("Reflect.defineProperty(Object.preventExtensions({}), 'x', {})"),
+            Value::Boolean(false)
+        );
     }
 
     #[test]
