@@ -939,6 +939,26 @@ fn tco_simple_tail_call_deep() {
 }
 
 #[test]
+fn tco_dynamic_eval_alias_tail_call() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval(
+            r#"var count = 0;
+            (function() {
+              function f(n) {
+                "use strict";
+                if (n === 0) { count += 1; return; }
+                return eval(n - 1);
+              }
+              var eval = f;
+              f(1000);
+            })(); count"#,
+        )
+        .unwrap();
+    assert_eq!(value, Value::Number(1.0));
+}
+
+#[test]
 fn tco_logical_or_tail_call_deep() {
     let mut ctx = Context::new().unwrap();
     let value = ctx

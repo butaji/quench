@@ -26,7 +26,7 @@ thread_local! {
 /// Direct `eval()` calls are excluded — they must not be tail-called.
 pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
     match expr {
-        Expression::Call { callee, .. } => !callee_is_direct_eval(callee),
+        Expression::Call { .. } => true,
         Expression::Binary {
             op: BinaryOp::And | BinaryOp::Or | BinaryOp::NullishCoalescing,
             right,
@@ -34,10 +34,6 @@ pub(crate) fn is_tail_expr(expr: &Expression) -> bool {
         } => is_tail_expr(right),
         _ => false,
     }
-}
-
-fn callee_is_direct_eval(callee: &Expression) -> bool {
-    matches!(callee, Expression::Identifier(name) if name == "eval")
 }
 
 /// Tail-call signal produced by `eval_function_body` and consumed by the
