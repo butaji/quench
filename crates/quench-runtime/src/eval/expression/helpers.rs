@@ -216,7 +216,7 @@ pub fn eval_delete(
             let _ = env.borrow_mut().delete_binding(name);
             Ok(Value::Boolean(true))
         }
-        _ => Ok(Value::Boolean(false)),
+        _ => Ok(Value::Boolean(true)),
     }
 }
 
@@ -528,6 +528,12 @@ mod tests {
     #[test]
     fn delete_object_property() {
         let r = eval("var o = {p: 42}; delete o.p").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn delete_non_reference_expression_returns_true() {
+        let r = eval("delete 1 && delete new Object()").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
