@@ -552,12 +552,18 @@ pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsErro
     if !crate::interpreter::is_in_async_generator() && !crate::interpreter::is_in_async_function() {
         return Ok(result);
     }
-    let promise = crate::builtins::promise::promise_resolve_impl_static(
-        vec![result],
-        crate::builtins::promise::get_promise_proto(),
-    )?;
-    let Value::Object(promise) = promise else {
-        return Ok(Value::Undefined);
+    let promise = match result {
+        Value::Object(object) if object.borrow().promise_data.is_some() => object,
+        value => {
+            let Value::Object(promise) = crate::builtins::promise::promise_resolve_impl_static(
+                vec![value],
+                crate::builtins::promise::get_promise_proto(),
+            )?
+            else {
+                return Ok(Value::Undefined);
+            };
+            promise
+        }
     };
     let mut data = promise.borrow().promise_data.clone();
     if data

@@ -954,6 +954,17 @@ mod tests {
     }
 
     #[test]
+    fn for_await_async_promise_iterator_avoids_redundant_constructor_lookup() {
+        let mut ctx = new_ctx();
+        ctx.eval("var actual=[]; function toAsyncIterator(iterable) { return { [Symbol.asyncIterator]() { var iter=iterable[Symbol.iterator](); return { next() { return Promise.resolve(iter.next()); } }; } }; } async function f() { var p=Promise.resolve(0); actual.push('pre'); for await (var x of toAsyncIterator([p])) { actual.push('loop'); } actual.push('post'); } Object.defineProperty(Promise.prototype,'constructor',{get(){actual.push('constructor');return Promise;},configurable:true}); Promise.resolve(0).then(()=>actual.push('tick 1')).then(()=>actual.push('tick 2')); f();")
+            .unwrap();
+        assert_eq!(
+            ctx.eval("actual.join(',')").unwrap(),
+            Value::String("pre,constructor,tick 1,loop,tick 2,post".into())
+        );
+    }
+
+    #[test]
     fn async_iterator_factory_does_not_reuse_local_iterator_state() {
         let mut ctx = new_ctx();
         ctx.eval("function factory(iterable) { return { [Symbol.asyncIterator]() { var iter = iterable[Symbol.iterator](); return { next() { return Promise.resolve(iter.next()); } }; } }; } var first = factory([1])[Symbol.asyncIterator](); first.next(); var second = factory([1])[Symbol.asyncIterator](); var result; second.next().then(value => result = value);")
