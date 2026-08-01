@@ -170,7 +170,9 @@ pub(crate) fn register_string_iterator(string_proto: &Rc<RefCell<Object>>) {
             _ => return Err(JsError::new("TypeError: not a String Iterator")),
         };
         let chars = match state.borrow().get("string") {
-            Some(Value::String(string)) => crate::value::wtf8::wtf8_for_of_iterate(&string),
+            Some(Value::String(string)) => {
+                crate::value::wtf8::wtf8_for_of_iterate_preserving_pairs(&string)
+            }
             _ => return Err(JsError::new("TypeError: not a String Iterator")),
         };
         let mut result = Object::new(ObjectKind::Ordinary);
