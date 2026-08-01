@@ -82,6 +82,9 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
         if let Some(key) = iterator_prop_key() {
             p.set(&key, native_fn(set_iterator_impl));
         }
+        p.set("keys", native_fn(set_iterator_impl));
+        p.set("values", native_fn(set_iterator_impl));
+        p.set("entries", native_fn(set_iterator_impl));
     }
 
     let set_proto_for_ctor = Rc::clone(&set_proto);

@@ -91,6 +91,30 @@ pub fn native_fn(f: impl Fn(Vec<Value>) -> Result<Value, JsError> + 'static) -> 
     Value::NativeFunction(Rc::new(NativeFunction::new(f)))
 }
 
+fn iterator_prototype(tag: &str) -> Rc<RefCell<Object>> {
+    let iterator_proto = crate::builtins::iterator::get_iterator_prototype()
+        .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary))));
+    let prototype = Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        iterator_proto,
+    )));
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        prototype.borrow_mut().define(
+            &symbol.property_key(),
+            Value::String(tag.to_string()),
+            crate::value::PropertyFlags {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+    }
+    prototype
+}
+
 /// Build an iterator object over a snapshot of values (`{ next() }` protocol).
 pub fn make_iterator(items: Vec<Value>) -> Value {
     let items = Rc::new(items);
@@ -127,13 +151,112 @@ pub enum LiveIndexIteratorMode {
     Entries,
 }
 
+#[derive(Copy, Clone)]
+pub enum MapIteratorMode {
+    Keys,
+    Values,
+}
+
+pub fn make_live_map_iterator(entries_rc: Rc<RefCell<Object>>, mode: MapIteratorMode) -> Value {
+    let index = Rc::new(RefCell::new(0usize));
+    let exhausted = Rc::new(RefCell::new(false));
+    let entries = Rc::clone(&entries_rc);
+    let exhausted_for_next = Rc::clone(&exhausted);
+    let next_fn = NativeFunction::new(move |_args| {
+        let valid = matches!(
+            crate::builtins::get_native_this(),
+            Some(Value::Object(ref object))
+                if object.borrow().get_own("\0mapIteratorEntries").is_some()
+        );
+        if !valid {
+            let (_, error) = crate::value::create_js_error_with_type(
+                "Map Iterator next called on incompatible receiver",
+                "TypeError",
+            );
+            return Err(error);
+        }
+        if *exhausted_for_next.borrow() {
+            let mut result = Object::new(ObjectKind::Ordinary);
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(result))));
+        }
+        let mut result = Object::new(ObjectKind::Ordinary);
+        let current = *index.borrow();
+        let borrowed = entries.borrow();
+        let value = borrowed.get(&current.to_string());
+        if let Some(Value::Object(pair)) = value {
+            let pair = pair.borrow();
+            let selected = match mode {
+                MapIteratorMode::Keys => pair.get("0").unwrap_or(Value::Undefined),
+                MapIteratorMode::Values => pair.get("1").unwrap_or(Value::Undefined),
+            };
+            result.set("value", selected);
+            result.set("done", Value::Boolean(false));
+            *index.borrow_mut() = current + 1;
+        } else {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+            *exhausted_for_next.borrow_mut() = true;
+        }
+        Ok(Value::Object(Rc::new(RefCell::new(result))))
+    });
+    next_fn.define_property(
+        "name",
+        Value::String("next".to_string()),
+        crate::value::PropertyFlags {
+            value: Some(Value::String("next".to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    next_fn.define_property(
+        "length",
+        Value::Number(0.0),
+        crate::value::PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    let next_value = Value::NativeFunction(Rc::new(next_fn));
+    let prototype = iterator_prototype("Map Iterator");
+    prototype.borrow_mut().set("next", next_value.clone());
+    let mut iter = Object::with_prototype(ObjectKind::Ordinary, prototype);
+    iter.set("\0mapIteratorEntries", Value::Boolean(true));
+    iter.set("next", next_value);
+    Value::Object(Rc::new(RefCell::new(iter)))
+}
+
 /// Build a live iterator over Map/Set entries referenced by `entries_rc`.
 /// Each iteration reads the current length from the entries array,
 /// so deletions during iteration are reflected correctly.
 pub fn make_live_entry_iterator(entries_rc: Rc<RefCell<Object>>) -> Value {
     let index = Rc::new(RefCell::new(0usize));
+    let exhausted = Rc::new(RefCell::new(false));
     let entries = Rc::clone(&entries_rc);
+    let exhausted_for_next = Rc::clone(&exhausted);
     let next_fn = NativeFunction::new(move |_args| {
+        let valid_receiver = matches!(
+            crate::builtins::get_native_this(),
+            Some(Value::Object(ref object))
+                if object.borrow().get_own("\0mapIteratorEntries").is_some()
+        );
+        if !valid_receiver {
+            let (_, error) = crate::value::create_js_error_with_type(
+                "Map Iterator next called on incompatible receiver",
+                "TypeError",
+            );
+            return Err(error);
+        }
+        if *exhausted_for_next.borrow() {
+            let mut result = Object::new(ObjectKind::Ordinary);
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(result))));
+        }
         let mut result = Object::new(ObjectKind::Ordinary);
         let current_idx = { *index.borrow() };
         let borrowed = entries.borrow();
@@ -156,19 +279,64 @@ pub fn make_live_entry_iterator(entries_rc: Rc<RefCell<Object>>) -> Value {
         } else {
             result.set("value", Value::Undefined);
             result.set("done", Value::Boolean(true));
+            *exhausted_for_next.borrow_mut() = true;
         }
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     });
-    let mut iter = Object::new(ObjectKind::Ordinary);
-    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    next_fn.define_property(
+        "name",
+        Value::String("next".to_string()),
+        crate::value::PropertyFlags {
+            value: Some(Value::String("next".to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    next_fn.define_property(
+        "length",
+        Value::Number(0.0),
+        crate::value::PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    let next_value = Value::NativeFunction(Rc::new(next_fn));
+    let prototype = iterator_prototype("Map Iterator");
+    prototype.borrow_mut().set("next", next_value.clone());
+    let mut iter = Object::with_prototype(ObjectKind::Ordinary, prototype);
+    iter.set("\0mapIteratorEntries", Value::Boolean(true));
+    iter.set("next", next_value);
     Value::Object(Rc::new(RefCell::new(iter)))
 }
 
 /// Build a live iterator over Set values referenced by `values_rc`.
 pub fn make_live_value_iterator(values_rc: Rc<RefCell<Object>>) -> Value {
     let index = Rc::new(RefCell::new(0usize));
+    let exhausted = Rc::new(RefCell::new(false));
     let values = Rc::clone(&values_rc);
+    let exhausted_for_next = Rc::clone(&exhausted);
     let next_fn = NativeFunction::new(move |_args| {
+        let valid = matches!(
+            crate::builtins::get_native_this(),
+            Some(Value::Object(ref object))
+                if object.borrow().get_own("\0setIteratorValues").is_some()
+        );
+        if !valid {
+            let (_, error) = crate::value::create_js_error_with_type(
+                "Set Iterator next called on incompatible receiver",
+                "TypeError",
+            );
+            return Err(error);
+        }
+        if *exhausted_for_next.borrow() {
+            let mut result = Object::new(ObjectKind::Ordinary);
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(result))));
+        }
         let mut result = Object::new(ObjectKind::Ordinary);
         let current_idx = { *index.borrow() };
         let borrowed = values.borrow();
@@ -189,11 +357,36 @@ pub fn make_live_value_iterator(values_rc: Rc<RefCell<Object>>) -> Value {
         } else {
             result.set("value", Value::Undefined);
             result.set("done", Value::Boolean(true));
+            *exhausted_for_next.borrow_mut() = true;
         }
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     });
-    let mut iter = Object::new(ObjectKind::Ordinary);
-    iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
+    next_fn.define_property(
+        "name",
+        Value::String("next".to_string()),
+        crate::value::PropertyFlags {
+            value: Some(Value::String("next".to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    next_fn.define_property(
+        "length",
+        Value::Number(0.0),
+        crate::value::PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    let next_value = Value::NativeFunction(Rc::new(next_fn));
+    let prototype = iterator_prototype("Set Iterator");
+    prototype.borrow_mut().set("next", next_value.clone());
+    let mut iter = Object::with_prototype(ObjectKind::Ordinary, prototype);
+    iter.set("\0setIteratorValues", Value::Boolean(true));
+    iter.set("next", next_value);
     Value::Object(Rc::new(RefCell::new(iter)))
 }
 
@@ -361,13 +554,7 @@ fn invoke_getter_func(
 /// Property key for the Symbol.iterator method
 pub fn iterator_prop_key() -> Option<String> {
     match crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator") {
-        Some(Value::Symbol(payload)) => Some(
-            payload
-                .desc
-                .clone()
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
-        ),
+        Some(Value::Symbol(payload)) => Some(payload.property_key()),
         _ => None,
     }
 }

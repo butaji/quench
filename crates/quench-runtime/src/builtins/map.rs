@@ -120,6 +120,9 @@ pub fn register_map_and_set(ctx: &mut Context) {
         p.set("has", native_fn(map_has_impl));
         p.set("delete", native_fn(map_delete_impl));
         p.set("clear", native_fn(map_clear_impl));
+        p.set("keys", native_fn(map_keys_impl));
+        p.set("values", native_fn(map_values_impl));
+        p.set("entries", native_fn(map_iterator_impl));
         if let Some(key) = iterator_prop_key() {
             p.set(&key, native_fn(map_iterator_impl));
         }
@@ -174,6 +177,24 @@ pub fn register_map_and_set(ctx: &mut Context) {
 
 use crate::value::NativeFunction;
 
+fn map_keys_impl(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let entries = map_entries(&this).unwrap_or_else(|| Rc::new(RefCell::new(Object::new_array(0))));
+    Ok(helpers::make_live_map_iterator(
+        entries,
+        helpers::MapIteratorMode::Keys,
+    ))
+}
+
+fn map_values_impl(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let entries = map_entries(&this).unwrap_or_else(|| Rc::new(RefCell::new(Object::new_array(0))));
+    Ok(helpers::make_live_map_iterator(
+        entries,
+        helpers::MapIteratorMode::Values,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::value::Value;
@@ -208,6 +229,42 @@ mod tests {
         assert_eq!(ctx.eval("m.size").unwrap(), Value::Number(1.0));
         ctx.eval("m.clear();").unwrap();
         assert_eq!(ctx.eval("m.size").unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn map_symbol_iterator_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof new Map()[Symbol.iterator]").unwrap(),
+            Value::String("function".to_string())
+        );
+    }
+
+    #[test]
+    fn map_iterator_exposes_prototype_tag() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof new Map()[Symbol.iterator]()").unwrap(),
+            Value::String("object".to_string())
+        );
+    }
+
+    #[test]
+    fn map_iterator_next_rejects_map_as_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var i = new Map()[Symbol.iterator](); try { i.next.call(new Map()); false } catch (e) { e instanceof TypeError }").unwrap(),
+            Value::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn set_iterator_next_rejects_set_as_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var i = new Set()[Symbol.iterator](); try { i.next.call(new Set()); false } catch (e) { e instanceof TypeError }").unwrap(),
+            Value::Boolean(true)
+        );
     }
 
     #[test]
