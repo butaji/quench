@@ -153,8 +153,8 @@ fn decode_uri(s: &str, keep_reserved: bool) -> Result<String, crate::JsError> {
             let decoded = (h1 << 4) | h2;
             if is_uri_reserved_byte(decoded) {
                 out.push(b'%');
-                out.push(bytes[i + 1].to_ascii_uppercase());
-                out.push(bytes[i + 2].to_ascii_uppercase());
+                out.push(bytes[i + 1]);
+                out.push(bytes[i + 2]);
             } else {
                 out.push(decoded);
             }
@@ -361,6 +361,12 @@ mod tests {
     #[test]
     fn decode_uri_preserves_encoded_hash() {
         assert_eq!(eval_str("decodeURI('%23')"), "%23");
+    }
+
+    #[test]
+    fn decode_uri_preserves_reserved_escape_case() {
+        assert_eq!(eval_str("decodeURI('%3b')"), "%3b");
+        assert_eq!(eval_str("decodeURI('%2F%3A%3f%23')"), "%2F%3A%3f%23");
     }
 
     #[test]
