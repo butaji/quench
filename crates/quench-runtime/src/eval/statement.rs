@@ -2184,6 +2184,9 @@ fn import_type_from_options(
     let Some(options) = options else {
         return Ok(ImportAttributeType::Module);
     };
+    if matches!(options, Value::Undefined) {
+        return Ok(ImportAttributeType::Module);
+    }
     let Value::Object(options) = options else {
         let (reason, _) = crate::value::error::create_js_error_with_type(
             "Dynamic import options must be an object",

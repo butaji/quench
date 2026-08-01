@@ -67,6 +67,19 @@ fn dynamic_import_with_non_object_options_rejects() {
 }
 
 #[test]
+fn dynamic_import_with_undefined_options_uses_default_attributes() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("default", Value::Number(42.0));
+    ctx.register_module("module-name", exports);
+    ctx.eval("var result; import('module-name', undefined).then((ns) => { result = ns.default; })")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Number(42.0));
+}
+
+#[test]
 fn dynamic_import_with_non_string_attribute_value_rejects() {
     let mut ctx = crate::Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
