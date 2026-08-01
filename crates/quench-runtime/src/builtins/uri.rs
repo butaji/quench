@@ -205,22 +205,6 @@ fn decode_uri_component_raw(s: &str) -> Result<String, crate::JsError> {
 }
 
 fn decode_uri_component(s: &str) -> Result<String, crate::JsError> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            strict_percent_byte(bytes, i)?;
-            i += 3;
-            continue;
-        }
-
-        let c = s[i..]
-            .chars()
-            .next()
-            .ok_or_else(|| uri_error("URI malformed"))?;
-        i += c.len_utf8();
-    }
-
     decode_uri_component_raw(s)
 }
 
