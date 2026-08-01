@@ -385,17 +385,11 @@ pub fn set_super_property(
     // then call [[Set]] with `this` as receiver so the property ends up on the instance.
     let proto = match &super_val {
         Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
-        Value::Object(o) => {
-            let proto_val = o.borrow().get("prototype");
-            match proto_val {
-                Some(Value::Object(proto_obj)) => proto_obj.clone(),
-                _ => {
-                    let mut p = Object::new(ObjectKind::Ordinary);
-                    p.set("constructor", Value::Object(Rc::clone(o)));
-                    Rc::new(RefCell::new(p))
-                }
-            }
-        }
+        Value::Object(o) => o
+            .borrow()
+            .prototype
+            .clone()
+            .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
         _ => return Ok(value),
     };
 

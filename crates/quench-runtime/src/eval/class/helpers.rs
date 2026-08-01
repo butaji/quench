@@ -3541,6 +3541,17 @@ mod tests {
     }
 
     #[test]
+    fn object_literal_super_setter_receives_this_object() {
+        let r = eval(
+            "var proto = { _x: 0, set x(v) { return this._x = v; } }; \
+             var object = { set x(v) { super.x = v; } }; Object.setPrototypeOf(object, proto); \
+             object.x = 1; object._x + '|' + Object.getPrototypeOf(object)._x",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("1|0".into()));
+    }
+
+    #[test]
     fn static_super_assignment_with_null_prototype_throws() {
         let result = eval(
             "var count = 0; class C { static m() { super[0] = count += 1; } } \
