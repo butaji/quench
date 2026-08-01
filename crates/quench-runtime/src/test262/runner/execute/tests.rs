@@ -59,6 +59,19 @@ fn optional_eval_call_is_indirect() {
 }
 
 #[test]
+fn compound_assignment_deleted_object_binding_throws() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/expressions/compound-assignment/compound-assignment-operator-calls-putvalue-lref--v--1.js",
+    );
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn super_assignment_checks_this_before_computed_key() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

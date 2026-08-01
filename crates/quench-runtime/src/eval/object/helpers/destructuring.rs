@@ -1251,11 +1251,18 @@ pub fn assign_to_identifier(
         if scope.borrow().is_declared_only(name) {
             scope.borrow_mut().initialize_declared(name, value);
         } else {
-            scope.borrow_mut().set(
+            let set_result = scope.borrow_mut().set(
                 name.to_string(),
                 value,
                 crate::interpreter::is_strict_mode(),
             );
+            if !set_result && crate::interpreter::is_strict_mode() {
+                let (_, js_err) = crate::value::error::create_js_error_with_type(
+                    &format!("{} is not defined", name),
+                    "ReferenceError",
+                );
+                return Err(js_err);
+            }
         }
         return Ok(());
     }
