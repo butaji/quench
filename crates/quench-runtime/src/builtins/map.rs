@@ -220,6 +220,16 @@ mod tests {
     }
 
     #[test]
+    fn map_and_set_match_same_symbol_key() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var s = Symbol('key'); var m = new Map([[s, 1]]); var t = new Set([s]);")
+            .unwrap();
+        assert_eq!(ctx.eval("m.get(s)").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("m.has(s)").unwrap(), Value::Boolean(true));
+        assert_eq!(ctx.eval("t.has(s)").unwrap(), Value::Boolean(true));
+    }
+
+    #[test]
     fn test_map_delete_clear() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var m = new Map(); m.set('a', 1); m.set('b', 2);")
