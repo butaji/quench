@@ -2,7 +2,8 @@
 
 JavaScript runtime targeting **100% test262 conformance**, staged to
 100% per stage, with the **minimum possible LOC** as a small Rust core
-plus a self-hosted JS builtins layer. Native TS/TSX/JSX via OXC.
+plus a self-hosted JS builtins layer *(currently dormant — see
+`docs/review-2026-08.md`)*. Native TS/TSX/JSX via OXC.
 
 See `AGENTS.md` for the rules, `docs/architecture.md` for the split,
 and `tasks/refactor-plan.md` for the active queue.

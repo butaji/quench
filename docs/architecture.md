@@ -31,6 +31,28 @@ This is the fastest path to 100% conformance with minimum LOC because:
 - **Builtins self-hosted in JS.** JS is ~1/3 the LOC of equivalent
   Rust for spec algorithms. Once `__ops__` is complete, builtins move
   to JS (`builtins/*.js`) and the Rust core shrinks.
+  *(Currently dormant — see Current state below.)*
+
+## Current state (2026-08 review)
+
+This document describes the design target. The current implementation
+differs materially; full findings in `docs/review-2026-08.md`, active
+queue in `tasks/refactor-plan.md` (R18+).
+
+- **Builtins are Rust-first; the JS layer is dormant.** `bootstrap_js_builtins`
+  is not called by `Context::new()`, the CLI, or the test262 runner
+  (`context/helpers.rs:236` — the JS wrapper pattern caused infinite
+  recursion). All conformance today is achieved by the Rust builtins
+  (`builtins/*.rs`). The 34 `builtins/*.js` files (1.5k LOC) load only under
+  unit tests and duplicate Rust implementations. Decision R22: revive
+  (migrate Rust → JS, deleting Rust impls) or delete the layer.
+- **`__ops__` diverges from the canonical ops** (R21): `SameValueZero` calls
+  `same_value`, `HasProperty` implements `has_own`, `IsCallable` misses
+  callable objects, and `DefineProp`/`SealObject`/`FreezeObject` duplicate
+  descriptor logic in `builtins/object_static/descriptors.rs`.
+- **Verified live bugs** in the Map/Set path: symbol keys never match under
+  `same_value_zero` (R18); `_entries`/`size` leak as enumerable own
+  properties (R19).
 
 ## Rust core
 
@@ -63,8 +85,10 @@ Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
 ## JS builtins
 
-34 `.js` files in `builtins/` (root of repo), loaded by
-`builtins/bootstrap.rs`. `__ops__` is scaffolded in
+34 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
+(`builtins/bootstrap.rs`) loads them, but **only under unit tests** — they
+are not loaded by `Context::new()`, the CLI, or the test262 runner (see
+Current state; R22). `__ops__` is scaffolded in
 `builtins/core/ops_wrapper.rs`. Order:
 
 ```

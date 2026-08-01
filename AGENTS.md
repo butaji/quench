@@ -24,12 +24,16 @@ minimum-LOC goal.
 
 Quench — JavaScript runtime targeting **100% test262 conformance**,
 staged to 100% per stage, with the **minimum possible LOC** as a
-**small Rust core** plus a **self-hosted JS builtins layer**. Single
+**small Rust core** plus a **self-hosted JS builtins layer** *(currently
+dormant: `bootstrap_js_builtins` runs only under unit tests — decision
+R22)*. Single
 crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 - `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
-- `tasks/refactor-plan.md` — active queue (R0 self-hosting pivot → R17).
-- `tasks/plan.md` — phases A→B→C, execution order; the plan above serves it.
+- `docs/review-2026-08.md` — 2026-08 architecture/code review, ranked findings.
+- `tasks/refactor-plan.md` — active queue (R18+ from the 2026-08 review).
+- `tasks/meta-analysis-stream.md` — conformance workflow; `tasks/index.json`
+  is the sole progress record.
 - `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
 
 ## Commands
@@ -62,10 +66,11 @@ out of scope.
 `.cargo/config.toml` sets `-D warnings` (warnings fail the build).
 `.clippy.toml` sets the hard limits:
 
-- **500 lines per file** (`too-many-lines-threshold`). Split the file
-  before merging if it crosses 500.
-- **40 lines per function** (`too-many-lines-threshold` on functions).
-  Extract a helper before merging if a function crosses 40.
+- **500 lines per file** (repo rule — clippy's `too-many-lines-threshold`
+  is a *per-function* lint, it does not enforce a file cap). Split the
+  file before merging if it crosses 500.
+- **40 lines per function** (`too-many-lines-threshold`). Extract a
+  helper before merging if a function crosses 40.
 - **cognitive complexity ≤ 10** (`cognitive-complexity-threshold`).
   Simplify or extract before merging if it crosses 10.
 - **≤ 3 boolean params** (`max-fn-params-bools`). Refactor to a flags
@@ -73,11 +78,19 @@ out of scope.
 - **zero clippy warnings**. `cargo clippy -p quench-runtime --all-targets`
   must print nothing. `-A warnings` anywhere in the repo is a bug.
 
+Current state (2026-08): clippy prints 16+2 warnings and exits 0 — the
+`-D warnings` gate is not wired into clippy runs. Enforcing the gate and
+splitting the >500-line files (`eval/class/helpers.rs` 3863,
+`early_errors.rs` 3264, `eval/statement.rs` 2053, `eval/iteration.rs`
+1859, `builtins/typed_array.rs` 2255, `object_static/descriptors.rs`
+1468, `builtins/bootstrap.rs` 1479) is **R27**. Until then the limits
+above are enforced at review, not by the build.
+
 A diff that lands a file > 500 lines, a function > 40 lines, a function
 with complexity > 10, or any clippy warning is rejected at review — no
 `#[allow(...)]` exceptions, no deferral to "next refactor". The
-refactor-plan splits (e.g. R12 for `eval/object.rs`) exist to bring
-existing offenders under these limits.
+refactor-plan splits exist to bring existing offenders under these
+limits.
 
 ## Workflow — unit tests, not guesswork (enforced, no exceptions)
 
@@ -125,7 +138,8 @@ not per-PR diffs. Two compounding levers:
    of crate-backed primitives in `builtins/core/`. Every pure spec
    algorithm on top of `__ops__` is authored in JS (`builtins/*.js`). JS
    is ~1/3 the LOC of equivalent Rust; that is the entire reason the
-   split exists.
+   split exists. *(Current state: builtins are Rust-first; the JS layer
+   is dormant — decision R22.)*
 2. **One canonical spec-op path.** `ToPrimitive`, `ToPropertyKey`,
    `ToObject`, `IteratorNext`, `IteratorClose`,
    `CreateDataPropertyOrThrow`, `OrdinaryHasProperty`, `IsCallable`,
@@ -151,7 +165,8 @@ Strategic rules:
   `%IteratorPrototype%`, intrinsic error constructors — wire once onto a
   `Realm`, clone per `Context::new`. `Context::reset` clears *every*
   thread-local proto pointer consistently (ideally zero — they live on
-  `Realm`).
+  `Realm`). *(Current state: cached in thread-locals, cleared by
+  `intrinsics::clear_intrinsics`; a `Realm` struct is the R23 target.)*
 - **No speculative generality.** No slots, flags, hooks, enum variants,
   vtables, or storage maps that no current stage exercises. Cost now,
   drift later. If a refactor scaffolds something with zero call sites,
@@ -189,8 +204,8 @@ extract it (with a test) and reuse it. New spec-op extractions go into
 - **Crate-backed primitives** (regress / chrono / num-bigint /
   serde_json / urlencoding) live in `builtins/core/` as small Rust
   fns; the `.prototype.*` and constructor wiring is JS.
-- **Symbols**: `Value::Symbol` payload is raw `desc\0id` string; used
-  as a property key directly.
+- **Symbols**: `Value::Symbol(Rc<Symbol>)`; `property_key()` yields the
+  `desc\0id` key string, used directly as a property key.
 - **Boxed primitives**: stored via `builtins::object::set_boxed_value`
   as `_value` property.
 - **Function strictness** captured at definition, never inherited from
