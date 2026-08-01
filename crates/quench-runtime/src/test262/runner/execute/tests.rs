@@ -240,6 +240,15 @@ fn object_methods_cannot_be_constructed() {
 }
 
 #[test]
+fn async_await_private_call_resolves_through_direct_then() {
+    let script = format!(
+        "{}class C {{ static #x(value) {{ return value; }} static async y(value) {{ return await this.#x(value); }} }} C.y(1).then(() => $DONE(), $DONE);",
+        ASYNC_DONE_PRELUDE
+    );
+    assert_eq!(run_async_script(&script, false), Ok(()));
+}
+
+#[test]
 fn exponentiation_one_to_infinity_is_nan() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

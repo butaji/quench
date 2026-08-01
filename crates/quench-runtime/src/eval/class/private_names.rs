@@ -474,6 +474,7 @@ fn scope_expression(expr: &mut Expression, class_id: usize) {
             }
         }
         Expression::Spread(inner) => scope_expression(inner, class_id),
+        Expression::Await(inner) => scope_expression(inner, class_id),
         Expression::BlockExpr(stmts) => scope_statements(stmts, class_id),
         Expression::Yield(Some(e)) => scope_expression(e, class_id),
         Expression::Yield(None) => {}
