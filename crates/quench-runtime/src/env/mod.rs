@@ -212,6 +212,7 @@ impl Environment {
                 || scope_ref
                     .object_binding_has(name)
                     .is_some_and(|present| present)
+                    && !scope_ref.is_unscopable(name)
             {
                 return Some(Rc::clone(scope));
             }

@@ -1091,13 +1091,6 @@ fn eval_var_decl(
 ) -> Result<Value, JsError> {
     let existing_var = *kind == VarKind::Var && env.borrow().get_kind(name) == Some(VarKind::Var);
     let already_declared = env.borrow().current_kind(name).is_some();
-    let in_with_scoped_binding = env.borrow().scopes.iter().rev().any(|scope| {
-        let scope = scope.borrow();
-        scope.is_object_binding()
-            && scope
-                .object_binding_has(name)
-                .is_some_and(|present| present)
-    });
     if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
@@ -1155,22 +1148,7 @@ fn eval_var_decl(
 
     if init.is_some() {
         if *kind == VarKind::Var {
-            let target = if in_with_scoped_binding {
-                env.borrow()
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find(|scope| {
-                        let scope = scope.borrow();
-                        scope.is_object_binding()
-                            && scope
-                                .object_binding_has(name)
-                                .is_some_and(|present| present)
-                    })
-                    .cloned()
-            } else {
-                None
-            };
+            let target = env.borrow().binding_scope(name);
             if let Some(scope) = target {
                 let mut scope = scope.borrow_mut();
                 if !scope.set(name.to_string(), value.clone(), strict) {

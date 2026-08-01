@@ -469,13 +469,22 @@ pub fn eval_expression(
                     )
                 } == Some(true);
                 if set_object_property {
-                    let is_global_object_binding = scope.borrow().is_global_object_binding();
-                    if is_global_object_binding {
-                        scope.borrow_mut().set(
-                            name.clone(),
-                            right_val.clone(),
-                            crate::interpreter::is_strict_mode(),
-                        );
+                    if scope.borrow().is_global_object_binding() {
+                        let strict = crate::interpreter::is_strict_mode();
+                        if let Some(var_scope) = env.borrow().var_binding_scope(name) {
+                            if !var_scope
+                                .borrow_mut()
+                                .set(name.clone(), right_val.clone(), strict)
+                            {
+                                scope
+                                    .borrow_mut()
+                                    .set(name.clone(), right_val.clone(), strict);
+                            }
+                        } else {
+                            scope
+                                .borrow_mut()
+                                .set(name.clone(), right_val.clone(), strict);
+                        }
                     }
                     return Ok(right_val);
                 }
@@ -506,7 +515,6 @@ pub fn eval_expression(
                 }
                 if matches!(scope.borrow().get_kind(name), Some(VarKind::Var) | None)
                     && scope.borrow().is_object_binding()
-                    && env.borrow().get_parent().is_none()
                 {
                     set_on_global_this(env, name, right_val.clone());
                 }

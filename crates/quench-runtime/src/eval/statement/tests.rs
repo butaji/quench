@@ -479,6 +479,39 @@ mod with_statement {
         );
         assert_eq!(result.unwrap(), Value::String("has:Object".to_string()));
     }
+
+    #[test]
+    fn with_unscopable_name_falls_through_to_initialized_var() {
+        let result = eval(
+            "globalThis.v = 1; globalThis[Symbol.unscopables] = { v: true }; \
+             var r; \
+             function p() { var v = 10; with (globalThis) { r = v; } } \
+             p(); r",
+        );
+        assert_eq!(result.unwrap(), Value::Number(10.0));
+    }
+
+    #[test]
+    fn with_unscopable_name_falls_through_to_declared_only_var() {
+        let result = eval(
+            "globalThis.v = 1; globalThis[Symbol.unscopables] = { v: true }; \
+             var observed = 1; \
+             function p() { with (globalThis) { observed = v; } var v = 10; } \
+             p(); observed",
+        );
+        assert_eq!(result.unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn with_unscopables_false_falls_through_to_global_property() {
+        let result = eval(
+            "globalThis.w = 7; globalThis[Symbol.unscopables] = { w: false }; \
+             var rw; \
+             function q() { with (globalThis) { rw = w; } } \
+             q(); rw",
+        );
+        assert_eq!(result.unwrap(), Value::Number(7.0));
+    }
 }
 
 mod class_static_properties {

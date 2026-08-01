@@ -284,7 +284,8 @@ impl Scope {
         self.with_unscopables_loaded.set(false);
     }
 
-    fn is_unscopable(&self, name: &str) -> bool {
+    pub(crate) fn is_unscopable(&self, name: &str) -> bool {
+        let _ = self.load_with_unscopables();
         self.with_unscopables.borrow().contains(name)
     }
 
@@ -534,7 +535,7 @@ impl Scope {
                 return Some(Value::Undefined);
             }
             if has_binding.is_some_and(|has| has) {
-                if self.with_unscopables_loaded.get() && self.is_unscopable(name) {
+                if self.is_unscopable(name) {
                     return None;
                 }
                 if !compound_binding_read()
