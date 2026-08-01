@@ -1629,6 +1629,25 @@ fn strict_arguments_use_the_intrinsic_throw_type_error() {
 }
 
 #[test]
+fn strict_arguments_throw_type_error_is_realm_specific() {
+    let mut ctx = crate::Context::new().unwrap();
+    crate::test262::harness::try_inject_harness(&mut ctx).unwrap();
+    let result = ctx
+        .eval(
+            "var other = $262.createRealm().global; \
+             var localArgs = (function() { 'use strict'; return arguments; })(); \
+             var otherArgs = (new other.Function('\"use strict\"; return arguments;'))(); \
+             var otherArgs2 = (new other.Function('\"use strict\"; return arguments;'))(); \
+             var localGetter = Object.getOwnPropertyDescriptor(localArgs, 'callee').get; \
+             var otherGetter = Object.getOwnPropertyDescriptor(otherArgs, 'callee').get; \
+             var otherGetter2 = Object.getOwnPropertyDescriptor(otherArgs2, 'callee').get; \
+             [localGetter === otherGetter, otherGetter === otherGetter2, (function() { try { otherGetter(); } catch (e) { return e instanceof other.TypeError; } })()].join('|')",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::String("false|true|true".to_string()));
+}
+
+#[test]
 fn non_simple_arguments_use_the_intrinsic_throw_type_error() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx

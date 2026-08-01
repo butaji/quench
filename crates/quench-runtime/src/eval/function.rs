@@ -12,10 +12,12 @@ use crate::value::{
     JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value, ValueFunction,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 thread_local! {
     static THROW_TYPE_ERROR: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static THROW_TYPE_ERRORS: RefCell<HashMap<usize, Value>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn save_throw_type_error() -> Option<Value> {
@@ -27,21 +29,95 @@ pub(crate) fn restore_throw_type_error(value: Option<Value>) {
 }
 
 pub(crate) fn throw_type_error() -> Value {
-    THROW_TYPE_ERROR.with(|cell| {
-        if let Some(value) = cell.borrow().clone() {
+    let constructor = crate::context::CURRENT_CONTEXT.with(|cell| {
+        cell.borrow()
+            .and_then(|ptr| unsafe { (*ptr).get_global("TypeError") })
+    });
+    let value = throw_type_error_for_constructor(constructor);
+    THROW_TYPE_ERROR.with(|cell| *cell.borrow_mut() = Some(value.clone()));
+    value
+}
+
+fn throw_type_error_for_constructor(constructor: Option<Value>) -> Value {
+    let key = constructor.as_ref().map(constructor_key).unwrap_or(0);
+    THROW_TYPE_ERRORS.with(|cell| {
+        if let Some(value) = cell.borrow().get(&key).cloned() {
             return value;
         }
-        let value = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
-            let (error, js_error) = crate::value::error::create_js_error_with_type(
-                "'caller' and 'callee' are not allowed in strict mode",
-                "TypeError",
-            );
+        let function = Rc::new(NativeFunction::new(move |_| {
+            let Some(constructor) = constructor.clone() else {
+                return Err(JsError(
+                    "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
+                ));
+            };
+            let message =
+                Value::String("'caller' and 'callee' are not allowed in strict mode".into());
+            let error = call_value_with_this(constructor, vec![message], Value::Undefined)?;
             crate::value::set_thrown_value(error);
-            Err(js_error)
-        })));
-        *cell.borrow_mut() = Some(value.clone());
+            Err(JsError(
+                "TypeError: 'caller' and 'callee' are not allowed in strict mode".into(),
+            ))
+        }));
+        function.define_property(
+            "name",
+            Value::String(String::new()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String(String::new())),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+        );
+        function.define_property(
+            "length",
+            Value::Number(0.0),
+            crate::value::PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: false,
+            },
+        );
+        function.set_extensible(false);
+        let value = Value::NativeFunction(function);
+        cell.borrow_mut().insert(key, value.clone());
         value
     })
+}
+
+fn constructor_key(value: &Value) -> usize {
+    match value {
+        Value::NativeConstructor(constructor) => Rc::as_ptr(constructor) as usize,
+        Value::NativeFunction(function) => Rc::as_ptr(function) as usize,
+        Value::Function(function) => Rc::as_ptr(&function.closure) as usize,
+        Value::Object(object) => Rc::as_ptr(object) as usize,
+        _ => 0,
+    }
+}
+
+fn throw_type_error_for_env(env: &Rc<RefCell<Environment>>) -> Value {
+    let constructor = env.borrow().get_global_property("TypeError");
+    let current = crate::context::CURRENT_CONTEXT.with(|cell| {
+        cell.borrow()
+            .and_then(|ptr| unsafe { (*ptr).get_global("TypeError") })
+    });
+    if same_constructor(current.as_ref(), constructor.as_ref()) {
+        return throw_type_error();
+    }
+    throw_type_error_for_constructor(constructor)
+}
+
+fn same_constructor(left: Option<&Value>, right: Option<&Value>) -> bool {
+    match (left, right) {
+        (Some(Value::NativeConstructor(left)), Some(Value::NativeConstructor(right))) => {
+            Rc::ptr_eq(left, right)
+        }
+        (Some(Value::NativeFunction(left)), Some(Value::NativeFunction(right))) => {
+            Rc::ptr_eq(left, right)
+        }
+        (Some(Value::Object(left)), Some(Value::Object(right))) => Rc::ptr_eq(left, right),
+        _ => false,
+    }
 }
 
 /// Call a value as a function with an explicit "this" binding
@@ -668,7 +744,7 @@ fn create_arguments_object(
 
     // Set callee property
     if strict_mode || !mappable {
-        let thrower = throw_type_error();
+        let thrower = throw_type_error_for_env(call_env);
         obj.set_getter_func("callee", thrower.clone());
         obj.set_setter_func("callee", thrower);
     } else {
