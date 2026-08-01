@@ -14,6 +14,15 @@ mod iterator_protocol_tests {
         Context::new().unwrap().eval(src)
     }
 
+    #[test]
+    fn object_spread_proxy_gets_only_enumerable_keys() {
+        let result = eval(
+            "var gets = []; var p = new Proxy({}, { ownKeys: function() { return ['a', 'b']; }, getOwnPropertyDescriptor: function(t, k) { return { enumerable: k === 'b', configurable: true, value: k }; }, get: function(t, k) { gets.push(k); return k; } }); ({ ...p, gets: gets.join(',') }).gets",
+        )
+        .unwrap();
+        assert_eq!(result, Value::String("b".to_string()));
+    }
+
     // ─── take_iterator_value: basic next() ─────────────────────────────────────
 
     /// iterator.next() returns correct value

@@ -385,6 +385,26 @@ fn copy_spread_into_object(
             o
         }
     };
+    if let Some(keys) = crate::eval::object::proxy_own_keys(&source_obj)? {
+        for key in keys {
+            if crate::eval::object::proxy_property_is_enumerable(&source_obj, &key)? == Some(false)
+            {
+                continue;
+            }
+            let property_key = match &key {
+                Value::String(key) => key.clone(),
+                Value::Symbol(symbol) => symbol.property_key(),
+                _ => continue,
+            };
+            let value = crate::eval::member::eval_object_member_value(&source_obj, &key, None)?;
+            if property_key.contains('\0') {
+                target.set_symbol(&property_key, value);
+            } else {
+                target.set(&property_key, value);
+            }
+        }
+        return Ok(());
+    }
     let src = source_obj.borrow();
     for i in 0..src.elements.len() {
         if src.holes.contains(&i) || !src.is_enumerable(&i.to_string()) {

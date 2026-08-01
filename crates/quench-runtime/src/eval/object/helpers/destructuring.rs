@@ -977,6 +977,23 @@ fn copy_enumerable_own_properties(
     if let Some(prototype) = crate::builtins::get_object_prototype() {
         rest.prototype = Some(prototype);
     }
+    if let Some(keys) = crate::eval::object::proxy_own_keys(obj)? {
+        for key in keys {
+            let property_key = match &key {
+                Value::String(key) => key.clone(),
+                Value::Symbol(symbol) => symbol.property_key(),
+                _ => continue,
+            };
+            if excluded.contains(&property_key)
+                || crate::eval::object::proxy_property_is_enumerable(obj, &key)? == Some(false)
+            {
+                continue;
+            }
+            let value = crate::eval::member::eval_object_member_value(obj, &key, None)?;
+            copy_key_to_rest(&mut rest, &property_key, value);
+        }
+        return Ok(Value::Object(Rc::new(RefCell::new(rest))));
+    }
     let src = obj.borrow();
     if let Some(s) = string_exotic_source_string(&src) {
         for (i, ch) in s.chars().enumerate() {
