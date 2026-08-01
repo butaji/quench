@@ -230,6 +230,19 @@ mod tests {
     }
 
     #[test]
+    fn map_and_set_internal_properties_are_not_enumerable() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Object.keys(new Map()).length").unwrap(),
+            Value::Number(0.0)
+        );
+        assert_eq!(
+            ctx.eval("Object.keys(new Set()).length").unwrap(),
+            Value::Number(0.0)
+        );
+    }
+
+    #[test]
     fn test_map_delete_clear() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var m = new Map(); m.set('a', 1); m.set('b', 2);")

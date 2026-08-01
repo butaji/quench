@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::eval::call_value_with_this;
 use crate::eval::member::eval_object_member;
 use crate::value::object::helpers::ObjData;
-use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
+use crate::value::{JsError, NativeFunction, Object, ObjectKind, PropertyFlags, Value};
 
 /// SameValueZero key equality: NaN equals NaN, +0 and -0 are the same key
 pub fn same_value_zero(a: &Value, b: &Value) -> bool {
@@ -52,8 +52,26 @@ pub fn init_map_object(obj: &Rc<RefCell<Object>>) {
     let mut m = obj.borrow_mut();
     if m.get("_entries").is_none() {
         let entries = Object::new_array(0);
-        m.set("_entries", Value::Object(Rc::new(RefCell::new(entries))));
-        m.set("size", Value::Number(0.0));
+        m.define(
+            "_entries",
+            Value::Object(Rc::new(RefCell::new(entries))),
+            PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+        m.define(
+            "size",
+            Value::Number(0.0),
+            PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
     }
     m.kind = ObjectKind::Map;
 }
@@ -63,8 +81,26 @@ pub fn init_set_object(obj: &Rc<RefCell<Object>>) {
     let mut s = obj.borrow_mut();
     if s.get("_values").is_none() {
         let values = Object::new_array(0);
-        s.set("_values", Value::Object(Rc::new(RefCell::new(values))));
-        s.set("size", Value::Number(0.0));
+        s.define(
+            "_values",
+            Value::Object(Rc::new(RefCell::new(values))),
+            PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+        s.define(
+            "size",
+            Value::Number(0.0),
+            PropertyFlags {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
     }
     s.kind = ObjectKind::Set;
 }
