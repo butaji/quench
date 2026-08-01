@@ -228,7 +228,7 @@ fn lower_method_prop_from_value(
             .unwrap_or_default();
         Ok((
             key,
-            PropertyValue::Value(Expression::FunctionExpression {
+            PropertyValue::Method(Expression::FunctionExpression {
                 name: None,
                 params,
                 body,
@@ -238,7 +238,7 @@ fn lower_method_prop_from_value(
         ))
     } else {
         let value = lower_expr(value)?;
-        Ok((key, PropertyValue::Value(value)))
+        Ok((key, PropertyValue::Method(value)))
     }
 }
 

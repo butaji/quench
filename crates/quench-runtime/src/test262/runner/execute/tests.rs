@@ -229,6 +229,17 @@ fn object_proto_shorthand_properties_do_not_trigger_duplicate_proto_error() {
 }
 
 #[test]
+fn object_methods_cannot_be_constructed() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let path = std::path::PathBuf::from(default_test262_dir())
+        .join("test/language/expressions/object/method-definition/name-invoke-ctor.js");
+    let harness = HarnessLoader::new(&default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn exponentiation_one_to_infinity_is_nan() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

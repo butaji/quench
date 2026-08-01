@@ -212,7 +212,9 @@ pub fn eval_object_literal(
             _ => {
                 let key_str = eval_property_key(key, &literal_env, in_arrow_function)?;
                 match value {
-                    PropertyValue::Value(expr) | PropertyValue::Shorthand(expr) => {
+                    PropertyValue::Value(expr)
+                    | PropertyValue::Shorthand(expr)
+                    | PropertyValue::Method(expr) => {
                         let mut val = crate::eval::expression::eval_expression(
                             expr,
                             &literal_env,
@@ -221,6 +223,11 @@ pub fn eval_object_literal(
                         crate::eval::class::helpers::set_function_name_for_field_initializer(
                             &mut val, key, &key_str, expr,
                         );
+                        if matches!(value, PropertyValue::Method(_)) {
+                            if let Value::Function(function) = &mut val {
+                                function.is_method = true;
+                            }
+                        }
                         if let PropertyKey::Computed(expression) = key {
                             let computed_key = crate::eval::expression::eval_expression(
                                 expression,

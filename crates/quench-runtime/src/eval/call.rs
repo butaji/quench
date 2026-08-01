@@ -431,7 +431,7 @@ pub fn eval_new(
 
     // Arrow functions and generator functions are not constructors
     if let Value::Function(ref f) = constructor_val {
-        if f.is_arrow || f.is_generator {
+        if f.is_method || f.is_arrow || f.is_generator {
             let (_, js_err) =
                 create_js_error_with_type("function is not a constructor", "TypeError");
             return Err(js_err);

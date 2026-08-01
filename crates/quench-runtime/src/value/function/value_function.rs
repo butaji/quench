@@ -994,7 +994,8 @@ fn generate_source_text(f: &ValueFunction) -> String {
                         };
                         match v {
                             crate::ast::PropertyValue::Value(e)
-                            | crate::ast::PropertyValue::Shorthand(e) => {
+                            | crate::ast::PropertyValue::Shorthand(e)
+                            | crate::ast::PropertyValue::Method(e) => {
                                 format!("{}: {}", key_str, expr_to_string(e))
                             }
                             crate::ast::PropertyValue::Getter { params: _, body } => {

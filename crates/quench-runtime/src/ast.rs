@@ -215,6 +215,8 @@ pub enum PropertyValue {
     Value(Expression),
     /// Shorthand property: `{ name }`
     Shorthand(Expression),
+    /// Concise method property: `{ name() {} }`
+    Method(Expression),
     /// Getter property: { get x() { return 42; } }
     Getter {
         params: Vec<String>,
