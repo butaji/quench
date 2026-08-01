@@ -85,13 +85,22 @@ struct StrictDeleteIdentifierChecker(bool);
 impl<'a> Visit<'a> for StrictDeleteIdentifierChecker {
     fn visit_unary_expression(&mut self, expression: &ast::UnaryExpression<'a>) {
         if expression.operator == oxc::syntax::operator::UnaryOperator::Delete
-            && expression.argument.is_identifier_reference()
+            && is_delete_identifier_reference(&expression.argument)
         {
             self.0 = true;
         }
         if !self.0 {
             self.visit_expression(&expression.argument);
         }
+    }
+}
+
+fn is_delete_identifier_reference(expression: &ast::Expression<'_>) -> bool {
+    match expression {
+        ast::Expression::ParenthesizedExpression(expression) => {
+            is_delete_identifier_reference(&expression.expression)
+        }
+        _ => expression.is_identifier_reference(),
     }
 }
 
@@ -3202,6 +3211,12 @@ mod tests {
     fn parse_script_rejects_delete_identifier_in_strict_mode() {
         use crate::parser::parse_script;
         assert!(parse_script("'use strict'; delete identifier; ").is_err());
+    }
+
+    #[test]
+    fn parse_script_rejects_parenthesized_delete_identifier_in_strict_mode() {
+        use crate::parser::parse_script;
+        assert!(parse_script("'use strict'; delete ((identifier)); ").is_err());
     }
 
     #[test]
