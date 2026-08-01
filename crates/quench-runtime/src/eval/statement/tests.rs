@@ -2199,6 +2199,13 @@ mod optional_chaining {
     }
 
     #[test]
+    fn optional_member_skips_computed_key_after_nullish_chain() {
+        let r = eval("var count = 0; function key() { count++; } undefined?.arr[key()]; count")
+            .unwrap();
+        assert_eq!(r, Value::Number(0.0));
+    }
+
+    #[test]
     fn optional_super_method_call_preserves_this() {
         let r = eval("let called = false; let context; class B { method() { called = true; context = this; } } class F extends B { method() { super.method?.(); } } let f = new F(); f.method(); [called, context === f]").unwrap();
         let object = match r {

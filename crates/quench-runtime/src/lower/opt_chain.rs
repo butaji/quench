@@ -98,11 +98,24 @@ fn lower_chain_recursive(
                     alternate: Box::new(member_access),
                 })
             } else {
-                Ok(Expression::Member {
+                let guarded = is_nullish_guard(&object_expr);
+                let member_access = Expression::Member {
                     object: Box::new(object_expr),
                     property: PropertyKey::Computed(Box::new(prop_expr)),
                     computed: true,
-                })
+                };
+                if guarded {
+                    let Expression::Member { object, .. } = &member_access else {
+                        unreachable!();
+                    };
+                    Ok(Expression::Conditional {
+                        condition: Box::new(make_nullish_check(object)),
+                        consequent: Box::new(Expression::Undefined),
+                        alternate: Box::new(member_access),
+                    })
+                } else {
+                    Ok(member_access)
+                }
             }
         }
         ast::ChainElement::CallExpression(call) => {
@@ -235,6 +248,17 @@ fn is_super_call(expression: &ast::Expression) -> bool {
         expression,
         ast::Expression::CallExpression(call)
             if matches!(call.callee, ast::Expression::Super(_))
+    )
+}
+
+fn is_nullish_guard(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Conditional { condition, .. }
+            if matches!(condition.as_ref(), Expression::Binary {
+                op: crate::ast::BinaryOp::Or,
+                ..
+            })
     )
 }
 
