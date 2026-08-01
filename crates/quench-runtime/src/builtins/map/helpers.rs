@@ -40,12 +40,7 @@ pub fn map_find_pair(entries: &Rc<RefCell<Object>>, key: &Value) -> Option<Rc<Re
 }
 
 /// Store the current entry count in the map's `size` property
-pub fn map_update_size(this: &Value, entries: &Rc<RefCell<Object>>) {
-    let size = entries.borrow().elements.len() as f64;
-    if let Value::Object(o) = this {
-        o.borrow_mut().set("size", Value::Number(size));
-    }
-}
+pub fn map_update_size(_this: &Value, _entries: &Rc<RefCell<Object>>) {}
 
 /// Initialize Map internal slots on `obj`, preserving its [[Prototype]] (subclassing).
 pub fn init_map_object(obj: &Rc<RefCell<Object>>) {
@@ -55,16 +50,6 @@ pub fn init_map_object(obj: &Rc<RefCell<Object>>) {
         m.define(
             "_entries",
             Value::Object(Rc::new(RefCell::new(entries))),
-            PropertyFlags {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                ..Default::default()
-            },
-        );
-        m.define(
-            "size",
-            Value::Number(0.0),
             PropertyFlags {
                 writable: true,
                 enumerable: false,
@@ -84,16 +69,6 @@ pub fn init_set_object(obj: &Rc<RefCell<Object>>) {
         s.define(
             "_values",
             Value::Object(Rc::new(RefCell::new(values))),
-            PropertyFlags {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                ..Default::default()
-            },
-        );
-        s.define(
-            "size",
-            Value::Number(0.0),
             PropertyFlags {
                 writable: true,
                 enumerable: false,

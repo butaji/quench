@@ -10,7 +10,7 @@ use self::helpers::{
     init_map_object, iterator_prop_key, map_entries, map_find_pair, map_populate, map_update_size,
     native_fn, set_values,
 };
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
 fn map_set_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -123,6 +123,16 @@ pub fn register_map_and_set(ctx: &mut Context) {
         p.set("keys", native_fn(map_keys_impl));
         p.set("values", native_fn(map_values_impl));
         p.set("entries", native_fn(map_iterator_impl));
+        p.define_accessor(
+            "size",
+            Some(native_fn(map_size_impl)),
+            None,
+            PropertyFlags {
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
         if let Some(key) = iterator_prop_key() {
             p.set(&key, native_fn(map_iterator_impl));
         }
@@ -176,6 +186,15 @@ pub fn register_map_and_set(ctx: &mut Context) {
 }
 
 use crate::value::NativeFunction;
+
+fn map_size_impl(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    Ok(Value::Number(
+        map_entries(&this)
+            .map(|entries| entries.borrow().elements.len() as f64)
+            .unwrap_or(0.0),
+    ))
+}
 
 fn map_keys_impl(_args: Vec<Value>) -> Result<Value, JsError> {
     let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -240,6 +259,20 @@ mod tests {
             ctx.eval("Object.keys(new Set()).length").unwrap(),
             Value::Number(0.0)
         );
+    }
+
+    #[test]
+    fn map_and_set_size_is_prototype_accessor() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "!Object.prototype.hasOwnProperty.call(new Map(), 'size') && \
+                 !Object.prototype.hasOwnProperty.call(new Set(), 'size') && \
+                 typeof Object.getOwnPropertyDescriptor(Map.prototype, 'size').get === 'function' && \
+                 typeof Object.getOwnPropertyDescriptor(Set.prototype, 'size').get === 'function'",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
     }
 
     #[test]

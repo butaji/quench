@@ -7,7 +7,7 @@ use super::helpers::{
     init_set_object, iterator_prop_key, map_update_size, native_fn, set_has_value, set_populate,
     set_values,
 };
-use crate::value::{JsError, Object, ObjectKind, Value};
+use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
 use crate::Context;
 
 fn set_add_impl(args: Vec<Value>) -> Result<Value, JsError> {
@@ -85,6 +85,16 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
         p.set("keys", native_fn(set_iterator_impl));
         p.set("values", native_fn(set_iterator_impl));
         p.set("entries", native_fn(set_iterator_impl));
+        p.define_accessor(
+            "size",
+            Some(native_fn(set_size_impl)),
+            None,
+            PropertyFlags {
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
     }
 
     let set_proto_for_ctor = Rc::clone(&set_proto);
@@ -112,4 +122,13 @@ pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
         let _ = nf.set_property("name", Value::String("Set".to_string()));
     }
     ctx.set_global("Set".to_string(), set_constructor);
+}
+
+fn set_size_impl(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    Ok(Value::Number(
+        set_values(&this)
+            .map(|values| values.borrow().elements.len() as f64)
+            .unwrap_or(0.0),
+    ))
 }
