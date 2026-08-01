@@ -286,7 +286,29 @@ pub fn eval_update(
     } else {
         None
     };
-    let current = crate::eval::expression::eval_expression(argument, env, in_arrow_function)?;
+    let member_target = if let Expression::Member {
+        object,
+        property,
+        computed,
+    } = argument
+    {
+        let object_value =
+            crate::eval::expression::eval_expression(object, env, in_arrow_function)?;
+        let property_name = crate::eval::call::extract_property_name(
+            property.clone(),
+            *computed,
+            env,
+            in_arrow_function,
+        )?;
+        let current = crate::eval::member::eval_member_access(&object_value, &property_name, env)?;
+        Some((object_value, property_name, current))
+    } else {
+        None
+    };
+    let current = match member_target.as_ref() {
+        Some((_, _, value)) => value.clone(),
+        None => crate::eval::expression::eval_expression(argument, env, in_arrow_function)?,
+    };
     let (new_value, old_value) = match &current {
         Value::BigInt(value) => {
             let unit = num_bigint::BigInt::from(1);
@@ -327,7 +349,11 @@ pub fn eval_update(
             };
         }
     }
-    crate::eval::object::assign_to(argument, &new_value, env)?;
+    if let Some((object, property, _)) = member_target {
+        crate::eval::object::assign_to_member_value(&object, &property, &new_value, env)?;
+    } else {
+        crate::eval::object::assign_to(argument, &new_value, env)?;
+    }
     if prefix {
         Ok(new_value)
     } else {

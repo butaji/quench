@@ -271,6 +271,14 @@ fn test_update_prefix_postfix() {
 }
 
 #[test]
+fn computed_member_update_evaluates_property_key_once() {
+    assert_eq!(
+        eval("var evaluated = false; var base = {}; var prop = { toString: function() { if (evaluated) throw 'twice'; evaluated = true; return 1; } }; base[prop]++; evaluated").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn logical_assignment_infers_anonymous_function_name() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(
