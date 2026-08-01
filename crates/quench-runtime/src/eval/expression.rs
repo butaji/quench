@@ -239,7 +239,11 @@ pub fn eval_expression(
             Ok(Value::Function(func))
         }
         Expression::PrivateIn { name, right } => {
+            crate::eval::generator::begin_assignment_rhs();
             let value = eval_expression(right, env, in_arrow_function)?;
+            if crate::eval::generator::take_assignment_yield() {
+                return Ok(Value::Undefined);
+            }
             let object = match value {
                 Value::Object(object) => object,
                 _ => {

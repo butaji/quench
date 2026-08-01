@@ -869,6 +869,24 @@ mod tests {
         assert_eq!(value, Value::String("false|true".to_string()));
     }
 
+    #[test]
+    fn private_in_uses_resumed_generator_value() {
+        let value = eval(
+            "class C { #field; static *check() { return #field in (yield); } } let first = C.check(); first.next(); first.next(new C()).value",
+        )
+        .unwrap();
+        assert_eq!(value, Value::Boolean(true));
+    }
+
+    #[test]
+    fn private_in_resumes_multiple_generators() {
+        let value = eval(
+            "class C { #field; static *check() { return #field in (yield); } } let first = C.check(); first.next(); let a = first.next(new C()).value; let second = C.check(); second.next(); let b = second.next({}).value; [a, b].join('|')",
+        )
+        .unwrap();
+        assert_eq!(value, Value::String("true|false".to_string()));
+    }
+
     // ─── String(f) diagnostic ────────────────────────────────────────────────
 
     #[test]
