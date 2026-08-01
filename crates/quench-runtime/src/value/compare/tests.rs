@@ -377,6 +377,13 @@ fn loose_eq_bigint_number_preserves_precision() {
     ));
 }
 
+#[test]
+fn loose_eq_bigint_empty_string_is_zero() {
+    let zero = Value::BigInt(std::rc::Rc::new(0_i64.into()));
+    assert!(loose_eq(&zero, &Value::String(String::new())));
+    assert!(loose_eq(&Value::String("  ".into()), &zero));
+}
+
 // ─── primitive_for_compare ────────────────────────────────────────────────────
 
 #[test]

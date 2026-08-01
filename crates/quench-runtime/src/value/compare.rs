@@ -144,12 +144,16 @@ fn bigint_string_eq(a: &Value, b: &Value) -> Option<bool> {
         (Value::String(text), Value::BigInt(value)) => (value, text),
         _ => return None,
     };
-    Some(
-        string
-            .trim()
-            .parse::<num_bigint::BigInt>()
-            .is_ok_and(|parsed| parsed == bigint.as_ref().clone()),
-    )
+    let text = string.trim();
+    let parsed = if text.is_empty() {
+        num_bigint::BigInt::from(0)
+    } else {
+        match text.parse::<num_bigint::BigInt>() {
+            Ok(value) => value,
+            Err(_) => return Some(false),
+        }
+    };
+    Some(parsed == bigint.as_ref().clone())
 }
 
 fn bigint_number_eq(a: &Value, b: &Value) -> Option<bool> {
