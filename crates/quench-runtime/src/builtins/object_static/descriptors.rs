@@ -1051,6 +1051,19 @@ pub fn get_native_function_property_descriptor(
         });
         return Ok(make_descriptor_value(flags, Value::Undefined));
     }
+    if prop == "prototype" {
+        let value = nf
+            .get_property(prop)
+            .or_else(|| nf.prototype.borrow().clone().map(Value::Object))
+            .unwrap_or(Value::Undefined);
+        let flags = nf.get_property_flags(prop).unwrap_or(PropertyFlags {
+            value: Some(value.clone()),
+            writable: true,
+            enumerable: false,
+            configurable: false,
+        });
+        return Ok(make_descriptor_value(flags, Value::Undefined));
+    }
     // Check for custom properties
     if let Some(value) = nf.get_property(prop) {
         return Ok(make_descriptor_value(

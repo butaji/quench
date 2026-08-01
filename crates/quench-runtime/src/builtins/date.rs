@@ -193,24 +193,79 @@ fn register_boolean_converter(ctx: &mut Context) {
     if let Some(object_proto) = crate::builtins::get_object_prototype() {
         boolean_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
-
-    boolean_proto_rc.borrow_mut().set(
-        "valueOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            if let Value::Object(obj) = &this_val {
-                if let Some(Value::Boolean(b)) = obj.borrow().get("_value") {
-                    return Ok(Value::Boolean(b));
-                }
-            }
-            match this_val {
-                Value::Boolean(b) => Ok(Value::Boolean(b)),
-                _ => Err(crate::JsError::new(
-                    "TypeError: Boolean.prototype.valueOf requires a Boolean receiver",
-                )),
-            }
-        }))),
+    crate::builtins::object::set_boxed_value(
+        &mut boolean_proto_rc.borrow_mut(),
+        Value::Boolean(false),
     );
+
+    let boolean_value = || {
+        let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+        match this_val {
+            Value::Boolean(value) => Ok(value),
+            Value::Object(object) => match object.borrow().get("_value") {
+                Some(Value::Boolean(value)) => Ok(value),
+                _ => Err(crate::JsError::new(
+                    "TypeError: Boolean.prototype method requires a Boolean receiver",
+                )),
+            },
+            _ => Err(crate::JsError::new(
+                "TypeError: Boolean.prototype method requires a Boolean receiver",
+            )),
+        }
+    };
+
+    let value_of = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        boolean_value().map(Value::Boolean)
+    })));
+    if let Value::NativeFunction(function) = &value_of {
+        function.define_property(
+            "name",
+            Value::String("valueOf".into()),
+            PropertyFlags {
+                value: Some(Value::String("valueOf".into())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        function.define_property(
+            "length",
+            Value::Number(0.0),
+            PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+    boolean_proto_rc.borrow_mut().set("valueOf", value_of);
+    let to_string = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+        boolean_value().map(|value| Value::String(value.to_string()))
+    })));
+    if let Value::NativeFunction(function) = &to_string {
+        function.define_property(
+            "name",
+            Value::String("toString".into()),
+            PropertyFlags {
+                value: Some(Value::String("toString".into())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        function.define_property(
+            "length",
+            Value::Number(0.0),
+            PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+    boolean_proto_rc.borrow_mut().set("toString", to_string);
 
     let boolean_proto_clone = Rc::clone(&boolean_proto_rc);
     let mut boolean_native = NativeFunction::new_with_prototype(
@@ -497,6 +552,35 @@ mod tests {
             .eval("[Boolean.length, __ops__.IsConstructor(Boolean), (() => { try { Reflect.construct(function(){}, [], Boolean); return true; } catch (e) { return false; } })()].join('|')")
             .unwrap();
         assert_eq!(result, crate::Value::String("1|true|true".to_string()));
+    }
+
+    #[test]
+    fn boolean_prototype_methods_and_descriptors_follow_boolean_spec() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "[Boolean.prototype.valueOf(), Boolean.prototype.toString(), \
+                 Object.getOwnPropertyDescriptor(Boolean.prototype.valueOf, 'name').value, \
+                 Object.getOwnPropertyDescriptor(Boolean.prototype.valueOf, 'length').writable, \
+                 Object.getOwnPropertyDescriptor(Boolean, 'prototype').writable, \
+                 Object.getOwnPropertyDescriptor(Boolean, 'prototype').configurable].join('|')",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            crate::Value::String("false|false|valueOf|false|false|false".to_string())
+        );
+    }
+
+    #[test]
+    fn boolean_prototype_cannot_be_deleted() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "(function() { 'use strict'; try { delete Boolean.prototype; return false; } catch (e) { return e instanceof TypeError; } })()",
+            )
+            .unwrap();
+        assert_eq!(result, crate::Value::Boolean(true));
     }
 
     #[test]

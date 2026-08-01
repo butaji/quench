@@ -167,6 +167,12 @@ pub fn eval_delete(
                     let configurable = flags.map_or(true, |f| f.configurable);
                     if configurable {
                         nf.as_ref().remove_property(&prop_key);
+                    } else if crate::interpreter::is_strict_mode() {
+                        let (_, error) = crate::value::error::create_js_error_with_type(
+                            "Cannot delete non-configurable property",
+                            "TypeError",
+                        );
+                        return Err(error);
                     }
                     Ok(Value::Boolean(configurable))
                 }
