@@ -3,7 +3,7 @@
 use crate::env::Environment;
 use crate::interpreter;
 use crate::parser;
-use crate::value::{JsError, Object, Value};
+use crate::value::{JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
@@ -132,6 +132,10 @@ impl Context {
 
         let result = (|| {
             let program = parser::parse_es_module(source)?;
+            self.env.borrow_mut().define(
+                "__import_meta__".to_string(),
+                Value::Object(Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
+            );
             // Module code: `this` is undefined (ThisMode::module per ES spec)
             interpreter::set_this_binding(&self.env, Value::Undefined);
             interpreter::eval_program(&program, &mut self.env, Some(source), false)

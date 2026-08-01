@@ -22,7 +22,7 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
         ast::Expression::ArrowFunctionExpression(arrow) => lower_arrow_expr(arrow),
         ast::Expression::YieldExpression(yield_expr) => lower_yield_expr(yield_expr),
         ast::Expression::NewTarget(_) => Ok(Expression::Identifier("new.target".to_string())),
-        ast::Expression::ImportMeta(_) => Ok(Expression::Undefined),
+        ast::Expression::ImportMeta(_) => Ok(Expression::Identifier("__import_meta__".to_string())),
         ast::Expression::AwaitExpression(await_expr) => Ok(Expression::Await(Box::new(
             lower_expr(&await_expr.argument)?,
         ))),

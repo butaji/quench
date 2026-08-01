@@ -31,6 +31,15 @@ fn test_es_module_default_export() {
 }
 
 #[test]
+fn module_import_meta_is_an_object() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval_es_module("typeof import.meta === 'object' && import.meta === import.meta")
+        .unwrap();
+    assert_eq!(result, crate::Value::Boolean(true));
+}
+
+#[test]
 fn top_level_await_using_initializes_module_binding() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
