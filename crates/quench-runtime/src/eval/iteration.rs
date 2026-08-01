@@ -954,6 +954,14 @@ mod tests {
     }
 
     #[test]
+    fn async_iterator_factory_does_not_reuse_local_iterator_state() {
+        let mut ctx = new_ctx();
+        ctx.eval("function factory(iterable) { return { [Symbol.asyncIterator]() { var iter = iterable[Symbol.iterator](); return { next() { return Promise.resolve(iter.next()); } }; } }; } var first = factory([1])[Symbol.asyncIterator](); first.next(); var second = factory([1])[Symbol.asyncIterator](); var result; second.next().then(value => result = value);")
+            .unwrap();
+        assert_eq!(ctx.eval("result.done").unwrap(), Value::Boolean(false));
+    }
+
+    #[test]
     fn async_generator_nested_destructuring_clears_stale_thrown_value() {
         let mut ctx = new_ctx();
         let result = ctx.eval(

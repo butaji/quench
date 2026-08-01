@@ -437,10 +437,6 @@ fn try_handle_tail_call(
     let Expression::Call { callee, arguments } = e.as_ref() else {
         return Ok(false);
     };
-    let args: Vec<Value> = arguments
-        .iter()
-        .map(|arg| eval_expression(arg, env, in_arrow_function))
-        .collect::<Result<Vec<_>, _>>()?;
     let (callee_val, this_val) = match callee.as_ref() {
         Expression::Member { .. } => {
             let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
@@ -457,6 +453,10 @@ fn try_handle_tail_call(
     if function.is_async || function.is_generator {
         return Ok(false);
     }
+    let args: Vec<Value> = arguments
+        .iter()
+        .map(|arg| eval_expression(arg, env, in_arrow_function))
+        .collect::<Result<Vec<_>, _>>()?;
     set_tail_call_signal(TailCallSignal::new(function, args, this_val));
     Ok(true)
 }
