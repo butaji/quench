@@ -366,6 +366,24 @@ mod tests {
     }
 
     #[test]
+    fn array_iterator_prototype_exposes_spec_tag() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("Object.getPrototypeOf([][Symbol.iterator]())[Symbol.toStringTag]")
+            .unwrap();
+        assert_eq!(result, Value::String("Array Iterator".to_string()));
+    }
+
+    #[test]
+    fn object_to_string_uses_array_iterator_tag() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("Object.prototype.toString.call([][Symbol.iterator]())")
+            .unwrap();
+        assert_eq!(result, Value::String("[object Array Iterator]".to_string()));
+    }
+
+    #[test]
     fn string_iterator_prototype_matches_intrinsic_iterator_ancestry() {
         let mut ctx = Context::new().unwrap();
         let result = ctx

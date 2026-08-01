@@ -66,7 +66,9 @@ pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
             if matches!(obj.data, ObjData::Args { .. }) {
                 return "Arguments".to_string();
             }
-            return get_object_kind_tag(obj.kind.clone());
+            if obj.prototype.is_none() {
+                return get_object_kind_tag(obj.kind.clone());
+            }
         }
         current = obj.prototype.clone();
     }
@@ -96,6 +98,13 @@ fn typed_array_builtin_tag(data: &ObjData) -> Option<String> {
 }
 
 fn get_to_string_tag_on_object(obj: &Object) -> Option<String> {
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        if let Some(Value::String(tag)) = obj.get_own(&symbol.property_key()) {
+            return Some(tag);
+        }
+    }
     get_to_string_tag(&obj.symbol_properties).or_else(|| get_to_string_tag(&obj.properties))
 }
 

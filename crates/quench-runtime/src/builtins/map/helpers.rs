@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::eval::call_value_with_this;
 use crate::eval::member::eval_object_member;
+use crate::value::object::helpers::ObjData;
 use crate::value::{JsError, NativeFunction, Object, ObjectKind, Value};
 
 /// SameValueZero key equality: NaN equals NaN, +0 and -0 are the same key
@@ -199,9 +200,17 @@ pub fn make_live_value_iterator(values_rc: Rc<RefCell<Object>>) -> Value {
 /// Build `{ next() }` reading indexed elements live from `arr_rc`.
 pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIteratorMode) -> Value {
     let index = Rc::new(RefCell::new(0usize));
+    let exhausted = Rc::new(RefCell::new(false));
+    let sticky_exhaustion = matches!(arr_rc.borrow().data, ObjData::Args { .. });
     let arr = Rc::clone(&arr_rc);
+    let exhausted_for_next = Rc::clone(&exhausted);
     let next_fn = NativeFunction::new(move |_args| {
         let mut result = Object::new(ObjectKind::Ordinary);
+        if sticky_exhaustion && *exhausted_for_next.borrow() {
+            result.set("value", Value::Undefined);
+            result.set("done", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(result))));
+        }
         let current_idx = { *index.borrow() };
         let borrowed = arr.borrow();
         if borrowed.typed_array_is_out_of_bounds() {
@@ -290,6 +299,9 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
         } else {
             result.set("value", Value::Undefined);
             result.set("done", Value::Boolean(true));
+            if sticky_exhaustion {
+                *exhausted_for_next.borrow_mut() = true;
+            }
         }
         Ok(Value::Object(Rc::new(RefCell::new(result))))
     });
@@ -299,6 +311,20 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
         ObjectKind::Ordinary,
         iterator_proto,
     )));
+    if let Some(Value::Symbol(tag)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
+    {
+        array_iterator_proto.borrow_mut().define(
+            &tag.property_key(),
+            Value::String("Array Iterator".to_string()),
+            crate::value::PropertyFlags {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                ..Default::default()
+            },
+        );
+    }
     let mut iter = Object::with_prototype(ObjectKind::Ordinary, array_iterator_proto);
     iter.set("next", Value::NativeFunction(Rc::new(next_fn)));
     Value::Object(Rc::new(RefCell::new(iter)))
