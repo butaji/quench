@@ -600,6 +600,7 @@ fn test_to_number_explicit_infinity() {
 #[test]
 fn test_to_number_invalid_returns_nan() {
     assert!(to_number(&Value::String("hello".to_string())).is_nan());
+    assert!(to_number(&Value::String("INFINITY".to_string())).is_nan());
     assert!(to_number(&Value::String("0xGG".to_string())).is_nan());
     assert!(to_number(&Value::String("0b123".to_string())).is_nan());
     assert!(to_number(&Value::String("0o89".to_string())).is_nan());

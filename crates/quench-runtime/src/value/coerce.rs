@@ -278,6 +278,14 @@ fn string_to_number(s: &str) -> f64 {
     if s == "NaN" {
         return f64::NAN;
     }
+    if !matches!(s, "Infinity" | "+Infinity" | "-Infinity")
+        && (s.eq_ignore_ascii_case("infinity")
+            || s.strip_prefix('+')
+                .or_else(|| s.strip_prefix('-'))
+                .is_some_and(|value| value.eq_ignore_ascii_case("infinity")))
+    {
+        return f64::NAN;
+    }
     // Per ES §7.1.4.1: ToNumber Applied to the String Type
     // Check for hex prefix (0x or 0X)
     let is_hex = s.len() > 2 && (s.starts_with("0x") || s.starts_with("0X"));
