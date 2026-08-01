@@ -628,6 +628,8 @@ mod tests {
     fn malformed_uri_throws() {
         let mut ctx = Context::new().unwrap();
         assert!(ctx.eval("decodeURIComponent('%2')").is_err());
+        assert!(ctx.eval("decodeURIComponent('%1')").is_err());
+        assert!(ctx.eval("decodeURIComponent('% ')").is_err());
         assert!(ctx.eval("decodeURIComponent('%xy')").is_err());
         assert!(ctx.eval("decodeURIComponent('%')").is_err());
         assert!(ctx.eval("decodeURIComponent('%1?')").is_err());
