@@ -1012,3 +1012,12 @@ fn bigint_addition_with_string_uses_string_concatenation() {
         Ok(crate::value::Value::String("1x".to_string()))
     );
 }
+
+#[test]
+fn function_prototype_is_callable() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("typeof Function.prototype"),
+        Ok(crate::value::Value::String("function".to_string()))
+    );
+}

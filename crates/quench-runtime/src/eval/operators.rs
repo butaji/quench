@@ -587,7 +587,13 @@ fn eval_typeof(val: &Value) -> Result<Value, JsError> {
         | Value::Class(_) => "function",
         Value::Generator(_) => "object",
         Value::BigInt(_) => "bigint",
-        Value::Object(_) => "object",
+        Value::Object(object) => {
+            if object.borrow().kind == crate::value::ObjectKind::Function {
+                "function"
+            } else {
+                "object"
+            }
+        }
         Value::Symbol(_) => "symbol",
     };
     Ok(Value::String(type_str.to_string()))
