@@ -2181,6 +2181,12 @@ mod optional_chaining {
     }
 
     #[test]
+    fn optional_call_supports_string_constructor() {
+        let r = eval("String?.(42)").unwrap();
+        assert_eq!(r, Value::String("42".to_string()));
+    }
+
+    #[test]
     fn optional_chain_with_method() {
         let r = eval("var o = {m() { return 5; }}; o.m?.()").unwrap();
         assert_eq!(r, Value::Number(5.0));

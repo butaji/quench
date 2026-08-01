@@ -248,12 +248,12 @@ fn extract_base_from_callee(callee: &ast::Expression) -> Result<Expression, Lowe
 /// Create a nullish check: base == null || base == undefined
 fn make_nullish_check(base: &Expression) -> Expression {
     let null_check = Expression::Binary {
-        op: crate::ast::BinaryOp::Eq,
+        op: crate::ast::BinaryOp::StrictEq,
         left: Box::new(base.clone()),
         right: Box::new(Expression::Null),
     };
     let undefined_check = Expression::Binary {
-        op: crate::ast::BinaryOp::Eq,
+        op: crate::ast::BinaryOp::StrictEq,
         left: Box::new(base.clone()),
         right: Box::new(Expression::Undefined),
     };
