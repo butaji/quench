@@ -385,6 +385,21 @@ fn typed_array_values(_args: Vec<Value>) -> Result<Value, JsError> {
     ))
 }
 
+fn typed_array_keys(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
+    let Value::Object(obj_rc) = this else {
+        let (_, js_err) = crate::value::error::create_js_error_with_type(
+            "TypedArray.prototype.keys called on incompatible receiver",
+            "TypeError",
+        );
+        return Err(js_err);
+    };
+    Ok(crate::builtins::map::helpers::make_live_index_iterator(
+        obj_rc,
+        crate::builtins::map::helpers::LiveIndexIteratorMode::Keys,
+    ))
+}
+
 /// Wire `%TypedArray%.prototype[Symbol.iterator]` after `Symbol` is registered.
 pub fn register_typed_array_iterator() {
     let Some(typed_array_proto) = get_typed_array_prototype() else {
@@ -403,6 +418,10 @@ pub fn register_typed_array_iterator() {
     typed_array_proto.borrow_mut().set_builtin_method(
         "values",
         Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
+    );
+    typed_array_proto.borrow_mut().set_builtin_method(
+        "keys",
+        Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_keys))),
     );
 }
 
@@ -2213,5 +2232,24 @@ failures.length === 0 ? 'ALL_PASS' : failures.join('|');
             matches!(outcome, crate::test262::host::TestOutcome::Pass),
             "unexpected test outcome: {outcome:?}"
         );
+    }
+
+    #[test]
+    fn typed_array_iterator_rejects_detached_buffer() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var a = new Float64Array(1); a.buffer.detached = true; \
+                 try { a.values().next(); false } catch (e) { e instanceof TypeError }",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn typed_array_keys_returns_index_iterator() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval("new Float64Array(1).keys().next().value").unwrap();
+        assert_eq!(result, Value::Number(0.0));
     }
 }

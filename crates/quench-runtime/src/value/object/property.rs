@@ -382,6 +382,9 @@ impl Object {
             return false;
         };
         let buf = buffer.borrow();
+        if matches!(buf.properties.get("detached"), Some(Value::Boolean(true))) {
+            return true;
+        }
         let is_resizable = buf
             .properties
             .get("maxByteLength")
