@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::test262::harness::HarnessLoader;
 use crate::test262::host::{capture_thrown_diagnostics, Test262Host, TestFailure, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
+use crate::Value;
 
 /// Per-test timeout in seconds — one value shared by the in-process and
 /// subprocess (isolated) paths so a test cannot pass one way and fail the other.
@@ -288,6 +289,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         .parent()
         .ok_or_else(|| "test has no parent directory".to_string())?;
     let entries = std::fs::read_dir(directory).map_err(|e| format!("fixture directory: {}", e))?;
+    let mut fixtures = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| format!("fixture entry: {}", e))?.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -296,7 +298,10 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         if !name.ends_with("_FIXTURE.js") {
             continue;
         }
-        let source = std::fs::read_to_string(&path).map_err(|e| format!("fixture read: {}", e))?;
+        fixtures.push((name.to_string(), path));
+    }
+    for (name, path) in &fixtures {
+        let source = std::fs::read_to_string(path).map_err(|e| format!("fixture read: {}", e))?;
         let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
         let mut values = std::collections::HashMap::new();
         for line in source.lines() {
@@ -340,11 +345,56 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         let module_name = format!("./{}", name);
         ctx.register_module(&module_name, exports);
     }
+    for (name, path) in &fixtures {
+        let source = std::fs::read_to_string(path).map_err(|e| format!("fixture read: {}", e))?;
+        let module_name = format!("./{}", name);
+        let Some(Value::Object(module)) = ctx.get_module(&module_name) else {
+            continue;
+        };
+        for line in source.lines().map(|line| line.trim().trim_end_matches(';')) {
+            let Some(rest) = line.strip_prefix("export * as ") else {
+                continue;
+            };
+            let Some((exported, source)) = rest.split_once(" from ") else {
+                continue;
+            };
+            let source = source.trim().trim_matches(['\'', '"']);
+            let target = format!("./{}", source.strip_prefix("./").unwrap_or(source));
+            if let Some(Value::Object(target)) = ctx.get_module(&target) {
+                let mut namespace =
+                    crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+                let mut keys = target.borrow().own_property_names();
+                keys.sort();
+                for key in keys {
+                    if let Some(value) = target.borrow().get_own_value(&key) {
+                        namespace.define(
+                            &key,
+                            value,
+                            crate::value::PropertyFlags {
+                                value: None,
+                                writable: true,
+                                enumerable: true,
+                                configurable: false,
+                            },
+                        );
+                    }
+                }
+                namespace.extensible = false;
+                module.borrow_mut().set(
+                    exported.trim(),
+                    Value::Object(std::rc::Rc::new(std::cell::RefCell::new(namespace))),
+                );
+            }
+        }
+    }
     Ok(())
 }
 
 fn fixture_literal(source: &str) -> Option<crate::Value> {
     let source = source.trim();
+    if source == "null" {
+        return Some(crate::Value::Null);
+    }
     if let Some(value) = source.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
         return Some(crate::Value::String(value.to_string()));
     }
