@@ -39,6 +39,14 @@ fn tagged_template_exposes_cooked_and_raw_values() {
 }
 
 #[test]
+fn tagged_template_objects_are_frozen() {
+    assert_eq!(
+        eval("(function(s) { s.x = 1; s.raw.x = 1; return [Object.isFrozen(s), Object.isFrozen(s.raw), s.x, s.raw.x].join('|'); })`x`").unwrap(),
+        Value::String("true|true|undefined|undefined".to_string())
+    );
+}
+
+#[test]
 fn test_logical_compound_assign_targets_left() {
     assert_eq!(eval("let x = 0; x ||= 5; x").unwrap(), Value::Number(5.0));
     assert_eq!(eval("let y = 3; y &&= 7; y").unwrap(), Value::Number(7.0));

@@ -76,24 +76,25 @@ pub fn lower_tagged_template(
         )
     });
     let mut strings = cooked.collect::<Vec<_>>();
+    let raw = Expression::Object(
+        tagged
+            .quasi
+            .quasis
+            .iter()
+            .enumerate()
+            .map(|(index, q)| {
+                (
+                    PropertyKey::String(index.to_string()),
+                    PropertyValue::Value(Expression::String(q.value.raw.to_string())),
+                )
+            })
+            .collect(),
+    );
     strings.push((
         PropertyKey::String("raw".to_string()),
-        PropertyValue::Value(Expression::Object(
-            tagged
-                .quasi
-                .quasis
-                .iter()
-                .enumerate()
-                .map(|(index, q)| {
-                    (
-                        PropertyKey::String(index.to_string()),
-                        PropertyValue::Value(Expression::String(q.value.raw.to_string())),
-                    )
-                })
-                .collect(),
-        )),
+        PropertyValue::Value(freeze_object(raw)),
     ));
-    arguments.push(Expression::Object(strings));
+    arguments.push(freeze_object(Expression::Object(strings)));
     for expr in &tagged.quasi.expressions {
         arguments.push(lower_expr(expr)?);
     }
@@ -101,4 +102,15 @@ pub fn lower_tagged_template(
         callee: Box::new(callee),
         arguments,
     })
+}
+
+fn freeze_object(object: Expression) -> Expression {
+    Expression::Call {
+        callee: Box::new(Expression::Member {
+            object: Box::new(Expression::Identifier("Object".to_string())),
+            property: PropertyKey::Ident("freeze".to_string()),
+            computed: false,
+        }),
+        arguments: vec![object],
+    }
 }
