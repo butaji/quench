@@ -124,15 +124,29 @@ pub fn define_accessor(
     setter: Option<crate::value::Value>,
     flags: crate::value::object::helpers::PropertyFlags,
 ) {
-    if let Some(g) = getter {
-        set_getter_func(obj, key, g);
-    } else {
-        obj.getters.shift_remove(key);
+    if getter
+        .as_ref()
+        .is_none_or(|value| matches!(value, crate::value::Value::Undefined))
+    {
+        if let Some(idx) = crate::value::object::helpers::as_array_index(key) {
+            if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
+                mapped.remove(&(idx as u32));
+                obj.holes.insert(idx);
+                obj.properties.shift_remove(key);
+            }
+        }
     }
-    if let Some(s) = setter {
-        set_setter_func(obj, key, s);
-    } else {
-        obj.setters.shift_remove(key);
+    match getter {
+        Some(g) if !matches!(g, crate::value::Value::Undefined) => set_getter_func(obj, key, g),
+        _ => {
+            obj.getters.shift_remove(key);
+        }
+    }
+    match setter {
+        Some(s) if !matches!(s, crate::value::Value::Undefined) => set_setter_func(obj, key, s),
+        _ => {
+            obj.setters.shift_remove(key);
+        }
     }
     obj.descriptors.insert(key.to_string(), flags);
 }

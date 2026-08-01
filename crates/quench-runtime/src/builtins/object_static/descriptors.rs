@@ -55,9 +55,17 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         desc,
         Value::Object(descriptor) if descriptor.borrow().has_own("set")
     );
+    let setter_accessor = matches!(
+        desc,
+        Value::Object(descriptor) if descriptor.borrow().has_setter("set")
+    );
     let descriptor_has_value = matches!(
         desc,
         Value::Object(descriptor) if descriptor.borrow().has_own("value")
+    );
+    let descriptor_has_writable = matches!(
+        desc,
+        Value::Object(descriptor) if descriptor.borrow().has_own("writable")
     );
 
     if let Value::Object(desc_obj) = desc {
@@ -334,6 +342,12 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             let mapped = matches!(&o.borrow().data, crate::value::object::helpers::ObjData::Args { mapped } if as_array_index(&prop).is_some_and(|idx| mapped.contains_key(&(idx as u32))));
             !mapped && !existing.configurable && (o.borrow().has_getter(&prop) || o.borrow().has_setter(&prop))
         });
+        let mapped_property = matches!(
+            &o.borrow().data,
+            crate::value::object::helpers::ObjData::Args { mapped }
+                if as_array_index(&prop)
+                    .is_some_and(|idx| mapped.contains_key(&(idx as u32)))
+        );
         let data_to_accessor = o.borrow().get_descriptor(&prop).is_some_and(|existing| {
             !existing.configurable
                 && (getter.is_some() || setter.is_some())
@@ -362,10 +376,11 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     &getter.clone().unwrap_or(Value::Undefined),
                 )
         });
-        if (accessor_redefinition && (flags.value.is_some() || has_writable))
-            || data_to_accessor
-            || setter_changed
-            || getter_changed
+        if !mapped_property
+            && ((accessor_redefinition && (flags.value.is_some() || has_writable))
+                || data_to_accessor
+                || setter_changed
+                || getter_changed)
         {
             let (error, js_error) = crate::value::error::create_js_error_with_type(
                 "Cannot redefine non-configurable accessor property",
@@ -400,7 +415,15 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         if let Value::Object(o) = &obj {
             let mut object = o.borrow_mut();
             let existing = object.get_descriptor(&prop);
+            let mapped_index = matches!(
+                &object.data,
+                crate::value::object::helpers::ObjData::Args { mapped }
+                    if as_array_index(&prop)
+                        .is_some_and(|idx| mapped.contains_key(&(idx as u32)))
+            );
             let existing_getter = if descriptor_has_get {
+                None
+            } else if mapped_index {
                 None
             } else {
                 object
@@ -408,6 +431,8 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                     .and_then(|getter| getter.func.clone())
             };
             let existing_setter = if descriptor_has_set {
+                None
+            } else if mapped_index {
                 None
             } else {
                 object
@@ -444,7 +469,13 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     if !descriptor_has_value {
         if let Value::Object(o) = &obj {
             let object = o.borrow();
-            if object.has_getter(&prop) || object.has_setter(&prop) {
+            let mapped_index = matches!(
+                &object.data,
+                crate::value::object::helpers::ObjData::Args { mapped }
+                    if as_array_index(&prop)
+                        .is_some_and(|idx| mapped.contains_key(&(idx as u32)))
+            );
+            if (object.has_getter(&prop) || object.has_setter(&prop)) && !mapped_index {
                 if !descriptor_has_get {
                     getter = object
                         .get_getter(&prop)
@@ -530,6 +561,16 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             {
                 obj.setters.shift_remove(&prop);
                 setter = None;
+            }
+            if (setter_accessor || descriptor_has_set)
+                && !descriptor_has_get
+                && matches!(
+                    obj.data,
+                    crate::value::object::helpers::ObjData::Args { .. }
+                )
+            {
+                obj.getters.shift_remove(&prop);
+                getter = None;
             }
             obj.define_accessor(&prop, getter, setter, flags);
         } else if let Value::NativeConstructor(nc) = &obj {
@@ -739,8 +780,11 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                 }
             }
         }
-        if obj.has_own(&prop) {
+        if obj.get_descriptor(&prop).is_some() {
             if let Some(existing) = obj.get_descriptor(&prop) {
+                if !descriptor_has_writable {
+                    flags.writable = existing.writable;
+                }
                 if !has_writable {
                     flags.writable = existing.writable;
                 }
@@ -754,6 +798,12 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
         let removes_mapping =
             !flags.configurable && !flags.writable && (has_writable || has_configurable);
+        let mapped_index = matches!(
+            &obj.data,
+            crate::value::object::helpers::ObjData::Args { mapped }
+                if as_array_index(&prop)
+                    .is_some_and(|idx| mapped.contains_key(&(idx as u32)))
+        );
         if let Some(existing) = obj.get_descriptor(&prop) {
             let value_changed = descriptor_has_value
                 && flags.value.as_ref().is_some_and(|next| {
@@ -765,7 +815,7 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
             let length_value_change =
                 prop == "length" && obj.kind == ObjectKind::Array && existing.writable;
             if !existing.configurable
-                && ((value_changed && !length_value_change)
+                && ((value_changed && !length_value_change && !mapped_index)
                     || (has_writable && flags.writable && !existing.writable))
             {
                 let (error, err) = crate::value::error::create_js_error_with_type(
@@ -803,8 +853,24 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
                 });
             }
         }
+        let drop_mapping = mapped_index && descriptor_has_value && !flags.writable;
+        if drop_mapping {
+            if let Some(idx) = as_array_index(&prop) {
+                if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
+                    mapped.remove(&(idx as u32));
+                    obj.getters.shift_remove(&prop);
+                    obj.setters.shift_remove(&prop);
+                }
+            }
+        }
         obj.define(&prop, value, flags);
-        if removes_mapping {
+        if removes_mapping
+            || (mapped_index
+                && descriptor_has_value
+                && !obj
+                    .get_descriptor(&prop)
+                    .is_some_and(|property| property.writable))
+        {
             if let Some(idx) = as_array_index(&prop) {
                 if let crate::value::object::helpers::ObjData::Args { mapped } = &mut obj.data {
                     mapped.remove(&(idx as u32));

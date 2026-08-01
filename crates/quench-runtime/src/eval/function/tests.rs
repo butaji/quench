@@ -1920,6 +1920,59 @@ fn deleting_mapped_arguments_index_in_harness_host_removes_property() {
 }
 
 #[test]
+fn mapped_arguments_setter_descriptor_removes_parameter_mapping() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "(function(a) { var setCalls = 0; Object.defineProperty(arguments, '0', { \
+             set: function(_) { setCalls += 1; }, enumerable: true, configurable: true }); \
+             arguments[0] = 'foo'; return [setCalls, a, arguments[0]].join(','); })(0)",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::String("1,0,undefined".into()));
+}
+
+#[test]
+fn mapped_arguments_nonconfigurable_value_redefinition_updates_parameter() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "(function(a) { Object.defineProperty(arguments, '0', {configurable: false}); \
+             Object.defineProperty(arguments, '0', {value: 2}); \
+             return [a, arguments[0]].join(','); })(1)",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::String("2,2".into()));
+}
+
+#[test]
+fn mapped_arguments_nonwritable_set_does_not_update_parameter() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "(function(a) { Object.defineProperty(arguments, '0', {writable: false}); \
+             arguments[0] = 2; Object.defineProperty(arguments, '0', {configurable: false}); \
+             return [a, arguments[0]].join(','); })(1)",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::String("1,1".into()));
+}
+
+#[test]
+fn mapped_arguments_nonwritable_value_redefinition_removes_mapping() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval(
+            "(function(a) { Object.defineProperty(arguments, '0', {writable: false}); \
+             Object.defineProperty(arguments, '0', {value: 2}); \
+             Object.defineProperty(arguments, '0', {configurable: false}); \
+             return [a, arguments[0]].join(','); })(1)",
+        )
+        .unwrap();
+    assert_eq!(result, crate::Value::String("1,2".into()));
+}
+
+#[test]
 fn deleting_strict_arguments_index_removes_property() {
     let mut ctx = Context::new().unwrap();
     let v = ctx

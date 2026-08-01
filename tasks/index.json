@@ -607,13 +607,13 @@
       "id": 49,
       "path": "test/language/arguments-object",
       "tests": 263,
-      "status": "pending",
+      "status": "done",
       "difficulty": 4,
       "impl": "rust",
       "rust_loc": "200\u2013500",
       "js_loc": "0\u20130",
-      "failed": 66,
-      "pass_rate": "74.9%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 50,

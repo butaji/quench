@@ -696,7 +696,14 @@ pub(crate) fn assign_to_object(
         crate::value::object::helpers::ObjData::Args { .. }
     ) {
         if let Some(flags) = o.borrow().get_descriptor(prop_name) {
-            if !flags.writable && o.borrow().get_setter(prop_name).is_none() {
+            let mapped = matches!(
+                &o.borrow().data,
+                crate::value::object::helpers::ObjData::Args { mapped }
+                    if prop_name.parse::<usize>().ok().is_some_and(|idx| {
+                        mapped.contains_key(&(idx as u32))
+                    })
+            );
+            if !flags.writable && (mapped || o.borrow().get_setter(prop_name).is_none()) {
                 if crate::interpreter::is_strict_mode() {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         "Cannot assign to read-only property",
