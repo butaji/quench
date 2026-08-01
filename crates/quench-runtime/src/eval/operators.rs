@@ -65,17 +65,29 @@ fn eval_bigint_shift(
     right: &Value,
     left_shift: bool,
 ) -> Option<Result<Value, JsError>> {
-    let left = to_primitive(left, Some("number"));
-    let right = to_primitive(right, Some("number"));
-    let left_bigint = matches!(&left, Ok(Value::BigInt(_)));
-    let right_bigint = matches!(&right, Ok(Value::BigInt(_)));
+    let left = match to_primitive(left, Some("number")) {
+        Ok(value) => value,
+        Err(error) => return Some(Err(error)),
+    };
+    if matches!(left, Value::Symbol(_)) {
+        return Some(crate::throw!(
+            "TypeError",
+            "Cannot convert Symbol to number"
+        ));
+    }
+    let right = match to_primitive(right, Some("number")) {
+        Ok(value) => value,
+        Err(error) => return Some(Err(error)),
+    };
+    let left_bigint = matches!(left, Value::BigInt(_));
+    let right_bigint = matches!(right, Value::BigInt(_));
     if left_bigint != right_bigint {
         return Some(crate::throw!(
             "TypeError",
             "Cannot mix BigInt and other types"
         ));
     }
-    let (Ok(Value::BigInt(left)), Ok(Value::BigInt(right))) = (&left, &right) else {
+    let (Value::BigInt(left), Value::BigInt(right)) = (&left, &right) else {
         return None;
     };
     let right_text = right.to_string();
@@ -139,8 +151,8 @@ fn eval_bigint_bitwise(
 }
 
 fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Result<Value, JsError> {
-    let left = to_primitive(left, None)?;
-    let right = to_primitive(right, None)?;
+    let left = to_numeric(left)?;
+    let right = to_numeric(right)?;
     match (&left, &right) {
         (Value::BigInt(left), Value::BigInt(right)) => {
             eval_bigint_arithmetic(left, right, operator)
@@ -149,14 +161,9 @@ fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Resul
             crate::throw!("TypeError", "Cannot mix BigInt and other types")
         }
         _ => {
-            if matches!(
-                (&left, &right),
-                (Value::Symbol(_), _) | (_, Value::Symbol(_))
-            ) {
-                return crate::throw!("TypeError", "Cannot convert Symbol to number");
-            }
-            let left = to_number(&left);
-            let right = to_number(&right);
+            let (Value::Number(left), Value::Number(right)) = (&left, &right) else {
+                unreachable!();
+            };
             if operator == '^' && right.is_infinite() && left.abs() == 1.0 {
                 return Ok(Value::Number(f64::NAN));
             }
@@ -165,11 +172,20 @@ fn eval_numeric_arithmetic(left: &Value, right: &Value, operator: char) -> Resul
                 '*' => left * right,
                 '/' => left / right,
                 '%' => left % right,
-                '^' => left.powf(right),
+                '^' => left.powf(*right),
                 _ => unreachable!(),
             };
             Ok(Value::Number(value))
         }
+    }
+}
+
+fn to_numeric(value: &Value) -> Result<Value, JsError> {
+    let primitive = to_primitive(value, None)?;
+    match primitive {
+        Value::BigInt(_) => Ok(primitive),
+        Value::Symbol(_) => crate::throw!("TypeError", "Cannot convert Symbol to number"),
+        value => Ok(Value::Number(to_number(&value))),
     }
 }
 
@@ -698,6 +714,9 @@ where
     F: FnOnce(u64, u64) -> u64,
 {
     let left_primitive = to_primitive(left, Some("number"))?;
+    if matches!(left_primitive, Value::Symbol(_)) {
+        return crate::throw!("TypeError", "Cannot convert Symbol to number");
+    }
     let right_primitive = to_primitive(right, Some("number"))?;
     if matches!(left_primitive, Value::BigInt(_)) || matches!(right_primitive, Value::BigInt(_)) {
         return crate::throw!("TypeError", "Cannot mix BigInt with unsigned right shift");
