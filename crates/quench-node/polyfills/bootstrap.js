@@ -4826,6 +4826,16 @@ globalThis.require = (specifier) => {
     Object.defineProperty(module, "INSPECT_MAX_BYTES", {
       get: () => NodeBuffer.INSPECT_MAX_BYTES,
       set: (value) => {
+        if (typeof value !== "number") {
+          const error = new TypeError("INSPECT_MAX_BYTES must be a number");
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isFinite(value) || value < 0) {
+          const error = new RangeError("INSPECT_MAX_BYTES is out of range");
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
         NodeBuffer.INSPECT_MAX_BYTES = value;
       },
     });
