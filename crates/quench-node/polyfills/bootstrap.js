@@ -1832,12 +1832,39 @@ globalThis.__nodePath = {
 globalThis.__nodePath.posix = globalThis.__nodePath;
 const __nodeWinPath = {
   sep: "\\",
-  parse(value) {
-    if (typeof value !== "string") {
-      const error = new TypeError('The "path" argument must be of type string');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+  isAbsolute(value) {
+    const input = __nodePathArg(value);
+    return /^[A-Za-z]:[\\/]/.test(input) || input.startsWith("\\\\");
+  },
+  normalize(value) {
+    const input = __nodePathArg(value).replace(/\//g, "\\");
+    const root = /^[A-Za-z]:\\/.test(input) ? input.slice(0, 3) : "";
+    const parts = input.slice(root.length).split("\\").filter(Boolean);
+    const output = [];
+    for (const part of parts) {
+      if (part === ".." && output.length && output.at(-1) !== "..")
+        output.pop();
+      else if (part !== ".") output.push(part);
     }
+    return `${root}${output.join("\\")}${output.length ? "" : root ? "" : "."}`;
+  },
+  join(...parts) {
+    return this.normalize(parts.map(__nodePathArg).join("\\"));
+  },
+  resolve(...parts) {
+    return this.normalize(parts.map(__nodePathArg).join("\\"));
+  },
+  relative(from, to) {
+    const a = this.normalize(__nodePathArg(from)).split("\\").filter(Boolean);
+    const b = this.normalize(__nodePathArg(to)).split("\\").filter(Boolean);
+    while (a.length && a[0].toLowerCase() === b[0].toLowerCase()) {
+      a.shift();
+      b.shift();
+    }
+    return [...a.map(() => ".."), ...b].join("\\");
+  },
+  parse(value) {
+    __nodePathArg(value);
     const input = value.replace(/\//g, "\\");
     let root = "";
     if (input.startsWith("\\\\")) {
@@ -1905,17 +1932,17 @@ const __nodeWinPath = {
     return `${dir}\\${base}`;
   },
   basename: (value) =>
-    String(value)
+    __nodePathArg(value)
       .replace(/[\\/]+$/, "")
       .split(/[\\/]/)
       .pop() || "",
   dirname: (value) => {
-    const input = String(value).replace(/[\\/]+$/, "");
+    const input = __nodePathArg(value).replace(/[\\/]+$/, "");
     const index = input.lastIndexOf("\\");
     return index < 0 ? "" : input.slice(0, index) || "\\";
   },
   extname(value) {
-    const base = this.basename(value);
+    const base = this.basename(__nodePathArg(value));
     const index = base.lastIndexOf(".");
     return index > 0 ? base.slice(index) : "";
   },
