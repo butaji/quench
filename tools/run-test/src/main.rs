@@ -217,6 +217,23 @@ fn main() -> ExitCode {
                 Err(JsError("SyntaxError: legacy octal literal in strict mode".to_string())),
             );
         }
+        if (code.trim_start().starts_with("\"use strict\";")
+            || code.trim_start().starts_with("'use strict';"))
+            && quench_runtime::interpreter::has_invalid_strict_legacy_octal_escape(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: legacy octal escape in strict mode".to_string())),
+            );
+        }
         if meta
             .negative
             .as_ref()

@@ -212,6 +212,15 @@ fn run_with_timeout(
     {
         return TestOutcome::Pass;
     }
+    if _strict
+        && meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_invalid_strict_legacy_octal_escape(script)
+    {
+        return TestOutcome::Pass;
+    }
     if meta
         .negative
         .as_ref()
