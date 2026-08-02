@@ -68,6 +68,8 @@ Late pull-mode `readable` listeners are covered by
 `tests/node-compat/stage-461/stream-readable-late-listener.js`.
 Live readable queue length is covered by
 `tests/node-compat/stage-462/stream-readable-length.js`.
+Readable flowing-state transitions are covered by
+`tests/node-compat/stage-463/stream-flowing-state.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by

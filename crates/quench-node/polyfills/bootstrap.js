@@ -2354,6 +2354,7 @@ class NodeReadable extends NodeEventEmitter {
     this.destroyed = false;
     this.readable = true;
     this._paused = false;
+    this.readableFlowing = null;
     this.readableEnded = false;
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
@@ -2362,6 +2363,7 @@ class NodeReadable extends NodeEventEmitter {
     super.on(event, listener);
     if (event === "data") {
       this._paused = false;
+      this.readableFlowing = true;
       queueMicrotask(() => {
         while (!this._paused && this._chunks.length)
           this.emit("data", this._chunks.shift());
@@ -2408,10 +2410,12 @@ class NodeReadable extends NodeEventEmitter {
   }
   pause() {
     this._paused = true;
+    this.readableFlowing = false;
     return this;
   }
   resume() {
     this._paused = false;
+    this.readableFlowing = true;
     queueMicrotask(() => {
       while (!this._paused && this.listenerCount("data") && this._chunks.length)
         this.emit("data", this._chunks.shift());
