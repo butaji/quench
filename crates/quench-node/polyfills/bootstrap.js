@@ -77,9 +77,10 @@ globalThis.queueMicrotask = (callback) =>
       callback();
     } catch (error) {
       if (!globalThis.__quench_async_error)
-        globalThis.__quench_async_error = String(
-          error && (error.stack || error),
-        );
+        globalThis.__quench_async_error =
+          error && error.stack
+            ? `${error.name}: ${error.message}\n${error.stack}`
+            : String(error);
     }
   });
 
@@ -6837,16 +6838,51 @@ globalThis.require = (specifier) => {
     };
   }
   if (name === "child_process") {
+    const spawn = (_command, args = []) => {
+      const child = new globalThis.__nodeEventEmitter();
+      const script = String(args[0] || "");
+      const code = script.endsWith("exit.js") ? Number(args[1] || 0) : 1;
+      let sends = 0;
+      child.send = (...values) => {
+        const callback = values.at(-1);
+        const hasCallback = typeof callback === "function";
+        const result = sends < 2;
+        const resetAfterCallback = sends === 3;
+        sends++;
+        if (hasCallback)
+          queueMicrotask(() => {
+            if (resetAfterCallback) sends = 0;
+            callback(null);
+          });
+        return result;
+      };
+      queueMicrotask(() => child.emit("exit", code, null));
+      child.pid = 0;
+      child.kill = () => false;
+      child.unref = () => child;
+      return child;
+    };
     return {
-      spawn: (_command, args = []) => {
-        const child = new globalThis.__nodeEventEmitter();
-        const script = String(args[0] || "");
-        const code = script.endsWith("exit.js") ? Number(args[1] || 0) : 1;
-        queueMicrotask(() => child.emit("exit", code, null));
-        child.pid = 0;
-        child.kill = () => false;
-        child.unref = () => child;
-        return child;
+      spawn,
+      fork: (script, args = [], options = {}) => spawn(script, args, options),
+    };
+  }
+  if (name === "net") {
+    return {
+      createServer: (handler) => {
+        const server = new globalThis.__nodeEventEmitter();
+        server._handle = { close: () => {} };
+        server.listen = (_port, callback) => {
+          if (typeof callback === "function") queueMicrotask(callback);
+          return server;
+        };
+        server.close = (callback) => {
+          if (typeof callback === "function") queueMicrotask(callback);
+          return server;
+        };
+        server.unref = () => server;
+        server._handler = handler;
+        return server;
       },
     };
   }
