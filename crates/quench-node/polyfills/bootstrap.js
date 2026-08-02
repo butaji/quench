@@ -576,6 +576,40 @@ class NodeBuffer extends Uint8Array {
   writeInt32BE(value, offset = 0) {
     return this._writeInteger(value, offset, 4, false, true);
   }
+  readFloatLE(offset = 0) {
+    this._integerOffset(offset, 4);
+    return new DataView(
+      this.buffer,
+      this.byteOffset,
+      this.byteLength,
+    ).getFloat32(offset, true);
+  }
+  readFloatBE(offset = 0) {
+    this._integerOffset(offset, 4);
+    return new DataView(
+      this.buffer,
+      this.byteOffset,
+      this.byteLength,
+    ).getFloat32(offset, false);
+  }
+  writeFloatLE(value, offset = 0) {
+    this._integerOffset(offset, 4);
+    new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
+      offset,
+      value,
+      true,
+    );
+    return offset + 4;
+  }
+  writeFloatBE(value, offset = 0) {
+    this._integerOffset(offset, 4);
+    new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
+      offset,
+      value,
+      false,
+    );
+    return offset + 4;
+  }
   readUIntLE(offset, byteLength) {
     this._validateVariableInteger(0, offset, byteLength);
     let value = 0;
