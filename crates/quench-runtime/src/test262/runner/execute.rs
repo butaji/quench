@@ -274,6 +274,14 @@ fn run_async_script_with_path(
         crate::value::error::set_main_realm_test262_error(te);
     }
     if let Some(test_path) = test_path {
+        if is_module {
+            if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
+                ctx.set_global(
+                    "__quench_current_module__".to_string(),
+                    crate::Value::String(format!("./{name}")),
+                );
+            }
+        }
         load_fixture_modules(&mut ctx, test_path)?;
     }
     crate::interpreter::set_strict_mode(strict);

@@ -2325,6 +2325,24 @@ fn get_module_exports(
         }
     }
 
+    let current = env.borrow().get("__quench_current_module__");
+    if current == Some(Value::String(source.to_string())) {
+        let mut module = Object::new(ObjectKind::ModuleNamespace);
+        if let Some(value) = env.borrow().get("default") {
+            module.define(
+                "default",
+                value,
+                crate::value::PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
+        module.extensible = false;
+        return Ok(Rc::new(RefCell::new(module)));
+    }
     Err(JsError::new(format!("Cannot find module '{}'.", source)))
 }
 

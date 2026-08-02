@@ -181,6 +181,14 @@ fn main() -> ExitCode {
             if let Some(te) = ctx.get_global("Test262Error") {
                 quench_runtime::value::error::set_main_realm_test262_error(te);
             }
+            if is_module_meta {
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    ctx.set_global(
+                        "__quench_current_module__".to_string(),
+                        Value::String(format!("./{name}")),
+                    );
+                }
+            }
             if is_async {
                 if let Err(e) = load_fixture_modules(&mut ctx, &path) {
                     eprintln!("{}: fixture load failed: {}", label, e);
