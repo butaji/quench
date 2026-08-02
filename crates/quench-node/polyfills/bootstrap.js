@@ -80,6 +80,16 @@ globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(mess
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
   if (!Object.is(actual, expected)) throw new Error(message || `${actual} !== ${expected}`);
 };
+globalThis.__nodeAssert.equal = (actual, expected, message) => {
+  if (actual != expected) throw new Error(message || `${actual} != ${expected}`);
+};
+globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
+  if (Object.is(actual, expected)) throw new Error(message || `${actual} === ${expected}`);
+};
+globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
+  if (actual == expected) throw new Error(message || `${actual} == ${expected}`);
+};
+globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
 globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(message || 'values differ');
 };
@@ -92,6 +102,12 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
   if (!thrown) throw new Error('Missing expected exception');
 };
 globalThis.__nodeAssert.ifError = (error) => { if (error) throw error; };
+globalThis.__nodeAssert.doesNotThrow = (fn, message) => {
+  try { fn(); } catch (error) { throw new Error(message || `Unexpected exception: ${error}`); }
+};
+globalThis.__nodeAssert.match = (value, expression) => {
+  if (!expression.test(String(value))) throw new Error('Value did not match expression');
+};
 
 globalThis.__nodePath = {
   sep: '/',

@@ -19,3 +19,4 @@ these small fixtures isolate the currently implemented contract.
 | 9 | URL authority and serialization | `tools/run-node-tests.sh --stage 9` |
 | 10 | asynchronous `fs` callbacks and promises | `tools/run-node-tests.sh --stage 10` |
 | 11 | minimal `stream` readable/writable flow | `tools/run-node-tests.sh --stage 11` |
+| 12 | expanded `assert` contract | `tools/run-node-tests.sh --stage 12` |
