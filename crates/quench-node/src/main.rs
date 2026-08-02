@@ -61,6 +61,19 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.globals().set(
+            "__quench_umask",
+            Func::from(|mask: Option<u32>| -> u32 {
+                #[cfg(unix)]
+                unsafe {
+                    let current = libc::umask(mask.unwrap_or(0o022) as libc::mode_t);
+                    if mask.is_none() { libc::umask(current); }
+                    current as u32
+                }
+                #[cfg(not(unix))]
+                { mask.unwrap_or(0o022) }
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_env_get",
             Func::from(|key: String| std::env::var(key).ok()),
         )?;
