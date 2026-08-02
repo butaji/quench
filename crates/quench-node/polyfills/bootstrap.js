@@ -4040,6 +4040,37 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
   };
   return stream;
 };
+globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+  const stream = new NodeReadable(options);
+  const path = nodePathValue(value);
+  stream.path = path;
+  stream.fd = null;
+  queueMicrotask(() => {
+    try {
+      stream.fd = globalThis.__nodeFs.openSync(path, "r");
+      stream.emit("open", stream.fd);
+      const bytes = globalThis.__nodeFs.readFileSync(path);
+      const start = Number(options.start || 0);
+      const end =
+        options.end === undefined ? bytes.length : Number(options.end) + 1;
+      stream._chunks = [bytes.subarray(start, Math.min(end, bytes.length))];
+      stream._index = 0;
+      stream._pump = () => {
+        while (!stream._paused && stream._index < stream._chunks.length)
+          stream.emit("data", stream._chunks[stream._index++]);
+        if (!stream._paused && stream._index === stream._chunks.length) {
+          stream._ended = true;
+          stream.emit("end");
+          stream.emit("close");
+        }
+      };
+      stream._pump();
+    } catch (error) {
+      stream.emit("error", error);
+    }
+  });
+  return stream;
+};
 class NodeAbortSignal {
   constructor() {
     this.aborted = false;
