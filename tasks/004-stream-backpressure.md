@@ -54,6 +54,8 @@ Chainable writable `end()` behavior is covered by
 `tests/node-compat/stage-454/stream-end-return.js`.
 Writable write-after-end rejection is covered by
 `tests/node-compat/stage-455/stream-write-after-end.js`.
+Readable push-after-EOF rejection is covered by
+`tests/node-compat/stage-456/stream-push-after-eof.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
