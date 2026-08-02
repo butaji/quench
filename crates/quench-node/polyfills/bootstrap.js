@@ -4244,6 +4244,14 @@ globalThis.__nodeUtil = {
     };
     const stringValue = (value) => {
       if (value && typeof value === "object") {
+        if (Object.getPrototypeOf(value) === null) {
+          const entries = Object.keys(value).map(
+            (key) => `${key}: ${inspect(value[key])}`,
+          );
+          return `[Object: null prototype] {${
+            entries.length ? ` ${entries.join(", ")} ` : ""
+          }}`;
+        }
         if (
           typeof value.toString === "function" &&
           value.toString !== Object.prototype.toString
