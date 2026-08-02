@@ -44,6 +44,23 @@ fn dynamic_import_uses_function_to_string_for_specifier() {
 }
 
 #[test]
+fn dynamic_import_namespace_to_string_tag_has_spec_attributes() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.register_module(
+        "module-name",
+        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+    );
+    ctx.eval("var result; import('module-name').then(ns => { var d = Object.getOwnPropertyDescriptor(ns, Symbol.toStringTag); result = [d.writable, d.enumerable, d.configurable].join('|'); });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("false|false|false".into())
+    );
+}
+
+#[test]
 fn dynamic_import_json_fixture_with_type_text_returns_raw_default() {
     let dir = std::env::temp_dir().join(format!("quench-json-import-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

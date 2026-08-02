@@ -2155,7 +2155,13 @@ pub(crate) fn dynamic_import(
             if let Some(Value::Symbol(symbol)) =
                 crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
             {
-                namespace.set_symbol(&symbol.property_key(), Value::String("Module".to_string()));
+                let key = symbol.property_key();
+                namespace.set_symbol(&key, Value::String("Module".to_string()));
+                if let Some(flags) = namespace.descriptors.get_mut(&key) {
+                    flags.writable = false;
+                    flags.enumerable = false;
+                    flags.configurable = false;
+                }
             }
             namespace.extensible = false;
             let namespace = Rc::new(RefCell::new(namespace));
