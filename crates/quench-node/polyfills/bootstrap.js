@@ -4273,7 +4273,9 @@ globalThis.__nodeUtil = {
           (key) =>
             `${key}: ${Array.isArray(value[key]) ? "[Array]" : inspect(value[key])}`,
         );
-        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+        const name = value.constructor?.name;
+        const prefix = name && name !== "Object" ? `${name} ` : "";
+        return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
       }
       return String(value);
     };
