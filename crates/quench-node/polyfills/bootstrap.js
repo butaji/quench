@@ -264,6 +264,14 @@ globalThis.__nodeTimersPromises = {
     ),
   setImmediate: (value) =>
     new Promise((resolve) => queueMicrotask(() => resolve(value))),
+  setInterval: async function* (_delay = 0, value) {
+    while (true) {
+      if (Number(_delay) > 0)
+        globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      else await new Promise((resolve) => queueMicrotask(resolve));
+      yield value;
+    }
+  },
 };
 
 const processListeners = {};
