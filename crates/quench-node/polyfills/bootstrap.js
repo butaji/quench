@@ -262,6 +262,8 @@ class NodeBuffer extends Uint8Array {
       }
       return new NodeBuffer(new NodeTextEncoder().encode(value));
     }
+    if (value && value.type === "Buffer" && Array.isArray(value.data))
+      return new NodeBuffer(value.data);
     return new NodeBuffer(value);
   }
   static alloc(size, fill = 0) {
@@ -467,6 +469,9 @@ class NodeBuffer extends Uint8Array {
       this.length === other.length &&
       this.every((value, index) => value === other[index])
     );
+  }
+  toJSON() {
+    return { type: "Buffer", data: Array.from(this) };
   }
   includes(value, byteOffset = 0, encoding) {
     if (
