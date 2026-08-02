@@ -81,3 +81,4 @@ these small fixtures isolate the currently implemented contract.
 | 71 | common success callbacks and isolated tmpdir paths | `tools/run-node-tests.sh --stage 71` |
 | 72 | `__filename` initialization and async `fs.readdir` errors | `tools/run-node-tests.sh --stage 72` |
 | 73 | synchronous filesystem open validation and `ENOENT` | `tools/run-node-tests.sh --stage 73` |
+| 74 | filesystem stat/lstat/fstat metadata contracts | `tools/run-node-tests.sh --stage 74` |
