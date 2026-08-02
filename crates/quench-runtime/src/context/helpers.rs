@@ -216,6 +216,26 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     // Exit eval: restore label stack and clear barrier.
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();
+    if let ast::Program::Script(body) = &program {
+        if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
+            for statement in body {
+                if let ast::Statement::FunctionDeclaration { name, .. } = statement {
+                    if let Some(value) = ctx.env.borrow().get(name) {
+                        global.borrow_mut().define(
+                            name,
+                            value,
+                            crate::value::PropertyFlags {
+                                value: None,
+                                writable: true,
+                                enumerable: true,
+                                configurable: true,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
     if crate::interpreter::is_direct_eval() {
         let ast::Program::Script(body) = &program;
         let eval_env =
@@ -804,5 +824,23 @@ mod tests {
         assert!(ctx
             .eval("let x = {}; eval(x) === x")
             .is_ok_and(|value| { matches!(value, Value::Boolean(true)) }));
+    }
+
+    #[test]
+    fn eval_global_function_declaration_has_configurable_property() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("eval('function evalDescriptorOnly() {}'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorOnly').configurable").is_ok_and(|value| {
+            matches!(value, Value::Boolean(true))
+        }));
+    }
+
+    #[test]
+    fn eval_arguments_var_in_arrow_default_parameter() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("let count = 0; const f = (p = eval(\"var arguments = 'param'\")) => { function arguments() {}; count++; }; f(); count").is_ok_and(|value| {
+            matches!(value, Value::Number(number) if number == 1.0)
+        }));
     }
 }
