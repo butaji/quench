@@ -1734,8 +1734,16 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
       assertion.expected = expected;
       throw assertion;
     }
-    if (expected instanceof RegExp && !expected.test(String(error)))
-      throw error;
+    if (expected instanceof RegExp && !expected.test(String(error))) {
+      const assertion = new globalThis.__nodeAssert.AssertionError(
+        `The input did not match the regular expression ${expected}. Input:\n\n'${String(error)}'\n`,
+      );
+      assertion.code = "ERR_ASSERTION";
+      assertion.operator = "throws";
+      assertion.actual = error;
+      assertion.expected = expected;
+      throw assertion;
+    }
     if (expected && typeof expected === "object") {
       if (expected.name && error.name !== expected.name) throw error;
       if (expected.message && error.message !== expected.message) throw error;
