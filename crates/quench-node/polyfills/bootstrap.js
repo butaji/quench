@@ -659,6 +659,10 @@ class NodeReadable extends NodeEventEmitter {
     this.on("end", () => destination.end());
     return destination;
   }
+
+  async *[Symbol.asyncIterator]() {
+    for (const chunk of this._chunks || []) yield chunk;
+  }
 }
 class NodeWritable extends NodeEventEmitter {
   write(chunk, encoding, callback) {
@@ -2652,6 +2656,39 @@ const __nodeOpenWithFilePosition = globalThis.__nodeFs.promises.open;
 globalThis.__nodeFs.promises.open = async (...args) => {
   const handle = await __nodeOpenWithFilePosition(...args);
   const previousWriteFile = handle.writeFile;
+  handle.pull = (transformOrOptions, maybeOptions) => {
+    const transform =
+      typeof transformOrOptions === "function" ? transformOrOptions : undefined;
+    const options = transform ? maybeOptions || {} : transformOrOptions || {};
+    const source = globalThis.__nodeFs.readFileSync(handle.fd);
+    const start =
+      options.start === undefined
+        ? globalThis.__nodeFdPositions[handle.fd] || 0
+        : Number(options.start);
+    const end =
+      options.limit === undefined
+        ? source.length
+        : Math.min(source.length, start + Number(options.limit));
+    const chunkSize =
+      options.chunkSize === undefined ? 128 * 1024 : Number(options.chunkSize);
+    const batches = [];
+    for (let offset = start; offset < end; offset += chunkSize)
+      batches.push([
+        source.subarray(offset, Math.min(end, offset + chunkSize)),
+      ]);
+    if (start >= end) batches.push([]);
+    return {
+      async *[Symbol.asyncIterator]() {
+        if (options.signal && options.signal.aborted) {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          throw error;
+        }
+        for (const batch of batches) yield transform ? transform(batch) : batch;
+        if (options.autoClose) await handle.close();
+      },
+    };
+  };
   handle.writeFile = async (data, options) => {
     if (typeof data === "string")
       data = NodeBuffer.from(
@@ -2905,6 +2942,27 @@ globalThis.require = (specifier) => {
       on: globalThis.__nodeEventEmitter.on,
     };
   if (name === "stream") return globalThis.__nodeStream;
+  if (name === "stream/iter")
+    return {
+      text: async (readable) => {
+        const chunks = [];
+        for await (const batch of readable)
+          for (const chunk of batch) chunks.push(chunk);
+        return new TextDecoder().decode(NodeBuffer.concat(chunks));
+      },
+      bytes: async (readable) => {
+        const chunks = [];
+        for await (const batch of readable)
+          for (const chunk of batch) chunks.push(chunk);
+        return NodeBuffer.concat(chunks);
+      },
+      pull: (readable, transform) => ({
+        async *[Symbol.asyncIterator]() {
+          for await (const batch of readable)
+            yield transform ? transform(batch) : batch;
+        },
+      }),
+    };
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "internal/test/binding")
     return {
