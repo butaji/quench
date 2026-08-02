@@ -463,7 +463,7 @@ globalThis.__nodeFs = {
   },
   accessSync: (value) => { const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
-  rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
+  rmSync: (value, options = {}) => { const path = nodeFsPath(value); let kind; try { kind = globalThis.__quench_fs_kind(path); } catch (_) { return; } if (kind === 'file') return globalThis.__quench_fs_unlink(path); if (kind === 'directory' && options.recursive === false) { const error = new Error(`ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`); error.code = 'ERR_FS_EISDIR'; error.path = path; throw error; } return globalThis.__quench_fs_remove_dir(path); },
   chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
@@ -513,7 +513,7 @@ globalThis.__nodeFs.rm = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
-  queueMicrotask(() => { try { globalThis.__quench_fs_remove_dir(path); } catch (error) { callback(error); return; } callback(null); });
+  queueMicrotask(() => { try { globalThis.__nodeFs.rmSync(path, options); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.rename = (from, to, callback) => {
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
