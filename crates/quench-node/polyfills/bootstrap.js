@@ -4251,6 +4251,7 @@ globalThis.__nodeUtil = {
     };
     const stringValue = (value) => {
       if (value && typeof value === "object") {
+        if (value instanceof Date) return inspect(value);
         if (typeof value[Symbol.toPrimitive] === "function") {
           try {
             return String(value);
@@ -4363,6 +4364,8 @@ globalThis.__nodeUtil = {
     );
   },
   inspect: (value) => {
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === "symbol") return String(value);
     if (typeof value === "string")
       return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
     if (typeof value === "function")
