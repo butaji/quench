@@ -2559,6 +2559,12 @@ globalThis.__nodeFs = {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (globalThis.__nodeFdPaths[fd] === undefined) {
+      const error = new Error("EBADF: bad file descriptor");
+      error.code = "EBADF";
+      error.syscall = "close";
+      throw error;
+    }
     delete globalThis.__nodeFdPaths[fd];
     delete globalThis.__nodeFdPositions[fd];
   },

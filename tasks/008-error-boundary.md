@@ -27,3 +27,5 @@ Write-path validation is covered by
 `tests/node-compat/stage-378/error-invalid-write-path.js`.
 Unknown read encodings are covered by
 `tests/node-compat/stage-379/error-unknown-encoding.js`.
+Unknown file descriptors are covered by
+`tests/node-compat/stage-387/fs-close-invalid-fd.js`.
