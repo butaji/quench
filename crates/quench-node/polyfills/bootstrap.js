@@ -16,6 +16,8 @@ globalThis.console.assert = (condition, ...args) => { if (!condition) globalThis
 globalThis.process = {
   env: new Proxy({}, { get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined }),
   argv: ['quench-node'],
+  pid: globalThis.__quench_pid,
+  ppid: globalThis.__quench_ppid,
   platform: 'unknown',
   arch: 'unknown',
   version: 'v0.1.0',
