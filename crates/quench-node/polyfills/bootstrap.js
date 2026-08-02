@@ -463,6 +463,13 @@ globalThis.__nodeFs = {
     const hex = globalThis.__quench_fs_read_range_hex(path, numericPosition, Number(length));
     const bytes = NodeBuffer.from(hex, 'hex'); buffer.set(bytes.subarray(0, Number(length)), Number(offset)); return bytes.length;
   },
+  readvSync: (fd, buffers, position = null) => {
+    if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    let total = 0; let at = position === null || position === undefined ? 0 : Number(position);
+    for (const buffer of buffers) { if (buffer.length) { const count = globalThis.__nodeFs.readSync(fd, buffer, 0, buffer.length, at); total += count; at += count; if (count < buffer.length) break; } }
+    return total;
+  },
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
     if (typeof mode !== 'number') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -511,6 +518,7 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   if (position !== null && position !== undefined && typeof position !== 'number' && typeof position !== 'bigint') { const error = new TypeError('The "position" argument must be of type number or bigint'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
   queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
 };
+globalThis.__nodeFs.readv = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readvSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
 const nodeMode = (mode) => {
