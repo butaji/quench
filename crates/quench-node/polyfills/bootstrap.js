@@ -276,6 +276,9 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
 globalThis.__nodeFs.promises = {
   readFile: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readFile(value, options, (error, data) => error ? reject(error) : resolve(data))),
   writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
+  mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
+  readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
+  stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
 };
 globalThis.__nodeOs = {
   EOL: '\n',
