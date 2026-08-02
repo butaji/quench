@@ -490,6 +490,11 @@ globalThis.__nodePath = {
     return [...a.map(() => ".."), ...b].join("/") || "";
   },
   parse: (value) => {
+    if (typeof value !== "string") {
+      const error = new TypeError('The "path" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const input = String(value);
     const base = globalThis.__nodePath.basename(input);
     const dir = globalThis.__nodePath.dirname(input);
@@ -502,12 +507,28 @@ globalThis.__nodePath = {
       name: ext ? base.slice(0, -ext.length) : base,
     };
   },
-  format: (parts) =>
-    globalThis.__nodePath.join(
-      parts.dir || parts.root || "",
-      parts.base || `${parts.name || ""}${parts.ext || ""}`,
-    ),
+  format: (parts) => {
+    if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
+      const error = new TypeError(
+        'The "pathObject" argument must be of type object',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const dir = parts.dir || parts.root || "";
+    const extension = parts.ext
+      ? String(parts.ext).startsWith(".")
+        ? String(parts.ext)
+        : `.${parts.ext}`
+      : "";
+    const base = parts.base || `${parts.name || ""}${extension}`;
+    if (!dir) return base;
+    if (dir === "/") return `/${base}`;
+    return `${dir}/${base}`;
+  },
 };
+globalThis.__nodePath.posix = globalThis.__nodePath;
+globalThis.__nodePath.win32 = globalThis.__nodePath;
 
 globalThis.__nodeCommon = {
   mustCall: (fn, exact = 1) => {
