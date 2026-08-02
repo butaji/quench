@@ -21,6 +21,13 @@ The repository contains only the `quench-node` crate, its polyfills, the Node
 test submodule, compatibility stages, and the small harness needed to run
 them. Polyfills are intentionally kept readable and uncompressed.
 
+## Runtime boundary
+
+`quench-node` uses `rquickjs` as its JavaScript engine and Rust host boundary.
+There is no `quench-runtime` crate in this repository, and compatibility work
+must not add or restore one. Keep engine integration in the `quench-node` crate
+and API behavior in the JavaScript polyfills.
+
 ## License
 
 MIT

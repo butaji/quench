@@ -18,7 +18,8 @@ Reduce harness startup overhead without weakening the existing per-test isolatio
 
 ## Status
 
-The explicit `--reuse-dir` mode reuses one rquickjs runtime while creating a
+The explicit `--reuse-dir` mode reuses one rquickjs `Runtime` from the
+`quench-node` crate while creating a
 fresh context per script. Isolation and state-reset behavior are covered by
 `tests/node-compat/stage-383/runtime-reuse.js` and its companion script.
 The mode is documented in the CLI `--help` output; isolated execution remains

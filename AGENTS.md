@@ -4,6 +4,10 @@ This repository implements Node-compatible APIs on rquickjs. Keep the Rust
 host minimal and put compatibility behavior in readable JavaScript polyfills.
 Do not add or restore a separate runtime crate.
 
+The only runtime integration in this repository is the `rquickjs` dependency
+inside `crates/quench-node`. Do not introduce references, workspace members, or
+tasks that depend on `quench-runtime`.
+
 ## Workflow
 
 1. Select the next upstream Node fixture or API cluster.
