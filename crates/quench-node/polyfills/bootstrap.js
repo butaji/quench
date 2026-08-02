@@ -1770,7 +1770,8 @@ globalThis.__nodePath = {
     return base;
   },
   dirname: (value) => {
-    const input = __nodePathArg(value).replace(/\\/g, "/");
+    const input =
+      __nodePathArg(value).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
     const parts = input.split("/");
     parts.pop();
     return parts.join("/") || (input.startsWith("/") ? "/" : ".");
