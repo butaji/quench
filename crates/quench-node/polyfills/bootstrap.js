@@ -4467,6 +4467,13 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     callback = options;
     options = undefined;
   }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (
     options &&
     options.signal !== undefined &&
