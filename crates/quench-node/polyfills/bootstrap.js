@@ -393,7 +393,7 @@ globalThis.__nodeFs = {
       throw error;
     }
     const file = kind === 'file'; const date = new Date();
-    const stats = new globalThis.__nodeStats(file, kind === 'directory', date); if (file) stats.size = globalThis.__quench_fs_read_hex(path).length / 2; stats.mode = globalThis.__nodeModes[path] || 0; return stats;
+    const stats = new globalThis.__nodeStats(file, kind === 'directory', date); if (file) stats.size = globalThis.__quench_fs_read_hex(path).length / 2; stats.mode = globalThis.__nodeModes[path] || (file ? (0o666 & ~process.umask()) : 0); return stats;
   },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
