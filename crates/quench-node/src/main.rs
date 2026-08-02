@@ -184,9 +184,11 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         )?;
         ctx.globals().set(
             "__quench_fs_open",
-            Func::from(|path: String, _flags: String| -> rquickjs::Result<u32> {
+            Func::from(|path: String, flags: String| -> rquickjs::Result<u32> {
                 use std::fs::OpenOptions;
-                OpenOptions::new().create(true).write(true).open(path)
+                let mut options = OpenOptions::new();
+                if flags.starts_with('r') { options.read(true); } else { options.create(true).write(true); }
+                options.open(path)
                     .map(|_| 1)
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "openSync failed"))
             }),

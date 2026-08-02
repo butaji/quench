@@ -371,7 +371,10 @@ globalThis.__nodeFs = {
     return globalThis.__quench_fs_open(path, flag);
   },
   closeSync: (_fd) => {},
-  statSync: (value) => { const kind = globalThis.__quench_fs_kind(nodePathValue(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
+  statSync: (value) => {
+    const path = nodeFsPath(value); const kind = globalThis.__quench_fs_kind(path); const file = kind === 'file'; const date = new Date();
+    return new globalThis.__nodeStats(file, kind === 'directory', date);
+  },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
     if (options && Object.prototype.hasOwnProperty.call(options, 'recursive') && typeof options.recursive !== 'boolean') {
@@ -428,6 +431,40 @@ globalThis.__nodeFs = {
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
 };
+globalThis.__nodeStats = function Stats(file = false, directory = false, date = new Date()) {
+  if (!(date instanceof Date)) date = new Date(Number(date) || 0);
+  this.dev = 0; this.mode = 0; this.nlink = 1; this.uid = 0; this.gid = 0; this.rdev = 0; this.blksize = 4096; this.ino = 0;
+  this.size = 0; this.blocks = 0; this.atime = date; this.mtime = date; this.ctime = date; this.birthtime = date;
+  this.atimeMs = date.getTime(); this.mtimeMs = date.getTime(); this.ctimeMs = date.getTime(); this.birthtimeMs = date.getTime();
+  this._file = file; this._directory = directory;
+};
+globalThis.__nodeStats.prototype.isFile = function () { return this._file; };
+globalThis.__nodeStats.prototype.isDirectory = function () { return this._directory; };
+globalThis.__nodeStats.prototype.isSocket = function () { return false; };
+globalThis.__nodeStats.prototype.isBlockDevice = function () { return false; };
+globalThis.__nodeStats.prototype.isCharacterDevice = function () { return false; };
+globalThis.__nodeStats.prototype.isFIFO = function () { return false; };
+globalThis.__nodeStats.prototype.isSymbolicLink = function () { return false; };
+for (const method of ['statSync', 'lstatSync']) globalThis.__nodeFs[method] = globalThis.__nodeFs.statSync;
+globalThis.__nodeFs.stat = (value, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.statSync(path)); } catch (error) { callback(error); } });
+};
+globalThis.__nodeFs.lstat = globalThis.__nodeFs.stat;
+globalThis.__nodeFs.fstatSync = (fd) => {
+  if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+  return globalThis.__nodeFs.statSync('.');
+};
+globalThis.__nodeFs.fstat = (fd, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.fstatSync(fd)); } catch (error) { callback(error); } });
+};
+globalThis.__nodeFs.Stats = globalThis.__nodeStats;
+globalThis.__nodeFs.close = (_fd, callback) => { if (typeof callback === 'function') queueMicrotask(() => callback(null)); };
 globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
   else if (typeof mode === 'function') { callback = mode; mode = undefined; }
