@@ -628,20 +628,32 @@ pub fn async_generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                         generator.call_env = None;
                     }
                     let reason = match crate::value::take_thrown_value() {
-                        Some(Value::String(_)) | None => {
+                        Some(value) => value,
+                        None => {
                             crate::value::error::create_js_error_with_type(
                                 &error.to_string(),
                                 "TypeError",
                             )
                             .0
                         }
-                        Some(value) => value,
                     };
                     crate::builtins::promise::promise_reject_impl_static(vec![reason], proto)
                 }
             }
         },
     )))
+}
+
+fn queue_async_generator_fulfilled(callback: Value, value: Value) {
+    let job = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        crate::eval::function::call_value_with_this(
+            callback.clone(),
+            vec![value.clone()],
+            Value::Undefined,
+        )?;
+        Ok(Value::Undefined)
+    })));
+    crate::builtins::promise::queue_microtask_impl(job);
 }
 
 fn resolve_async_result_later(
@@ -660,18 +672,32 @@ fn resolve_async_result_later(
     let rejected_target = Rc::clone(&promise);
     let done = result.done;
     let generator_for_fulfilled = Rc::clone(&generator);
+    let fulfilled_slot = Rc::new(RefCell::new(None));
+    let fulfilled_slot_for_callback = Rc::clone(&fulfilled_slot);
+    let rejected_slot = Rc::new(RefCell::new(None));
+    let rejected_slot_for_callback = Rc::clone(&rejected_slot);
     let fulfilled =
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |args| {
             let value = args.first().cloned().unwrap_or(Value::Undefined);
             let should_resume = {
-                let mut generator_ref = generator_for_fulfilled.borrow_mut();
+                let Ok(mut generator_ref) = generator_for_fulfilled.try_borrow_mut() else {
+                    if let Some(callback) = fulfilled_slot_for_callback.borrow().clone() {
+                        queue_async_generator_fulfilled(callback, value);
+                    }
+                    return Ok(Value::Undefined);
+                };
                 let should_resume = generator_ref.await_resume;
                 generator_ref.await_resume = false;
                 should_resume
             };
             if should_resume {
                 let (next_result, await_completion) = {
-                    let mut generator_ref = generator_for_fulfilled.borrow_mut();
+                    let Ok(mut generator_ref) = generator_for_fulfilled.try_borrow_mut() else {
+                        if let Some(callback) = fulfilled_slot_for_callback.borrow().clone() {
+                            queue_async_generator_fulfilled(callback, value);
+                        }
+                        return Ok(Value::Undefined);
+                    };
                     crate::interpreter::enter_async_generator();
                     let next_result = generator_ref.next(value);
                     let await_completion = generator_ref.await_completion;
@@ -701,14 +727,21 @@ fn resolve_async_result_later(
             crate::builtins::promise::settle_resolve(&fulfilled_target, result);
             Ok(Value::Undefined)
         })));
+    *fulfilled_slot.borrow_mut() = Some(fulfilled.clone());
     let rejected = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |args| {
         let reason = args.first().cloned().unwrap_or(Value::Undefined);
-        let mut generator = generator.borrow_mut();
+        let Ok(mut generator) = generator.try_borrow_mut() else {
+            if let Some(callback) = rejected_slot_for_callback.borrow().clone() {
+                queue_async_generator_fulfilled(callback, reason);
+            }
+            return Ok(Value::Undefined);
+        };
         generator.state = GeneratorState::Completed;
         generator.call_env = None;
         crate::builtins::promise::settle_reject(&rejected_target, reason);
         Ok(Value::Undefined)
     })));
+    *rejected_slot.borrow_mut() = Some(rejected.clone());
     let Value::Object(source) = source else {
         return Ok(Value::Object(promise));
     };

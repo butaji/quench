@@ -46,6 +46,24 @@ fn for_await_awaits_custom_async_iterator_results() {
 }
 
 #[test]
+fn async_generator_concurrent_next_rejection_does_not_panic() {
+    let mut ctx = Context::new().unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.eval("async function* g(){for await(const x of [Promise.resolve(1),Promise.reject('foo')])yield x;}var i=g();i.next();i.next();i.next();")
+    }));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn async_generator_preserves_rejected_string_reason() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var reason;async function* g(){for await(const x of [Promise.reject('foo')])yield x;}g().next().then(undefined,function(e){reason=e;});")
+        .unwrap();
+    quench_runtime::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.get_global("reason"), Some(Value::String("foo".into())));
+}
+
+#[test]
 fn shift_operators_coerce_each_operand_once() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var trace='';var left={valueOf:function(){trace+='13';return 1;}};var right={valueOf:function(){trace+='24';return 1;}};left >> right").unwrap();
