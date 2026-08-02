@@ -227,6 +227,13 @@ globalThis.process = {
     error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
     throw error;
   },
+  getBuiltinModule: (name) => {
+    try {
+      return globalThis.require(String(name));
+    } catch (_) {
+      return undefined;
+    }
+  },
   umask: (mask) =>
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
