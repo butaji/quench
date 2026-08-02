@@ -549,6 +549,14 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 .set(&module_name, crate::Value::Boolean(needs_refresh));
         }
         ctx.register_module(&module_name, module_exports);
+        if name.contains("script-code") {
+            if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+                errors.borrow_mut().set(
+                    &module_name,
+                    crate::Value::String("Script fixture is not valid module code".into()),
+                );
+            }
+        }
     }
     let mut named_graph = HashMap::<String, Vec<String>>::new();
     for (module, source) in &named_reexport_edges {

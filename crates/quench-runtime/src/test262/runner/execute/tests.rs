@@ -349,6 +349,18 @@ fn dynamic_import_rejects_circular_named_reexport() {
 }
 
 #[test]
+fn dynamic_import_rejects_script_code_fixture_as_syntax_error() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let path = std::path::PathBuf::from(default_test262_dir()).join(
+        "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-eval-script-code-target.js",
+    );
+    let harness = HarnessLoader::new(&default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn stage44_probe_module_code_exports() {
     let root = crate::test262::runner::default_test262_dir();
     let path = std::path::PathBuf::from(&root)
