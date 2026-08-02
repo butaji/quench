@@ -218,6 +218,7 @@ class NodeBuffer extends Uint8Array {
     return this.byteOffset;
   }
   static from(value, encoding, length) {
+    if (typeof encoding === "string") encoding = encoding.toLowerCase();
     if (value instanceof ArrayBuffer) {
       let offset = Number(encoding);
       if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
@@ -568,11 +569,17 @@ class NodeBuffer extends Uint8Array {
     return this;
   }
   toString(encoding = "utf8") {
+    encoding = String(encoding).toLowerCase();
+    if (!NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     if (encoding === "hex")
       return Array.from(this, (byte) =>
         byte.toString(16).padStart(2, "0"),
       ).join("");
-    if (encoding === "base64") {
+    if (encoding === "base64" || encoding === "base64url") {
       const alphabet =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
       let result = "";
@@ -585,7 +592,9 @@ class NodeBuffer extends Uint8Array {
           (i + 1 < this.length ? alphabet[(n >> 6) & 63] : "=") +
           (i + 2 < this.length ? alphabet[n & 63] : "=");
       }
-      return result;
+      return encoding === "base64url"
+        ? result.replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_")
+        : result;
     }
     if (encoding === "latin1" || encoding === "binary")
       return Array.from(this, (byte) => String.fromCharCode(byte)).join("");
