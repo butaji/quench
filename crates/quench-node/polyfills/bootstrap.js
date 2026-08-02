@@ -6466,9 +6466,63 @@ globalThis.require = (specifier) => {
     };
   if (name === "async_hooks") {
     globalThis.__nodeCurrentAsyncResource ||= {};
+    globalThis.__nodeNextAsyncId ||= 1;
+    class AsyncResource {
+      constructor(type) {
+        this.type = String(type);
+        this._asyncId = ++globalThis.__nodeNextAsyncId;
+        this._resource = { asyncId: this._asyncId };
+      }
+      asyncId() {
+        return this._asyncId;
+      }
+      runInAsyncScope(callback, thisArg, ...args) {
+        if (typeof callback !== "function") {
+          const error = new TypeError(
+            "The callback argument must be of type function",
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const previous = globalThis.__nodeCurrentAsyncResource;
+        globalThis.__nodeCurrentAsyncResource = this._resource;
+        try {
+          return callback.apply(thisArg, args);
+        } finally {
+          globalThis.__nodeCurrentAsyncResource = previous;
+        }
+      }
+      bind(callback, thisArg) {
+        if (typeof callback !== "function") {
+          const error = new TypeError(
+            "The callback argument must be of type function",
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        const resource = this;
+        const bound = function (...args) {
+          return resource.runInAsyncScope(
+            callback,
+            thisArg === undefined ? this : thisArg,
+            ...args,
+          );
+        };
+        Object.defineProperty(bound, "length", { value: callback.length });
+        return bound;
+      }
+      emitDestroy() {
+        return this;
+      }
+      static bind(callback, thisArg) {
+        return new AsyncResource("bound").bind(callback, thisArg);
+      }
+    }
     return {
+      AsyncResource,
       executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource,
-      executionAsyncId: () => 1,
+      executionAsyncId: () =>
+        globalThis.__nodeCurrentAsyncResource.asyncId || 1,
       triggerAsyncId: () => 0,
       createHook: (callbacks = {}) => ({
         enable() {

@@ -41,3 +41,6 @@ chainable hook enable/disable methods. This is covered by
 Async resources are captured and restored across timers and HTTP request
 handlers, covered by `tests/node-compat/stage-495` and the upstream
 `test-async-hooks-execution-async-resource.js` test.
+`AsyncResource` now supports IDs, scoped execution, static and instance
+`bind()`, and argument validation. This is covered by
+`tests/node-compat/stage-496`.
