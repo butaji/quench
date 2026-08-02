@@ -220,7 +220,10 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             .get("globalThis")
             .unwrap_or(Value::Undefined);
         crate::interpreter::set_this_binding(&ctx.env, this_value);
-        crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
+        let saved_scopes = ctx.env.borrow_mut().scopes.split_off(1);
+        let result = crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false);
+        ctx.env.borrow_mut().scopes.extend(saved_scopes);
+        result
     };
     crate::interpreter::set_new_target(saved_new_target);
     // Restore strict mode after eval (indirect eval may have changed it).
@@ -853,6 +856,15 @@ mod tests {
         assert!(ctx
             .eval("try { ({ method() { eval('super();'); } }).method(); false } catch (e) { e instanceof SyntaxError }")
             .is_ok_and(|value| matches!(value, Value::Boolean(true))));
+    }
+
+    #[test]
+    fn indirect_eval_uses_global_scope_not_current_block() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("let x = 'outside'; { let x = 'inside'; (0, eval)('x;') === 'outside' }")
+            .is_ok_and(|value| { matches!(value, Value::Boolean(true)) }));
     }
 
     #[test]
