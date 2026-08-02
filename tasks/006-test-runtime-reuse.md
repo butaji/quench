@@ -53,3 +53,5 @@ Child processes launched with `-e` now report successful exit status and no
 signal, covered by `tests/node-compat/stage-503`.
 The minimal primary-process cluster fork and disconnect lifecycle is covered
 by `tests/node-compat/stage-504`.
+Cluster primary setup now clones settings and emits asynchronous `setup`
+events, covered by `tests/node-compat/stage-505`.

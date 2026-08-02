@@ -5474,6 +5474,7 @@ globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
   isArray: (value) => Array.isArray(value),
+  debuglog: () => () => {},
   _extend: (target, source) => {
     if (source && typeof source === "object") Object.assign(target, source);
     return target;
@@ -6896,6 +6897,13 @@ globalThis.require = (specifier) => {
     cluster.isPrimary = true;
     cluster.isMaster = true;
     cluster.isWorker = false;
+    cluster.settings = {};
+    cluster.setupPrimary = (settings = {}) => {
+      cluster.settings = { ...settings };
+      queueMicrotask(() => cluster.emit("setup"));
+      return cluster.settings;
+    };
+    cluster.setupMaster = cluster.setupPrimary;
     cluster.fork = () => {
       const worker = new globalThis.__nodeEventEmitter();
       worker.id = ++forks;
