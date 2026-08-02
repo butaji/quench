@@ -64,3 +64,4 @@ these small fixtures isolate the currently implemented contract.
 | 54 | exact callback-count enforcement | `tools/run-node-tests.sh --stage 54` |
 | 55 | process warning emission | `tools/run-node-tests.sh --stage 55` |
 | 56 | process executable identity | `tools/run-node-tests.sh --stage 56` |
+| 57 | host command-line `process.argv` | `tools/run-node-tests.sh --stage 57` |
