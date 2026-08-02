@@ -4547,13 +4547,17 @@ globalThis.__nodeQuerystring = {
   parse: (input, sep = "&", eq = "=", options = {}) => {
     const result = Object.create(null);
     if (input == null || input === "") return result;
-    const decode =
-      options && options.decodeURIComponent
-        ? options.decodeURIComponent
-        : (value) =>
-            globalThis.__nodeQuerystring.unescape(
-              String(value).replace(/\+/g, " "),
-            );
+    const decode = (value) => {
+      const inputValue = String(value).replace(/\+/g, " ");
+      if (options && options.decodeURIComponent) {
+        try {
+          return options.decodeURIComponent(inputValue);
+        } catch (_) {
+          return globalThis.__nodeQuerystring.unescape(inputValue);
+        }
+      }
+      return globalThis.__nodeQuerystring.unescape(inputValue);
+    };
     const separator = sep == null ? "&" : String(sep);
     const equals = eq == null ? "=" : String(eq);
     const maxKeys =
