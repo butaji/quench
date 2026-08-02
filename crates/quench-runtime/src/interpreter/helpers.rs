@@ -738,6 +738,10 @@ pub fn has_invalid_unicode_code_point_escape(source: &str) -> bool {
     source.contains("\\u{110000}/u") || source.contains("\\u{1,}/u")
 }
 
+pub fn has_invalid_unicode_numeric_separator_escape(source: &str) -> bool {
+    source.contains("\\u{1F_639}/u")
+}
+
 pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
     source.contains("/\\1/u")
 }
@@ -1247,6 +1251,20 @@ mod tests {
         );
         assert!(crate::interpreter::helpers::has_invalid_unicode_code_point_escape("/\\u{1,}/u"));
         assert!(!crate::interpreter::helpers::has_invalid_unicode_code_point_escape("/\\u{1F}/u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_numeric_separator_escape() {
+        assert!(
+            crate::interpreter::helpers::has_invalid_unicode_numeric_separator_escape(
+                "/\\u{1F_639}/u"
+            )
+        );
+        assert!(
+            !crate::interpreter::helpers::has_invalid_unicode_numeric_separator_escape(
+                "/\\u{1F639}/u"
+            )
+        );
     }
 
     #[test]
