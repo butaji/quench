@@ -4063,6 +4063,20 @@ globalThis.__nodeUtil = {
     );
   },
   inspect: (value) => {
+    if (value instanceof NodeBuffer) {
+      const custom = value[Symbol.for("nodejs.util.inspect.custom")];
+      const properties = Object.keys(value).map((key) => {
+        const item = value[key];
+        if (item instanceof Uint8Array)
+          return `${key}: ${item.constructor.name}(${item.length}) []`;
+        return `${key}: ${item === undefined ? "undefined" : String(item)}`;
+      });
+      const rendered =
+        typeof custom === "function"
+          ? custom.call(value)
+          : `<Buffer ${Array.from(value).join(" ")}>`;
+      return `${rendered}${properties.length ? `, ${properties.join(", ")}` : ""}`;
+    }
     if (
       value &&
       typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
