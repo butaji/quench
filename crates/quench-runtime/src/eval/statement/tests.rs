@@ -31,6 +31,11 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn calling_dynamic_import_promise_throws_type_error() {
+    assert!(eval("import('missing-module')()").is_err());
+}
+
+#[test]
 fn dynamic_import_refreshes_fixture_exports_after_initialization() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

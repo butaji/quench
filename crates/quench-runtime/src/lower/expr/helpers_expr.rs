@@ -162,10 +162,10 @@ fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError>
             if import.phase.is_some() {
                 arguments.push(Expression::Boolean(true));
             }
-            return Ok(Expression::Call {
+            Expression::Call {
                 callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
                 arguments,
-            });
+            }
         }
         ast::Expression::Super(_) => Expression::Identifier("super".to_string()),
         _ => lower_expr_inner(&call.callee)?,
