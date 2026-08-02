@@ -216,22 +216,21 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     // Exit eval: restore label stack and clear barrier.
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();
-    if let ast::Program::Script(body) = &program {
-        if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
-            for statement in body {
-                if let ast::Statement::FunctionDeclaration { name, .. } = statement {
-                    if let Some(value) = ctx.env.borrow().get(name) {
-                        global.borrow_mut().define(
-                            name,
-                            value,
-                            crate::value::PropertyFlags {
-                                value: None,
-                                writable: true,
-                                enumerable: true,
-                                configurable: true,
-                            },
-                        );
-                    }
+    let ast::Program::Script(body) = &program;
+    if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
+        for statement in body {
+            if let ast::Statement::FunctionDeclaration { name, .. } = statement {
+                if let Some(value) = ctx.env.borrow().get(name) {
+                    global.borrow_mut().define(
+                        name,
+                        value,
+                        crate::value::PropertyFlags {
+                            value: None,
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                        },
+                    );
                 }
             }
         }
