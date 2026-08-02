@@ -4320,6 +4320,12 @@ globalThis.__nodeUtil = {
     );
   },
   inspect: (value) => {
+    if (typeof value === "string")
+      return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    if (typeof value === "function")
+      return value.name
+        ? `[${value.constructor.name}: ${value.name}]`
+        : `[${value.constructor.name} (anonymous)]`;
     if (value instanceof NodeBuffer) {
       const custom = value[Symbol.for("nodejs.util.inspect.custom")];
       const properties = Object.keys(value)
@@ -4657,6 +4663,7 @@ globalThis.require = (specifier) => {
   if (name === "querystring") return globalThis.__nodeQuerystring;
   if (name === "url") return globalThis.__nodeUrlModule;
   if (name === "crypto") return globalThis.__nodeCrypto;
+  if (name === "v8") return {};
   if (name === "events")
     return {
       EventEmitter: globalThis.__nodeEventEmitter,
@@ -4760,6 +4767,7 @@ globalThis.require = (specifier) => {
                         return false;
                       };
                     })(),
+                    previewEntries: () => [],
                   }
                 : { fstat: () => undefined },
     };
