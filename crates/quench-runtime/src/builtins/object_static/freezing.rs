@@ -295,6 +295,11 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
 
     match &obj {
         Value::Object(o) => {
+            if o.borrow().kind == crate::value::ObjectKind::ModuleNamespace {
+                return Err(JsError::from(
+                    "TypeError: Cannot set prototype of module namespace object",
+                ));
+            }
             o.borrow_mut().prototype = proto;
             Ok(Value::Object(Rc::clone(o)))
         }
@@ -351,6 +356,8 @@ pub fn object_is_extensible(args: Vec<Value>) -> Result<Value, JsError> {
 mod tests {
     use crate::value::Value;
     use crate::Context;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn test_freeze_returns_object_and_is_frozen() {
@@ -512,6 +519,20 @@ mod tests {
     fn test_set_prototype_of_function_throws() {
         let mut ctx = Context::new().unwrap();
         assert!(ctx.eval("Object.setPrototypeOf(function(){}, {})").is_err());
+    }
+
+    #[test]
+    fn test_set_prototype_of_module_namespace_throws() {
+        let namespace = Rc::new(RefCell::new(crate::value::Object::new(
+            crate::value::ObjectKind::ModuleNamespace,
+        )));
+        let result = super::object_set_prototype_of(vec![
+            Value::Object(namespace),
+            Value::Object(Rc::new(RefCell::new(crate::value::Object::new(
+                crate::value::ObjectKind::Ordinary,
+            )))),
+        ]);
+        assert!(matches!(result, Err(error) if error.0.contains("TypeError")));
     }
 
     #[test]
