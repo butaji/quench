@@ -4422,6 +4422,8 @@ globalThis.__nodeUtil = {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
       if (value instanceof Date) return value.toISOString();
+      if (value instanceof Error)
+        return value.stack || `${value.name}: ${value.message}`;
       if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
       if (typeof value === "function")
