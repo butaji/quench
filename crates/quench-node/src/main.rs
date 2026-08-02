@@ -277,6 +277,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())?;
+        while ctx.execute_pending_job() {}
         ctx.eval::<(), _>(b"globalThis.__quench_verify_calls()")
     })?;
     Ok(())
