@@ -2419,6 +2419,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableNeedDrain = false;
     this.writableEnded = false;
     this.writableFinished = false;
+    this.writableCorked = 0;
   }
   destroy(error) {
     if (this.destroyed) return this;
@@ -2427,6 +2428,12 @@ class NodeWritable extends NodeEventEmitter {
     if (error) this.emit("error", error);
     queueMicrotask(() => this.emit("close"));
     return this;
+  }
+  cork() {
+    this.writableCorked++;
+  }
+  uncork() {
+    if (this.writableCorked > 0) this.writableCorked--;
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
