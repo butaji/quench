@@ -48,6 +48,8 @@ Adding a `data` listener drains buffered readable data in
 `tests/node-compat/stage-451/stream-flow-transition.js`.
 Explicit `resume()` drains paused readable data in
 `tests/node-compat/stage-452/stream-resume-queue.js`.
+Writable `drain` transition and callback-free length recovery are covered by
+`tests/node-compat/stage-453/stream-drain-transition.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
