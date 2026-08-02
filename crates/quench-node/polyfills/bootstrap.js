@@ -5855,6 +5855,11 @@ const __createNodeCrypto = () => ({
         if (encoding === "base64") return bytes.toString("base64");
         throw new Error(`Unsupported digest encoding: ${encoding}`);
       },
+      copy: () => {
+        const clone = globalThis.__nodeCrypto.createHash("sha256");
+        for (const chunk of chunks) clone.update(chunk);
+        return clone;
+      },
     };
     return hash;
   },
@@ -5904,6 +5909,11 @@ const __createNodeCrypto = () => ({
             : encoding === "base64"
               ? result.toString("base64")
               : result;
+      },
+      copy: () => {
+        const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);
+        for (const chunk of chunks) clone.update(chunk);
+        return clone;
       },
     };
     return hmac;
