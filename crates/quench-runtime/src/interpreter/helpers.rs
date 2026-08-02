@@ -790,6 +790,17 @@ pub fn has_dangling_named_backreference(source: &str) -> bool {
     })
 }
 
+pub fn has_duplicate_named_group(source: &str) -> bool {
+    let mut names = std::collections::HashSet::new();
+    source.match_indices("(?<").any(|(start, _)| {
+        let Some(end) = source[start + 3..].find('>') else {
+            return false;
+        };
+        let name = &source[start + 3..start + 3 + end];
+        !name.is_empty() && !name.starts_with('=') && !name.starts_with('!') && !names.insert(name)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};

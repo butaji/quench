@@ -293,6 +293,25 @@ fn main() -> ExitCode {
                 Err(JsError("SyntaxError: dangling named backreference".to_string())),
             );
         }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_duplicate_named_group(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: duplicate named group".to_string())),
+            );
+        }
         let run_result = if module || is_module_meta {
             ctx.eval_es_module(code)
         } else {
