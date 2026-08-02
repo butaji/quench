@@ -51,6 +51,8 @@ Read-stream descriptor cleanup before `close` is covered by
 `tests/node-compat/stage-427/fs-read-stream-close.js`.
 Write-stream descriptor cleanup before `close` is covered by
 `tests/node-compat/stage-428/fs-write-stream-close.js`.
+Write-stream append flags are covered by
+`tests/node-compat/stage-443/fs-write-stream-append.js`.
 `autoClose: false` descriptor retention is covered by
 `tests/node-compat/stage-430/fs-stream-autoclose.js`.
 Write-stream `autoClose: false` retention is covered by
