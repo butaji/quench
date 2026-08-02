@@ -57,3 +57,6 @@ Write-stream append flags are covered by
 `tests/node-compat/stage-430/fs-stream-autoclose.js`.
 Write-stream `autoClose: false` retention is covered by
 `tests/node-compat/stage-431/fs-write-stream-autoclose.js`.
+An in-process HTTP compatibility layer now supports basic server/client
+request flow, response headers, encoding, and completion events. This is
+covered by `tests/node-compat/stage-494`.

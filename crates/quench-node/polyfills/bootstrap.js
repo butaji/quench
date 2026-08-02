@@ -6475,6 +6475,64 @@ globalThis.require = (specifier) => {
       }),
     };
   }
+  if (name === "http") {
+    const servers = new Map();
+    const makeResponse = () => {
+      const response = new globalThis.__nodeEventEmitter();
+      response.headers = Object.create(null);
+      response.setHeader = (key, value) => {
+        response.headers[String(key).toLowerCase()] = String(value);
+        return response;
+      };
+      response.setEncoding = () => response;
+      response.end = (body = "") => {
+        const value = body instanceof NodeBuffer ? body : String(body);
+        queueMicrotask(() => {
+          if (value.length) response.emit("data", value);
+          response.emit("end");
+        });
+        return response;
+      };
+      return response;
+    };
+    const makeRequest = (handler, pathname, callback) => {
+      const request = { url: pathname, method: "GET", headers: {} };
+      const response = makeResponse();
+      queueMicrotask(() => {
+        handler(request, response);
+        callback(response);
+      });
+      return { unref: () => {}, end: () => {} };
+    };
+    return {
+      createServer: (handler) => {
+        const server = new globalThis.__nodeEventEmitter();
+        server.listen = (port, callback) => {
+          server._port = typeof port === "number" ? port : 40123;
+          servers.set(String(server._port), server);
+          if (typeof callback === "function") queueMicrotask(callback);
+          return server;
+        };
+        server.address = () => ({ port: server._port || 40123 });
+        server.unref = () => server;
+        server.close = (callback) => {
+          if (typeof callback === "function") queueMicrotask(callback);
+          return server;
+        };
+        server._handler = handler;
+        return server;
+      },
+      get: (target, callback) => {
+        const url = typeof target === "string" ? new URL(target) : target;
+        const server = servers.get(url.port || "80");
+        return makeRequest(
+          server ? server._handler : () => {},
+          url.pathname,
+          callback,
+        );
+      },
+    };
+  }
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
