@@ -16,6 +16,33 @@ globalThis.DataView = function (...args) {
   return view;
 };
 globalThis.DataView.prototype = __nodeNativeDataView.prototype;
+const __nodeTypedArraySets = {};
+for (const name of [
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int8Array",
+  "Uint16Array",
+  "Int16Array",
+  "Uint32Array",
+  "Int32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]) {
+  const Native = globalThis[name];
+  const set = new WeakSet();
+  __nodeTypedArraySets[name] = set;
+  const Wrapped = function (...args) {
+    const array = new Native(...args);
+    set.add(array);
+    return array;
+  };
+  Wrapped.prototype = Native.prototype;
+  Object.setPrototypeOf(Wrapped, Native);
+  globalThis[name] = Wrapped;
+}
 const __quenchQueueMicrotask = globalThis.queueMicrotask;
 globalThis.__quench_async_error = "";
 globalThis.queueMicrotask = (callback) =>
@@ -1465,8 +1492,33 @@ globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
     throw new Error(message || `${actual} == ${expected}`);
 };
 globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
+const __nodeAssertNormalize = (value, seen = new WeakSet()) => {
+  if (typeof value === "bigint") return `${value}n`;
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (ArrayBuffer.isView(value)) {
+    const values = [];
+    let length = 0;
+    try {
+      length = value.length || 0;
+    } catch (_) {}
+    for (let index = 0; index < length; index++)
+      values.push(__nodeAssertNormalize(value[index], seen));
+    return { constructor: value.constructor.name, values };
+  }
+  if (Array.isArray(value))
+    return value.map((item) => __nodeAssertNormalize(item, seen));
+  const normalized = {};
+  for (const key of Object.keys(value))
+    normalized[key] = __nodeAssertNormalize(value[key], seen);
+  return normalized;
+};
 globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
-  if (JSON.stringify(actual) !== JSON.stringify(expected))
+  if (
+    JSON.stringify(__nodeAssertNormalize(actual)) !==
+    JSON.stringify(__nodeAssertNormalize(expected))
+  )
     throw new Error(message || "values differ");
 };
 globalThis.__nodeAssert.throws = (fn, expected) => {
@@ -4147,52 +4199,64 @@ globalThis.__nodeUtil = {
     isTypedArray: (value) =>
       ArrayBuffer.isView(value) && !__nodeUtil.types.isDataView(value),
     isUint8Array: (value) =>
-      value instanceof Uint8Array ||
+      __nodeTypedArraySets.Uint8Array.has(value) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Uint8Array]"),
     isUint8ClampedArray: (value) =>
-      value instanceof Uint8ClampedArray ||
+      __nodeTypedArraySets.Uint8ClampedArray.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint8ClampedArray) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Uint8ClampedArray]"),
     isInt8Array: (value) =>
-      value instanceof Int8Array ||
+      __nodeTypedArraySets.Int8Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int8Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Int8Array]"),
     isUint16Array: (value) =>
-      value instanceof Uint16Array ||
+      __nodeTypedArraySets.Uint16Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint16Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Uint16Array]"),
     isInt16Array: (value) =>
-      value instanceof Int16Array ||
+      __nodeTypedArraySets.Int16Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int16Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Int16Array]"),
     isUint32Array: (value) =>
-      value instanceof Uint32Array ||
+      __nodeTypedArraySets.Uint32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint32Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Uint32Array]"),
     isInt32Array: (value) =>
-      value instanceof Int32Array ||
+      __nodeTypedArraySets.Int32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int32Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Int32Array]"),
     isFloat32Array: (value) =>
-      value instanceof Float32Array ||
+      __nodeTypedArraySets.Float32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Float32Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Float32Array]"),
     isFloat64Array: (value) =>
-      value instanceof Float64Array ||
+      __nodeTypedArraySets.Float64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Float64Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object Float64Array]"),
     isFloat16Array: (value) =>
-      typeof Float16Array !== "undefined" &&
-      (value instanceof Float16Array ||
-        (ArrayBuffer.isView(value) &&
-          Object.prototype.toString.call(value) === "[object Float16Array]")),
+      __nodeTypedArraySets.Float16Array.has(value) ||
+      (typeof Float16Array !== "undefined" &&
+        ArrayBuffer.isView(value) &&
+        value instanceof Float16Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Float16Array]"),
     isBigInt64Array: (value) =>
-      value instanceof BigInt64Array ||
+      __nodeTypedArraySets.BigInt64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof BigInt64Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object BigInt64Array]"),
     isBigUint64Array: (value) =>
-      value instanceof BigUint64Array ||
+      __nodeTypedArraySets.BigUint64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof BigUint64Array) ||
       (ArrayBuffer.isView(value) &&
         Object.prototype.toString.call(value) === "[object BigUint64Array]"),
     isProxy: (value) => __nodeProxySet.has(value),
