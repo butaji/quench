@@ -1721,8 +1721,15 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
   } catch (error) {
     thrown = true;
     captured = error;
-    if (typeof expected === "function" && !(error instanceof expected))
-      throw error;
+    if (typeof expected === "function" && !(error instanceof expected)) {
+      const assertion = new globalThis.__nodeAssert.AssertionError(
+        `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"`,
+      );
+      assertion.operator = "throws";
+      assertion.actual = error;
+      assertion.expected = expected;
+      throw assertion;
+    }
     if (expected && typeof expected === "object") {
       if (expected.name && error.name !== expected.name) throw error;
       if (expected.message && error.message !== expected.message) throw error;
