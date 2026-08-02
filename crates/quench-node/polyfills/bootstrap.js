@@ -2918,6 +2918,17 @@ globalThis.__nodeUtil = {
       ),
   format: (...args) => {
     if (!args.length) return "";
+    const numeric = (value) => {
+      const rendered = String(value);
+      if (!globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator)
+        return rendered;
+      const [mantissa, exponent] = rendered.split("e");
+      const sign = mantissa.startsWith("-") ? "-" : "";
+      const unsigned = sign ? mantissa.slice(1) : mantissa;
+      const [whole, fraction] = unsigned.split(".");
+      const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, "_");
+      return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
+    };
     const inspect = (value) => {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
@@ -2940,7 +2951,10 @@ globalThis.__nodeUtil = {
         if (token === "%%") return "%";
         if (index >= args.length) return token;
         const value = args[index++];
-        if (token === "%s") return String(value);
+        if (token === "%s")
+          return typeof value === "number" || typeof value === "bigint"
+            ? numeric(value)
+            : String(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d") return `${value}n`;
           let number;
@@ -2949,7 +2963,7 @@ globalThis.__nodeUtil = {
           } catch (_) {
             number = NaN;
           }
-          return Object.is(number, -0) ? "-0" : number.toString();
+          return Object.is(number, -0) ? "-0" : numeric(number);
         }
         if (token === "%i") {
           if (typeof value === "bigint") return `${value}n`;
@@ -2959,7 +2973,7 @@ globalThis.__nodeUtil = {
           } catch (_) {
             number = NaN;
           }
-          return Object.is(number, -0) ? "-0" : number.toString();
+          return Object.is(number, -0) ? "-0" : numeric(number);
         }
         if (token === "%j") return JSON.stringify(value);
         return token === "%o" ? inspect(value) : String(value);
@@ -2977,8 +2991,18 @@ globalThis.__nodeUtil = {
   },
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
-globalThis.__nodeUtil.formatWithOptions = (_options, ...args) =>
-  globalThis.__nodeUtil.format(...args);
+globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
+  const previous =
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
+  if (options && options.numericSeparator !== undefined)
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator =
+      options.numericSeparator;
+  try {
+    return globalThis.__nodeUtil.format(...args);
+  } finally {
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
+  }
+};
 globalThis.__nodeQuerystring = {
   escape: (value) => encodeURIComponent(String(value)),
   unescape: (value) => decodeURIComponent(String(value)),
