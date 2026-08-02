@@ -25,3 +25,5 @@ Deferred initialization timing is verified by
 `tests/node-compat/stage-385/bootstrap-lazy-state.js`.
 Stream export initialization timing is covered by
 `tests/node-compat/stage-386/bootstrap-lazy-stream.js`.
+URL module initialization timing is covered by
+`tests/node-compat/stage-388/bootstrap-lazy-url.js`.
