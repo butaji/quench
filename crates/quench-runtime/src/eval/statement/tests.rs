@@ -25,6 +25,86 @@ fn generator_assignment_defers_write_until_yield_resumes() {
 }
 
 #[test]
+fn optional_chain_for_update_short_circuits_computed_key() {
+    let value = eval("var count = 0; var touched = 0; var obj = { get a() { count++; return undefined; } }; for (count = 0; true; obj?.a?.[touched++]) { if (count > 0) break; } String(count) + ',' + String(touched)").unwrap();
+    assert_eq!(value, Value::String("1,0".into()));
+}
+
+#[test]
+fn static_and_dynamic_import_share_namespace_object() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/reuse-namespace-object-from-import.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval_es_module("import * as ns from './module-code_FIXTURE.js'; var same; import('./module-code_FIXTURE.js').then(function(value) { same = value === ns; });")
+        .unwrap();
+    assert_eq!(ctx.get_global("same"), Some(Value::Boolean(true)));
+}
+
+#[test]
+fn arrow_returned_dynamic_import_chain_fulfills_once() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-import-then-returns-thenable.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("var count = 0; var calls = 0; function done(error) { count++; if (count > 1) throw new Error(); if (error !== undefined) throw error; } var f = () => { calls++; return import('./dynamic-import-module_FIXTURE.js').then(function(value) { if (value.x !== 1) throw new Error(); }).then(done, done).catch(done); }; f();")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("String(calls) + ',' + String(count)").unwrap(),
+        Value::String("1,1".into())
+    );
+}
+
+#[test]
+fn dynamic_import_namespace_reads_updated_export_binding() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-assignment-expression-eval-gtbndng-indirect-update.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("var before, after; import('./eval-gtbndng-indirect-update_FIXTURE.js').then(function(ns) { before = ns.x; test262update(); after = ns.x; });")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("String(before) + ',' + String(after)").unwrap(),
+        Value::String("1,2".into())
+    );
+}
+
+#[test]
+fn dynamic_import_namespace_reads_self_updated_default_binding() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-assignment-expression-eval-gtbndng-indirect-update-dflt.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("var first, second; import('./eval-gtbndng-indirect-update-dflt_FIXTURE.js').then(function(ns) { first = ns.default(); second = ns.default; });")
+        .unwrap();
+    assert_eq!(
+        ctx.eval("String(first) + ',' + second").unwrap(),
+        Value::String("1,2".into())
+    );
+}
+
+#[test]
+fn repeated_errored_module_import_preserves_error_type() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/import-errored-module.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("var types = []; import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); return import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); }); });")
+        .unwrap();
+    assert_eq!(ctx.eval("types.join(',')").unwrap(), Value::String("Error,Error".into()));
+}
+
+#[test]
 fn dynamic_import_returns_promise_for_missing_module() {
     let value = eval("typeof import('missing-module').then").unwrap();
     assert_eq!(value, Value::String("function".into()));

@@ -45,6 +45,27 @@ fn has_object_binding_environment(env: &Rc<RefCell<Environment>>) -> bool {
 #[cfg(test)]
 mod tests;
 
+fn replay_pending_yield() -> Result<Option<Value>, JsError> {
+    if !crate::value::generator_replay::is_resuming_pending_yield() {
+        return Ok(None);
+    }
+    let Some(value) = crate::value::generator_replay::try_replay_yield() else {
+        return Ok(None);
+    };
+    match crate::interpreter::take_control_flow() {
+        Some(crate::interpreter::ControlFlow::Return(returned)) => {
+            crate::interpreter::set_control_flow(crate::interpreter::ControlFlow::Return(returned));
+        }
+        Some(crate::interpreter::ControlFlow::Throw(thrown)) => {
+            crate::value::set_thrown_value(thrown);
+            return Err(JsError("Generator threw".to_string()));
+        }
+        Some(flow) => crate::interpreter::set_control_flow(flow),
+        None => {}
+    }
+    Ok(Some(value))
+}
+
 /// Evaluate an expression
 pub fn eval_expression(
     expr: &Expression,
@@ -74,6 +95,13 @@ pub fn eval_expression(
             Ok(Value::BigInt(std::rc::Rc::new(bi)))
         }
         Expression::Yield(expr) => {
+            if expr.as_ref().is_some_and(|operand| {
+                crate::value::generator_replay::count_yields_in_expr(operand) == 0
+            }) {
+                if let Some(value) = replay_pending_yield()? {
+                    return Ok(value);
+                }
+            }
             let value = match expr {
                 Some(e) => crate::eval::expression::eval_expression(e, env, in_arrow_function)?,
                 None => {
@@ -316,19 +344,10 @@ pub fn eval_expression(
                 };
                 crate::eval::class::eval_class_expr(class, env, inferred_name)?
             } else {
-                crate::eval::generator::begin_assignment_rhs();
                 eval_expression(right, env, in_arrow_function)?
             };
-            if crate::eval::generator::take_assignment_yield() {
+            if crate::interpreter::peek_generator_yield() {
                 return Ok(right_val);
-            }
-            if crate::eval::generator::take_suspended_assignment()
-                && crate::eval::generator::take_pending_return()
-            {
-                if let Some(control) = crate::interpreter::take_control_flow() {
-                    crate::interpreter::set_control_flow(control);
-                    return Ok(right_val);
-                }
             }
             eval_binary_op(*op, &left_val, &right_val)
         }

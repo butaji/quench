@@ -54,6 +54,25 @@ pub fn settle_resolve(promise_rc: &Rc<RefCell<Object>>, value: Value) {
     enqueue_promise_reactions(promise_rc);
 }
 
+pub(crate) fn settle_resolve_inline(promise: &Rc<RefCell<Object>>, value: Value) {
+    let callbacks = {
+        let mut object = promise.borrow_mut();
+        let Some(data) = object.promise_data.as_mut() else {
+            return;
+        };
+        if data.state != PromiseState::Pending {
+            return;
+        }
+        data.fulfill(value.clone());
+        std::mem::take(&mut data.on_fulfilled_callbacks)
+    };
+    for callback in callbacks {
+        if let Some((fulfilled, _, target)) = extract_callback_info(&callback) {
+            execute_callback(&fulfilled, value.clone(), &target, false);
+        }
+    }
+}
+
 fn queue_thenable_job(promise: &Rc<RefCell<Object>>, thenable: &Rc<RefCell<Object>>, then: Value) {
     let resolve_target = Rc::clone(promise);
     let reject_target = Rc::clone(promise);
@@ -172,6 +191,7 @@ fn enqueue_reaction_job(
     // Capture the result value directly so execute_callback can pass it to the callback
     let captured_result = result.clone();
     let job = Value::NativeFunction(Rc::new(NativeFunction::new(move |_args: Vec<Value>| {
+        crate::interpreter::take_control_flow();
         execute_callback(
             &callback,
             captured_result.clone(),

@@ -80,7 +80,7 @@ mod tests {
                 if matches!(
                     *expr,
                     Expression::Call {
-                        callee: ref callee,
+                        ref callee,
                         arguments: ref args,
                     } if matches!(**callee, Expression::Identifier(ref name) if name == "__dynamic_import__")
                         && args.len() == 2

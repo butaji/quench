@@ -301,6 +301,9 @@ fn run_async_script_with_path(
         }
     }
     crate::interpreter::set_strict_mode(strict);
+    if is_module {
+        register_current_module_bindings(&mut ctx, source)?;
+    }
     let result = if is_module {
         ctx.eval_es_module(source)
     } else {
@@ -316,6 +319,50 @@ fn run_async_script_with_path(
     async_done_probe(&mut ctx)
 }
 
+fn register_current_module_bindings(ctx: &mut crate::Context, source: &str) -> Result<(), String> {
+    let (_, _, exports, _, _) = fixture_exports_from_source(usize::MAX, source)?;
+    let mut bindings = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    for name in exports.named {
+        bindings.set(&name, crate::Value::String(name.clone()));
+    }
+    for (local, exported) in exports.aliases {
+        bindings.set(&exported, crate::Value::String(local));
+    }
+    for local in exports.default_aliases {
+        bindings.set("default", crate::Value::String(local));
+    }
+    for line in source.lines().map(str::trim) {
+        let Some(clause) = line
+            .strip_prefix("export {")
+            .and_then(|line| line.strip_suffix("};"))
+        else {
+            continue;
+        };
+        for specifier in clause.split(',').map(str::trim) {
+            let (local, exported) = specifier
+                .split_once(" as ")
+                .unwrap_or((specifier, specifier));
+            bindings.set(exported.trim(), crate::Value::String(local.trim().into()));
+        }
+    }
+    ctx.set_global(
+        "__quench_current_module_bindings__".into(),
+        crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(bindings))),
+    );
+    Ok(())
+}
+
+fn default_function_updates_itself(source: &str) -> bool {
+    source.lines().map(str::trim).any(|line| {
+        let Some(function) = line.strip_prefix("export default function ") else {
+            return false;
+        };
+        let Some(name) = function.split('(').next().map(str::trim) else {
+            return false;
+        };
+        source.contains(&format!("{name} ="))
+    })
+}
 
 pub fn register_current_script_module(ctx: &mut crate::Context, path: &Path) -> Result<(), String> {
     let name = path
@@ -362,6 +409,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let init_scripts_key = "__quench_fixture_init_scripts__";
     let init_done_key = "__quench_fixture_init_done__";
     let init_bindings_key = "__quench_fixture_export_bindings__";
+    let init_getters_key = "__quench_fixture_export_getters__";
     let init_imported_key = "__quench_fixture_imported_modules__";
     let init_refresh_key = "__quench_fixture_refresh_required__";
     let raw_modules_key = "__quench_fixture_raw_modules__";
@@ -385,6 +433,14 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     if ctx.get_global(init_bindings_key).is_none() {
         ctx.set_global(
             init_bindings_key.to_string(),
+            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            ))),
+        );
+    }
+    if ctx.get_global(init_getters_key).is_none() {
+        ctx.set_global(
+            init_getters_key.to_string(),
             crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
                 crate::value::Object::new(crate::value::ObjectKind::Ordinary),
             ))),
@@ -465,6 +521,9 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         }
         let (eval_source, side_effect_source, exports, default_import, reexports) =
             fixture_exports_from_source(index, &source)?;
+        let side_effects_need_refresh = !side_effect_source.trim().is_empty();
+        let exposes_update = side_effect_source.contains("test262update")
+            || default_function_updates_itself(&source);
         let eval_source = if source.contains("import.meta") {
             let meta = format!("__quench_fixture_import_meta_{index}");
             format!(
@@ -496,10 +555,13 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         let mut module_exports =
             crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
         let mut module_bindings = Vec::<(String, String)>::new();
-        let mut needs_refresh = false;
+        let mut needs_refresh = side_effects_need_refresh;
         let mut values = std::collections::HashMap::new();
         for name in exports.named {
             let value = ctx.get_global(&name).unwrap_or(crate::Value::Undefined);
+            if value == crate::Value::Undefined {
+                needs_refresh = true;
+            }
             values.insert(name.clone(), value.clone());
             module_exports.define(
                 &name,
@@ -599,6 +661,25 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                 crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
             );
         }
+        if exposes_update {
+            if let Some(Value::Object(getters)) = ctx.get_global(init_getters_key) {
+                let mut mapping = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+                for (exported, local) in &module_bindings {
+                    let Some(binding) = ctx.env().borrow().get_shared(local) else {
+                        continue;
+                    };
+                    needs_refresh = true;
+                    let getter = crate::Value::NativeFunction(std::rc::Rc::new(
+                        crate::value::NativeFunction::new(move |_| Ok(binding.borrow().clone())),
+                    ));
+                    mapping.set(exported, getter);
+                }
+                getters.borrow_mut().set(
+                    &module_name,
+                    crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(mapping))),
+                );
+            }
+        }
         if let Some(Value::Object(refresh)) = ctx.get_global(init_refresh_key) {
             refresh
                 .borrow_mut()
@@ -632,95 +713,100 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             }
         }
     }
-    for (module_name, reexports) in pending_reexports {
-        let Some(Value::Object(module)) = ctx.get_module(&module_name) else {
-            continue;
-        };
-        for reexport in reexports {
-            match reexport {
-                PendingReExport::StarAs { name, source } => {
-                    let Some(Value::Object(target)) = ctx.get_module(&source) else {
-                        continue;
-                    };
-                    let mut namespace =
-                        crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
-                    let mut keys = target.borrow().own_property_names();
-                    keys.sort();
-                    for key in keys {
-                        if let Some(value) = target.borrow().get_own_value(&key) {
-                            namespace.define(
-                                &key,
-                                value,
-                                crate::value::PropertyFlags {
-                                    value: None,
-                                    writable: true,
-                                    enumerable: true,
-                                    configurable: false,
-                                },
-                            );
-                        }
-                    }
-                    namespace.extensible = false;
-                    define_module_binding(
-                        &module,
-                        &name,
-                        Value::Object(std::rc::Rc::new(std::cell::RefCell::new(namespace))),
-                    );
-                }
-                PendingReExport::StarAll { source } => {
-                    let Some(Value::Object(target)) = ctx.get_module(&source) else {
-                        continue;
-                    };
-                    let mut keys = target.borrow().own_property_names();
-                    keys.sort();
-                    for key in keys {
-                        if key == "default" {
+    let reexport_passes = pending_reexports.len().max(1);
+    for _ in 0..reexport_passes {
+        for (module_name, reexports) in &pending_reexports {
+            let Some(Value::Object(module)) = ctx.get_module(&module_name) else {
+                continue;
+            };
+            for reexport in reexports {
+                match reexport {
+                    PendingReExport::StarAs { name, source } => {
+                        let Some(Value::Object(target)) = ctx.get_module(&source) else {
                             continue;
-                        }
-                        let sources = star_sources.entry(module_name.clone()).or_default();
-                        if let Some(previous) = sources.get(&key) {
-                            if previous != &source {
-                                if let Some(Value::Object(errors)) =
-                                    ctx.get_global(module_errors_key)
-                                {
-                                    errors.borrow_mut().set(
-                                        &module_name,
-                                        crate::Value::String("Ambiguous indirect export".into()),
-                                    );
-                                }
-                                continue;
+                        };
+                        let mut namespace =
+                            crate::value::Object::new(crate::value::ObjectKind::ModuleNamespace);
+                        let mut keys = target.borrow().own_property_names();
+                        keys.sort();
+                        for key in keys {
+                            if let Some(value) = target.borrow().get_own_value(&key) {
+                                namespace.define(
+                                    &key,
+                                    value,
+                                    crate::value::PropertyFlags {
+                                        value: None,
+                                        writable: true,
+                                        enumerable: true,
+                                        configurable: false,
+                                    },
+                                );
                             }
-                        } else {
-                            sources.insert(key.clone(), source.clone());
                         }
-                        let value = target
-                            .borrow()
-                            .get_own_value(&key)
-                            .unwrap_or(crate::Value::Undefined);
-                        define_module_binding(&module, &key, value);
-                    }
-                }
-                PendingReExport::Named {
-                    source,
-                    local,
-                    exported,
-                } => {
-                    if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
-                        let reason = errors.borrow().get(&source);
-                        if let Some(reason) = reason {
-                            errors.borrow_mut().set(&module_name, reason);
-                            continue;
-                        }
-                    }
-                    if let Some(Value::Object(target)) = ctx.get_module(&source) {
-                        let value = target.borrow().get_own_value(&local);
+                        namespace.extensible = false;
                         define_module_binding(
                             &module,
-                            &exported,
-                            value.unwrap_or(crate::Value::Undefined),
+                            &name,
+                            Value::Object(std::rc::Rc::new(std::cell::RefCell::new(namespace))),
                         );
-                    } else {
-                        define_module_binding(&module, &exported, crate::Value::Undefined);
+                    }
+                    PendingReExport::StarAll { source } => {
+                        let Some(Value::Object(target)) = ctx.get_module(&source) else {
+                            continue;
+                        };
+                        let mut keys = target.borrow().own_property_names();
+                        keys.sort();
+                        for key in keys {
+                            if key == "default" {
+                                continue;
+                            }
+                            let sources = star_sources.entry(module_name.clone()).or_default();
+                            if let Some(previous) = sources.get(&key) {
+                                if previous != source {
+                                    if let Some(Value::Object(errors)) =
+                                        ctx.get_global(module_errors_key)
+                                    {
+                                        errors.borrow_mut().set(
+                                            &module_name,
+                                            crate::Value::String(
+                                                "Ambiguous indirect export".into(),
+                                            ),
+                                        );
+                                    }
+                                    continue;
+                                }
+                            } else {
+                                sources.insert(key.clone(), source.clone());
+                            }
+                            let value = target
+                                .borrow()
+                                .get_own_value(&key)
+                                .unwrap_or(crate::Value::Undefined);
+                            define_module_binding(&module, &key, value);
+                        }
+                    }
+                    PendingReExport::Named {
+                        source,
+                        local,
+                        exported,
+                    } => {
+                        if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+                            let reason = errors.borrow().get(&source);
+                            if let Some(reason) = reason {
+                                errors.borrow_mut().set(&module_name, reason);
+                                continue;
+                            }
+                        }
+                        if let Some(Value::Object(target)) = ctx.get_module(&source) {
+                            let value = target.borrow().get_own_value(&local);
+                            define_module_binding(
+                                &module,
+                                &exported,
+                                value.unwrap_or(crate::Value::Undefined),
+                            );
+                        } else {
+                            define_module_binding(&module, &exported, crate::Value::Undefined);
+                        }
                     }
                 }
             }
@@ -884,6 +970,21 @@ fn fixture_exports_from_source(
                 if let Some(import_spec) = parse_default_import(rest) {
                     default_import = Some(import_spec);
                     continue;
+                }
+                if let Some(function) = rest.strip_prefix("function ") {
+                    if let Some((name, tail)) = function.split_once('(') {
+                        let name = name.trim();
+                        default_aliases.push(name.to_string());
+                        let declaration = format!("var {name} = function({tail}");
+                        let depth_delta = declaration.matches('{').count() as i32
+                            - declaration.matches('}').count() as i32;
+                        if depth_delta > 0 {
+                            in_export_block = true;
+                            export_block_depth = depth_delta;
+                        }
+                        eval_lines.push(declaration);
+                        continue;
+                    }
                 }
                 let rhs = rest;
                 has_default_marker = true;
@@ -1105,6 +1206,7 @@ fn extract_binding_name(declaration: &str) -> Option<String> {
     name.split(',')
         .next()
         .map(str::trim)
+        .map(|name| name.trim_end_matches(';').trim())
         .filter(|name| !name.is_empty())
         .map(decode_identifier_escape)
 }

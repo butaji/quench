@@ -681,11 +681,10 @@ fn test_to_primitive_valueof_returns_object_falls_back_to_string() {
 #[test]
 fn test_to_primitive_both_return_object() {
     let mut ctx = crate::Context::new().unwrap();
-    // Both return objects → default to "[object Object]"
     let r = ctx.eval(
-        "var obj = { valueOf: function() { return {}; }, toString: function() { return {}; } }; String(obj)"
+        "var obj = { valueOf: function() { return {}; }, toString: function() { return {}; } }; try { String(obj); 'ok' } catch (e) { e.name }"
     ).unwrap();
-    assert_eq!(r, Value::String("[object Object]".to_string()));
+    assert_eq!(r, Value::String("TypeError".to_string()));
 }
 
 #[test]

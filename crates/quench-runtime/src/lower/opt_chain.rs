@@ -153,15 +153,13 @@ fn lower_chain_recursive(
                 _ => unreachable!(),
             });
             let full_call = Expression::Call {
-                callee: Box::new(if call.optional {
-                    if matches!(callee, Expression::Member { .. }) {
-                        callee
-                    } else {
+                callee: Box::new(
+                    if call.optional && !matches!(callee, Expression::Member { .. }) {
                         Expression::Parenthesized(Box::new(callee))
-                    }
-                } else {
-                    callee
-                }),
+                    } else {
+                        callee
+                    },
+                ),
                 arguments: args,
             };
 
@@ -358,7 +356,7 @@ fn is_nullish_guard(expression: &Expression) -> bool {
         expression,
         Expression::Conditional { condition, .. }
             if matches!(condition.as_ref(), Expression::Binary {
-                op: crate::ast::BinaryOp::Or,
+                op: crate::ast::BinaryOp::LooseEq,
                 ..
             })
     )
@@ -384,20 +382,10 @@ fn extract_base_from_callee(callee: &ast::Expression) -> Result<Expression, Lowe
 
 /// Create a nullish check: base == null || base == undefined
 fn make_nullish_check(base: &Expression) -> Expression {
-    let null_check = Expression::Binary {
-        op: crate::ast::BinaryOp::StrictEq,
+    Expression::Binary {
+        op: crate::ast::BinaryOp::LooseEq,
         left: Box::new(base.clone()),
         right: Box::new(Expression::Null),
-    };
-    let undefined_check = Expression::Binary {
-        op: crate::ast::BinaryOp::StrictEq,
-        left: Box::new(base.clone()),
-        right: Box::new(Expression::Undefined),
-    };
-    Expression::Binary {
-        op: crate::ast::BinaryOp::Or,
-        left: Box::new(null_check),
-        right: Box::new(undefined_check),
     }
 }
 

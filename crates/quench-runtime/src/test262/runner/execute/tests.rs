@@ -82,6 +82,27 @@ fn dynamic_import_namespace_fixture_exports_uninitialized_bindings() {
 }
 
 #[test]
+fn fixture_star_as_namespace_contains_exported_bindings() {
+    let root = crate::test262::runner::default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/expressions/dynamic-import/namespace/await-ns-get-nested-namespace-props-nrml.js",
+    );
+    let mut ctx = crate::Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    load_fixture_modules(&mut ctx, &path).unwrap();
+    let Value::Object(module) = ctx
+        .get_module("./get-nested-namespace-props-nrml-1_FIXTURE.js")
+        .unwrap()
+    else {
+        panic!("expected module");
+    };
+    let Value::Object(namespace) = module.borrow().get("exportns").unwrap() else {
+        panic!("expected namespace export");
+    };
+    assert!(namespace.borrow().has("starAsVarDecl"));
+}
+
+#[test]
 fn module_can_dynamically_import_itself() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
@@ -387,7 +408,7 @@ fn stage44_probe_module_code_exports() {
     };
 
     let indirect = module.borrow().get("indirect");
-    assert_eq!(indirect, Some(Value::Undefined));
+    assert_eq!(indirect, Some(Value::String("Test262".into())));
     assert_eq!(
         module.borrow().get_own_value("local1"),
         Some(Value::String("Test262".into()))
@@ -398,7 +419,7 @@ fn stage44_probe_module_code_exports() {
     );
     assert_eq!(
         module.borrow().get_own_value("indirect"),
-        Some(Value::Undefined)
+        Some(Value::String("Test262".into()))
     );
 
     assert_eq!(

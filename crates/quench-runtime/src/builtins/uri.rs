@@ -159,6 +159,9 @@ fn decode_percent_triplet_sequence(
     }
 
     let b0 = decoded[0];
+    if keep_reserved && decoded[..count].iter().copied().any(is_uri_reserved_byte) {
+        return None;
+    }
     let mut result = String::new();
     let cp = match count {
         1 => {

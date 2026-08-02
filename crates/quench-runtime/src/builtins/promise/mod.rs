@@ -13,6 +13,7 @@ pub use static_methods::{capability, promise_all, promise_race};
 // Re-export public APIs
 pub(crate) use callbacks::{
     enqueue_promise_reactions, queue_callback_on_promise, settle_reject, settle_resolve,
+    settle_resolve_inline,
 };
 pub use constructor::{create_promise_constructor, register_promise};
 pub use helpers::{

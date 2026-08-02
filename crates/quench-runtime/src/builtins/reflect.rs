@@ -400,66 +400,69 @@ pub fn register_reflect(ctx: &mut Context) {
     register_proxy(ctx);
 }
 
+fn create_proxy(args: Vec<Value>) -> Result<Value, crate::value::JsError> {
+    let target = args
+        .first()
+        .cloned()
+        .ok_or_else(|| crate::value::JsError::new("Proxy: target argument missing"))?;
+    let handler = args
+        .get(1)
+        .cloned()
+        .ok_or_else(|| crate::value::JsError::new("Proxy: handler argument missing"))?;
+    let Value::Object(handler) = handler else {
+        return Err(crate::value::JsError::new(
+            "TypeError: Proxy handler must be an object",
+        ));
+    };
+    if !matches!(
+        target,
+        Value::Object(_) | Value::Class(_) | Value::Function(_) | Value::NativeFunction(_)
+    ) {
+        return Err(crate::value::JsError::new(
+            "TypeError: Proxy target must be an object",
+        ));
+    }
+    let mut proxy = Object::new(ObjectKind::Ordinary);
+    proxy.callable = target.is_callable();
+    proxy.call_slot = proxy.callable.then(|| target.clone());
+    if let Value::Object(target) = &target {
+        proxy.data = ObjData::Proxy {
+            target: Rc::clone(target),
+            handler,
+        };
+    } else {
+        proxy.set("__quench_proxy_target", target);
+        proxy.set("__quench_proxy_handler", Value::Object(handler));
+    }
+    Ok(Value::Object(Rc::new(RefCell::new(proxy))))
+}
+
+fn proxy_revocable(args: Vec<Value>) -> Result<Value, crate::value::JsError> {
+    let proxy = create_proxy(args)?;
+    let Value::Object(proxy_object) = &proxy else {
+        unreachable!()
+    };
+    let revoked = Rc::clone(proxy_object);
+    let revoke = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+        revoked
+            .borrow_mut()
+            .set("__quench_proxy_revoked", Value::Boolean(true));
+        Ok(Value::Undefined)
+    })));
+    let mut record = Object::new(ObjectKind::Ordinary);
+    record.set("proxy", proxy);
+    record.set("revoke", revoke);
+    Ok(Value::Object(Rc::new(RefCell::new(record))))
+}
+
 fn register_proxy(ctx: &mut Context) {
-    // Proxy(target, handler) — minimal forwarding implementation.
-    // The proxy is an object whose default traps (get/set/has) forward to
-    // the target. A handler object may override any of those traps. This
-    // is sufficient for test262 tests that use a plain handler `{}` to
-    // check private-field access boundaries.
-    //
-    // Per ES spec, Proxy is a constructor but has no .prototype property,
-    // so `class extends Proxy {}` throws TypeError at class-definition time.
-    let mut proxy_fn = crate::value::NativeFunction::new(
-        |args: Vec<Value>| -> Result<Value, crate::value::JsError> {
-            let target = match args.first() {
-                Some(v) => v.clone(),
-                _ => return Err(crate::value::JsError::new("Proxy: target argument missing")),
-            };
-            let handler = match args.get(1) {
-                Some(v) => v.clone(),
-                _ => {
-                    return Err(crate::value::JsError::new(
-                        "Proxy: handler argument missing",
-                    ))
-                }
-            };
-            if !matches!(
-                target,
-                Value::Object(_) | Value::Class(_) | Value::Function(_) | Value::NativeFunction(_)
-            ) {
-                return Err(crate::value::JsError::new(
-                    "TypeError: Proxy target must be an object",
-                ));
-            }
-            if !matches!(handler, Value::Object(_)) {
-                return Err(crate::value::JsError::new(
-                    "TypeError: Proxy handler must be an object",
-                ));
-            }
-            let handler_obj = if let Value::Object(h) = &handler {
-                Rc::clone(h)
-            } else {
-                return Err(crate::value::JsError::new(
-                    "TypeError: Proxy handler must be an object",
-                ));
-            };
-            let mut proxy = Object::new(ObjectKind::Ordinary);
-            if let Value::Object(target_obj) = &target {
-                proxy.data = ObjData::Proxy {
-                    target: Rc::clone(target_obj),
-                    handler: Rc::clone(&handler_obj),
-                };
-            } else {
-                // Compatibility: keep legacy fallback metadata on non-object targets
-                // so minimal tests that rely on direct property lookup still pass.
-                proxy.set("__quench_proxy_target", target);
-                proxy.set("__quench_proxy_handler", Value::Object(handler_obj));
-            }
-            Ok(Value::Object(Rc::new(RefCell::new(proxy))))
-        },
-    );
+    let mut proxy_fn = crate::value::NativeFunction::new(create_proxy);
     proxy_fn.set_constructable(true);
     proxy_fn.name = "Proxy".to_string();
+    let _ = proxy_fn.set_property(
+        "revocable",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(proxy_revocable))),
+    );
     let proxy_ctor = Value::NativeFunction(Rc::new(proxy_fn));
     ctx.set_global("Proxy".to_string(), proxy_ctor);
 }

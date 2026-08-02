@@ -396,8 +396,19 @@ pub fn eval_sequence(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let mut last = Value::Undefined;
-    for e in exprs {
+    let skip = if crate::value::generator_replay::is_resuming_pending_yield() {
+        exprs
+            .iter()
+            .position(|expr| crate::value::generator_replay::count_yields_in_expr(expr) > 0)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    for e in exprs.iter().skip(skip) {
         last = crate::eval::expression::eval_expression(e, env, in_arrow_function)?;
+        if crate::interpreter::is_control_flow_set() || crate::interpreter::peek_generator_yield() {
+            break;
+        }
     }
     Ok(last)
 }

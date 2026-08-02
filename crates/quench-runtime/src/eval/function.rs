@@ -174,6 +174,11 @@ pub(crate) fn call_value_impl(
                 crate::interpreter::leave_async_function();
                 let proto = crate::builtins::promise::get_promise_proto();
                 match inner {
+                    Ok(val) if crate::eval::r#await::is_promise(&val) => {
+                        let promise = crate::builtins::promise::create_pending_promise();
+                        crate::builtins::promise::settle_resolve(&promise, val);
+                        Ok(Value::Object(promise))
+                    }
                     Ok(val) => {
                         crate::builtins::promise::promise_resolve_impl_static(vec![val], proto)
                     }

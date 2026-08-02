@@ -483,6 +483,7 @@ impl ClassValue {
         value: Value,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<(), JsError> {
+        let caller_env = Rc::clone(env);
         let eval_env = self.class_def_env_cell.borrow();
         let env = eval_env
             .as_ref()
@@ -520,6 +521,21 @@ impl ClassValue {
                 })
             };
         if crate::value::is_private_name_key(name) && !self.private_brand_matches(name) {
+            if let Some(ctor) = caller_env.borrow().get("TypeError") {
+                if let Ok(error) = crate::eval::call_value_with_this(
+                    ctor,
+                    vec![Value::String(
+                        "Cannot write private member to an object whose class did not declare it"
+                            .to_string(),
+                    )],
+                    Value::Undefined,
+                ) {
+                    crate::value::set_thrown_value(error);
+                    return Err(JsError::from(
+                        "TypeError: Cannot write private member to an object whose class did not declare it",
+                    ));
+                }
+            }
             let (_, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot write private member to an object whose class did not declare it",
                 "TypeError",

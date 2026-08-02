@@ -162,6 +162,7 @@ struct ForOfIteratorRunOwned {
     index: usize,
     pending: ForOfPending,
     per_iteration: bool,
+    completion_promise: Option<Rc<RefCell<Object>>>,
 }
 
 pub(crate) fn stage_stored_for_of_suspend(state: crate::value::generator::ForOfSuspend) {
@@ -258,6 +259,7 @@ pub fn eval_yield_delegate(
     continue_yield_delegate(
         crate::value::generator::YieldDelegateSuspend {
             iterator,
+            yielded_result: None,
             index: 0,
             await_values,
             abrupt_error: None,
@@ -319,12 +321,30 @@ fn continue_yield_delegate(
     } else {
         resume_val.clone()
     };
-    let (value, done) = crate::eval::object::take_iterator_step_with_value(
-        &state.iterator,
-        &mut state.index,
-        env,
-        next_value.clone(),
-    )?;
+    let (value, done) = if state.await_values || crate::interpreter::is_in_async_generator() {
+        crate::eval::object::take_iterator_step_with_value(
+            &state.iterator,
+            &mut state.index,
+            env,
+            next_value.clone(),
+        )?
+    } else {
+        let (result, done) = crate::eval::object::take_iterator_result_with_value(
+            &state.iterator,
+            &mut state.index,
+            env,
+            next_value.clone(),
+        )?;
+        if done {
+            (
+                crate::eval::member::eval_object_member(&result, "value", Some(env))?,
+                true,
+            )
+        } else {
+            state.yielded_result = Some(result);
+            (Value::Undefined, false)
+        }
+    };
     state.done_present = crate::eval::object::take_last_done_present();
     if done {
         return Ok(value);
@@ -365,7 +385,7 @@ fn eval_for_of_body_tail(
     crate::eval::statement::eval_statements(tail, env, false, in_arrow_function)
 }
 
-fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError> {
+fn eval_for_of_iterator(run: ForOfIteratorRun<'_>) -> Result<Value, JsError> {
     let per_iteration = run
         .loop_binding
         .is_some_and(|k| matches!(k, VarKind::Let | VarKind::Const));
@@ -382,6 +402,7 @@ fn eval_for_of_iterator(mut run: ForOfIteratorRun<'_>) -> Result<Value, JsError>
         index: run.index,
         pending: run.pending.clone(),
         per_iteration,
+        completion_promise: None,
     };
     eval_for_of_iterator_owned(owned)
 }
@@ -413,9 +434,13 @@ fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, J
                     (item, ForOfResume::default())
                 }
                 crate::eval::object::IteratorStepResult::Pending(promise) => {
-                    let pending = crate::builtins::promise::create_pending_promise();
+                    let completion_promise = run
+                        .completion_promise
+                        .get_or_insert_with(crate::builtins::promise::create_pending_promise)
+                        .clone();
                     let state_for_fulfill = Rc::new(RefCell::new(run.clone()));
                     let env_fulfill = Rc::clone(&run.env);
+                    let completion_for_fulfill = Rc::clone(&completion_promise);
                     let fulfill = Value::NativeFunction(Rc::new(
                         crate::value::NativeFunction::new(move |args| {
                             let arg = args.first().cloned().unwrap_or(Value::Undefined);
@@ -426,29 +451,60 @@ fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, J
                                 &env_fulfill,
                                 &mut state.index,
                             )?;
-                            let settled = if result.1 {
-                                Value::Undefined
+                            if result.1 {
+                                crate::builtins::promise::settle_resolve_inline(
+                                    &completion_for_fulfill,
+                                    Value::Undefined,
+                                );
                             } else {
                                 state.pending = Some((result.0, ForOfResume::default()));
-                                eval_for_of_iterator_owned(state.clone())?
-                            };
-                            Ok(settled)
+                                match eval_for_of_iterator_owned(state.clone()) {
+                                    Ok(Value::Object(promise))
+                                        if Rc::ptr_eq(&promise, &completion_for_fulfill) => {}
+                                    Ok(value) if crate::eval::r#await::is_promise(&value) => {
+                                        crate::builtins::promise::settle_resolve(
+                                            &completion_for_fulfill,
+                                            value,
+                                        );
+                                    }
+                                    Ok(value) => crate::builtins::promise::settle_resolve_inline(
+                                        &completion_for_fulfill,
+                                        value,
+                                    ),
+                                    Err(error) => {
+                                        let reason = crate::value::take_thrown_value()
+                                            .unwrap_or_else(|| Value::String(error.to_string()));
+                                        crate::builtins::promise::settle_reject(
+                                            &completion_for_fulfill,
+                                            reason,
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(Value::Undefined)
                         }),
                     ));
+                    let completion_for_reject = Rc::clone(&completion_promise);
                     let reject = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
                         move |args| {
                             let reason = args.first().cloned().unwrap_or(Value::Undefined);
-                            crate::value::set_thrown_value(reason.clone());
-                            Err(JsError("for-await iterator rejected".to_string()))
+                            crate::builtins::promise::settle_reject(&completion_for_reject, reason);
+                            Ok(Value::Undefined)
                         },
                     )));
+                    let reaction_target = crate::builtins::promise::create_pending_promise();
                     let reaction = crate::builtins::promise::create_callback_promise(
                         fulfill,
                         reject,
-                        Rc::clone(&pending),
+                        reaction_target,
                     );
                     crate::builtins::promise::queue_callback_on_promise(&promise, reaction);
-                    let result = Value::Object(pending);
+                    crate::builtins::promise::enqueue_promise_reactions(&promise);
+                    let result = Value::Object(completion_promise);
+                    crate::eval::r#await::stage_pending_await(match &result {
+                        Value::Object(promise) => Rc::clone(promise),
+                        _ => unreachable!(),
+                    });
                     crate::interpreter::set_control_flow(ControlFlow::Return(result.clone()));
                     return Ok(result);
                 }
@@ -824,10 +880,7 @@ pub fn eval_for_of(
         }
         Value::Generator(gen) => (
             crate::value::generator::generator_as_iterator_object(Rc::clone(gen)),
-            // Async generators already await their values inside next()
-            // (async_generator_next_fn); only sync generators need the
-            // Async-from-Sync value-await simulation.
-            await_of,
+            false,
         ),
         Value::Object(o) if await_of => {
             let (iterator, sync_fallback) = obtain_async_iterator(o, env)?;

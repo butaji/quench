@@ -2412,3 +2412,12 @@ fn await_using_async_dispose_literal_method_keeps_binding_through_async_test_wra
     .unwrap();
     assert_eq!(ctx.eval("same").unwrap(), Value::Boolean(true));
 }
+
+#[test]
+fn tagged_template_tail_call_completes_deep_recursion() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("'use strict'; var finished = false; function f(_, n) { if (n === 0) { finished = true; return; } return f`${n - 1}`; } f(null, 100000); finished")
+        .unwrap();
+    assert_eq!(value, Value::Boolean(true));
+}

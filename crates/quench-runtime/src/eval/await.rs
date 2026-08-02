@@ -15,6 +15,10 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+pub(crate) fn stage_pending_await(promise: Rc<RefCell<Object>>) {
+    LAST_PENDING_AWAIT.with(|cell| *cell.borrow_mut() = Some(promise));
+}
+
 /// Evaluator for await expressions within an async function context.
 /// Takes the already-evaluated argument value and returns it wrapped in
 /// Promise.resolve() semantics for chaining.

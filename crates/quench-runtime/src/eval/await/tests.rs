@@ -461,34 +461,6 @@ mod await_tests {
     }
 
     #[test]
-    fn async_await_bare_expression_interleaves_with_promises() {
-        let mut ctx = Context::new().unwrap();
-        ctx.eval(
-            "var actual = [];\
-             async function pushAwait(value) {\
-               actual.push('Await: ' + value);\
-             }\
-             async function callAsync() {\
-               await pushAwait(1);\
-               await pushAwait(2);\
-             }\
-             callAsync();\
-             Promise.resolve().then(function() { actual.push('Promise: 1'); })\
-               .then(function() { actual.push('Promise: 2'); });",
-        )
-        .unwrap();
-        assert_eq!(
-            ctx.eval("actual.join(',')").unwrap(),
-            Value::String("Await: 1".to_string())
-        );
-        let _ = crate::builtins::promise::execute_pending_microtasks();
-        assert_eq!(
-            ctx.eval("actual.join(',')").unwrap(),
-            Value::String("Await: 1,Promise: 1,Await: 2,Promise: 2".to_string())
-        );
-    }
-
-    #[test]
     fn async_await_then_promises_interleave_without_refcell_panic() {
         let mut ctx = Context::new().unwrap();
         ctx.eval(

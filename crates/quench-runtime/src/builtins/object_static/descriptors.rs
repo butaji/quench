@@ -910,18 +910,23 @@ fn define_module_namespace_property(
         unreachable!();
     };
     let namespace = namespace.borrow();
-    if !namespace.has_own(prop) {
+    if !namespace.has_own(prop) && !namespace.symbol_properties.contains_key(prop) {
         return reject_namespace_property();
     }
-    let symbol = prop.contains('\0');
+    let symbol = prop.contains('\0')
+        || prop == "Symbol.toStringTag"
+        || namespace.symbol_properties.contains_key(prop);
+    let current_value = namespace
+        .get_own_value(prop)
+        .or_else(|| namespace.symbol_properties.get(prop).cloned());
     let same_value = !has_value
         || flags.value.as_ref().is_some_and(|value| {
-            namespace
-                .get_own_value(prop)
-                .is_some_and(|current| crate::value::same_value(&current, value))
+            current_value
+                .as_ref()
+                .is_some_and(|current| crate::value::same_value(current, value))
         });
-    let writable = !has_writable || flags.writable != symbol;
-    let enumerable = !has_enumerable || flags.enumerable != symbol;
+    let writable = !has_writable || flags.writable == !symbol;
+    let enumerable = !has_enumerable || flags.enumerable == !symbol;
     let configurable = !has_configurable || !flags.configurable;
     let allowed = same_value && writable && enumerable && configurable;
     drop(namespace);

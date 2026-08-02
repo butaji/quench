@@ -214,6 +214,9 @@ pub fn eval_object_literal(
             }
             _ => {
                 let key_str = eval_property_key(key, &literal_env, in_arrow_function)?;
+                if crate::interpreter::peek_generator_yield() {
+                    return Ok(Value::Object(Rc::clone(&home)));
+                }
                 match value {
                     PropertyValue::Value(expr)
                     | PropertyValue::Shorthand(expr)

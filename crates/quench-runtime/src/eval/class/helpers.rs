@@ -742,7 +742,7 @@ pub fn class_member_storage_key(key: &str) -> String {
 pub fn method_function_name(
     key: &crate::ast::PropertyKey,
     key_str: &str,
-    env: &Rc<RefCell<Environment>>,
+    _env: &Rc<RefCell<Environment>>,
 ) -> Result<String, JsError> {
     if crate::value::is_private_element_key(key_str) {
         return Ok(crate::value::private_method_display_name(key_str));
@@ -752,19 +752,14 @@ pub fn method_function_name(
             return Ok(crate::value::private_method_display_name(s));
         }
     }
-    match key {
-        crate::ast::PropertyKey::Computed(expr) => {
-            let val = eval_expression(expr, env, false)?;
-            if crate::value::generator_replay::yield_pending() {
-                return Ok(String::new());
-            }
-            match val {
-                Value::Symbol(s) => Ok(s.display_name()),
-                _ => Ok(key_str.to_string()),
-            }
+    if matches!(key, crate::ast::PropertyKey::Computed(_)) {
+        if let Some((description, _)) = key_str.split_once('\0') {
+            return Ok((!description.is_empty())
+                .then(|| format!("[{description}]"))
+                .unwrap_or_default());
         }
-        _ => Ok(key_str.to_string()),
     }
+    Ok(key_str.to_string())
 }
 
 /// SetFunctionName for getter/setter with `"get "` / `"set "` prefix.

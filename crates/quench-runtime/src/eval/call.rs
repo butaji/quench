@@ -86,6 +86,9 @@ fn eval_call_after_special_case(
     in_arrow_function: bool,
 ) -> Result<Value, JsError> {
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
+    if crate::interpreter::is_control_flow_set() || crate::interpreter::peek_generator_yield() {
+        return Ok(args.last().cloned().unwrap_or(Value::Undefined));
+    }
     // Save the previous DIRECT_EVAL flag, then set for this call.
     // This ensures nested eval calls don't clobber the outer eval's flag.
     let prev_direct = crate::interpreter::is_direct_eval();

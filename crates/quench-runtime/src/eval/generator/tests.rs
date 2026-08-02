@@ -331,6 +331,90 @@ mod generator_tests {
     }
 
     #[test]
+    fn private_async_generator_return_value_is_preserved() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "var ctorPromise; function check(value, expected) { if (value !== expected) throw new Error(); } class C { async * #m() { return 42; } get ref() { return this.#m; } \
+             constructor() { check(typeof this.#m, 'function'); check(this.ref, this.#m); var p = this.#m().next(); ctorPromise = p.then(function(v) { check(v.value, 42); return v.value; }); } } \
+             var c = new C(); var other = new C(); var result; ctorPromise.then(function() { return c.ref().next(); }).then(function(v) { result = v.value; });",
+        )
+        .unwrap();
+        let _ = crate::builtins::promise::execute_pending_microtasks();
+        assert_eq!(ctx.get_global("result"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn async_generator_preserves_postfix_update_across_yields() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        ctx.eval(
+            "var seen = []; async function* values() { var current = 3; while (current > 0) yield current--; } var iterator = values(); iterator.next().then(function(v) { seen.push(v.value); iterator.next().then(function(v) { seen.push(v.value); iterator.next().then(function(v) { seen.push(v.value); iterator.next().then(function(v) { seen.push(v.done); }); }); }); });",
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        assert_eq!(
+            ctx.eval("seen.join(',')").unwrap(),
+            Value::String("3,2,1,true".into())
+        );
+    }
+
+    #[test]
+    fn computed_accessor_names_preserve_yield_resumes() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var assigned, obj; function* g() { obj = { get [yield]() { return 'get'; }, set [yield](value) { assigned = value; } }; } var iterator = g(); iterator.next(); iterator.next('first'); iterator.next('second');")
+            .unwrap();
+        assert_eq!(ctx.eval("obj.first").unwrap(), Value::String("get".into()));
+        ctx.eval("obj.second = 'set'").unwrap();
+        assert_eq!(ctx.eval("assigned").unwrap(), Value::String("set".into()));
+    }
+
+    #[test]
+    fn template_assignment_waits_for_yield_resume() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("var value; function* g() { value = `1${yield}3${4}5`; } var iterator = g(); var first = iterator.next(); var before = value; var second = iterator.next(2); String(before) + '|' + value + '|' + second.done")
+            .unwrap();
+        assert_eq!(result, Value::String("undefined|12345|true".into()));
+    }
+
+    #[test]
+    fn in_operand_assignment_waits_for_yield_resume() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("var object = { hit: true }; var value; function* g() { value = yield 'hit' in object; value = yield 'miss' in object; } var iterator = g(); var first = iterator.next(); var before = value; var second = iterator.next('second'); first.value === true && before === undefined && second.value === false && value === 'second'")
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn generator_return_does_not_replay_import_options_prefix() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("var before = 0; var after = 0; var iterator = function*() { before += 1, import('', yield), after += 1; }(); iterator.next(); var returned = iterator.return(595); String(returned.done) + ':' + returned.value + ':' + before + ':' + after")
+            .unwrap();
+        assert_eq!(result, Value::String("true:595:1:0".into()));
+    }
+
+    #[test]
+    fn generator_for_loop_advances_between_yields() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("function* g() { for (var i = 0; i < 3; i++) yield i; } var iterator = g(); [iterator.next().value, iterator.next().value, iterator.next().value, iterator.next().done].join(',')")
+            .unwrap();
+        assert_eq!(result, Value::String("0,1,2,true".into()));
+    }
+
+    #[test]
+    fn yield_delegate_does_not_read_value_until_done() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval("var calls = 0; var step = Object.defineProperty({ done: false }, 'value', { get: function() { calls++; } }); var source = { [Symbol.iterator]: function() { return { next: function() { return step; } }; } }; function* g() { yield* source; } var iterator = g(); iterator.next(); calls")
+            .unwrap();
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    #[test]
     fn async_generator_await_resumes_and_completes() {
         let mut ctx = Context::new().unwrap();
         ctx.eval(
@@ -356,5 +440,27 @@ mod generator_tests {
         .unwrap();
         let r = ctx.eval("actual.join(',')").unwrap();
         assert_eq!(r, Value::String("await,1,await,2".to_string()));
+    }
+
+    #[test]
+    fn async_generator_queues_concurrent_next_requests() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var values = []; async function* g() { yield Promise.resolve(42); yield Promise.resolve(39); } var iterator = g(); var a = iterator.next(); var b = iterator.next(); a.then(function(step) { values.push(step.value); }); b.then(function(step) { values.push(step.value); });")
+            .unwrap();
+        assert_eq!(ctx.eval("values.join(',')").unwrap(), Value::String("42,39".into()));
+    }
+
+    #[test]
+    fn async_generator_queues_concurrent_dynamic_import_yields() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../tests/test262/test/language/expressions/dynamic-import/for-await-resolution-and-error-agen-yield.js",
+        );
+        crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+        ctx.eval("var values = []; var lastError; async function* g() { yield import('./for-await-resolution-and-error-a_FIXTURE.js'); yield import('./for-await-resolution-and-error-b_FIXTURE.js'); yield import('./for-await-resolution-and-error-poisoned_FIXTURE.js'); } async function* h() { yield await import('./for-await-resolution-and-error-a_FIXTURE.js'); yield await import('./for-await-resolution-and-error-b_FIXTURE.js'); yield await import('./for-await-resolution-and-error-poisoned_FIXTURE.js'); } var iterator = g(); var other = h(); var a = iterator.next(); var b = iterator.next(); var c = iterator.next(); var d = other.next(); var e = other.next(); var f = other.next(); a.then(function(step) { values.push('a:' + step.value.x); }); b.then(function(step) { values.push('b:' + step.value.x); }); c.catch(function() {}); d.catch(function() {}); e.catch(function() {}); f.catch(function(error) { lastError = error; });")
+            .unwrap();
+        assert_eq!(ctx.eval("values.join(',')").unwrap(), Value::String("a:42,b:39".into()));
+        assert_eq!(ctx.eval("lastError").unwrap(), Value::String("foo".into()));
     }
 }

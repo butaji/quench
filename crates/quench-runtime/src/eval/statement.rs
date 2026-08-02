@@ -182,7 +182,27 @@ pub fn eval_statements(
         // Only update last_val when the statement produces a non-empty value.
         let is_empty_completion = is_empty_completion(stmt);
         if !is_empty_completion {
-            last_val = val;
+            last_val = val.clone();
+        }
+        let is_for_await = matches!(
+            stmt,
+            Statement::Expression(expr)
+                if matches!(expr.as_ref(), Expression::ForOf { await_of: true, .. })
+        );
+        let pending_await =
+            !is_last_stmt && crate::eval::r#await::take_last_pending_await().is_some();
+        if (pending_await || is_in_async_context() && is_for_await)
+            && crate::eval::r#await::is_promise(&val)
+            && !is_last_stmt
+        {
+            let resumed = crate::eval::r#await::await_statement(
+                val,
+                stmts[i + 1..].to_vec(),
+                Rc::clone(env),
+                in_arrow_function,
+            )?;
+            take_control_flow();
+            return Ok(resumed);
         }
         if crate::interpreter::peek_generator_yield() {
             return Ok(last_val);
@@ -196,6 +216,18 @@ pub fn eval_statements(
             continue;
         }
         match take_control_flow() {
+            Some(ControlFlow::Return(value))
+                if (pending_await || is_for_await)
+                    && crate::eval::r#await::is_promise(&value)
+                    && !is_last_stmt =>
+            {
+                return crate::eval::r#await::await_statement(
+                    value,
+                    stmts[i + 1..].to_vec(),
+                    Rc::clone(env),
+                    in_arrow_function,
+                );
+            }
             Some(ControlFlow::Return(val)) | Some(ControlFlow::Yield(val)) => {
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -355,9 +387,14 @@ fn eval_function_body_impl(
         }
 
         let stmt_val = eval_statement(stmt, env, false, in_arrow_function)?;
-        let suspended_await = is_in_async_context()
-            && crate::eval::r#await::is_promise(&stmt_val)
-            && crate::eval::r#await::take_last_pending_await().is_some();
+        let is_for_await = matches!(
+            stmt,
+            Statement::Expression(expr)
+                if matches!(expr.as_ref(), Expression::ForOf { await_of: true, .. })
+        );
+        let pending_await = crate::eval::r#await::take_last_pending_await().is_some();
+        let suspended_await = (pending_await || is_in_async_context() && is_for_await)
+            && crate::eval::r#await::is_promise(&stmt_val);
         if suspended_await {
             let resumed = crate::eval::r#await::await_statement(
                 stmt_val,
@@ -499,27 +536,18 @@ fn try_handle_tail_call(
     let Expression::Call { callee, arguments } = e.as_ref() else {
         return Ok(false);
     };
-    let (callee_val, this_val) = match callee.as_ref() {
-        Expression::Member { .. } => {
-            let (func, this, _) = crate::eval::object::eval_callee_with_this(callee, env)?;
-            (func, this)
-        }
-        _ => (
-            eval_expression(callee, env, in_arrow_function)?,
-            Value::Undefined,
-        ),
-    };
+    if matches!(callee.as_ref(), Expression::Member { .. }) {
+        return Ok(false);
+    }
+    let callee_val = eval_expression(callee, env, in_arrow_function)?;
     let Value::Function(function) = callee_val else {
         return Ok(false);
     };
     if function.is_async || function.is_generator {
         return Ok(false);
     }
-    let args: Vec<Value> = arguments
-        .iter()
-        .map(|arg| eval_expression(arg, env, in_arrow_function))
-        .collect::<Result<Vec<_>, _>>()?;
-    set_tail_call_signal(TailCallSignal::new(function, args, this_val));
+    let args = crate::eval::call::eval_call_arguments(arguments, env, in_arrow_function)?;
+    set_tail_call_signal(TailCallSignal::new(function, args, Value::Undefined));
     Ok(true)
 }
 
@@ -1319,6 +1347,9 @@ fn eval_while_with_labels(
     while to_bool(&eval_expression(condition, env, in_arrow_function)?) {
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
+        if crate::interpreter::peek_generator_yield() {
+            return Ok(body_val);
+        }
         // Per ES §13.7.3.6 step 2.g: if body's [[value]] is not empty, update V
         if !matches!(body_val, Value::Undefined) {
             completion = body_val;
@@ -1522,6 +1553,13 @@ fn eval_for(
         take_control_flow();
         let body_val = eval_statement(body, env, false, in_arrow_function)?;
         completion = body_val.clone();
+        if crate::interpreter::peek_generator_yield() {
+            if head_lexical {
+                env.borrow_mut().pop_scope();
+                env.borrow_mut().pop_scope();
+            }
+            return Ok(body_val);
+        }
         // Control flow handling — always pop PI before early exit
         match take_control_flow() {
             Some(cf @ ControlFlow::Break(_)) => {
@@ -1556,29 +1594,27 @@ fn eval_for(
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                 }
-                let while_stmt = Statement::While {
-                    condition: condition
-                        .clone()
-                        .unwrap_or_else(|| Box::new(Expression::Boolean(true))),
-                    body: Box::new(Statement::Block({
-                        let mut body_statements = Vec::new();
-                        body_statements.push(((*body).clone()));
-                        if let Some(update) = update {
-                            body_statements.push(Statement::Expression(update.clone()));
-                        }
-                        body_statements
-                    })),
+                let for_stmt = Statement::For {
+                    init: None,
+                    condition: condition.clone(),
+                    update: update.clone(),
+                    body: Box::new((*body).clone()),
                 };
-                let mut continuation = while_stmt;
+                let mut continuation = for_stmt;
                 for label in loop_labels.iter().rev() {
                     continuation = Statement::Labeled {
                         label: label.clone(),
                         body: Box::new(continuation),
                     };
                 }
+                let mut tail = Vec::new();
+                if let Some(update) = update {
+                    tail.push(Statement::Expression(update.clone()));
+                }
+                tail.push(continuation);
                 let awaited = crate::eval::r#await::await_statement(
                     val,
-                    vec![continuation],
+                    tail,
                     Rc::clone(env),
                     in_arrow_function,
                 )?;
@@ -1591,29 +1627,27 @@ fn eval_for(
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                 }
-                let while_stmt = Statement::While {
-                    condition: condition
-                        .clone()
-                        .unwrap_or_else(|| Box::new(Expression::Boolean(true))),
-                    body: Box::new(Statement::Block({
-                        let mut body_statements = Vec::new();
-                        body_statements.push(((*body).clone()));
-                        if let Some(update) = update {
-                            body_statements.push(Statement::Expression(update.clone()));
-                        }
-                        body_statements
-                    })),
+                let for_stmt = Statement::For {
+                    init: None,
+                    condition: condition.clone(),
+                    update: update.clone(),
+                    body: Box::new((*body).clone()),
                 };
-                let mut continuation = while_stmt;
+                let mut continuation = for_stmt;
                 for label in loop_labels.iter().rev() {
                     continuation = Statement::Labeled {
                         label: label.clone(),
                         body: Box::new(continuation),
                     };
                 }
+                let mut tail = Vec::new();
+                if let Some(update) = update {
+                    tail.push(Statement::Expression(update.clone()));
+                }
+                tail.push(continuation);
                 let awaited = crate::eval::r#await::await_statement(
                     val,
-                    vec![continuation],
+                    tail,
                     Rc::clone(env),
                     in_arrow_function,
                 )?;
@@ -1735,7 +1769,7 @@ fn eval_try(
             // Try succeeded - run finally if present, propagate control flow if needed
             if let Some(fin) = finalizer {
                 if crate::interpreter::is_in_async_function()
-                    && defer_disposal_until_pending_await(fin, env, in_arrow_function)
+                    && defer_disposal_until_pending_await(fin, &try_val, env, in_arrow_function)
                 {
                     return Ok(try_val);
                 }
@@ -1999,6 +2033,7 @@ fn finalizer_has_dispose(finalizer: &Statement) -> bool {
 
 fn defer_disposal_until_pending_await(
     finalizer: &Statement,
+    pending_value: &Value,
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> bool {
@@ -2012,7 +2047,14 @@ fn defer_disposal_until_pending_await(
     {
         return false;
     }
-    let Some(promise) = crate::eval::r#await::take_last_pending_await() else {
+    let promise = match pending_value {
+        Value::Object(promise) if crate::eval::r#await::is_promise(pending_value) => {
+            Some(Rc::clone(promise))
+        }
+        _ => None,
+    }
+    .or_else(crate::eval::r#await::take_last_pending_await);
+    let Some(promise) = promise else {
         return false;
     };
     take_async_disposal_evaluated();
@@ -2035,6 +2077,18 @@ fn rejected_promise_reason(value: &Value) -> Option<Value> {
     let object = object.borrow();
     let data = object.promise_data.as_ref()?;
     (data.state == crate::value::object::PromiseState::Rejected).then(|| data.result.clone())
+}
+
+fn module_namespace_cache(env: &Rc<RefCell<Environment>>) -> Rc<RefCell<Object>> {
+    if let Some(Value::Object(cache)) = env.borrow().get("__quench_module_namespaces__") {
+        return cache;
+    }
+    let cache = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    env.borrow_mut().define(
+        "__quench_module_namespaces__".to_string(),
+        Value::Object(Rc::clone(&cache)),
+    );
+    cache
 }
 
 /// Evaluate an ES module import statement
@@ -2070,8 +2124,13 @@ fn eval_import(
 
     // Handle namespace import: `import * as ns from 'mod'`
     if let Some(name) = namespace {
-        env.borrow_mut()
-            .define(name.clone(), Value::Object(module_exports.clone()));
+        let cache = module_namespace_cache(env);
+        let value = cache
+            .borrow()
+            .get(source)
+            .unwrap_or_else(|| Value::Object(Rc::clone(&module_exports)));
+        cache.borrow_mut().set(source, value.clone());
+        env.borrow_mut().define(name.clone(), value);
     }
 
     Ok(Value::Undefined)
@@ -2080,11 +2139,12 @@ fn eval_import(
 /// Get exports from a module (CommonJS-style lookup)
 pub(crate) fn dynamic_import(
     source: &str,
-    env: &Rc<RefCell<Environment>>,
+    caller_env: &Rc<RefCell<Environment>>,
     options: Option<&Value>,
     source_phase: bool,
     deferred: bool,
 ) -> Result<Value, JsError> {
+    let env = caller_env;
     if source_phase {
         let (reason, _) = crate::value::error::create_js_error_with_type(
             "Source phase import is not available",
@@ -2117,16 +2177,14 @@ pub(crate) fn dynamic_import(
     }
     if !deferred {
         if let Err(error) = initialize_fixture_module(source, env) {
-            if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
-                errors
-                    .borrow_mut()
-                    .set(source, Value::String(error.0.clone()));
-            }
             let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
                 let (value, _) =
                     crate::value::error::create_js_error_with_type(&error.0, "TypeError");
                 value
             });
+            if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
+                errors.borrow_mut().set(source, reason.clone());
+            }
             return Ok(Value::Object(
                 crate::builtins::promise::create_rejected_promise(reason)?,
             ));
@@ -2172,6 +2230,81 @@ pub(crate) fn dynamic_import(
                         crate::value::PropertyFlags {
                             value: None,
                             writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                    continue;
+                }
+                if matches!(import_type, ImportAttributeType::Module) {
+                    let source = source.to_string();
+                    let exported = key.clone();
+                    let getter = fixture_export_getter(&source, &exported, env);
+                    if getter.is_none() && crate::value::object::has_getter(&exports.borrow(), &key)
+                    {
+                        let exports = Rc::clone(&exports);
+                        let key_for_getter = key.clone();
+                        let getter = Value::NativeFunction(Rc::new(
+                            crate::value::NativeFunction::new(move |_| {
+                                crate::eval::member::eval_object_member(
+                                    &exports,
+                                    &key_for_getter,
+                                    None,
+                                )
+                            }),
+                        ));
+                        namespace.define_accessor(
+                            &key,
+                            Some(getter),
+                            None,
+                            crate::value::PropertyFlags {
+                                value: None,
+                                writable: false,
+                                enumerable: true,
+                                configurable: false,
+                            },
+                        );
+                        continue;
+                    }
+                    if getter.is_none() || !fixture_requires_refresh(&source, env) {
+                        if let Some(value) = exports.borrow().get_own_value(&key) {
+                            namespace.define(
+                                &key,
+                                value,
+                                crate::value::PropertyFlags {
+                                    value: None,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: false,
+                                },
+                            );
+                        }
+                        continue;
+                    }
+                    let env = Rc::clone(env);
+                    let getter = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+                        move |_| {
+                            if let Some(getter) = &getter {
+                                return crate::eval::function::call_value_with_this(
+                                    getter.clone(),
+                                    Vec::new(),
+                                    Value::Undefined,
+                                );
+                            }
+                            refresh_fixture_module_exports(&source, &env);
+                            Ok(get_module_exports(&source, &env)?
+                                .borrow()
+                                .get(&exported)
+                                .unwrap_or(Value::Undefined))
+                        },
+                    )));
+                    namespace.define_accessor(
+                        &key,
+                        Some(getter),
+                        None,
+                        crate::value::PropertyFlags {
+                            value: None,
+                            writable: false,
                             enumerable: true,
                             configurable: false,
                         },
@@ -2252,18 +2385,7 @@ pub(crate) fn dynamic_import(
             namespace.extensible = false;
             let namespace = Rc::new(RefCell::new(namespace));
             if matches!(import_type, ImportAttributeType::Module) {
-                let existing_cache = env.borrow().get("__quench_module_namespaces__");
-                let cache = match existing_cache {
-                    Some(Value::Object(cache)) => cache,
-                    _ => {
-                        let cache = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
-                        env.borrow_mut().define(
-                            "__quench_module_namespaces__".to_string(),
-                            Value::Object(Rc::clone(&cache)),
-                        );
-                        cache
-                    }
-                };
+                let cache = module_namespace_cache(env);
                 cache
                     .borrow_mut()
                     .set(source, Value::Object(Rc::clone(&namespace)));
@@ -2347,14 +2469,60 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
         }
         done.borrow_mut().set(source, Value::Boolean(true));
     }
-    let program = if script.contains("await ") {
-        crate::parser::parse_es_module(&script)?
-    } else {
-        crate::parser::parse_script(&script)?
+    let program = match crate::parser::parse_script(&script) {
+        Ok(program) => program,
+        Err(_) => crate::parser::parse_es_module(&script)?,
     };
-    let mut eval_env = Rc::clone(env);
+    let was_imported = env
+        .borrow()
+        .get("__quench_fixture_imported_modules__")
+        .and_then(|value| match value {
+            Value::Object(imported) => {
+                Some(imported.borrow().get(source) == Some(Value::Boolean(true)))
+            }
+            _ => None,
+        })
+        .unwrap_or(false);
+    let mut eval_env = Rc::new(RefCell::new(Environment::with_parent(Rc::clone(env))));
     crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false)?;
-    refresh_fixture_module_exports(source, env);
+    let current_needs_refresh = env
+        .borrow()
+        .get("__quench_modules__")
+        .and_then(|value| match value {
+            Value::Object(modules) => modules.borrow().get(source),
+            _ => None,
+        })
+        .and_then(|value| match value {
+            Value::Object(module) => Some(
+                module
+                    .borrow()
+                    .own_property_names()
+                    .into_iter()
+                    .any(|key| module.borrow().get_own_value(&key) == Some(Value::Undefined)),
+            ),
+            _ => None,
+        })
+        .unwrap_or(false);
+    if was_imported || current_needs_refresh {
+        refresh_fixture_module_exports(source, env);
+    }
+    if let Some(Value::Object(imported)) = env.borrow().get("__quench_fixture_imported_modules__") {
+        imported.borrow_mut().set(source, Value::Boolean(true));
+    }
+    let current_source = source.to_string();
+    let sources = env
+        .borrow()
+        .get("__quench_fixture_imported_modules__")
+        .and_then(|value| match value {
+            Value::Object(object) => Some(object.borrow().own_property_names()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for source in sources {
+        if source != current_source {
+            refresh_fixture_module_exports(&source, env);
+        }
+    }
     Ok(())
 }
 
@@ -2379,6 +2547,13 @@ fn refresh_fixture_module_exports(source: &str, env: &Rc<RefCell<Environment>>) 
     let Some(Value::Object(module)) = modules.borrow().get(&normalize_module_path(source)) else {
         return;
     };
+    let namespace =
+        env.borrow()
+            .get("__quench_module_namespaces__")
+            .and_then(|value| match value {
+                Value::Object(cache) => cache.borrow().get(source),
+                _ => None,
+            });
     for exported in module_bindings.borrow().own_property_names() {
         let Some(Value::String(local)) = module_bindings.borrow().get(&exported) else {
             continue;
@@ -2395,7 +2570,44 @@ fn refresh_fixture_module_exports(source: &str, env: &Rc<RefCell<Environment>>) 
                     configurable: false,
                 });
         module.borrow_mut().define(&exported, value, flags);
+        if let Some(Value::Object(namespace)) = &namespace {
+            namespace.borrow_mut().define(
+                &exported,
+                module.borrow().get(&exported).unwrap_or(Value::Undefined),
+                crate::value::PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                },
+            );
+        }
     }
+}
+
+fn fixture_export_getter(
+    source: &str,
+    exported: &str,
+    env: &Rc<RefCell<Environment>>,
+) -> Option<Value> {
+    let Value::Object(getters) = env.borrow().get("__quench_fixture_export_getters__")? else {
+        return None;
+    };
+    let Value::Object(mapping) = getters.borrow().get(source)? else {
+        return None;
+    };
+    let getter = mapping.borrow().get(exported);
+    getter
+}
+
+fn fixture_requires_refresh(source: &str, env: &Rc<RefCell<Environment>>) -> bool {
+    env.borrow()
+        .get("__quench_fixture_refresh_required__")
+        .and_then(|value| match value {
+            Value::Object(refresh) => refresh.borrow().get(source),
+            _ => None,
+        })
+        == Some(Value::Boolean(true))
 }
 
 #[derive(Clone, Copy)]
@@ -2539,30 +2751,62 @@ fn get_module_exports(
     source: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Rc<RefCell<Object>>, JsError> {
+    let current = env.borrow().get("__quench_current_module__");
+    let is_current = matches!(current, Some(Value::String(ref name)) if
+        name.trim_start_matches("./") == source.trim_start_matches("./"));
     // Check if we have a cached module in the global __quench_modules__
     let cache = env.borrow().get("__quench_modules__");
 
-    if let Some(Value::Object(cache_obj)) = &cache {
-        let key = normalize_module_path(source);
-        if let Some(Value::Object(exports_obj)) = cache_obj.borrow().get(&key) {
-            return Ok(exports_obj.clone());
-        }
-    }
-
-    // Check globalThis.__quench_modules__
-    let global = env.borrow().get("globalThis");
-    if let Some(Value::Object(global_obj)) = &global {
-        if let Some(Value::Object(modules_obj)) = global_obj.borrow().get("__quench_modules__") {
+    if !is_current {
+        if let Some(Value::Object(cache_obj)) = &cache {
             let key = normalize_module_path(source);
-            if let Some(Value::Object(exports_obj)) = modules_obj.borrow().get(&key) {
+            if let Some(Value::Object(exports_obj)) = cache_obj.borrow().get(&key) {
                 return Ok(exports_obj.clone());
             }
         }
     }
 
-    let current = env.borrow().get("__quench_current_module__");
-    if current == Some(Value::String(source.to_string())) {
+    // Check globalThis.__quench_modules__
+    let global = env.borrow().get("globalThis");
+    if !is_current {
+        if let Some(Value::Object(global_obj)) = &global {
+            if let Some(Value::Object(modules_obj)) = global_obj.borrow().get("__quench_modules__")
+            {
+                let key = normalize_module_path(source);
+                if let Some(Value::Object(exports_obj)) = modules_obj.borrow().get(&key) {
+                    return Ok(exports_obj.clone());
+                }
+            }
+        }
+    }
+
+    if is_current {
         let mut module = Object::new(ObjectKind::ModuleNamespace);
+        if let Some(Value::Object(bindings)) =
+            env.borrow().get("__quench_current_module_bindings__")
+        {
+            for exported in bindings.borrow().own_property_names() {
+                let Some(Value::String(local)) = bindings.borrow().get(&exported) else {
+                    continue;
+                };
+                let env = Rc::clone(env);
+                let getter =
+                    Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(move |_| {
+                        Ok(env.borrow().get(&local).unwrap_or(Value::Undefined))
+                    })));
+                module.define_accessor(
+                    &exported,
+                    Some(getter),
+                    None,
+                    crate::value::PropertyFlags {
+                        value: None,
+                        writable: false,
+                        enumerable: true,
+                        configurable: false,
+                    },
+                );
+            }
+        }
         if let Some(value) = env.borrow().get("default") {
             module.define(
                 "default",

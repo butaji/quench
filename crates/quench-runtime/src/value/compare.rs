@@ -303,6 +303,8 @@ fn object_to_primitive_for_compare(obj: &Rc<std::cell::RefCell<crate::value::Obj
 
 fn object_vs_primitive_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        (Value::Object(_), Value::Null | Value::Undefined)
+        | (Value::Null | Value::Undefined, Value::Object(_)) => false,
         (Value::Object(_), Value::Number(_) | Value::String(_)) => {
             match to_primitive_for_compare_strict(a) {
                 Ok(prim) => loose_eq(&prim, b),

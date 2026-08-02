@@ -607,11 +607,7 @@ fn test_assignment_to_global_function_property_returns_rhs() {
 fn test_export_default_expr_lowers_to_assignment() {
     let program = crate::parser::parse_es_module("export default 42;").unwrap();
     let crate::ast::Program::Script(stmts) = program;
-    assert!(
-        stmts.is_empty(),
-        "export default not yet lowered, got {} stmts",
-        stmts.len()
-    );
+    assert_eq!(stmts.len(), 1);
 }
 
 // ─── super in static init block ───────────────────────────────────
@@ -830,4 +826,13 @@ fn assignment_evaluates_computed_member_before_rhs() {
     )
     .unwrap();
     assert_eq!(result, Value::String("DummyError".into()));
+}
+
+#[test]
+fn typeof_revoked_callable_proxy_remains_function() {
+    let result = eval(
+        "var record = Proxy.revocable(function() {}, {}); record.revoke(); typeof record.proxy",
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("function".into()));
 }

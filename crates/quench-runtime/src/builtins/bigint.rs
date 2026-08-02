@@ -608,8 +608,8 @@ mod tests {
     #[test]
     fn test_bigint_prototype_to_string_and_length_name() {
         assert_eq!(
-            eval("BigInt.prototype.toString()"),
-            Value::String("0".to_string())
+            eval("try { BigInt.prototype.toString(); 'ok' } catch (e) { e.name }"),
+            Value::String("TypeError".to_string())
         );
         assert_eq!(
             eval("Object.getOwnPropertyDescriptor(BigInt.prototype, 'toString').writable"),
@@ -640,9 +640,7 @@ mod tests {
             Value::String("BigInt".to_string())
         );
         assert_eq!(
-            eval(
-                "Object.getOwnPropertyDescriptor(BigInt.prototype[Symbol.toStringTag], 'writable')"
-            ),
+            eval("Object.getOwnPropertyDescriptor(BigInt.prototype, Symbol.toStringTag).writable"),
             Value::Boolean(false)
         );
     }

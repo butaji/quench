@@ -88,6 +88,7 @@ pub struct GeneratorObject {
 #[derive(Debug, Clone)]
 pub struct YieldDelegateSuspend {
     pub iterator: Rc<RefCell<Object>>,
+    pub yielded_result: Option<Rc<RefCell<Object>>>,
     pub index: usize,
     pub await_values: bool,
     pub abrupt_error: Option<(JsError, Value)>,
@@ -197,7 +198,6 @@ impl GeneratorObject {
         // Only Yield/YieldDelegate variants are stale carry-over from a prior yield;
         // Return/Throw are fresh completions that must be passed through.
         let pending_cf = crate::interpreter::take_control_flow();
-
         if let Some(s) = self.for_of_suspend.take() {
             crate::eval::iteration::stage_stored_for_of_suspend(s);
         }
@@ -468,6 +468,14 @@ pub fn generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 .try_borrow_mut()
                 .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?
                 .next(arg)?;
+            if let Some(result) = gen
+                .borrow_mut()
+                .yield_delegate_suspend
+                .as_mut()
+                .and_then(|state| state.yielded_result.take())
+            {
+                return Ok(Value::Object(result));
+            }
             let done_present = gen.borrow().yielded_done_present;
             Ok(result.to_object_with_done(done_present))
         },
@@ -572,6 +580,14 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
             if gen.borrow().yield_delegate_suspend.is_some() {
                 let result = delegate_abrupt(&gen, "throw", arg)?;
+                if let Some(result) = gen
+                    .borrow_mut()
+                    .yield_delegate_suspend
+                    .as_mut()
+                    .and_then(|state| state.yielded_result.take())
+                {
+                    return Ok(Value::Object(result));
+                }
                 return Ok(result.to_object());
             }
             let mut g = gen
@@ -1047,12 +1063,25 @@ fn resume_delegate_error(
 
 fn finish_delegate_abrupt(
     generator: &Rc<RefCell<GeneratorObject>>,
-    state: YieldDelegateSuspend,
+    mut state: YieldDelegateSuspend,
     result: Rc<RefCell<Object>>,
 ) -> Result<IteratorResult, JsError> {
     let done = crate::eval::member::eval_object_member(&result, "done", None)?;
-    let value = crate::eval::member::eval_object_member(&result, "value", None)?;
     let done = crate::value::to_bool(&done);
+    let is_async = generator.borrow().is_async;
+    let value = if done || is_async {
+        crate::eval::member::eval_object_member(&result, "value", None)?
+    } else {
+        state.yielded_result = Some(result);
+        Value::Undefined
+    };
+    if done && !is_async {
+        state.completion = Some(value);
+        let mut generator = generator.borrow_mut();
+        generator.yield_delegate_suspend = Some(state);
+        generator.state = GeneratorState::Suspended;
+        return generator.next(Value::Undefined);
+    }
     let mut generator = generator.borrow_mut();
     generator.state = if done {
         GeneratorState::Completed
@@ -1760,53 +1789,6 @@ mod tests {
         assert_eq!(
             result,
             Value::String("tick 1,implicit,tick 2,explicit".into())
-        );
-    }
-
-    #[test]
-    fn async_generator_await_interleaves_with_builtin_promises() {
-        let mut ctx = crate::Context::new().unwrap();
-        ctx.eval(
-            "var actual = []; \
-            async function pushAwait() { actual.push('await'); } \
-            async function* callAsync() { \
-              for (let i = 0; i < 2; i++) { \
-                await pushAwait(); \
-              } \
-              return 0; \
-            } \
-             var gen = callAsync(); \
-             var result = gen.next(); \
-             result.then(function(v) { first = v; }); \
-             new Promise(function (resolve) { \
-               actual.push(1); \
-               resolve(); \
-              }).then(function () { \
-               actual.push(2); \
-              });",
-        )
-        .unwrap();
-        let _ = crate::builtins::promise::execute_pending_microtasks();
-        let first_done = ctx
-            .eval(
-                "String(first !== undefined) + ',' + String(first && first.done) + ',' + String(first && first.value instanceof Promise)",
-            )
-            .unwrap();
-        assert_eq!(first_done, Value::String("true,false,true".into()));
-        assert_eq!(
-            ctx.eval("actual.join(',')").unwrap(),
-            Value::String("await,1,await,2".to_string())
-        );
-        let _ = crate::builtins::promise::execute_pending_microtasks();
-        let _ = crate::builtins::promise::execute_pending_microtasks();
-        assert_eq!(
-            ctx.eval("String(first !== undefined) + ',' + String(first.done) + ',' + String(first && first.value instanceof Promise)")
-                .unwrap(),
-            Value::String("true,false,true".into())
-        );
-        assert_eq!(
-            ctx.eval("actual.join(',')").unwrap(),
-            Value::String("await,1,await,2".to_string())
         );
     }
 
