@@ -641,6 +641,13 @@ impl Scope {
         self.bindings.remove(name).is_some()
     }
 
+    pub fn remove_binding(&mut self, name: &str) {
+        self.bindings.remove(name);
+        self.declarations.remove(name);
+        self.var_kinds.remove(name);
+        self.function_names.remove(name);
+    }
+
     pub fn get_this(&self) -> Option<Value> {
         self.this_value.clone()
     }

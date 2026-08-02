@@ -215,6 +215,25 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     // Exit eval: restore label stack and clear barrier.
     crate::interpreter::pop_label_scope();
     crate::interpreter::clear_eval_barrier_depth();
+    if crate::interpreter::is_direct_eval() {
+        let ast::Program::Script(body) = &program;
+        let eval_env =
+            crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
+        for statement in body {
+            if let ast::Statement::VarDeclaration {
+                kind: ast::VarKind::Let | ast::VarKind::Const,
+                name,
+                ..
+            } = statement
+            {
+                eval_env
+                    .borrow()
+                    .current_scope()
+                    .borrow_mut()
+                    .remove_binding(name);
+            }
+        }
+    }
     CURRENT_CONTEXT.with(|cell| {
         *cell.borrow_mut() = prev_ctx;
     });
@@ -754,5 +773,14 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("eval('function NaN(){}')").is_err());
+    }
+
+    #[test]
+    fn direct_eval_lexical_bindings_do_not_leak() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("eval('let evalOnly = 3'); typeof evalOnly")
+            .is_ok_and(|value| crate::value::to_js_string(&value) == "undefined"));
     }
 }
