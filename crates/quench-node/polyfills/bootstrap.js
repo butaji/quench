@@ -224,8 +224,19 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
 globalThis.clearTimeout = (id) => {
   if (id) id.active = false;
 };
-globalThis.setInterval = (callback, _delay = 0, ...args) =>
-  setTimeout(callback, _delay, ...args);
+globalThis.setInterval = (callback, _delay = 0, ...args) => {
+  const id = { active: true };
+  const schedule = () => {
+    queueMicrotask(() => {
+      if (!id.active) return;
+      if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      callback(...args);
+      if (id.active) schedule();
+    });
+  };
+  schedule();
+  return id;
+};
 globalThis.clearInterval = globalThis.clearTimeout;
 globalThis.__nodeTimers = {
   setTimeout,
