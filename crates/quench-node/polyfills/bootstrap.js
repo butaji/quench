@@ -4201,6 +4201,13 @@ globalThis.__nodeOs = {
     errno: { ENOENT: -2, EACCES: -13 },
   },
 };
+const __nodePrototypeNames = new WeakMap();
+const __nodeSetPrototypeOf = Object.setPrototypeOf;
+Object.setPrototypeOf = (object, prototype) => {
+  if (prototype === null && object && object.constructor?.name)
+    __nodePrototypeNames.set(object, object.constructor.name);
+  return __nodeSetPrototypeOf(object, prototype);
+};
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
@@ -4248,7 +4255,8 @@ globalThis.__nodeUtil = {
           const entries = Object.keys(value).map(
             (key) => `${key}: ${inspect(value[key])}`,
           );
-          return `[Object: null prototype] {${
+          const name = __nodePrototypeNames.get(value) || "Object";
+          return `[${name}: null prototype] {${
             entries.length ? ` ${entries.join(", ")} ` : ""
           }}`;
         }
