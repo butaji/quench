@@ -2503,6 +2503,28 @@ class NodeReadable extends NodeEventEmitter {
     if (!this._chunks || this._chunks.length === 0) return null;
     if (size !== undefined && size <= 0) return null;
     const chunk = this._chunks.shift();
+    if (
+      size !== undefined &&
+      !this.readableObjectMode &&
+      chunk &&
+      chunk.length < size
+    ) {
+      const parts = [chunk];
+      let length = chunk.length;
+      while (this._chunks.length && length < size) {
+        const next = this._chunks.shift();
+        const remaining = size - length;
+        if (next.length > remaining) {
+          parts.push(next.subarray(0, remaining));
+          this._chunks.unshift(next.subarray(remaining));
+          length = size;
+        } else {
+          parts.push(next);
+          length += next.length;
+        }
+      }
+      if (parts.length > 1) return this._decode(NodeBuffer.concat(parts));
+    }
     if (size !== undefined && chunk && chunk.length > size) {
       this._chunks.unshift(chunk.subarray(size));
       return this._decode(chunk.subarray(0, size));
