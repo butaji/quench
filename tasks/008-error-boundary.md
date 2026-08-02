@@ -35,3 +35,5 @@ Missing-file `statSync()` metadata is covered by
 `tests/node-compat/stage-419/fs-stat-enoent.js`.
 Synchronous `fs.readFile()` callback validation is covered by
 `tests/node-compat/stage-479/fs-readfile-callback-validation.js`.
+Synchronous `fs.mkdtemp()` callback validation is covered by
+`tests/node-compat/stage-480/fs-mkdtemp-callback-validation.js`.

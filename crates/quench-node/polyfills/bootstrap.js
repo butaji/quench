@@ -4503,6 +4503,13 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
 };
 globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
   if (typeof options === "function") callback = options;
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   queueMicrotask(() => {
     try {
       callback(null, globalThis.__nodeFs.mkdtempSync(prefix));
