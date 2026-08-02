@@ -15,3 +15,9 @@ Reduce eager JavaScript setup while retaining the same Node-visible APIs.
 
 - Focused startup and module-loading stages pass.
 - All moved initialization remains observable at the same API boundary.
+
+## Status
+
+Crypto compatibility construction is lazy behind a public-compatible proxy and
+covered by `tests/node-compat/stage-384/bootstrap-lazy-crypto.js`. Other
+optional bootstrap sections remain in progress.
