@@ -1211,7 +1211,8 @@ class NodeBuffer extends Uint8Array {
     const bytes = Array.from(this.subarray(0, limit), (byte) =>
       byte.toString(16).padStart(2, "0"),
     );
-    return `<Buffer ${bytes.join(" ")}${limit < this.length ? ` ... ${this.length - limit} more byte${this.length - limit === 1 ? "" : "s"}` : ""}>`;
+    const label = this instanceof NodeBuffer ? "Buffer" : "Uint8Array";
+    return `<${label} ${bytes.join(" ")}${limit < this.length ? ` ... ${this.length - limit} more byte${this.length - limit === 1 ? "" : "s"}` : ""}>`;
   }
   toLocaleString(...args) {
     return this.toString(...args);

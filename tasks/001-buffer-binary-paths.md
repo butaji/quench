@@ -26,3 +26,5 @@ Buffer compatibility tests. This is covered by
 Buffer's internal helper names are hidden from reflection on the public
 prototype while preserving generic method behavior and `instanceof Buffer`.
 This is covered by `tests/node-compat/stage-498`.
+Generic Buffer inspection now labels plain `Uint8Array` receivers correctly,
+covered by `tests/node-compat/stage-499`.
