@@ -2400,11 +2400,13 @@ globalThis.__nodeFs.promises = {
       ),
     ),
   readFile: (value, options) =>
-    new Promise((resolve, reject) =>
-      globalThis.__nodeFs.readFile(value, options, (error, data) =>
-        error ? reject(error) : resolve(data),
-      ),
-    ),
+    value && typeof value === "object" && typeof value.fd === "number"
+      ? value.readFile(options)
+      : new Promise((resolve, reject) =>
+          globalThis.__nodeFs.readFile(value, options, (error, data) =>
+            error ? reject(error) : resolve(data),
+          ),
+        ),
   writeFile: (value, data, options) =>
     new Promise((resolve, reject) =>
       globalThis.__nodeFs.writeFile(value, data, options, (error) =>
@@ -2656,6 +2658,7 @@ const __nodeOpenWithFilePosition = globalThis.__nodeFs.promises.open;
 globalThis.__nodeFs.promises.open = async (...args) => {
   const handle = await __nodeOpenWithFilePosition(...args);
   const previousWriteFile = handle.writeFile;
+  const previousReadFile = handle.readFile;
   handle.pull = (transformOrOptions, maybeOptions) => {
     if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
       const error = new Error("The file handle is not in a valid state");
@@ -2754,6 +2757,17 @@ globalThis.__nodeFs.promises.open = async (...args) => {
       return;
     }
     return previousWriteFile(data, options);
+  };
+  handle.readFile = async (options) => {
+    if (options && options.signal)
+      await new Promise((resolve) => queueMicrotask(resolve));
+    if (options && options.signal && options.signal.aborted) {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      throw error;
+    }
+    return previousReadFile(options);
   };
   return handle;
 };
