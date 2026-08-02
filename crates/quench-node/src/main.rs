@@ -94,6 +94,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         ctx.globals().set("__quench_pid", std::process::id())?;
         ctx.globals().set("__quench_exec_path", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
         ctx.globals().set("__quench_argv", env::args().collect::<Vec<String>>())?;
+        ctx.globals().set("__quench_env_keys", std::env::vars().map(|(key, _)| key).collect::<Vec<String>>())?;
         ctx.globals().set("__quench_platform", std::env::consts::OS)?;
         ctx.globals().set("__quench_arch", std::env::consts::ARCH)?;
         ctx.globals().set("__quench_tmpdir", std::env::temp_dir().to_string_lossy().into_owned())?;
