@@ -336,7 +336,22 @@ pub fn get_prototype_from_class_val(val: &Value) -> Option<Rc<RefCell<Object>>> 
     }
 }
 
-fn private_member_type_error() -> JsError {
+fn private_member_type_error(env: &Rc<RefCell<Environment>>) -> JsError {
+    if let Some(ctor) = env.borrow().get("TypeError") {
+        if let Ok(error) = crate::eval::call_value_with_this(
+            ctor,
+            vec![Value::String(
+                "Cannot read private member from an object whose class did not declare it"
+                    .to_string(),
+            )],
+            Value::Undefined,
+        ) {
+            crate::value::set_thrown_value(error);
+            return JsError::from(
+                "TypeError: Cannot read private member from an object whose class did not declare it",
+            );
+        }
+    }
     let (_, js_err) = create_js_error_with_type(
         "Cannot read private member from an object whose class did not declare it",
         "TypeError",
@@ -369,7 +384,7 @@ fn eval_class_private_member_get(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     if !class_private_brand_matches(class, prop_name) {
-        return Err(private_member_type_error());
+        return Err(private_member_type_error(env));
     }
     if let Some(val) = class.get_static_field(prop_name) {
         return Ok(val);
@@ -413,7 +428,7 @@ fn eval_class_private_member_get(
         let _ = crate::interpreter::take_control_flow();
         return result;
     }
-    Err(private_member_type_error())
+    Err(private_member_type_error(env))
 }
 
 fn eval_private_member_get(
@@ -424,7 +439,7 @@ fn eval_private_member_get(
     match obj_val {
         Value::Object(o) => eval_object_member(o, prop_name, Some(env)),
         Value::Class(class) => eval_class_private_member_get(class, prop_name, env),
-        _ => Err(private_member_type_error()),
+        _ => Err(private_member_type_error(env)),
     }
 }
 

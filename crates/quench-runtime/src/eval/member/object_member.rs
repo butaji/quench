@@ -77,7 +77,7 @@ pub fn eval_object_member(
         ));
     }
     if crate::value::is_private_name_key(prop_name) {
-        return eval_private_name_get(&private_field_object(o), prop_name);
+        return eval_private_name_get(&private_field_object(o), prop_name, env);
     }
     if let Some((handler, target)) = proxy_handler_and_target(o) {
         let symbol_key = Value::String(prop_name.to_string());
@@ -93,7 +93,7 @@ pub fn eval_object_member_value(
 ) -> Result<Value, JsError> {
     if let Value::String(s) = prop_name {
         if crate::value::is_private_name_key(s) {
-            return eval_private_name_get(&private_field_object(o), s);
+            return eval_private_name_get(&private_field_object(o), s, env);
         }
     }
     if let Some((handler, target)) = proxy_handler_and_target(o) {
@@ -272,7 +272,11 @@ fn eval_object_member_inner_value(
     Ok(Value::Undefined)
 }
 
-fn eval_private_name_get(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Value, JsError> {
+fn eval_private_name_get(
+    o: &Rc<RefCell<Object>>,
+    prop_name: &str,
+    env: Option<&Rc<RefCell<Environment>>>,
+) -> Result<Value, JsError> {
     let obj = o.borrow();
     if let Some(getter_storage) = obj.get_getter(prop_name) {
         let getter_clone = getter_storage.clone();
@@ -281,6 +285,21 @@ fn eval_private_name_get(o: &Rc<RefCell<Object>>, prop_name: &str) -> Result<Val
     }
     if let Some(val) = obj.properties.get(prop_name) {
         return Ok(val.clone());
+    }
+    if let Some(ctor) = env.and_then(|e| e.borrow().get("TypeError")) {
+        if let Ok(error) = crate::eval::call_value_with_this(
+            ctor,
+            vec![Value::String(
+                "Cannot read private member from an object whose class did not declare it"
+                    .to_string(),
+            )],
+            Value::Undefined,
+        ) {
+            crate::value::set_thrown_value(error);
+            return Err(JsError::from(
+                "TypeError: Cannot read private member from an object whose class did not declare it",
+            ));
+        }
     }
     let (_, js_err) = create_js_error_with_type(
         "Cannot read private member from an object whose class did not declare it",
