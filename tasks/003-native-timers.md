@@ -37,3 +37,5 @@ Performance entry retrieval and clearing are covered by
 `tests/node-compat/stage-405/timers-promises-interval.js`.
 Pre-aborted `timers/promises.setTimeout()` signals are covered by
 `tests/node-compat/stage-406/timers-promises-abort.js`.
+Pre-aborted `timers/promises.setInterval()` signals are covered by
+`tests/node-compat/stage-407/timers-promises-interval-abort.js`.
