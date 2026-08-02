@@ -4238,7 +4238,8 @@ globalThis.__nodeUtil = {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
       if (value instanceof Date) return value.toISOString();
-      if (typeof value === "string") return value;
+      if (typeof value === "string")
+        return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
       if (typeof value === "symbol") return String(value);
       if (Array.isArray(value))
         return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
