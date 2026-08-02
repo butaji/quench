@@ -2420,6 +2420,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableEnded = false;
     this.writableFinished = false;
     this.writableCorked = 0;
+    this._corkedChunks = [];
   }
   destroy(error) {
     if (this.destroyed) return this;
@@ -2434,13 +2435,18 @@ class NodeWritable extends NodeEventEmitter {
   }
   uncork() {
     if (this.writableCorked > 0) this.writableCorked--;
+    if (this.writableCorked === 0) {
+      for (const chunk of this._corkedChunks) this.emit("data", chunk);
+      this._corkedChunks = [];
+    }
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
     const size =
       typeof chunk === "string" ? chunk.length : chunk?.byteLength || 1;
     this.writableLength += size;
-    this.emit("data", chunk);
+    if (this.writableCorked > 0) this._corkedChunks.push(chunk);
+    else this.emit("data", chunk);
     if (callback)
       queueMicrotask(() => {
         this.writableLength = Math.max(0, this.writableLength - size);
