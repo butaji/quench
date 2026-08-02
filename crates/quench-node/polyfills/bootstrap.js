@@ -139,6 +139,11 @@ globalThis.__nodeAssert.ifError = (error) => { if (error) throw error; };
 globalThis.__nodeAssert.doesNotThrow = (fn, message) => {
   try { fn(); } catch (error) { throw new Error(message || `Unexpected exception: ${error}`); }
 };
+globalThis.__nodeAssert.rejects = (promiseOrFn, expected) => Promise.resolve().then(() => typeof promiseOrFn === 'function' ? promiseOrFn() : promiseOrFn).then(
+  () => { throw new Error('Missing expected rejection'); },
+  (error) => { if (expected && expected.name && error.name !== expected.name) throw error; return error; },
+);
+globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) => Promise.resolve().then(() => typeof promiseOrFn === 'function' ? promiseOrFn() : promiseOrFn).catch((error) => { throw new Error(message || `Unexpected rejection: ${error}`); });
 globalThis.__nodeAssert.match = (value, expression) => {
   if (!expression.test(String(value))) throw new Error('Value did not match expression');
 };
