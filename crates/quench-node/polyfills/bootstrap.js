@@ -2265,7 +2265,12 @@ class NodeReadable extends NodeEventEmitter {
     return stream;
   }
   pipe(destination) {
-    this.on("data", (chunk) => destination.write(chunk));
+    this.on("data", (chunk) => {
+      if (destination.write(chunk) === false) {
+        this.pause();
+        destination.once("drain", () => this.resume());
+      }
+    });
     this.on("end", () => destination.end());
     return destination;
   }
