@@ -2397,6 +2397,9 @@ class NodeReadable extends NodeEventEmitter {
     if (!this._ended) queueMicrotask(this._pump);
     return this;
   }
+  isPaused() {
+    return this._paused;
+  }
 
   async *[Symbol.asyncIterator]() {
     for (const chunk of this._chunks || []) yield chunk;
