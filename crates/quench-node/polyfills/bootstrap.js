@@ -247,7 +247,7 @@ globalThis.__nodeFs = {
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
   readFileSync: (value) => globalThis.__quench_fs_read_file(String(value)),
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
-  statSync: () => ({ isFile: () => true, isDirectory: () => false }),
+  statSync: (value) => { const kind = globalThis.__quench_fs_kind(String(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
   mkdirSync: (value) => globalThis.__quench_fs_mkdir(String(value)),
   readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
