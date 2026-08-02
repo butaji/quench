@@ -240,6 +240,8 @@ globalThis.__nodeTimersPromises = {
 };
 
 const processListeners = {};
+process.stdout ||= { isTTY: false };
+process.stderr ||= { isTTY: false };
 process.on = (event, listener) => {
   (processListeners[event] ||= []).push(listener);
   return process;
@@ -1631,23 +1633,35 @@ const nodeFsPath = (value) => {
 };
 
 globalThis.__nodeAssert = (value, message) => {
-  if (!value) throw new Error(message || "Assertion failed");
+  if (!value) __nodeAssertionFailure(message);
+};
+globalThis.__nodeAssert.AssertionError = class AssertionError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AssertionError";
+  }
+};
+const __nodeAssertionFailure = (message) => {
+  if (message instanceof Error) throw message;
+  throw new globalThis.__nodeAssert.AssertionError(
+    message || "Assertion failed",
+  );
 };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
   if (!Object.is(actual, expected))
-    throw new Error(message || `${actual} !== ${expected}`);
+    __nodeAssertionFailure(message || `${actual} !== ${expected}`);
 };
 globalThis.__nodeAssert.equal = (actual, expected, message) => {
   if (actual != expected)
-    throw new Error(message || `${actual} != ${expected}`);
+    __nodeAssertionFailure(message || `${actual} != ${expected}`);
 };
 globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
   if (Object.is(actual, expected))
-    throw new Error(message || `${actual} === ${expected}`);
+    __nodeAssertionFailure(message || `${actual} === ${expected}`);
 };
 globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
   if (actual == expected)
-    throw new Error(message || `${actual} == ${expected}`);
+    __nodeAssertionFailure(message || `${actual} == ${expected}`);
 };
 globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
 const __nodeAssertNormalize = (value, seen = new WeakSet()) => {
@@ -1677,7 +1691,7 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
     JSON.stringify(__nodeAssertNormalize(actual)) !==
     JSON.stringify(__nodeAssertNormalize(expected))
   ) {
-    throw new Error(message || "values differ");
+    __nodeAssertionFailure(message || "values differ");
   }
 };
 globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
@@ -1685,7 +1699,7 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
     JSON.stringify(__nodeAssertNormalize(actual)) ===
     JSON.stringify(__nodeAssertNormalize(expected))
   )
-    throw new Error(message || "values are deeply equal");
+    __nodeAssertionFailure(message || "values are deeply equal");
 };
 globalThis.__nodeAssert.throws = (fn, expected) => {
   let thrown = false;
@@ -5193,6 +5207,7 @@ globalThis.require = (specifier) => {
         async link() {}
         async evaluate() {}
       },
+      createContext: (sandbox = {}) => sandbox,
       runInThisContext: (code) => (0, eval)(String(code)),
       runInNewContext: (code, sandbox = {}) => {
         const previous = {};
