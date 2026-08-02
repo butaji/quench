@@ -6457,6 +6457,24 @@ globalThis.require = (specifier) => {
       once: globalThis.__nodeEventEmitter.once,
       on: globalThis.__nodeEventEmitter.on,
     };
+  if (name === "async_hooks") {
+    const resource = {};
+    return {
+      executionAsyncResource: () => resource,
+      executionAsyncId: () => 1,
+      triggerAsyncId: () => 0,
+      createHook: (callbacks = {}) => ({
+        enable() {
+          if (typeof callbacks.init === "function")
+            callbacks.init(1, "ROOT", 0, resource);
+          return this;
+        },
+        disable() {
+          return this;
+        },
+      }),
+    };
+  }
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
