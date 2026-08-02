@@ -280,7 +280,12 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let mut failed = 0;
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
-        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "js") {
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|e| e == "js" || e == "mjs")
+        {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
             match run_source(&source) {
