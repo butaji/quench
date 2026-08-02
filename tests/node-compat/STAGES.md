@@ -66,3 +66,4 @@ these small fixtures isolate the currently implemented contract.
 | 56 | process executable identity | `tools/run-node-tests.sh --stage 56` |
 | 57 | host command-line `process.argv` | `tools/run-node-tests.sh --stage 57` |
 | 58 | mutable host-backed `process.env` | `tools/run-node-tests.sh --stage 58` |
+| 59 | process environment enumeration | `tools/run-node-tests.sh --stage 59` |
