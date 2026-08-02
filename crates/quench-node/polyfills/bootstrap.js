@@ -2609,13 +2609,17 @@ globalThis.__nodeFs.promises.open = async (...args) => {
       data =
         chunks.length === 1
           ? chunks[0]
-          : chunks.reduce(
-              (all, chunk) =>
-                all +
-                (typeof chunk === "string"
-                  ? chunk
-                  : NodeBuffer.from(chunk).toString("utf8")),
-              "",
+          : NodeBuffer.concat(
+              chunks.map((chunk) =>
+                typeof chunk === "string"
+                  ? NodeBuffer.from(
+                      chunk,
+                      typeof options === "string"
+                        ? options
+                        : options && options.encoding,
+                    )
+                  : NodeBuffer.from(chunk),
+              ),
             );
     }
     if (
