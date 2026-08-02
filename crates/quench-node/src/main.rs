@@ -51,6 +51,16 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 .into_owned(),
         )?;
         ctx.globals().set(
+            "__quench_cwd_get",
+            Func::from(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().into_owned()),
+        )?;
+        ctx.globals().set(
+            "__quench_chdir",
+            Func::from(|path: String| -> rquickjs::Result<()> {
+                std::env::set_current_dir(path).map_err(|_| rquickjs::Error::new_from_js("process", "chdir failed"))
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_env_get",
             Func::from(|key: String| std::env::var(key).ok()),
         )?;
