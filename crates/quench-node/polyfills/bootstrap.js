@@ -153,7 +153,7 @@ class NodeBuffer extends Uint8Array {
     }
     return new NodeTextDecoder().decode(this);
   }
-  equals(other) { return other && this.length === other.length && this.every((value, index) => value === other[index]); }
+  equals(other) { if (typeof other === 'string') other = NodeBuffer.from(other); return other && this.length === other.length && this.every((value, index) => value === other[index]); }
 }
 globalThis.Buffer = NodeBuffer;
 const nodeAtob = (value) => NodeBuffer.from(String(value), 'base64').toString();
