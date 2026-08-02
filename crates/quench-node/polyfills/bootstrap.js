@@ -211,7 +211,28 @@ process.emitWarning = (warning, options = {}) => {
 };
 
 class NodeBuffer extends Uint8Array {
-  static from(value, encoding) {
+  static from(value, encoding, length) {
+    if (value instanceof ArrayBuffer) {
+      let offset = Number(encoding);
+      if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
+      offset = Math.trunc(offset);
+      if (offset < 0 || offset > value.byteLength) {
+        const error = new RangeError('"offset" is outside of buffer bounds');
+        error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+        throw error;
+      }
+      let size =
+        length === undefined
+          ? value.byteLength - offset
+          : Math.trunc(Number(length));
+      if (!Number.isFinite(size) || Number.isNaN(size)) size = 0;
+      if (size < 0 || offset + size > value.byteLength) {
+        const error = new RangeError('"length" is outside of buffer bounds');
+        error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+        throw error;
+      }
+      return new NodeBuffer(value, offset, size);
+    }
     if (typeof value === "string") {
       if (encoding === "hex") {
         const output = new NodeBuffer(Math.floor(value.length / 2));
