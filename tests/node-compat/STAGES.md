@@ -102,3 +102,4 @@ these small fixtures isolate the currently implemented contract.
 | 92 | fd-based `fchmod` compatibility | `tools/run-node-tests.sh --stage 92` |
 | 93 | sync, async, and promise `fs.access` | `tools/run-node-tests.sh --stage 93` |
 | 94 | `appendFileSync` data validation | `tools/run-node-tests.sh --stage 94` |
+| 95 | foundational promise-based `appendFile` | `tools/run-node-tests.sh --stage 95` |
