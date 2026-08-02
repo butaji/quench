@@ -33,6 +33,18 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
 globalThis.clearTimeout = (id) => { if (id) id.active = false; };
 globalThis.setInterval = (callback, _delay = 0, ...args) => setTimeout(callback, _delay, ...args);
 globalThis.clearInterval = globalThis.clearTimeout;
+globalThis.__nodeTimers = {
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  setImmediate,
+  clearImmediate,
+};
+globalThis.__nodeTimersPromises = {
+  setTimeout: (_delay = 0, value) => new Promise((resolve) => queueMicrotask(() => resolve(value))),
+  setImmediate: (value) => new Promise((resolve) => queueMicrotask(() => resolve(value))),
+};
 
 const processListeners = {};
 process.on = (event, listener) => {
@@ -298,6 +310,8 @@ globalThis.require = (specifier) => {
   if (name === 'querystring') return globalThis.__nodeQuerystring;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === 'stream') return globalThis.__nodeStream;
+  if (name === 'timers') return globalThis.__nodeTimers;
+  if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
