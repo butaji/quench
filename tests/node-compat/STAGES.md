@@ -49,3 +49,4 @@ these small fixtures isolate the currently implemented contract.
 | 39 | host-backed `process.chdir` | `tools/run-node-tests.sh --stage 39` |
 | 40 | POSIX `process.umask` | `tools/run-node-tests.sh --stage 40` |
 | 41 | Rust-backed process high-resolution time | `tools/run-node-tests.sh --stage 41` |
+| 42 | Rust-backed process identity | `tools/run-node-tests.sh --stage 42` |
