@@ -21,4 +21,5 @@ Allow Node `fs` APIs to move binary data directly between Rust and `Buffer`/`Arr
 Behavioral Buffer round-trip coverage is present in
 `tests/node-compat/stage-363/fs-buffer-roundtrip.js`. Native byte transport
 is now used by `readFileSync`/`writeFileSync`; positioned and file-handle
-paths still remain in progress.
+paths now use byte transport as well. Append-mode and legacy encoding branches
+remain in progress.
