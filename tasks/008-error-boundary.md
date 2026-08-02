@@ -37,3 +37,5 @@ Synchronous `fs.readFile()` callback validation is covered by
 `tests/node-compat/stage-479/fs-readfile-callback-validation.js`.
 Synchronous `fs.mkdtemp()` callback validation is covered by
 `tests/node-compat/stage-480/fs-mkdtemp-callback-validation.js`.
+Synchronous `fs.mkdtempSync()` prefix validation is covered by
+`tests/node-compat/stage-481/fs-mkdtemp-prefix-validation.js`.
