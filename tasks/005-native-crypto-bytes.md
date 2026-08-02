@@ -54,3 +54,5 @@ Finalized hash and HMAC copy validation is covered by
 `tests/node-compat/stage-486/crypto-copy-finalized.js`.
 `randomBytes()` size and callback validation is covered by
 `tests/node-compat/stage-487/crypto-random-bytes-validation.js`.
+`randomFillSync()` buffer and range validation is covered by
+`tests/node-compat/stage-488/crypto-random-fill-validation.js`.
