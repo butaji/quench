@@ -733,6 +733,8 @@ globalThis.__nodeFs.promises = {
   symlink: (target, link, type) => new Promise((resolve, reject) => globalThis.__nodeFs.symlink(target, link, type, (error) => error ? reject(error) : resolve())),
   readlink: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readlink(value, options, (error, result) => error ? reject(error) : resolve(result))),
   realpath: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.realpathSync(value, options)),
+  fstat: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd)),
+  fchmod: (fd, mode) => Promise.resolve().then(() => globalThis.__nodeFs.fchmodSync(fd, mode)),
   readv: (fd, buffers, position) => Promise.resolve().then(() => { const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position); return { bytesRead, buffers }; }),
   writev: (fd, buffers, position) => Promise.resolve().then(() => { const bytesWritten = globalThis.__nodeFs.writevSync(fd, buffers, position); return { bytesWritten, buffers }; }),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
