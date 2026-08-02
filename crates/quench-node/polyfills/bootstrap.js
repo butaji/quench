@@ -401,8 +401,20 @@ class NodeBuffer extends Uint8Array {
     }
     if (value && value.type === "Buffer" && Array.isArray(value.data))
       return new NodeBuffer(value.data);
-    if (Array.isArray(value) || ArrayBuffer.isView(value))
-      return new NodeBuffer(value);
+    if (
+      value &&
+      !ArrayBuffer.isView(value) &&
+      value.buffer instanceof ArrayBuffer
+    )
+      return NodeBuffer.from(value.buffer);
+    if (ArrayBuffer.isView(value)) {
+      if (value.length === undefined) return new NodeBuffer(value);
+      const output = new NodeBuffer(value.length);
+      for (let index = 0; index < value.length; index++)
+        output[index] = Number(value[index]) & 0xff;
+      return output;
+    }
+    if (Array.isArray(value)) return new NodeBuffer(value);
     if (value && typeof value === "object" && "length" in value) {
       const length = Math.max(0, Math.trunc(Number(value.length)) || 0);
       const output = new NodeBuffer(length);
@@ -772,6 +784,13 @@ class NodeBuffer extends Uint8Array {
     if (value === null || value === undefined || typeof value === "number")
       pattern = new NodeBuffer([Number(value) || 0]);
     else if (typeof value === "string") {
+      if (encoding !== undefined && typeof encoding !== "string") {
+        const error = new TypeError(
+          'The "encoding" argument must be of type string',
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
       if (
         String(encoding).toLowerCase() === "hex" &&
         (value.length % 2 || !/^[0-9a-f]*$/i.test(value))
@@ -788,7 +807,14 @@ class NodeBuffer extends Uint8Array {
         value.byteLength,
       );
     else pattern = NodeBuffer.from(String(value));
-    if (pattern.length === 0) return this;
+    if (pattern.length === 0) {
+      if (ArrayBuffer.isView(value)) {
+        const error = new TypeError('The "value" argument is invalid');
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return this;
+    }
     for (let i = start; i < end; i++)
       this[i] = pattern[(i - start) % pattern.length];
     return this;
@@ -1473,6 +1499,7 @@ for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
     NodeBuffer.prototype[`writeUInt${name}`];
 }
 NodeBuffer.prototype.readUintLE = NodeBuffer.prototype.readUIntLE;
+NodeBuffer.prototype.toLocaleString = NodeBuffer.prototype.toString;
 NodeBuffer.prototype.readUintBE = NodeBuffer.prototype.readUIntBE;
 NodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;
 NodeBuffer.prototype.writeUintBE = NodeBuffer.prototype.writeUIntBE;
