@@ -287,6 +287,16 @@ class NodeBuffer extends Uint8Array {
         return output;
       }
       if (
+        encoding === "ascii" ||
+        encoding === "latin1" ||
+        encoding === "binary"
+      ) {
+        const output = new NodeBuffer(value.length);
+        for (let i = 0; i < value.length; i++)
+          output[i] = value.charCodeAt(i) & 0xff;
+        return output;
+      }
+      if (
         encoding === "ucs2" ||
         encoding === "ucs-2" ||
         encoding === "utf16le" ||
@@ -441,6 +451,7 @@ class NodeBuffer extends Uint8Array {
     const finish = Math.max(start, index(end, this.length));
     const output = new NodeBuffer(finish - start);
     for (let i = start; i < finish; i++) output[i - start] = this[i];
+    Object.defineProperty(output, "parent", { value: this.parent });
     return output;
   }
   slice(start = 0, end = this.length) {
@@ -569,7 +580,21 @@ class NodeBuffer extends Uint8Array {
       this[i] = pattern[(i - start) % pattern.length];
     return this;
   }
-  toString(encoding = "utf8") {
+  toString(encoding = "utf8", start = 0, end = this.length) {
+    if (start !== 0 || end !== this.length) {
+      const normalize = (value, fallback) => {
+        const number = Math.trunc(Number(value));
+        return Number.isNaN(number)
+          ? fallback
+          : Math.max(
+              0,
+              Math.min(this.length, number < 0 ? this.length + number : number),
+            );
+      };
+      const first = normalize(start, 0);
+      const last = normalize(end, this.length);
+      return this.subarray(first, Math.max(first, last)).toString(encoding);
+    }
     encoding = String(encoding).toLowerCase();
     if (!NodeBuffer.isEncoding(encoding)) {
       const error = new TypeError(`Unknown encoding: ${encoding}`);
@@ -603,7 +628,12 @@ class NodeBuffer extends Uint8Array {
       return Array.from(this, (byte) => String.fromCharCode(byte & 0x7f)).join(
         "",
       );
-    if (encoding === "utf16le" || encoding === "ucs2" || encoding === "ucs-2") {
+    if (
+      encoding === "utf16le" ||
+      encoding === "utf-16le" ||
+      encoding === "ucs2" ||
+      encoding === "ucs-2"
+    ) {
       let result = "";
       for (let i = 0; i + 1 < this.length; i += 2)
         result += String.fromCharCode(this[i] | (this[i + 1] << 8));
@@ -792,6 +822,13 @@ class NodeBuffer extends Uint8Array {
   }
   write(value, offset = 0, length, encoding = "utf8") {
     if (typeof offset === "string") {
+      if (length !== undefined) {
+        const error = new TypeError(
+          'The "offset" argument must be of type number',
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
       encoding = offset;
       offset = 0;
       length = undefined;
@@ -1147,6 +1184,7 @@ class NodeBuffer extends Uint8Array {
 }
 globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
+    if (typeof args[0] === "number") return new NodeBuffer(args[0]);
     return NodeBuffer.from(...args);
   },
 });
