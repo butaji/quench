@@ -58,6 +58,19 @@ fn async_await_dynamic_import_rejection_reaches_catch() {
 }
 
 #[test]
+fn async_arrow_await_dynamic_import_rejection_reaches_catch() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval(
+        "var result = 'pending'; (async () => { await import('missing-module'); })()\
+         .catch(error => result = error.name);",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+}
+
+#[test]
 fn async_await_fixture_evaluation_rejection_reaches_catch() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
