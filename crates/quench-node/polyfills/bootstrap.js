@@ -2942,10 +2942,12 @@ globalThis.__nodeUtil = {
         const value = args[index++];
         if (token === "%s") return String(value);
         if (token === "%d" || token === "%f") {
+          if (typeof value === "bigint" && token === "%d") return `${value}n`;
           const number = Number(value);
           return Object.is(number, -0) ? "-0" : number.toString();
         }
         if (token === "%i") {
+          if (typeof value === "bigint") return `${value}n`;
           const number = Number.parseInt(value, 10);
           return Object.is(number, -0) ? "-0" : number.toString();
         }
