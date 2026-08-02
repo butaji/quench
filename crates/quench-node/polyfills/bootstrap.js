@@ -2367,6 +2367,8 @@ class NodeReadable extends NodeEventEmitter {
           this.emit("data", this._chunks.shift());
         if (!this._chunks.length && this._ended) this._emitEnd();
       });
+    } else if (event === "readable" && this._chunks.length) {
+      queueMicrotask(() => this.emit("readable"));
     }
     return this;
   }
