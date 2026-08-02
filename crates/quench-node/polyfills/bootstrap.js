@@ -360,7 +360,7 @@ class NodeTransform extends NodeWritable {
 }
 globalThis.__nodeStream = { Readable: NodeReadable, Writable: NodeWritable, Transform: NodeTransform, PassThrough: NodeTransform };
 globalThis.__nodeFs = {
-  constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
+  constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4, UV_FS_COPYFILE_EXCL: 1, UV_FS_COPYFILE_FICLONE: 2, UV_FS_COPYFILE_FICLONE_FORCE: 4 },
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value, options) => {
@@ -452,6 +452,11 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
+  if (typeof mode === 'function') { callback = mode; mode = 0; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  queueMicrotask(() => { try { globalThis.__nodeFs.copyFileSync(from, to); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.realpath = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
@@ -700,7 +705,7 @@ globalThis.require = (specifier) => {
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter, once: globalThis.__nodeEventEmitter.once, on: globalThis.__nodeEventEmitter.on };
   if (name === 'stream') return globalThis.__nodeStream;
   if (name === 'worker_threads') return { isMainThread: true };
-  if (name === 'internal/test/binding') return { internalBinding: (_name) => ({ fstat: () => undefined }) };
+  if (name === 'internal/test/binding') return { internalBinding: (binding) => binding === 'uv' ? { UV_ENOENT: -2, UV_EEXIST: -17 } : ({ fstat: () => undefined }) };
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
