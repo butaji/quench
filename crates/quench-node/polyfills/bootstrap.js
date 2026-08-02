@@ -108,6 +108,33 @@ globalThis.__nodeCommon = {
   noop: () => {},
   expectWarning: () => {},
 };
+class NodeEventEmitter {
+  constructor() { this._events = {}; }
+  on(event, listener) { (this._events[event] ||= []).push(listener); return this; }
+  addListener(event, listener) { return this.on(event, listener); }
+  once(event, listener) {
+    const wrapped = (...args) => { this.removeListener(event, wrapped); listener(...args); };
+    return this.on(event, wrapped);
+  }
+  emit(event, ...args) {
+    const listeners = this._events[event] || [];
+    listeners.slice().forEach((listener) => listener(...args));
+    return listeners.length > 0;
+  }
+  removeListener(event, listener) {
+    this._events[event] = (this._events[event] || []).filter((item) => item !== listener);
+    return this;
+  }
+  off(event, listener) { return this.removeListener(event, listener); }
+  removeAllListeners(event) {
+    if (event === undefined) this._events = {};
+    else delete this._events[event];
+    return this;
+  }
+  listeners(event) { return (this._events[event] || []).slice(); }
+  listenerCount(event) { return (this._events[event] || []).length; }
+}
+globalThis.__nodeEventEmitter = NodeEventEmitter;
 globalThis.__nodeFs = {
   existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
@@ -120,7 +147,7 @@ globalThis.require = (specifier) => {
   if (name === 'assert') return globalThis.__nodeAssert;
   if (name === 'path' || name === 'path/posix') return globalThis.__nodePath;
   if (name === 'util') return { format: globalThis.__nodeFormat };
-  if (name === 'events') return { EventEmitter: class {} };
+  if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
