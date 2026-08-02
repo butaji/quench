@@ -2713,7 +2713,7 @@ globalThis.__nodeFs = {
     UV_FS_COPYFILE_FICLONE_FORCE: 4,
   },
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
-  mkdtempSync: (prefix) => {
+  mkdtempSync: (prefix, options) => {
     if (
       typeof prefix !== "string" &&
       !(prefix instanceof Uint8Array) &&
@@ -2721,6 +2721,17 @@ globalThis.__nodeFs = {
     ) {
       const error = new TypeError(
         'The "prefix" argument must be of type string or an instance of Buffer or URL',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      options !== undefined &&
+      typeof options !== "string" &&
+      (typeof options !== "object" || options === null)
+    ) {
+      const error = new TypeError(
+        'The "options" argument must be a string or an object',
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
@@ -4515,6 +4526,18 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
 };
 globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
   if (typeof options === "function") callback = options;
+  if (
+    options !== undefined &&
+    typeof options !== "function" &&
+    typeof options !== "string" &&
+    (typeof options !== "object" || options === null)
+  ) {
+    const error = new TypeError(
+      'The "options" argument must be a string or an object',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (
     typeof prefix !== "string" &&
     !(prefix instanceof Uint8Array) &&
