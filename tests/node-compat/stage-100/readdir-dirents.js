@@ -3,4 +3,5 @@ const path = '/tmp/quench-node-stage-100';
 
 fs.mkdirSync(path, { recursive: true });
 fs.writeFileSync(`${path}/file`, 'x');
-if (!fs.readdirSync(path).includes('file')) throw new Error('directory entry mismatch');
+const entry = fs.readdirSync(path, { withFileTypes: true })[0];
+if (!entry || !entry.isFile() || entry.isDirectory()) throw new Error('Dirent mismatch');

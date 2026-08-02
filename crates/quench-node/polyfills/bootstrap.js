@@ -434,7 +434,7 @@ globalThis.__nodeFs = {
       throw error;
     }
   },
-  readdirSync: (value) => {
+  readdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
     let kind;
     try { kind = globalThis.__quench_fs_kind(path); } catch (_) { kind = undefined; }
@@ -443,8 +443,9 @@ globalThis.__nodeFs = {
       error.code = 'ENOTDIR'; error.syscall = 'scandir'; error.path = path;
       throw error;
     }
-    const entries = globalThis.__quench_fs_readdir(path);
-    return entries;
+    const entries = globalThis.__quench_fs_readdir(path).sort();
+    if (!options || !options.withFileTypes) return entries;
+    return entries.map((name) => { const dirent = new globalThis.__nodeFs.Dirent(name, (() => { try { return globalThis.__quench_fs_kind(`${path}/${name}`) === 'directory'; } catch (_) { return false; } })()); dirent.parentPath = path; return dirent; });
   },
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
@@ -548,6 +549,11 @@ globalThis.__nodeStats.prototype.isBlockDevice = function () { return false; };
 globalThis.__nodeStats.prototype.isCharacterDevice = function () { return false; };
 globalThis.__nodeStats.prototype.isFIFO = function () { return false; };
 globalThis.__nodeStats.prototype.isSymbolicLink = function () { return false; };
+globalThis.__nodeFs.Dirent = class Dirent {
+  constructor(name, directory = false) { this.name = name; this._directory = directory; }
+  isFile() { return !this._directory; } isDirectory() { return this._directory; } isSocket() { return false; }
+  isBlockDevice() { return false; } isCharacterDevice() { return false; } isFIFO() { return false; } isSymbolicLink() { return false; }
+};
 for (const method of ['statSync', 'lstatSync']) globalThis.__nodeFs[method] = globalThis.__nodeFs.statSync;
 globalThis.__nodeFs.stat = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
@@ -593,7 +599,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   queueMicrotask(() => { let fd; try { fd = globalThis.__nodeFs.openSync(path, flags, mode); } catch (error) { callback(error); return; } callback(null, fd); });
 };
 globalThis.__nodeFs.readdir = (value, options, callback) => {
-  if (typeof options === 'function') callback = options;
+  if (typeof options === 'function') { callback = options; options = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
   queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.readdirSync(path, options); } catch (error) { callback(error); return; } callback(null, result); });
