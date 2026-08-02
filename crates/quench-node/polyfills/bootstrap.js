@@ -1736,14 +1736,21 @@ globalThis.__nodeAssert.match = (value, expression) => {
 };
 globalThis.__nodeAssert.strict = globalThis.__nodeAssert;
 
+const __nodePathArg = (value) => {
+  if (typeof value !== "string") {
+    const error = new TypeError('The "path" argument must be of type string');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return value;
+};
 globalThis.__nodePath = {
   sep: "/",
-  isAbsolute: (value) => String(value).startsWith("/"),
+  isAbsolute: (value) => __nodePathArg(value).startsWith("/"),
   normalize: (value) => {
-    const absolute = String(value).startsWith("/");
-    const parts = String(value)
-      .split("/")
-      .filter((part) => part && part !== ".");
+    const input = __nodePathArg(value);
+    const absolute = input.startsWith("/");
+    const parts = input.split("/").filter((part) => part && part !== ".");
     const output = [];
     parts.forEach((part) => {
       if (part === ".." && output.length && output[output.length - 1] !== "..")
@@ -1753,23 +1760,31 @@ globalThis.__nodePath = {
     const result = (absolute ? "/" : "") + output.join("/");
     return result || (absolute ? "/" : ".");
   },
-  basename: (value) => String(value).replace(/\\/g, "/").split("/").pop(),
+  basename: (value) =>
+    __nodePathArg(value).replace(/\\/g, "/").split("/").pop(),
   dirname: (value) => {
-    const parts = String(value).replace(/\\/g, "/").split("/");
+    const parts = __nodePathArg(value).replace(/\\/g, "/").split("/");
     parts.pop();
     return parts.join("/") || ".";
   },
   extname: (value) => {
-    const name = globalThis.__nodePath.basename(value);
+    const name = globalThis.__nodePath.basename(__nodePathArg(value));
     const i = name.lastIndexOf(".");
     return i > 0 ? name.slice(i) : "";
   },
-  join: (...parts) => globalThis.__nodePath.normalize(parts.join("/")),
+  join: (...parts) =>
+    globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),
   resolve: (...parts) =>
-    globalThis.__nodePath.normalize(parts.filter(Boolean).join("/")),
+    globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),
   relative: (from, to) => {
-    const a = globalThis.__nodePath.normalize(from).split("/").filter(Boolean);
-    const b = globalThis.__nodePath.normalize(to).split("/").filter(Boolean);
+    const a = globalThis.__nodePath
+      .normalize(__nodePathArg(from))
+      .split("/")
+      .filter(Boolean);
+    const b = globalThis.__nodePath
+      .normalize(__nodePathArg(to))
+      .split("/")
+      .filter(Boolean);
     while (a.length && a[0] === b[0]) {
       a.shift();
       b.shift();
