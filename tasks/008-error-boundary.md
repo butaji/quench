@@ -29,3 +29,5 @@ Unknown read encodings are covered by
 `tests/node-compat/stage-379/error-unknown-encoding.js`.
 Unknown file descriptors are covered by
 `tests/node-compat/stage-387/fs-close-invalid-fd.js`.
+Asynchronous descriptor closure is covered by
+`tests/node-compat/stage-390/fs-close-callback.js`.
