@@ -536,14 +536,37 @@ const __nodeWinPath = {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const input = value.replace(/\//g, "\\").replace(/\\{2,}/g, "\\");
+    const input = value.replace(/\//g, "\\");
     let root = "";
-    if (/^[A-Za-z]:\\/.test(input)) root = input.slice(0, 3);
+    if (input.startsWith("\\\\")) {
+      const parts = input.split("\\");
+      if (parts.length >= 4 && parts[2] && parts[3])
+        root = `\\\\${parts[2]}\\${parts[3]}\\`;
+      else root = "\\";
+    } else if (/^[A-Za-z]:\\/.test(input)) root = input.slice(0, 3);
     else if (/^[A-Za-z]:/.test(input)) root = input.slice(0, 2);
     else if (input.startsWith("\\")) root = "\\";
+    const hadTrailingSeparator = input.length > 0 && /[\\]$/.test(input);
     const trimmed = input.replace(/[\\]+$/, "") || root;
+    if (/^[A-Za-z]:$/.test(input))
+      return { root: input, dir: "", base: "", ext: "", name: "" };
+    if (/^[A-Za-z]:\.$/.test(input))
+      return {
+        root: input.slice(0, 2),
+        dir: "",
+        base: ".",
+        ext: "",
+        name: ".",
+      };
+    if (root.startsWith("\\\\") && trimmed === root.slice(0, -1))
+      return { root, dir: root, base: "", ext: "", name: "" };
     const index = trimmed.lastIndexOf("\\");
-    const dir = index >= 0 ? trimmed.slice(0, index) || root : "";
+    const dir =
+      index >= 0
+        ? (hadTrailingSeparator
+            ? trimmed.slice(0, index + 1)
+            : trimmed.slice(0, index)) || root
+        : "";
     const base = index >= 0 ? trimmed.slice(index + 1) : trimmed;
     const dot = base.lastIndexOf(".");
     const ext = dot > 0 ? base.slice(dot) : "";
@@ -571,6 +594,7 @@ const __nodeWinPath = {
     const base = parts.base || `${parts.name || ""}${extension}`;
     const dir = parts.dir || parts.root || "";
     if (!dir) return base;
+    if (/^[A-Za-z]:$/.test(dir)) return `${dir}${base}`;
     if (dir.endsWith("\\")) return `${dir}${base}`;
     return `${dir}\\${base}`;
   },
