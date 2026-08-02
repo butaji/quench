@@ -6102,6 +6102,24 @@ const __createNodeCrypto = () => ({
     return output;
   },
   randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
+    if (!ArrayBuffer.isView(buffer)) {
+      const error = new TypeError(
+        'The "buffer" argument must be an instance of ArrayBufferView',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(size) ||
+      offset < 0 ||
+      size < 0 ||
+      offset + size > buffer.byteLength
+    ) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const bytes = globalThis.__quench_random_bytes(Number(size));
     buffer.set(bytes, offset);
     return buffer;
