@@ -4148,7 +4148,7 @@ globalThis.__nodeUtil = {
     isBigInt64Array: (value) => value instanceof BigInt64Array,
     isBigUint64Array: (value) => value instanceof BigUint64Array,
     isProxy: (value) => __nodeProxySet.has(value),
-    isExternal: (value) => value && value._externalStream !== undefined,
+    isExternal: (value) => value && value.__quench_external === true,
   },
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
@@ -4417,7 +4417,7 @@ globalThis.require = (specifier) => {
             ? {
                 JSStream: class JSStream {
                   constructor() {
-                    this._externalStream = {};
+                    this._externalStream = { __quench_external: true };
                   }
                 },
               }
