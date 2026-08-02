@@ -4499,7 +4499,9 @@ globalThis.__nodeQuerystring = {
         return values.map((item) => {
           const encodedKey = globalThis.__nodeQuerystring.escape(key);
           const encodedValue =
-            item === null || typeof item === "object"
+            item === null ||
+            typeof item === "object" ||
+            typeof item === "function"
               ? ""
               : globalThis.__nodeQuerystring.escape(item);
           return `${encodedKey}${eq}${encodedValue}`;
