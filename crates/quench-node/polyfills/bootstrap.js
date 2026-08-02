@@ -4489,6 +4489,28 @@ globalThis.__nodeUtil = {
       }
       return String(value);
     };
+    const structured = (value, depth = 0) => {
+      const indent = "  ".repeat(depth);
+      const childIndent = "  ".repeat(depth + 1);
+      if (typeof value === "function") {
+        const name = value.name ? `: ${value.name}` : "";
+        return `[Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
+      }
+      if (Array.isArray(value))
+        return `[\n${value.map((item) => `${childIndent}${structured(item, depth + 1)}`).join(",\n")}\n${indent}]`;
+      if (value && typeof value === "object") {
+        const entries = Object.keys(value).map(
+          (key) => `${childIndent}${key}: ${structured(value[key], depth + 1)}`,
+        );
+        return `{\n${entries.join(",\n")}\n${indent}}`;
+      }
+      return typeof value === "string" ? `'${value}'` : inspect(value);
+    };
+    const containsFunction = (value) =>
+      typeof value === "function" ||
+      (value &&
+        typeof value === "object" &&
+        Object.values(value).some((entry) => containsFunction(entry)));
     if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
@@ -4542,6 +4564,13 @@ globalThis.__nodeUtil = {
         if (token === "%j") return JSON.stringify(value);
         if (token === "%o" && typeof value === "string")
           return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+        if (
+          token === "%o" &&
+          value &&
+          typeof value === "object" &&
+          containsFunction(value)
+        )
+          return structured(value);
         return token === "%o" ? inspect(value) : String(value);
       }) +
       args
