@@ -321,6 +321,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             error
         })?;
         while ctx.execute_pending_job() {}
+        if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
+            if !detail.is_empty() {
+                eprintln!("Asynchronous JavaScript exception: {detail}");
+                return Err(rquickjs::Error::new_from_js("async", "exception"));
+            }
+        }
         ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }").map_err(|error| {
             eprintln!("Node harness assertion failure: {error:?}");
             error
