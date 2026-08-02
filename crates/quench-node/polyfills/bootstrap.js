@@ -268,6 +268,10 @@ globalThis.__nodeCommon = {
     (globalThis.__nodeCallChecks ||= []).push(wrapped);
     return wrapped;
   },
+  mustSucceed: (fn = () => {}) => globalThis.__nodeCommon.mustCall((error, ...args) => {
+    if (error) throw error;
+    return fn(...args);
+  }),
   mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
   expectWarning: (_type, _message) => {},
@@ -281,9 +285,10 @@ globalThis.__quench_verify_calls = () => {
   }
 };
 globalThis.__nodeTmpdir = {
-  refresh: () => {},
-  resolve: (name = '') => globalThis.__nodePath.join('/tmp', String(name)),
-  fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join('/tmp', String(name))}`),
+  path: `/tmp/quench-node-${process.pid}`,
+  refresh: () => { try { globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path); } catch (_) {} },
+  resolve: (name = '') => globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
+  fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))}`),
 };
 class NodeEventEmitter {
   constructor() { this._events = {}; }
