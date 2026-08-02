@@ -4255,7 +4255,7 @@ globalThis.__nodeOs = {
   type: () => "Quench",
   endianness: () => "LE",
   hostname: () => globalThis.__quench_hostname,
-  uptime: () => (Date.now() - __nodeStartedAt) / 1000,
+  uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),
   getPriority: () => __nodePriority,
   setPriority: (pid, priority) => {
     __nodePriority = Number(priority === undefined ? pid : priority);
