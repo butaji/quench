@@ -750,7 +750,7 @@ pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsErro
 #[must_use = "iterator.return() errors must be handled per ES spec §7.4.6"]
 pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
-    let return_call = invoke_iterator_return(iterator, iter_this);
+    let return_call = invoke_iterator_return(iterator, iter_this, vec![]);
     match return_call {
         IteratorReturnResult::Skipped => None,
         IteratorReturnResult::Throw(err) => Some(err),
@@ -758,9 +758,12 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     }
 }
 
-pub fn call_iterator_return_done(iterator: &Rc<RefCell<Object>>) -> Result<Option<bool>, JsError> {
+pub fn call_iterator_return_done(
+    iterator: &Rc<RefCell<Object>>,
+    argument: Value,
+) -> Result<Option<bool>, JsError> {
     let iter_this = Value::Object(Rc::clone(iterator));
-    match invoke_iterator_return(iterator, iter_this) {
+    match invoke_iterator_return(iterator, iter_this, vec![argument]) {
         IteratorReturnResult::Skipped => Ok(None),
         IteratorReturnResult::Throw(error) => Err(error),
         IteratorReturnResult::Value(value) => {
@@ -789,9 +792,10 @@ enum IteratorReturnResult {
 fn invoke_iterator_return(
     iterator: &Rc<RefCell<Object>>,
     iter_this: Value,
+    args: Vec<Value>,
 ) -> IteratorReturnResult {
     let saved_throw = crate::value::take_thrown_value();
-    let result = invoke_iterator_return_inner(iterator, iter_this);
+    let result = invoke_iterator_return_inner(iterator, iter_this, args);
     match result {
         IteratorReturnResult::Throw(_) if saved_throw.is_some() => {
             if let Some(thrown) = saved_throw {
@@ -812,6 +816,7 @@ fn invoke_iterator_return(
 fn invoke_iterator_return_inner(
     iterator: &Rc<RefCell<Object>>,
     iter_this: Value,
+    args: Vec<Value>,
 ) -> IteratorReturnResult {
     let binding = iterator.borrow_mut();
     // Resolve the "return" method per GetMethod (ES §7.3.9):
@@ -819,7 +824,7 @@ fn invoke_iterator_return_inner(
     let resolved = if let Some(getter) = binding.get_getter("return") {
         if let Some(func) = getter.func.clone() {
             drop(binding);
-            match crate::eval::function::call_value_with_this(func, vec![], iter_this.clone()) {
+            match crate::eval::function::call_value_with_this(func, args.clone(), iter_this.clone()) {
                 Ok(val) => val,
                 Err(err) => return IteratorReturnResult::Throw(err),
             }
@@ -834,7 +839,7 @@ fn invoke_iterator_return_inner(
                     Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
                     closure,
                 )),
-                vec![],
+                args.clone(),
                 iter_this.clone(),
             ) {
                 Ok(val) => val,
@@ -864,7 +869,7 @@ fn invoke_iterator_return_inner(
     }
     finish_iterator_return_call(crate::eval::function::call_value_with_this(
         resolved,
-        vec![],
+        args,
         iter_this,
     ))
 }

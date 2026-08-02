@@ -1071,6 +1071,15 @@ mod tests {
     }
 
     #[test]
+    fn yield_star_forwards_generator_return_value_to_iterator() {
+        let mut ctx = new_ctx();
+        let value = ctx
+            .eval("var received; var iter={next(){return {done:false};}, return(value){received=value; return {done:true,value:3333};}}; iter[Symbol.iterator]=function(){return this;}; function* g(){yield* iter;} var i=g(); i.next(); i.return(2222); received")
+            .unwrap();
+        assert_eq!(value, Value::Number(2222.0));
+    }
+
+    #[test]
     fn yield_star_catches_return_method_getter_error_after_missing_throw() {
         let mut ctx = new_ctx();
         let value = ctx

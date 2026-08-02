@@ -517,7 +517,7 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_ref() {
-                match crate::eval::object::call_iterator_return_done(&suspend.iterator) {
+                match crate::eval::object::call_iterator_return_done(&suspend.iterator, arg.clone()) {
                     Err(error) => {
                         let reason = crate::value::take_thrown_value()
                             .unwrap_or_else(|| Value::String(error.to_string()));
