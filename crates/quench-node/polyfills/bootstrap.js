@@ -4496,10 +4496,15 @@ globalThis.__nodeUtil = {
       const childIndent = "  ".repeat(depth + 1);
       if (typeof value === "function") {
         const name = value.name ? `: ${value.name}` : "";
-        return `[Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
+        return `<ref *1> [Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
       }
-      if (Array.isArray(value))
-        return `[\n${value.map((item) => `${childIndent}${structured(item, depth + 1)}`).join(",\n")}\n${indent}]`;
+      if (Array.isArray(value)) {
+        const items = value.map(
+          (item) => `${childIndent}${structured(item, depth + 1)}`,
+        );
+        items.push(`${childIndent}[length]: ${value.length}`);
+        return `[\n${items.join(",\n")}\n${indent}]`;
+      }
       if (value && typeof value === "object") {
         const entries = Object.keys(value).map(
           (key) => `${childIndent}${key}: ${structured(value[key], depth + 1)}`,
