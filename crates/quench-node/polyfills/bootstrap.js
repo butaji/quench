@@ -71,7 +71,7 @@ globalThis.__nodePath = {
   dirname: (value) => { const parts = String(value).replace(/\\/g, '/').split('/'); parts.pop(); return parts.join('/') || '.'; },
   extname: (value) => { const name = globalThis.__nodePath.basename(value); const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i) : ''; },
   join: (...parts) => parts.join('/').replace(/\/+/g, '/'),
-  resolve: (...parts) => path.join(...parts),
+  resolve: (...parts) => globalThis.__nodePath.join(...parts),
 };
 
 globalThis.__nodeCommon = {
@@ -83,6 +83,9 @@ globalThis.__nodeCommon = {
 globalThis.__nodeFs = {
   existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
+  readFileSync: (value) => globalThis.__quench_fs_read_file(String(value)),
+  writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
+  statSync: () => ({ isFile: () => true, isDirectory: () => false }),
 };
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
