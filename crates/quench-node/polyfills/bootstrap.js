@@ -4482,13 +4482,8 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
 };
 globalThis.__nodeQuerystring = {
   escape: (value) => encodeURIComponent(String(value)),
-  unescape: (value) => {
-    try {
-      return decodeURIComponent(String(value));
-    } catch (_) {
-      return String(value);
-    }
-  },
+  unescape: (value) =>
+    globalThis.__nodeQuerystring.unescapeBuffer(String(value), true).toString(),
   unescapeBuffer: (value, decodeSpaces = false) => {
     const input = String(value);
     const bytes = [];
