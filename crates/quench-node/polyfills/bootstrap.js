@@ -2,7 +2,7 @@
 globalThis.global = globalThis;
 globalThis.globalThis = globalThis;
 
-const format = (args) => args.map((value) => {
+globalThis.__nodeFormat = (args) => args.map((value) => {
   try { return typeof value === 'string' ? value : JSON.stringify(value); }
   catch (_) { return String(value); }
 }).join(' ');
@@ -47,3 +47,46 @@ class Buffer extends Uint8Array {
   }
 }
 globalThis.Buffer = Buffer;
+
+globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
+globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
+  if (!Object.is(actual, expected)) throw new Error(message || `${actual} !== ${expected}`);
+};
+globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(message || 'values differ');
+};
+globalThis.__nodeAssert.throws = (fn, expected) => {
+  let thrown = false;
+  try { fn(); } catch (error) {
+    thrown = true;
+    if (expected && expected.name && error.name !== expected.name) throw error;
+  }
+  if (!thrown) throw new Error('Missing expected exception');
+};
+globalThis.__nodeAssert.ifError = (error) => { if (error) throw error; };
+
+globalThis.__nodePath = {
+  sep: '/',
+  basename: (value) => String(value).replace(/\\/g, '/').split('/').pop(),
+  dirname: (value) => { const parts = String(value).replace(/\\/g, '/').split('/'); parts.pop(); return parts.join('/') || '.'; },
+  extname: (value) => { const name = globalThis.__nodePath.basename(value); const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i) : ''; },
+  join: (...parts) => parts.join('/').replace(/\/+/g, '/'),
+  resolve: (...parts) => path.join(...parts),
+};
+
+globalThis.__nodeCommon = {
+  mustCall: (fn) => fn,
+  mustNotCall: () => () => { throw new Error('Unexpected call'); },
+  noop: () => {},
+  expectWarning: () => {},
+};
+globalThis.require = (specifier) => {
+  const name = String(specifier).replace(/^node:/, '');
+  if (name === 'assert') return globalThis.__nodeAssert;
+  if (name === 'path' || name === 'path/posix') return globalThis.__nodePath;
+  if (name === 'util') return { format: globalThis.__nodeFormat };
+  if (name === 'events') return { EventEmitter: class {} };
+  if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
+  if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
+  throw new Error(`Cannot find module '${specifier}'`);
+};
