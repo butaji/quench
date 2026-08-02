@@ -95,6 +95,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         ctx.globals().set("__quench_tmpdir", std::env::temp_dir().to_string_lossy().into_owned())?;
         ctx.globals().set("__quench_homedir", std::env::var("HOME").unwrap_or_else(|_| "/".into()))?;
         ctx.globals().set("__quench_hostname", hostname::get().map(|v| v.to_string_lossy().into_owned()).unwrap_or_else(|_| "quench-node".into()))?;
+        ctx.globals().set("__quench_cpu_count", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))?;
         ctx.globals().set(
             "__quench_ppid",
             {
