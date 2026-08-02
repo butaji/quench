@@ -173,12 +173,29 @@ globalThis.__nodeUtil = {
     isPromise: (value) => value instanceof Promise,
   },
 };
+globalThis.__nodeQuerystring = {
+  escape: (value) => encodeURIComponent(String(value)),
+  unescape: (value) => decodeURIComponent(String(value)),
+  stringify: (object, sep = '&', eq = '=') => Object.keys(object).map((key) => {
+    const value = object[key];
+    return (Array.isArray(value) ? value : [value]).map((item) =>
+      encodeURIComponent(key) + eq + encodeURIComponent(String(item))).join(sep);
+  }).join(sep),
+  parse: (input, sep = '&', eq = '=') => String(input).split(sep).filter(Boolean).reduce((result, part) => {
+    const index = part.indexOf(eq);
+    const key = decodeURIComponent(index < 0 ? part : part.slice(0, index));
+    const value = decodeURIComponent(index < 0 ? '' : part.slice(index + eq.length));
+    result[key] = result[key] === undefined ? value : Array.isArray(result[key]) ? result[key].concat(value) : [result[key], value];
+    return result;
+  }, {}),
+};
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;
   if (name === 'path' || name === 'path/posix') return globalThis.__nodePath;
   if (name === 'util') return globalThis.__nodeUtil;
   if (name === 'os') return globalThis.__nodeOs;
+  if (name === 'querystring') return globalThis.__nodeQuerystring;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
