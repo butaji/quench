@@ -365,6 +365,24 @@ fn stage44_probe_module_code_exports() {
 }
 
 #[test]
+fn fixture_alias_reads_non_exported_declaration() {
+    let root = crate::test262::runner::default_test262_dir();
+    let path = std::path::PathBuf::from(&root)
+        .join("test/language/expressions/dynamic-import/namespace/await-ns-prop-descs.js");
+    let mut ctx = crate::Context::new().expect("context");
+    crate::builtins::register_builtins(&mut ctx);
+    load_fixture_modules(&mut ctx, &path).expect("fixtures");
+    let module = ctx.get_module("./module-code_FIXTURE.js").expect("module");
+    let Value::Object(module) = module else {
+        panic!("module is not an object")
+    };
+    assert_eq!(
+        module.borrow().get_own_value("renamed"),
+        Some(Value::String("TC39".into()))
+    );
+}
+
+#[test]
 fn dynamic_import_fixture_exports_nested_namespace() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

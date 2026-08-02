@@ -442,10 +442,9 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             let value = values
                 .get(&local)
                 .cloned()
+                .or_else(|| ctx.get_global(&local))
                 .unwrap_or(crate::Value::Undefined);
-            if !values.contains_key(&local) {
-                needs_refresh = true;
-            }
+            needs_refresh |= !values.contains_key(&local) && matches!(value, Value::Undefined);
             module_exports.define(
                 &exported,
                 value,
@@ -462,6 +461,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             let default = values
                 .get(&local)
                 .cloned()
+                .or_else(|| ctx.get_global(&local))
                 .unwrap_or(crate::Value::Undefined);
             if !values.contains_key(&local) {
                 needs_refresh = true;
