@@ -226,10 +226,13 @@ class NodeBuffer extends Uint8Array {
         }
         return output.subarray(0, written);
       }
-      if (encoding === "base64") {
+      if (encoding === "base64" || encoding === "base64url") {
         const alphabet =
           "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        const clean = value.replace(/=+$/, "");
+        const clean = value
+          .replace(/=+$/, "")
+          .replace(/-/g, "+")
+          .replace(/_/g, "/");
         const output = new NodeBuffer(Math.floor((clean.length * 6) / 8));
         let buffer = 0;
         let bits = 0;
@@ -386,6 +389,42 @@ class NodeBuffer extends Uint8Array {
       offset += count;
     });
     return output;
+  }
+  fill(value = 0, start = 0, end = this.length, encoding = "utf8") {
+    if (typeof start === "string") {
+      encoding = start;
+      start = 0;
+      end = this.length;
+    } else if (typeof end === "string") {
+      encoding = end;
+      end = this.length;
+    }
+    const toIndex = (input, fallback) => {
+      const number = Math.trunc(Number(input));
+      return Number.isNaN(number) ? fallback : number;
+    };
+    start = toIndex(start, 0);
+    end = toIndex(end, this.length);
+    if (start < 0 || end < 0 || start > this.length || end > this.length) {
+      const error = new RangeError("The value is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    let pattern;
+    if (typeof value === "number") pattern = new NodeBuffer([value & 0xff]);
+    else if (typeof value === "string")
+      pattern = NodeBuffer.from(value, encoding);
+    else if (ArrayBuffer.isView(value))
+      pattern = new Uint8Array(
+        value.buffer,
+        value.byteOffset,
+        value.byteLength,
+      );
+    else pattern = NodeBuffer.from(String(value));
+    if (pattern.length === 0) return this;
+    for (let i = start; i < end; i++)
+      this[i] = pattern[(i - start) % pattern.length];
+    return this;
   }
   toString(encoding = "utf8") {
     if (encoding === "hex")
