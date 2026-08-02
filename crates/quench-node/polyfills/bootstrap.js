@@ -4329,6 +4329,15 @@ globalThis.require = (specifier) => {
         ERR_OUT_OF_RANGE: class ERR_OUT_OF_RANGE extends RangeError {},
       },
     };
+  if (name === "internal/buffer")
+    return {
+      utf8Write: (
+        buffer,
+        string,
+        offset = 0,
+        length = buffer.length - offset,
+      ) => buffer.write(string, offset, length, "utf8"),
+    };
   if (name === "internal/fs/utils")
     return {
       stringToFlags: (flags) => {
