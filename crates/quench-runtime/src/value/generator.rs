@@ -501,10 +501,15 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_ref() {
-                if let Some(close_err) =
-                    crate::eval::object::call_iterator_return(&suspend.iterator)
-                {
-                    return Err(close_err);
+                match crate::eval::object::call_iterator_return_done(&suspend.iterator)? {
+                    Some(false) => {
+                        return Ok(IteratorResult {
+                            value: Value::Undefined,
+                            done: false,
+                        }
+                        .to_object());
+                    }
+                    Some(true) | None => {}
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_mut() {

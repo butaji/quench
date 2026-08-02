@@ -735,6 +735,28 @@ pub fn call_iterator_return(iterator: &Rc<RefCell<Object>>) -> Option<JsError> {
     }
 }
 
+pub fn call_iterator_return_done(iterator: &Rc<RefCell<Object>>) -> Result<Option<bool>, JsError> {
+    let iter_this = Value::Object(Rc::clone(iterator));
+    match invoke_iterator_return(iterator, iter_this) {
+        IteratorReturnResult::Skipped => Ok(None),
+        IteratorReturnResult::Throw(error) => Err(error),
+        IteratorReturnResult::Value(value) => {
+            if let Some(error) = iterator_close_type_error(value.clone()) {
+                return Err(error);
+            }
+            let Value::Object(object) = value else {
+                unreachable!()
+            };
+            let done = crate::eval::member::eval_object_member(&object, "done", None)?;
+            let done = crate::value::to_bool(&done);
+            if done {
+                crate::eval::member::eval_object_member(&object, "value", None)?;
+            }
+            Ok(Some(done))
+        }
+    }
+}
+
 enum IteratorReturnResult {
     Skipped,
     Throw(JsError),

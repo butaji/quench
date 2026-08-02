@@ -18,6 +18,15 @@ fn native_js_eval() {
 }
 
 #[test]
+fn generator_yield_star_return_keeps_incomplete_iterator_suspended() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var n=0,s=0,x={done:false};Object.defineProperty(x,'value',{get(){n++;}});var i={next(){return {done:false};},return(){return x;}};var g=(function*(){try{yield*{[Symbol.iterator](){return i;}};}finally{s++;}})();g.next();g.return();s===0&&n===0")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn arrow_function_has_function_prototype() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
