@@ -12,13 +12,13 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
 }
 
 globalThis.process = {
-  env: {},
+  env: new Proxy({}, { get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined }),
   argv: ['quench-node'],
   platform: 'unknown',
   arch: 'unknown',
   version: 'v0.1.0',
   versions: { node: '0.1.0' },
-  cwd: () => '.',
+  cwd: () => globalThis.__quench_cwd,
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
   hrtime: { bigint: () => BigInt(Date.now()) * 1000000n },
 };
