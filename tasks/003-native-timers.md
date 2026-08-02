@@ -15,3 +15,9 @@ Replace the current microtask-based timer substitutions with correct timer sched
 
 - Timer compatibility stages pass consistently.
 - Pending jobs are drained correctly by the existing Rust harness.
+
+## Status
+
+Initial delayed timeout and cancellation behavior is implemented and covered by
+`tests/node-compat/stage-366/timer-timeout.js`. Native interval scheduling and
+full nextTick/promise/timer ordering remain in progress.
