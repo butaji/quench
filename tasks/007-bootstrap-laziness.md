@@ -21,3 +21,5 @@ Reduce eager JavaScript setup while retaining the same Node-visible APIs.
 Crypto compatibility construction is lazy behind a public-compatible proxy and
 covered by `tests/node-compat/stage-384/bootstrap-lazy-crypto.js`. Other
 optional bootstrap sections remain in progress.
+Deferred initialization timing is verified by
+`tests/node-compat/stage-385/bootstrap-lazy-state.js`.
