@@ -2099,6 +2099,19 @@ pub(crate) fn dynamic_import(
             ));
         }
     };
+    if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
+        if let Some(reason) = errors.borrow().get(source) {
+            let reason = match reason {
+                Value::String(message) => {
+                    crate::value::error::create_js_error_with_type(&message, "SyntaxError").0
+                }
+                reason => reason,
+            };
+            return Ok(Value::Object(
+                crate::builtins::promise::create_rejected_promise(reason)?,
+            ));
+        }
+    }
     if let Err(error) = initialize_fixture_module(source, env) {
         let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
             let (value, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");

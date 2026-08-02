@@ -322,6 +322,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     let init_imported_key = "__quench_fixture_imported_modules__";
     let init_refresh_key = "__quench_fixture_refresh_required__";
     let raw_modules_key = "__quench_fixture_raw_modules__";
+    let module_errors_key = "__quench_module_errors__";
     if ctx.get_global(init_scripts_key).is_none() {
         ctx.set_global(
             init_scripts_key.to_string(),
@@ -370,7 +371,17 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             ))),
         );
     }
+    if ctx.get_global(module_errors_key).is_none() {
+        ctx.set_global(
+            module_errors_key.to_string(),
+            crate::Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+            ))),
+        );
+    }
     let mut pending_reexports = HashMap::<String, Vec<PendingReExport>>::new();
+    let mut star_sources = HashMap::<String, HashMap<String, String>>::new();
+    let mut named_reexport_edges = Vec::<(String, String)>::new();
     let mut pending_default_imports = HashMap::<String, String>::new();
     for (index, (name, path)) in fixtures.iter().enumerate() {
         let source = std::fs::read_to_string(path).map_err(|e| format!("fixture read: {}", e))?;
@@ -515,6 +526,11 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
             pending_default_imports.insert(module_name.clone(), default_import);
         }
         if !reexports.is_empty() {
+            for reexport in &reexports {
+                if let PendingReExport::Named { source, .. } = reexport {
+                    named_reexport_edges.push((module_name.clone(), source.clone()));
+                }
+            }
             pending_reexports.insert(module_name.clone(), reexports);
         }
         if let Some(Value::Object(bindings)) = ctx.get_global(init_bindings_key) {
@@ -579,6 +595,21 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                         if key == "default" {
                             continue;
                         }
+                        let sources = star_sources.entry(module_name.clone()).or_default();
+                        if let Some(previous) = sources.get(&key) {
+                            if previous != &source {
+                                if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key)
+                                {
+                                    errors.borrow_mut().set(
+                                        &module_name,
+                                        crate::Value::String("Ambiguous indirect export".into()),
+                                    );
+                                }
+                                continue;
+                            }
+                        } else {
+                            sources.insert(key.clone(), source.clone());
+                        }
                         let value = target
                             .borrow()
                             .get_own_value(&key)
@@ -591,6 +622,13 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                     local,
                     exported,
                 } => {
+                    if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+                        let reason = errors.borrow().get(&source);
+                        if let Some(reason) = reason {
+                            errors.borrow_mut().set(&module_name, reason);
+                            continue;
+                        }
+                    }
                     if let Some(Value::Object(target)) = ctx.get_module(&source) {
                         let value = target.borrow().get_own_value(&local);
                         define_module_binding(
@@ -603,6 +641,15 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                     }
                 }
             }
+        }
+    }
+    for (module_name, source) in named_reexport_edges {
+        let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) else {
+            continue;
+        };
+        let reason = errors.borrow().get(&source);
+        if let Some(reason) = reason {
+            errors.borrow_mut().set(&module_name, reason);
         }
     }
     for (module_name, source) in pending_default_imports {
