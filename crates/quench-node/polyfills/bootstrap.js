@@ -2657,6 +2657,12 @@ globalThis.__nodeFs.promises.open = async (...args) => {
   const handle = await __nodeOpenWithFilePosition(...args);
   const previousWriteFile = handle.writeFile;
   handle.pull = (transformOrOptions, maybeOptions) => {
+    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
+      const error = new Error("The file handle is not in a valid state");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    handle._pullLocked = true;
     const transform =
       typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
@@ -2679,13 +2685,19 @@ globalThis.__nodeFs.promises.open = async (...args) => {
     if (start >= end) batches.push([]);
     return {
       async *[Symbol.asyncIterator]() {
-        if (options.signal && options.signal.aborted) {
-          const error = new Error("The operation was aborted");
-          error.name = "AbortError";
-          throw error;
+        try {
+          if (options.signal && options.signal.aborted) {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            throw error;
+          }
+          for (const batch of batches)
+            yield transform ? transform(batch) : batch;
+          globalThis.__nodeFdPositions[handle.fd] = end;
+          if (options.autoClose) await handle.close();
+        } finally {
+          handle._pullLocked = false;
         }
-        for (const batch of batches) yield transform ? transform(batch) : batch;
-        if (options.autoClose) await handle.close();
       },
     };
   };
