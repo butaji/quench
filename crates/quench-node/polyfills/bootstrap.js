@@ -4315,6 +4315,13 @@ globalThis.__nodeOs = {
     },
   },
 };
+for (const [name, getter] of [
+  ["uptime", () => globalThis.__nodeOs.uptime()],
+  ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
+  ["freemem", () => globalThis.__nodeOs.freemem()],
+]) {
+  globalThis.__nodeOs[name].valueOf = getter;
+}
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
