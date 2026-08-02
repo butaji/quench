@@ -2510,12 +2510,15 @@ class NodeWritable extends NodeEventEmitter {
     this.writableCorked = 0;
     this._corkedChunks = [];
   }
-  destroy(error) {
+  destroy(error, callback) {
     if (this.destroyed) return this;
     this.destroyed = true;
     this.writable = false;
     if (error) this.emit("error", error);
-    queueMicrotask(() => this.emit("close"));
+    queueMicrotask(() => {
+      this.emit("close");
+      if (callback) callback(error);
+    });
     return this;
   }
   cork() {
