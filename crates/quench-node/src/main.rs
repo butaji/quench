@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -187,6 +188,14 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         }))?;
         ctx.globals().set("__quench_fs_read_hex", Func::from(|path: String| -> rquickjs::Result<String> {
             fs::read(path).map(|bytes| bytes.iter().map(|byte| format!("{byte:02x}")).collect()).map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
+        }))?;
+        ctx.globals().set("__quench_fs_read_range_hex", Func::from(|path: String, position: u64, length: u64| -> rquickjs::Result<String> {
+            let mut file = fs::File::open(path).map_err(|_| rquickjs::Error::new_from_js("fs", "read failed"))?;
+            file.seek(SeekFrom::Start(position)).map_err(|_| rquickjs::Error::new_from_js("fs", "read failed"))?;
+            let mut bytes = vec![0; length.min(1024 * 1024) as usize];
+            let count = file.read(&mut bytes).map_err(|_| rquickjs::Error::new_from_js("fs", "read failed"))?;
+            bytes.truncate(count);
+            Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
         }))?;
         ctx.globals().set("__quench_fs_write_hex", Func::from(|path: String, hex: String| -> rquickjs::Result<()> {
             let bytes: Result<Vec<u8>, _> = hex.as_bytes().chunks(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or("00"), 16)).collect();
