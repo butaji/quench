@@ -482,6 +482,18 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
 };
 globalThis.__nodeFs.Stats = globalThis.__nodeStats;
 globalThis.__nodeFs.close = (_fd, callback) => { if (typeof callback === 'function') queueMicrotask(() => callback(null)); };
+class NodeAbortSignal {
+  constructor() { this.aborted = false; this._listeners = []; }
+  addEventListener(event, listener) { if (event === 'abort') this._listeners.push(listener); }
+  removeEventListener(event, listener) { this._listeners = this._listeners.filter((item) => item !== listener); }
+  static abort() { const signal = new NodeAbortSignal(); signal.aborted = true; return signal; }
+}
+class NodeAbortController {
+  constructor() { this.signal = new NodeAbortSignal(); }
+  abort() { this.signal.aborted = true; this.signal._listeners.slice().forEach((listener) => listener()); }
+}
+globalThis.AbortSignal = NodeAbortSignal;
+globalThis.AbortController = NodeAbortController;
 globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
   else if (typeof mode === 'function') { callback = mode; mode = undefined; }
@@ -513,7 +525,13 @@ globalThis.__nodeFs.mkdir = (value, options, callback) => {
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
+  if (options && options.signal !== undefined && !(options.signal instanceof NodeAbortSignal)) {
+    const error = new TypeError('The "signal" option must be an AbortSignal'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error;
+  }
   queueMicrotask(() => {
+    if (options && options.signal && options.signal.aborted) {
+      const error = new Error('The operation was aborted'); error.name = 'AbortError'; error.code = 'ABORT_ERR'; callback(error); return;
+    }
     try { callback(null, globalThis.__nodeFs.readFileSync(value, options)); }
     catch (error) { callback(error); }
   });
