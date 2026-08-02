@@ -8,8 +8,10 @@ globalThis.__nodeFormat = (args) => args.map((value) => {
 }).join(' ');
 globalThis.console = globalThis.console || {};
 for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
-  globalThis.console[method] = (...args) => undefined;
+  globalThis.console[method] = (...args) => globalThis.__quench_console_write(globalThis.__nodeFormat(args));
 }
+globalThis.console.dir = (value) => globalThis.__quench_console_write(globalThis.__nodeFormat([value]));
+globalThis.console.assert = (condition, ...args) => { if (!condition) globalThis.console.error(...args); };
 
 globalThis.process = {
   env: new Proxy({}, { get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined }),
