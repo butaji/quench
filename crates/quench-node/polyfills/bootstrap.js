@@ -411,6 +411,9 @@ globalThis.__nodeFs = {
       error.code = 'EEXIST'; error.syscall = 'mkdir'; error.path = path;
       throw error;
     }
+    if (targetKind === 'directory' && !(options && options.recursive)) {
+      const error = new Error(`EEXIST: file already exists, mkdir '${path}'`); error.code = 'EEXIST'; error.syscall = 'mkdir'; error.path = path; throw error;
+    }
     const parts = path.split('/').filter(Boolean);
     let prefix = path.startsWith('/') ? '' : '.';
     for (const part of parts.slice(0, -1)) {
@@ -442,7 +445,7 @@ globalThis.__nodeFs = {
     return globalThis.__quench_fs_readdir(path);
   },
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
-  renameSync: (from, to) => globalThis.__quench_fs_rename(String(from), String(to)),
+  renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
@@ -457,6 +460,17 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.rmdir = (value, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__nodeFs.rmdirSync(path); } catch (error) { callback(error); return; } callback(null); });
+};
+globalThis.__nodeFs.rename = (from, to, callback) => {
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const source = nodeFsPath(from); const destination = nodeFsPath(to);
+  queueMicrotask(() => { try { globalThis.__nodeFs.renameSync(source, destination); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
   if (typeof mode === 'function') { callback = mode; mode = 0; }
