@@ -369,6 +369,7 @@ globalThis.__nodeFs = {
     const path = nodePathValue(value); const hex = globalThis.__quench_fs_read_hex(path);
     if (options === undefined || options === null) return NodeBuffer.from(hex, 'hex');
     const encoding = typeof options === 'string' ? options : options && options.encoding;
+    if (options && typeof options === 'object' && options.buffer !== undefined) { const bytes = NodeBuffer.from(hex, 'hex'); const target = typeof options.buffer === 'function' ? options.buffer(bytes.length) : options.buffer; if (!(target instanceof Uint8Array)) { const error = new TypeError('The "buffer" option must return a Buffer'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } target.set(bytes.subarray(0, target.length)); return encoding ? target.toString(encoding) : target.subarray(0, bytes.length); }
     if (encoding === 'hex' || encoding === 'base64') return NodeBuffer.from(hex, 'hex').toString(encoding);
     return globalThis.__quench_fs_read_file(path);
   },
