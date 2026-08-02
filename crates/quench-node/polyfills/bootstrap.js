@@ -3900,6 +3900,8 @@ globalThis.__nodeOs = {
   },
 };
 globalThis.__nodeUtil = {
+  TextEncoder: globalThis.TextEncoder,
+  TextDecoder: globalThis.TextDecoder,
   promisify:
     (fn) =>
     (...args) =>
