@@ -37,6 +37,8 @@ Correct timer handle ref/unref state transitions are covered by
 `tests/node-compat/stage-468/timer-handle-state.js`.
 Timeout and interval refresh method contracts are covered by
 `tests/node-compat/stage-469/timer-handle-refresh.js`.
+Timeout refresh rescheduling behavior is covered by
+`tests/node-compat/stage-470/timer-refresh-behavior.js`.
 Minimal `perf_hooks.performance` timing APIs are covered by
 `tests/node-compat/stage-402/perf-hooks-performance.js`.
 User Timing marks and measures are covered by
