@@ -142,6 +142,24 @@ globalThis.__nodeFs = {
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
   statSync: () => ({ isFile: () => true, isDirectory: () => false }),
 };
+globalThis.__nodeFs.readFile = (value, options, callback) => {
+  if (typeof options === 'function') { callback = options; options = undefined; }
+  queueMicrotask(() => {
+    try { callback(null, globalThis.__nodeFs.readFileSync(value, options)); }
+    catch (error) { callback(error); }
+  });
+};
+globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  queueMicrotask(() => {
+    try { globalThis.__nodeFs.writeFileSync(value, data); callback(null); }
+    catch (error) { callback(error); }
+  });
+};
+globalThis.__nodeFs.promises = {
+  readFile: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readFile(value, options, (error, data) => error ? reject(error) : resolve(data))),
+  writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
+};
 globalThis.__nodeOs = {
   EOL: '\n',
   platform: () => process.platform,
