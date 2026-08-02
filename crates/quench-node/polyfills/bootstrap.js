@@ -454,6 +454,7 @@ globalThis.__nodeFs = {
     if (offset === null || (typeof offset === 'object' && !ArrayBuffer.isView(offset))) { const options = offset || {}; if (offset !== null && typeof offset !== 'object') { const error = new TypeError('The "options" argument must be an object'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
     if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (buffer.length === 0 && Number(length) > 0) { const error = new TypeError('The argument \'buffer\' is empty and cannot be written.'); error.code = 'ERR_INVALID_ARG_VALUE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
     const numericPosition = position === null || Number(position) < 0 ? 0 : Number(position);
     const hex = globalThis.__quench_fs_read_range_hex(path, numericPosition, Number(length));
@@ -495,11 +496,12 @@ globalThis.__nodeFs.fdatasync = (fd, callback) => { if (typeof fd !== 'number') 
 globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   if (typeof buffer === 'function' || buffer === undefined) { callback = buffer; buffer = NodeBuffer.alloc(16384); offset = 0; length = buffer.length; position = null; }
   else if (buffer === null) { callback = offset; buffer = NodeBuffer.alloc(16384); offset = 0; length = buffer.length; position = null; }
-  else if (typeof buffer === 'object' && !ArrayBuffer.isView(buffer)) { const options = buffer; callback = offset; buffer = NodeBuffer.alloc(options.length === undefined ? 16384 : Number(options.length)); offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
+  else if (typeof buffer === 'object' && !ArrayBuffer.isView(buffer)) { const options = buffer; callback = offset; buffer = options.buffer || NodeBuffer.alloc(options.length === undefined ? 16384 : Number(options.length)); offset = options.offset == null ? 0 : Number(options.offset); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
   else if (typeof offset === 'function') { callback = offset; offset = 0; length = buffer.length; position = null; }
   else if (typeof offset === 'object' || offset === null || offset === undefined) { const options = offset || {}; callback = length; offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
   else if (typeof position === 'function') { callback = position; position = null; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (buffer.length === 0 && Number(length) > 0) { const error = new TypeError('The argument \'buffer\' is empty and cannot be written.'); error.code = 'ERR_INVALID_ARG_VALUE'; throw error; }
   queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
 };
 globalThis.__nodeModes = {};
@@ -675,7 +677,7 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
   });
 };
 globalThis.__nodeFs.promises = {
-  open: (value, flags = 'r', mode) => new Promise((resolve, reject) => globalThis.__nodeFs.open(value, flags, mode, (error, fd) => error ? reject(error) : resolve({ fd, close: () => Promise.resolve() }))),
+  open: (value, flags = 'r', mode) => new Promise((resolve, reject) => globalThis.__nodeFs.open(value, flags, mode, (error, fd) => error ? reject(error) : resolve({ fd, close: () => Promise.resolve(), read: (buffer, offset, length, position) => Promise.resolve().then(() => { let target = buffer; let start = offset; let size = length; let at = position; if (offset && typeof offset === 'object') { const options = offset; target = options.buffer || NodeBuffer.alloc(16384); start = options.offset == null ? 0 : options.offset; size = options.length === undefined ? target.length - start : options.length; at = options.position; } if (target.length === 0 && Number(size) > 0) { const error = new TypeError('The buffer is empty'); error.code = 'ERR_INVALID_ARG_VALUE'; throw error; } const bytesRead = globalThis.__nodeFs.readSync(fd, target, start || 0, size === undefined ? target.length : size, at === undefined ? null : at); return { bytesRead, buffer: target }; }) }))),
   readFile: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readFile(value, options, (error, data) => error ? reject(error) : resolve(data))),
   writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
