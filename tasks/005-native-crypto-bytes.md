@@ -32,3 +32,5 @@ PBKDF2 callback argument validation is covered by
 `tests/node-compat/stage-392/crypto-pbkdf2-validation.js`.
 Supported algorithm discovery is covered by
 `tests/node-compat/stage-395/crypto-capabilities.js`.
+Byte comparison and unequal-length validation are covered by
+`tests/node-compat/stage-396/crypto-timing-safe-equal.js`.
