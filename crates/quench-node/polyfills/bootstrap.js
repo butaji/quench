@@ -550,20 +550,24 @@ const __nodeWinPath = {
     const trimmed = input.replace(/[\\]+$/, "") || root;
     if (/^[A-Za-z]:$/.test(input))
       return { root: input, dir: "", base: "", ext: "", name: "" };
-    if (/^[A-Za-z]:\.$/.test(input))
+    if (/^[A-Za-z]:[^\\]/.test(input)) {
+      const relative = input.slice(2);
+      const dot = relative.lastIndexOf(".");
+      const ext = dot > 0 ? relative.slice(dot) : "";
       return {
         root: input.slice(0, 2),
         dir: "",
-        base: ".",
-        ext: "",
-        name: ".",
+        base: relative,
+        ext,
+        name: ext ? relative.slice(0, -ext.length) : relative,
       };
+    }
     if (root.startsWith("\\\\") && trimmed === root.slice(0, -1))
       return { root, dir: root, base: "", ext: "", name: "" };
     const index = trimmed.lastIndexOf("\\");
     const dir =
       index >= 0
-        ? (hadTrailingSeparator
+        ? (hadTrailingSeparator || (root.length === 3 && index === 2)
             ? trimmed.slice(0, index + 1)
             : trimmed.slice(0, index)) || root
         : "";
