@@ -2943,12 +2943,22 @@ globalThis.__nodeUtil = {
         if (token === "%s") return String(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d") return `${value}n`;
-          const number = Number(value);
+          let number;
+          try {
+            number = Number(value);
+          } catch (_) {
+            number = NaN;
+          }
           return Object.is(number, -0) ? "-0" : number.toString();
         }
         if (token === "%i") {
           if (typeof value === "bigint") return `${value}n`;
-          const number = Number.parseInt(value, 10);
+          let number;
+          try {
+            number = Number.parseInt(value, 10);
+          } catch (_) {
+            number = NaN;
+          }
           return Object.is(number, -0) ? "-0" : number.toString();
         }
         if (token === "%j") return JSON.stringify(value);
