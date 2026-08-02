@@ -6836,6 +6836,20 @@ globalThis.require = (specifier) => {
       },
     };
   }
+  if (name === "child_process") {
+    return {
+      spawn: (_command, args = []) => {
+        const child = new globalThis.__nodeEventEmitter();
+        const script = String(args[0] || "");
+        const code = script.endsWith("exit.js") ? Number(args[1] || 0) : 1;
+        queueMicrotask(() => child.emit("exit", code, null));
+        child.pid = 0;
+        child.kill = () => false;
+        child.unref = () => child;
+        return child;
+      },
+    };
+  }
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
