@@ -140,6 +140,23 @@ fn dynamic_import_namespace_has_symbol_to_string_tag() {
 }
 
 #[test]
+fn dynamic_import_namespace_deletes_non_exported_properties() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.register_module(
+        "module-name",
+        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+    );
+    ctx.eval("var result; import('module-name').then(ns => { result = [Reflect.deleteProperty(ns, 'undef'), Reflect.deleteProperty(ns, 'default'), Reflect.deleteProperty(ns, Symbol.toStringTag), Reflect.deleteProperty(ns, Symbol('x'))].join('|'); });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("true|true|false|true".into())
+    );
+}
+
+#[test]
 fn dynamic_import_source_rejects_with_syntax_error() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

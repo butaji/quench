@@ -330,7 +330,7 @@ pub fn register_reflect(ctx: &mut Context) {
                     ));
                 };
                 if object.borrow().kind == ObjectKind::ModuleNamespace {
-                    return Ok(Value::Boolean(false));
+                    return Ok(Value::Boolean(!object.borrow().has_own(&key)));
                 }
                 Ok(Value::Boolean(object.borrow_mut().delete(&key)))
             },
