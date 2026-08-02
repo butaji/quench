@@ -4482,37 +4482,54 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
 };
 globalThis.__nodeQuerystring = {
   escape: (value) => encodeURIComponent(String(value)),
-  unescape: (value) => decodeURIComponent(String(value)),
-  stringify: (object, sep = "&", eq = "=") =>
-    Object.keys(object)
-      .map((key) => {
+  unescape: (value) => {
+    try {
+      return decodeURIComponent(String(value));
+    } catch (_) {
+      return String(value);
+    }
+  },
+  stringify: (object, sep = "&", eq = "=") => {
+    if (!object || typeof object !== "object") return "";
+    return Object.keys(object)
+      .flatMap((key) => {
         const value = object[key];
-        return (Array.isArray(value) ? value : [value])
-          .map(
-            (item) =>
-              encodeURIComponent(key) + eq + encodeURIComponent(String(item)),
-          )
-          .join(sep);
+        if (Array.isArray(value) && value.length === 0) return [];
+        const values = Array.isArray(value) ? value : [value];
+        return values.map((item) => {
+          const encodedKey = globalThis.__nodeQuerystring.escape(key);
+          const encodedValue =
+            item === null || typeof item === "object"
+              ? ""
+              : globalThis.__nodeQuerystring.escape(item);
+          return `${encodedKey}${eq}${encodedValue}`;
+        });
       })
-      .join(sep),
-  parse: (input, sep = "&", eq = "=") =>
+      .join(sep);
+  },
+  parse: (input, sep = "&", eq = "=", options = {}) => {
+    const result = Object.create(null);
+    if (input == null || input === "") return result;
+    const decode = (value) =>
+      globalThis.__nodeQuerystring.unescape(String(value).replace(/\+/g, " "));
+    const maxKeys = options && options.maxKeys === 0 ? Infinity : 1000;
     String(input)
       .split(sep)
       .filter(Boolean)
-      .reduce((result, part) => {
+      .slice(0, maxKeys)
+      .forEach((part) => {
         const index = part.indexOf(eq);
-        const key = decodeURIComponent(index < 0 ? part : part.slice(0, index));
-        const value = decodeURIComponent(
-          index < 0 ? "" : part.slice(index + eq.length),
-        );
+        const key = decode(index < 0 ? part : part.slice(0, index));
+        const value = decode(index < 0 ? "" : part.slice(index + eq.length));
         result[key] =
           result[key] === undefined
             ? value
             : Array.isArray(result[key])
               ? result[key].concat(value)
               : [result[key], value];
-        return result;
-      }, {}),
+      });
+    return result;
+  },
 };
 class NodeURLSearchParams {
   constructor(init = "") {
