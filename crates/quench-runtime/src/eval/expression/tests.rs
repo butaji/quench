@@ -71,6 +71,14 @@ fn generator_return_closes_yield_star_iterator() {
 }
 
 #[test]
+fn super_property_getter_does_not_inherit_new_target() {
+    assert_eq!(
+        eval("var seen = null; class Parent { get attr() { seen = new.target; } } class Child extends Parent { constructor() { super(); super.attr; } } new Child(); seen").unwrap(),
+        Value::Undefined
+    );
+}
+
+#[test]
 fn optional_chaining_short_circuits_continuations() {
     assert_eq!(
         eval("const a = undefined; let x = 1; a?.[++x]; x").unwrap(),

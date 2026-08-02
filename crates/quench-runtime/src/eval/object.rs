@@ -221,12 +221,16 @@ pub(crate) fn call_getter_with_this(
 ) -> Result<Value, JsError> {
     if let Some(func) = &getter_storage.func {
         let call_site_strict = crate::interpreter::is_strict_mode();
-        return crate::eval::function::call_value_impl(
+        let previous_new_target = crate::interpreter::get_new_target();
+        crate::interpreter::set_new_target(None);
+        let result = crate::eval::function::call_value_impl(
             func.clone(),
             Vec::new(),
             this_val,
             call_site_strict,
         );
+        crate::interpreter::set_new_target(previous_new_target);
+        return result;
     }
     let closure = Rc::clone(&getter_storage.closure);
     let body = getter_storage.body.clone();
