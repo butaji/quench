@@ -62,6 +62,8 @@ Non-positive readable `read()` sizes are covered by
 `tests/node-compat/stage-458/stream-read-zero.js`.
 Readable `readableEnded` timing is covered by
 `tests/node-compat/stage-459/stream-readable-ended-timing.js`.
+Pull-mode `readable` event delivery is covered by
+`tests/node-compat/stage-460/stream-readable-event.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by

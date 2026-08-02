@@ -2435,9 +2435,11 @@ class NodeReadable extends NodeEventEmitter {
       }
       return false;
     }
-    if (this._paused || this.listenerCount("data") === 0)
+    if (this._paused || this.listenerCount("data") === 0) {
       this._chunks.push(chunk);
-    else this.emit("data", chunk);
+      if (this.listenerCount("readable"))
+        queueMicrotask(() => this.emit("readable"));
+    } else this.emit("data", chunk);
     return true;
   }
   unshift(chunk) {
