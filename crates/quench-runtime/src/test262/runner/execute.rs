@@ -241,12 +241,13 @@ fn execute_script(
     test_path: &Path,
 ) -> Result<(), String> {
     if is_async {
-        return run_async_script_with_path(script, is_module, Some(test_path), true);
+        return run_async_script_with_path(script, is_module, Some(test_path));
     }
+    let mut inner = crate::test262::host::QuenchHost::new();
     if is_module {
-        run_async_script_with_path(script, true, Some(test_path), false)
+        inner.run_module_script(script)
     } else {
-        crate::test262::host::QuenchHost::new().run_script(script)
+        inner.run_script(script)
     }
 }
 
@@ -254,14 +255,13 @@ fn execute_script(
 /// was invoked exactly once.
 #[cfg(test)]
 fn run_async_script(source: &str, is_module: bool) -> Result<(), String> {
-    run_async_script_with_path(source, is_module, None, true)
+    run_async_script_with_path(source, is_module, None)
 }
 
 fn run_async_script_with_path(
     source: &str,
     is_module: bool,
     test_path: Option<&Path>,
-    check_done: bool,
 ) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
     crate::builtins::register_builtins(&mut ctx);
@@ -297,11 +297,7 @@ fn run_async_script_with_path(
     // head with `await using`). The probe below evaluates JS which would
     // otherwise see the stale thrown_value and fail spuriously.
     crate::value::take_thrown_value();
-    if check_done {
-        async_done_probe(&mut ctx)
-    } else {
-        Ok(())
-    }
+    async_done_probe(&mut ctx)
 }
 
 pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
@@ -917,12 +913,6 @@ fn fixture_exports_from_source(
         }
     }
 
-    let mut eval_source = eval_lines.join("\n");
-    if source.contains("import.meta") {
-        let import_meta = format!("globalThis.__quench_fixture_import_meta_{index}");
-        eval_source = eval_source.replace("import.meta", &import_meta);
-        eval_source = format!("{import_meta} = {{}};\n{eval_source}");
-    }
     let export = FixtureExports {
         named,
         default_marker: if has_default_marker {
@@ -934,7 +924,7 @@ fn fixture_exports_from_source(
         default_aliases,
     };
     Ok((
-        eval_source,
+        eval_lines.join("\n"),
         side_effect_lines.join("\n"),
         export,
         default_import,

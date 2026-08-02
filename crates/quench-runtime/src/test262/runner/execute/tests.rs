@@ -325,29 +325,6 @@ fn dynamic_import_fixture_exports_values() {
 }
 
 #[test]
-fn import_meta_fixture_registers_without_evaluating_module_syntax() {
-    let mut ctx = crate::Context::new().unwrap();
-    crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/test262/test/language/expressions/import.meta/distinct-for-each-module.js",
-    );
-    assert!(load_fixture_modules(&mut ctx, &path).is_ok());
-    assert!(ctx.get_module("./distinct-for-each-module_FIXTURE.js").is_some());
-}
-
-#[test]
-fn module_test_loads_fixture_modules() {
-    use crate::test262::harness::HarnessLoader;
-    use crate::test262::runner::{default_test262_dir, run_single_test};
-
-    let root = default_test262_dir();
-    let path = PathBuf::from(&root)
-        .join("test/language/expressions/import.meta/distinct-for-each-module.js");
-    let harness = HarnessLoader::new(&root);
-    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
-}
-
-#[test]
 fn dynamic_import_rejects_ambiguous_star_reexport() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
