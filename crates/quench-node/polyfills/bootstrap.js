@@ -4608,13 +4608,45 @@ globalThis.__nodeOs = new Proxy(
     }),
   },
 );
-globalThis.__nodePerfHooks = {
-  performance: {
-    now: () => Date.now() - __nodeStartedAt,
-    timeOrigin: __nodeStartedAt,
-    toJSON: () => ({ timeOrigin: __nodeStartedAt }),
+const __nodePerformanceMarks = new Map();
+const __nodePerformance = {
+  now: () => Date.now() - __nodeStartedAt,
+  timeOrigin: __nodeStartedAt,
+  mark: (name) => {
+    const entry = {
+      name: String(name),
+      entryType: "mark",
+      startTime: __nodePerformance.now(),
+      duration: 0,
+    };
+    (
+      __nodePerformanceMarks.get(entry.name) ||
+      __nodePerformanceMarks.set(entry.name, []).get(entry.name)
+    ).push(entry);
+    return entry;
   },
+  measure: (name, startMark, endMark) => {
+    const start = startMark
+      ? __nodePerformanceMarks.get(String(startMark))?.at(-1)?.startTime || 0
+      : 0;
+    const end = endMark
+      ? __nodePerformanceMarks.get(String(endMark))?.at(-1)?.startTime ||
+        __nodePerformance.now()
+      : __nodePerformance.now();
+    return {
+      name: String(name),
+      entryType: "measure",
+      startTime: start,
+      duration: Math.max(0, end - start),
+    };
+  },
+  clearMarks: (name) => {
+    if (name === undefined) __nodePerformanceMarks.clear();
+    else __nodePerformanceMarks.delete(String(name));
+  },
+  toJSON: () => ({ timeOrigin: __nodeStartedAt }),
 };
+globalThis.__nodePerfHooks = { performance: __nodePerformance };
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {

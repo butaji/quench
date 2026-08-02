@@ -29,3 +29,5 @@ Delayed `timers/promises.setTimeout()` value resolution is covered by
 `tests/node-compat/stage-401/timers-promises-delay.js`.
 Minimal `perf_hooks.performance` timing APIs are covered by
 `tests/node-compat/stage-402/perf-hooks-performance.js`.
+User Timing marks and measures are covered by
+`tests/node-compat/stage-403/perf-hooks-user-timing.js`.
