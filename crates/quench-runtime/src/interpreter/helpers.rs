@@ -748,7 +748,10 @@ pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
                     .enumerate()
                     .all(|(index, flag)| !flags[..index].contains(flag))
         };
-        !valid(added) || !valid(removed) || added.chars().any(|flag| removed.contains(flag))
+        (added.is_empty() && removed.is_empty())
+            || !valid(added)
+            || !valid(removed)
+            || added.chars().any(|flag| removed.contains(flag))
     })
 }
 
