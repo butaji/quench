@@ -7,7 +7,7 @@
     { "id": "003", "file": "003-native-timers.md", "title": "Implement Node-compatible native timers", "status": "in-progress" },
     { "id": "004", "file": "004-stream-backpressure.md", "title": "Implement stream backpressure semantics", "status": "in-progress" },
     { "id": "005", "file": "005-native-crypto-bytes.md", "title": "Reduce crypto byte and string conversions", "status": "in-progress" },
-    { "id": "006", "file": "006-test-runtime-reuse.md", "title": "Add an isolated and reusable test execution mode", "status": "in-progress" },
+    { "id": "006", "file": "006-test-runtime-reuse.md", "title": "Add an isolated and reusable test execution mode", "status": "complete" },
     { "id": "007", "file": "007-bootstrap-laziness.md", "title": "Make compatibility bootstrap initialization lazy", "status": "planned" },
     { "id": "008", "file": "008-error-boundary.md", "title": "Preserve Node error codes across the host boundary", "status": "in-progress" }
   ]
