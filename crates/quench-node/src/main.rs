@@ -101,6 +101,22 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 { 0u32 }
             },
         )?;
+        ctx.globals().set("__quench_getuid", {
+            #[cfg(unix)] { Some(unsafe { libc::getuid() as u32 }) }
+            #[cfg(not(unix))] { None::<u32> }
+        })?;
+        ctx.globals().set("__quench_geteuid", {
+            #[cfg(unix)] { Some(unsafe { libc::geteuid() as u32 }) }
+            #[cfg(not(unix))] { None::<u32> }
+        })?;
+        ctx.globals().set("__quench_getgid", {
+            #[cfg(unix)] { Some(unsafe { libc::getgid() as u32 }) }
+            #[cfg(not(unix))] { None::<u32> }
+        })?;
+        ctx.globals().set("__quench_getegid", {
+            #[cfg(unix)] { Some(unsafe { libc::getegid() as u32 }) }
+            #[cfg(not(unix))] { None::<u32> }
+        })?;
         ctx.globals().set(
             "__quench_sha256",
             Func::from(|value: String| {
