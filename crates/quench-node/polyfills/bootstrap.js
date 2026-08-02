@@ -4114,6 +4114,19 @@ globalThis.__nodeUrlModule = {
 };
 globalThis.__nodeCrypto = {
   randomUUID: () => globalThis.__quench_random_uuid(),
+  randomBytes: (size, callback) => {
+    const output = NodeBuffer.allocUnsafe(Number(size));
+    for (let i = 0; i < output.length; i++)
+      output[i] = Math.floor(Math.random() * 256);
+    if (typeof callback === "function")
+      queueMicrotask(() => callback(null, output));
+    return output;
+  },
+  randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
+    for (let i = offset; i < offset + size; i++)
+      buffer[i] = Math.floor(Math.random() * 256);
+    return buffer;
+  },
   createHash: (algorithm) => {
     if (algorithm !== "sha256")
       throw new Error(`Unsupported hash: ${algorithm}`);
