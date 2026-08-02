@@ -5319,7 +5319,7 @@ globalThis.__nodeUrlModule = {
   },
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
 };
-globalThis.__nodeCrypto = {
+const __createNodeCrypto = () => ({
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
     const output = NodeBuffer.from(
@@ -5406,7 +5406,24 @@ globalThis.__nodeCrypto = {
     };
     return hmac;
   },
-};
+});
+let __nodeCryptoInstance;
+globalThis.__nodeCrypto = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      __nodeCryptoInstance ||= __createNodeCrypto();
+      return __nodeCryptoInstance[key];
+    },
+    ownKeys: () =>
+      Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: (__nodeCryptoInstance ||= __createNodeCrypto())[key],
+    }),
+  },
+);
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
   if (name === "assert") return globalThis.__nodeAssert;
