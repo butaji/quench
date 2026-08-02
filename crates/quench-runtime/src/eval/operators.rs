@@ -455,6 +455,30 @@ fn string_compare(a: &str, b: &str) -> i32 {
 }
 
 fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
+    if let Value::Symbol(symbol) = left {
+        return match right {
+            Value::Object(obj) => {
+                let mut current = Some(Rc::clone(obj));
+                let key = Value::Symbol(Rc::clone(symbol));
+                let mut found = false;
+                while let Some(object) = current {
+                    let borrowed = object.borrow();
+                    if borrowed.has_symbol(&key) {
+                        found = true;
+                        break;
+                    }
+                    current = borrowed.prototype.as_ref().map(Rc::clone);
+                }
+                Ok(Value::Boolean(found))
+            }
+            Value::Function(_) | Value::NativeConstructor(_) | Value::NativeFunction(_) => {
+                Ok(Value::Boolean(false))
+            }
+            _ => Err(JsError::new(
+                "TypeError: right-hand side of 'in' is not an object",
+            )),
+        };
+    }
     let prop_name = to_js_string(left);
     match right {
         Value::Object(obj) => Ok(Value::Boolean(obj.borrow().has(&prop_name))),
