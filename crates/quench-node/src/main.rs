@@ -17,6 +17,11 @@ static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let mode = args.next();
+    if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
+        println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
+        println!("  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
+        return Ok(());
+    }
     if mode.as_deref() == Some("--stage") {
         let stage = args.next().unwrap_or_else(|| "0".into());
         return run_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")));
