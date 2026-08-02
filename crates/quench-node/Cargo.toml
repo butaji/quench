@@ -1,0 +1,9 @@
+[package]
+name = "quench-node"
+version = "0.1.0"
+edition = "2021"
+description = "Node-compatible entry point for the Quench JavaScript runtime"
+license = "MIT"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime" }
