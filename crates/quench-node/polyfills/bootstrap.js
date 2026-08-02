@@ -258,6 +258,7 @@ globalThis.__nodeFs = {
   accessSync: (value) => { if (!globalThis.__quench_fs_access(String(value))) throw new Error('ENOENT'); },
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
   rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
+  chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
