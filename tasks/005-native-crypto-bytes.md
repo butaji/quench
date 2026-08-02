@@ -38,3 +38,5 @@ Random integer generation and range validation are covered by
 `tests/node-compat/stage-397/crypto-random-int.js`.
 Asynchronous random buffer filling is covered by
 `tests/node-compat/stage-398/crypto-random-fill.js`.
+Base64 digest output for SHA-256 and HMAC is covered by
+`tests/node-compat/stage-399/crypto-digest-base64.js`.
