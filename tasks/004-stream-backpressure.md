@@ -44,3 +44,5 @@ Readable/writable lifecycle state flags are covered by
 `tests/node-compat/stage-440/stream-readable-writable-state.js`.
 Writable cork state is covered by
 `tests/node-compat/stage-441/stream-cork.js`.
+Deferred corked writes and final uncork delivery are covered by
+`tests/node-compat/stage-442/stream-cork-buffer.js`.
