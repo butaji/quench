@@ -6277,7 +6277,9 @@ const __createNodeCrypto = () => ({
         if (encoding === undefined || encoding === null) return bytes;
         if (encoding === "hex") return result;
         if (encoding === "base64") return bytes.toString("base64");
-        throw new Error(`Unsupported digest encoding: ${encoding}`);
+        const error = new TypeError(`Unknown encoding: ${encoding}`);
+        error.code = "ERR_UNKNOWN_ENCODING";
+        throw error;
       },
       copy: () => {
         const clone = globalThis.__nodeCrypto.createHash("sha256");
