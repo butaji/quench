@@ -4285,7 +4285,19 @@ globalThis.require = (specifier) => {
       internalBinding: (binding) =>
         binding === "uv"
           ? { UV_ENOENT: -2, UV_EEXIST: -17 }
-          : { fstat: () => undefined },
+          : binding === "util"
+            ? {
+                arrayBufferViewHasBuffer: (() => {
+                  const observed = new WeakSet();
+                  return (value) => {
+                    if (value.byteLength >= 96 || observed.has(value))
+                      return true;
+                    observed.add(value);
+                    return false;
+                  };
+                })(),
+              }
+            : { fstat: () => undefined },
     };
   if (name === "internal/errors")
     return {
