@@ -5400,6 +5400,8 @@ globalThis.__nodeUrlModule = new Proxy(
   },
 );
 const __createNodeCrypto = () => ({
+  getHashes: () => ["sha256"],
+  getCiphers: () => [],
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
     const output = NodeBuffer.from(
