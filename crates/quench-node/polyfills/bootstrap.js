@@ -4010,12 +4010,14 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
   const chunks = [];
   stream.path = path;
   stream.fd = null;
+  stream.bytesWritten = 0;
   stream.write = (chunk) => {
-    chunks.push(
+    const bytes =
       typeof chunk === "string"
         ? NodeBuffer.from(chunk, options.encoding || "utf8")
-        : NodeBuffer.from(chunk),
-    );
+        : NodeBuffer.from(chunk);
+    chunks.push(bytes);
+    stream.bytesWritten += bytes.byteLength;
     return true;
   };
   stream.end = (chunk, encoding, callback) => {
