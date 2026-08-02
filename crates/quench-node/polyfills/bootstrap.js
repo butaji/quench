@@ -4489,6 +4489,27 @@ globalThis.__nodeQuerystring = {
       return String(value);
     }
   },
+  unescapeBuffer: (value, decodeSpaces = false) => {
+    const input = String(value);
+    const bytes = [];
+    for (let i = 0; i < input.length; i++) {
+      if (input[i] === "+" && decodeSpaces) {
+        bytes.push(0x20);
+        continue;
+      }
+      if (
+        input[i] === "%" &&
+        /^[0-9a-f]{2}$/i.test(input.slice(i + 1, i + 3))
+      ) {
+        bytes.push(parseInt(input.slice(i + 1, i + 3), 16));
+        i += 2;
+      } else {
+        const encoded = new TextEncoder().encode(input[i]);
+        bytes.push(...encoded);
+      }
+    }
+    return NodeBuffer.from(new Uint8Array(bytes));
+  },
   stringify: (object, sep = "&", eq = "=", options = {}) => {
     if (!object || typeof object !== "object") return "";
     sep = sep == null ? "&" : String(sep);
@@ -4526,8 +4547,13 @@ globalThis.__nodeQuerystring = {
   parse: (input, sep = "&", eq = "=", options = {}) => {
     const result = Object.create(null);
     if (input == null || input === "") return result;
-    const decode = (value) =>
-      globalThis.__nodeQuerystring.unescape(String(value).replace(/\+/g, " "));
+    const decode =
+      options && options.decodeURIComponent
+        ? options.decodeURIComponent
+        : (value) =>
+            globalThis.__nodeQuerystring.unescape(
+              String(value).replace(/\+/g, " "),
+            );
     const separator = sep == null ? "&" : String(sep);
     const equals = eq == null ? "=" : String(eq);
     const maxKeys =
@@ -4538,8 +4564,8 @@ globalThis.__nodeQuerystring = {
         : 1000;
     String(input)
       .split(separator)
-      .filter(Boolean)
       .slice(0, maxKeys)
+      .filter(Boolean)
       .forEach((part) => {
         const index = part.indexOf(equals);
         const key = decode(index < 0 ? part : part.slice(0, index));
