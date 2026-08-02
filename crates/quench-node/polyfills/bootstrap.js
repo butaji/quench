@@ -262,6 +262,8 @@ globalThis.process = {
 process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
 
 globalThis.setImmediate = (callback, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
   const id = { active: true };
   queueMicrotask(() => {
     if (id.active) callback(...args);
@@ -272,6 +274,8 @@ globalThis.clearImmediate = (id) => {
   if (id) id.active = false;
 };
 globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
   const id = { active: true };
   queueMicrotask(() => {
     if (id.active) {
@@ -285,6 +289,8 @@ globalThis.clearTimeout = (id) => {
   if (id) id.active = false;
 };
 globalThis.setInterval = (callback, _delay = 0, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
   const id = { active: true };
   const schedule = () => {
     queueMicrotask(() => {
