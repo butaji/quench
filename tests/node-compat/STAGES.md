@@ -29,3 +29,4 @@ these small fixtures isolate the currently implemented contract.
 | 19 | Buffer composition and base64 | `tools/run-node-tests.sh --stage 19` |
 | 20 | host-backed console output | `tools/run-node-tests.sh --stage 20` |
 | 21 | asynchronous assertion helpers | `tools/run-node-tests.sh --stage 21` |
+| 22 | promise EventEmitter helpers | `tools/run-node-tests.sh --stage 22` |
