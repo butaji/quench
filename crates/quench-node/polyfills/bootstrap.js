@@ -1703,13 +1703,16 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
 };
 globalThis.__nodeAssert.throws = (fn, expected) => {
   let thrown = false;
+  let captured;
   try {
     fn();
   } catch (error) {
     thrown = true;
+    captured = error;
     if (expected && expected.name && error.name !== expected.name) throw error;
   }
   if (!thrown) throw new Error("Missing expected exception");
+  return captured;
 };
 globalThis.__nodeAssert.ifError = (error) => {
   if (error) throw error;
