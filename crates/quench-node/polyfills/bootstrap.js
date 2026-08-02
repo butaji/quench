@@ -1951,6 +1951,7 @@ globalThis.__nodeCommon = {
   expectWarning: (_type, _message) => {},
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === "linux",
+  hasIntl: typeof Intl !== "undefined",
   isDebug: true,
   isMacOS: process.platform === "darwin",
   isWindows: process.platform === "win32",
@@ -4735,6 +4736,8 @@ globalThis.require = (specifier) => {
     return {
       describe: (_name, callback) => callback(),
       it: (_name, callback) => callback(),
+      test: (_name, options, callback) =>
+        (typeof options === "function" ? options : callback)(),
     };
   if (name === "internal/test/binding")
     return {
