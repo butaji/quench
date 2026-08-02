@@ -462,6 +462,12 @@ globalThis.__nodeFs = {
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
 };
+globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value); const content = data instanceof NodeBuffer ? data.toString() : String(data);
+  queueMicrotask(() => { try { globalThis.__quench_fs_append(path, content); } catch (error) { callback(error); return; } callback(null); });
+};
 globalThis.__nodeFs.rmdir = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
@@ -593,6 +599,7 @@ globalThis.__nodeFs.promises = {
   open: (value, flags = 'r', mode) => new Promise((resolve, reject) => globalThis.__nodeFs.open(value, flags, mode, (error, fd) => error ? reject(error) : resolve({ fd, close: () => Promise.resolve() }))),
   readFile: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readFile(value, options, (error, data) => error ? reject(error) : resolve(data))),
   writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
+  appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
