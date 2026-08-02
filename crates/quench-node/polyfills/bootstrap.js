@@ -733,6 +733,8 @@ globalThis.__nodeFs.promises = {
   readdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value, options)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
 };
+const __nodePromiseOpen = globalThis.__nodeFs.promises.open;
+globalThis.__nodeFs.promises.open = async (...args) => { const handle = await __nodePromiseOpen(...args); handle.write = (buffer, offset, length, position) => Promise.resolve().then(() => { const start = typeof offset === 'object' ? (offset.offset || 0) : (offset || 0); const source = typeof offset === 'object' ? (offset.buffer || offset) : buffer; const size = typeof offset === 'object' ? (offset.length === undefined ? source.length - start : offset.length) : (length === undefined ? source.length - start : length); const at = typeof offset === 'object' ? offset.position : position; return { bytesWritten: globalThis.__nodeFs.writeSync(handle.fd, source, start, size, at === undefined ? null : at), buffer: source }; }); return handle; };
 globalThis.__nodeOs = {
   EOL: '\n',
   platform: () => process.platform,
