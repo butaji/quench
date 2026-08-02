@@ -350,6 +350,8 @@ globalThis.__nodeFs = {
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value) => globalThis.__quench_fs_read_file(nodePathValue(value)),
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
+  openSync: (value, flags) => globalThis.__quench_fs_open(nodeFsPath(value), String(flags)),
+  closeSync: (_fd) => {},
   statSync: (value) => { const kind = globalThis.__quench_fs_kind(nodePathValue(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
@@ -396,6 +398,12 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.readdir = (value, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readdirSync(path)); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.mkdir = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = {}; }

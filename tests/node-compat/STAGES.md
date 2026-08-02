@@ -76,3 +76,4 @@ these small fixtures isolate the currently implemented contract.
 | 66 | UTF-8 Uint8Array filesystem paths | `tools/run-node-tests.sh --stage 66` |
 | 67 | upstream common platform helpers | `tools/run-node-tests.sh --stage 67` |
 | 68 | callback and recursive `fs.mkdir` compatibility | `tools/run-node-tests.sh --stage 68` |
+| 69 | basic filesystem open/close and directory enumeration | `tools/run-node-tests.sh --stage 69` |
