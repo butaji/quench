@@ -738,6 +738,10 @@ pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
     source.contains("/\\1/u")
 }
 
+pub fn has_invalid_unicode_out_of_bounds_decimal_escape(source: &str) -> bool {
+    source.contains("/\\8/u")
+}
+
 pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
     source.contains("/\\c0/u")
 }
@@ -1182,6 +1186,16 @@ mod tests {
     fn detects_invalid_unicode_legacy_octal_escape() {
         assert!(crate::interpreter::helpers::has_invalid_unicode_legacy_octal_escape("/\\1/u"));
         assert!(!crate::interpreter::helpers::has_invalid_unicode_legacy_octal_escape("/1/u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_out_of_bounds_decimal_escape() {
+        assert!(
+            crate::interpreter::helpers::has_invalid_unicode_out_of_bounds_decimal_escape("/\\8/u")
+        );
+        assert!(
+            !crate::interpreter::helpers::has_invalid_unicode_out_of_bounds_decimal_escape("/8/u")
+        );
     }
 
     #[test]

@@ -278,6 +278,25 @@ fn main() -> ExitCode {
             .negative
             .as_ref()
             .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_unicode_out_of_bounds_decimal_escape(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: out-of-bounds decimal escape".to_string())),
+            );
+        }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
             && quench_runtime::interpreter::has_invalid_unicode_class_control_escape(code)
         {
             return judge(
