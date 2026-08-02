@@ -374,7 +374,7 @@ fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, J
                 &mut run.index,
                 &run.env,
                 run.await_values,
-                false,
+                run.await_of,
             )? {
                 crate::eval::object::IteratorStepResult::Ready((item, done)) => {
                     if done {

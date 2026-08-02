@@ -18,6 +18,16 @@ fn native_js_eval() {
 }
 
 #[test]
+fn for_await_awaits_custom_async_iterator_results() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var result;var obj={};obj[Symbol.asyncIterator]=function(){var i=0;return{next:function(){return Promise.resolve(i++<1?{value:7,done:false}:{done:true});}}};async function f(){for await(const x of obj)return x;}f().then(function(v){result=v;});")
+        .unwrap();
+    quench_runtime::builtins::promise::execute_pending_microtasks().unwrap();
+    let result = ctx.get_global("result").unwrap();
+    assert_eq!(result, Value::Number(7.0));
+}
+
+#[test]
 fn generator_yield_star_return_keeps_incomplete_iterator_suspended() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
