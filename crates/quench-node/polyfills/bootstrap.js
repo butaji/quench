@@ -361,10 +361,24 @@ class NodeBuffer extends Uint8Array {
     return new NodeBuffer(size).fill(fill, 0, size, encoding);
   }
   static allocUnsafe(size) {
+    NodeBuffer._validateSize(size);
     return new NodeBuffer(size);
   }
   static allocUnsafeSlow(size) {
+    NodeBuffer._validateSize(size);
     return new NodeBuffer(size);
+  }
+  static _validateSize(size) {
+    if (typeof size !== "number") {
+      const error = new TypeError('The "size" argument must be of type number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isSafeInteger(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError('The value of "size" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
   }
   static of(...values) {
     return new NodeBuffer(values);
