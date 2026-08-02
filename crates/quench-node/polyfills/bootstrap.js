@@ -560,8 +560,7 @@ globalThis.__nodeFs.chmod = (value, mode, callback) => {
 globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
-  const path = nodeFsPath(value); const content = data instanceof NodeBuffer ? data.toString() : String(data);
-  queueMicrotask(() => { try { globalThis.__quench_fs_append(path, content); } catch (error) { callback(error); return; } callback(null); });
+  queueMicrotask(() => { try { globalThis.__nodeFs.appendFileSync(value, data, options); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.rmdir = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
