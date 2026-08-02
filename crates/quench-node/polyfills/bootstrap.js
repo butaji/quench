@@ -449,6 +449,13 @@ globalThis.__nodeFs = {
   truncateSync: (value, length = 0) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
   fsyncSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Number.isInteger(fd) || fd < 0) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } },
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
+  readSync: (fd, buffer, offset = 0, length = buffer.length, position = null) => {
+    if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
+    const hex = globalThis.__quench_fs_read_range_hex(path, position === null ? 0 : Number(position), Number(length));
+    const bytes = NodeBuffer.from(hex, 'hex'); buffer.set(bytes.subarray(0, Number(length)), Number(offset)); return bytes.length;
+  },
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
     if (typeof mode !== 'number') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -482,6 +489,7 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
 };
 globalThis.__nodeFs.fsync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fsyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
 globalThis.__nodeFs.fdatasync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fdatasyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readSync(fd, buffer, offset, length, position)); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
 const nodeMode = (mode) => {
