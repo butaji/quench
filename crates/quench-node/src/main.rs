@@ -56,6 +56,20 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 Err(rquickjs::Error::new_from_js("fs", "mkdtemp failed"))
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_read_file",
+            Func::from(|path: String| -> rquickjs::Result<String> {
+                fs::read_to_string(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_write_file",
+            Func::from(|path: String, data: String| -> rquickjs::Result<()> {
+                fs::write(path, data)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;
