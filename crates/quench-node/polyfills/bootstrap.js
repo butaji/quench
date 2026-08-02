@@ -2665,6 +2665,12 @@ globalThis.__nodeFs = {
       kind = globalThis.__quench_fs_kind(path);
     } catch (error) {
       if (options && options.throwIfNoEntry === false) return undefined;
+      if (!error.code) {
+        error.code = "ENOENT";
+        error.syscall = "stat";
+        error.path = path;
+        error.message = `ENOENT: no such file or directory, stat '${path}'`;
+      }
       throw error;
     }
     const file = kind === "file";
