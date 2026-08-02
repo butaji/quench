@@ -2438,6 +2438,11 @@ class NodeReadable extends NodeEventEmitter {
     return true;
   }
   unshift(chunk) {
+    if (this.readableEnded && chunk !== null) {
+      const error = new Error("stream.unshift() after end event");
+      error.code = "ERR_STREAM_UNSHIFT_AFTER_END_EVENT";
+      throw error;
+    }
     if (chunk === null) {
       this._ended = true;
       if (!this._chunks.length) this._emitEnd();
