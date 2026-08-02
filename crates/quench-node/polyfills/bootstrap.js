@@ -5402,6 +5402,26 @@ globalThis.__nodeUrlModule = new Proxy(
 const __createNodeCrypto = () => ({
   getHashes: () => ["sha256"],
   getCiphers: () => [],
+  timingSafeEqual: (left, right) => {
+    if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (left.length !== right.length) {
+      const error = new RangeError(
+        "Input buffers must have the same byte length",
+      );
+      error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
+      throw error;
+    }
+    let difference = 0;
+    for (let index = 0; index < left.length; index++)
+      difference |= left[index] ^ right[index];
+    return difference === 0;
+  },
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
     const output = NodeBuffer.from(
