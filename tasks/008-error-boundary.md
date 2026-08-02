@@ -41,3 +41,5 @@ Synchronous `fs.mkdtempSync()` prefix validation is covered by
 `tests/node-compat/stage-481/fs-mkdtemp-prefix-validation.js`.
 Asynchronous `fs.mkdtemp()` prefix validation is covered by
 `tests/node-compat/stage-482/fs-mkdtemp-async-prefix.js`.
+Synchronous and asynchronous `fs.mkdtemp()` options validation is covered by
+`tests/node-compat/stage-483/fs-mkdtemp-options-validation.js`.
