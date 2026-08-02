@@ -104,6 +104,25 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             return Err(js_err);
         }
     };
+    let ast::Program::Script(body) = &program;
+    if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
+        for statement in body {
+            if let ast::Statement::FunctionDeclaration { name, .. } = statement {
+                if global
+                    .borrow()
+                    .get_own_property(name)
+                    .is_some_and(|descriptor| descriptor.configurable == Some(false))
+                {
+                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                        "cannot redefine global property",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(err_val);
+                    return Err(js_err);
+                }
+            }
+        }
+    }
     if crate::interpreter::is_direct_eval() {
         if let Some(eval_env) = crate::interpreter::get_current_eval_env() {
             let declared = eval_env.borrow().declared_private_names();
@@ -728,5 +747,12 @@ mod tests {
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("eval('export default null;')").is_err());
         assert!(ctx.eval("eval('import x from \\\"x\\\";')").is_err());
+    }
+
+    #[test]
+    fn eval_rejects_function_declaration_for_non_definable_global() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("eval('function NaN(){}')").is_err());
     }
 }
