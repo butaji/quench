@@ -2,8 +2,8 @@
 name = "quench-node"
 version = "0.1.0"
 edition = "2021"
-description = "Node-compatible entry point for the Quench JavaScript runtime"
+description = "Node-compatible JavaScript runtime built on rquickjs"
 license = "MIT"
 
 [dependencies]
-quench-runtime = { path = "../quench-runtime" }
+rquickjs = { version = "0.9", features = ["array-buffer", "classes", "futures", "loader", "macro", "properties", "parallel"] }
