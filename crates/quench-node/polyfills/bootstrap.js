@@ -4335,6 +4335,21 @@ for (const [name, getter] of [
 ]) {
   globalThis.__nodeOs[name].valueOf = getter;
 }
+for (const name of [
+  "hostname",
+  "homedir",
+  "release",
+  "type",
+  "endianness",
+  "tmpdir",
+  "arch",
+  "platform",
+  "version",
+  "machine",
+]) {
+  globalThis.__nodeOs[name].toString = () =>
+    String(globalThis.__nodeOs[name]());
+}
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
