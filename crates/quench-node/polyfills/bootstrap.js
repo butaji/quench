@@ -190,6 +190,38 @@ globalThis.process = {
   cwd: () => globalThis.__quench_cwd_get(),
   chdir: (value) => globalThis.__quench_chdir(String(value)),
   exitCode: 0,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
+  uptime: () => Math.max(0, (Date.now() - __nodeStartedAt) / 1000),
+  memoryUsage: () => ({
+    rss: 0,
+    heapTotal: 0,
+    heapUsed: 0,
+    external: 0,
+    arrayBuffers: 0,
+  }),
+  resourceUsage: () => ({
+    userCPUTime: 0,
+    systemCPUTime: 0,
+    maxRSS: 0,
+    sharedMemorySize: 0,
+    unsharedDataSize: 0,
+    unsharedStackSize: 0,
+    minorPageFault: 0,
+    majorPageFault: 0,
+    swappedOut: 0,
+    fsRead: 0,
+    fsWrite: 0,
+    ipcSent: 0,
+    ipcReceived: 0,
+    signalsCount: 0,
+    voluntaryContextSwitches: 0,
+    involuntaryContextSwitches: 0,
+  }),
   umask: (mask) =>
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
