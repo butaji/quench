@@ -1873,6 +1873,7 @@ const __nodeWinPath = {
   },
   parse(value) {
     __nodePathArg(value);
+    if (value.startsWith("/")) return globalThis.__nodePath.parse(value);
     const input = value.replace(/\//g, "\\");
     let root = "";
     if (input.startsWith("\\\\")) {
