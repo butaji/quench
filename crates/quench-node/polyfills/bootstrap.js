@@ -4332,6 +4332,7 @@ for (const [name, getter] of [
   ["uptime", () => globalThis.__nodeOs.uptime()],
   ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
   ["freemem", () => globalThis.__nodeOs.freemem()],
+  ["totalmem", () => globalThis.__nodeOs.totalmem()],
 ]) {
   globalThis.__nodeOs[name].valueOf = getter;
 }
