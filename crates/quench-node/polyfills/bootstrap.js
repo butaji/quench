@@ -244,6 +244,19 @@ class NodeBuffer extends Uint8Array {
         }
         return output;
       }
+      if (
+        encoding === "ucs2" ||
+        encoding === "ucs-2" ||
+        encoding === "utf16le"
+      ) {
+        const output = new NodeBuffer(value.length * 2);
+        for (let i = 0; i < value.length; i++) {
+          const code = value.charCodeAt(i);
+          output[i * 2] = code & 0xff;
+          output[i * 2 + 1] = code >> 8;
+        }
+        return output;
+      }
       return new NodeBuffer(new NodeTextEncoder().encode(value));
     }
     return new NodeBuffer(value);
@@ -314,6 +327,49 @@ class NodeBuffer extends Uint8Array {
       this.length === other.length &&
       this.every((value, index) => value === other[index])
     );
+  }
+  includes(value, byteOffset = 0, encoding) {
+    if (
+      typeof value !== "number" &&
+      typeof value !== "string" &&
+      !(value instanceof Uint8Array)
+    ) {
+      const error = new TypeError(
+        'The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    let start = Number(byteOffset);
+    if (Number.isNaN(start) || start === -Infinity) start = 0;
+    if (start === Infinity)
+      return (
+        value === "" || (value instanceof Uint8Array && value.length === 0)
+      );
+    start =
+      start < 0
+        ? Math.max(this.length + Math.trunc(start), 0)
+        : Math.trunc(start);
+    if (
+      (encoding === "ucs2" || encoding === "ucs-2" || encoding === "utf16le") &&
+      start % 2 !== 0
+    )
+      return false;
+    const needle =
+      typeof value === "number"
+        ? NodeBuffer.from([value & 0xff])
+        : NodeBuffer.from(value, encoding);
+    if (needle.length === 0) return true;
+    for (let i = start; i + needle.length <= this.length; i++) {
+      let match = true;
+      for (let j = 0; j < needle.length; j++)
+        if (this[i + j] !== needle[j]) {
+          match = false;
+          break;
+        }
+      if (match) return true;
+    }
+    return false;
   }
   write(value, offset = 0, length, encoding = "utf8") {
     if (typeof length === "string") {
