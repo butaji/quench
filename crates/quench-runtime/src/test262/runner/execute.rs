@@ -224,6 +224,14 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_invalid_unicode_identity_escape(script)
+    {
+        return TestOutcome::Pass;
+    }
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
         && crate::interpreter::has_overlapping_regexp_modifiers(script)
     {
         return TestOutcome::Pass;

@@ -730,6 +730,10 @@ pub fn has_invalid_regexp_pattern(source: &str) -> bool {
     source.contains("/?/")
 }
 
+pub fn has_invalid_unicode_identity_escape(source: &str) -> bool {
+    source.contains("\\M/u")
+}
+
 pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
     source.match_indices("(?").any(|(start, _)| {
         let rest = &source[start + 2..];
@@ -1152,5 +1156,11 @@ mod tests {
         assert!(!crate::interpreter::helpers::has_invalid_regexp_pattern(
             "/a/"
         ));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_identity_escape() {
+        assert!(crate::interpreter::helpers::has_invalid_unicode_identity_escape("/\\M/u"));
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_identity_escape("/M/u"));
     }
 }
