@@ -146,7 +146,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let eval_strict = strict_inherited
         || source.trim_start().starts_with("\"use strict\"")
         || source.trim_start().starts_with("'use strict'");
-    if !eval_strict {
+    if !eval_strict && crate::interpreter::is_direct_eval() {
         reject_eval_var_lexical_conflict(&program, ctx)?;
     }
     let in_class_field = crate::interpreter::is_eval_in_class_field()
@@ -782,5 +782,12 @@ mod tests {
         assert!(ctx
             .eval("eval('let evalOnly = 3'); typeof evalOnly")
             .is_ok_and(|value| crate::value::to_js_string(&value) == "undefined"));
+    }
+
+    #[test]
+    fn indirect_eval_var_ignores_lower_lexical_binding() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("{ let x; { (0, eval)('var x;'); } }").is_ok());
     }
 }
