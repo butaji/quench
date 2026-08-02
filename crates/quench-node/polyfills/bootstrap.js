@@ -740,6 +740,7 @@ globalThis.__nodeFs.promises = {
   rename: (from, to) => Promise.resolve().then(() => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to))),
   unlink: (value) => Promise.resolve().then(() => globalThis.__quench_fs_unlink(nodeFsPath(value))),
   copyFile: (from, to, mode = 0) => Promise.resolve().then(() => globalThis.__nodeFs.copyFileSync(from, to, mode)),
+  rmdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.rmdirSync(value, options)),
   readv: (fd, buffers, position) => Promise.resolve().then(() => { const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position); return { bytesRead, buffers }; }),
   writev: (fd, buffers, position) => Promise.resolve().then(() => { const bytesWritten = globalThis.__nodeFs.writevSync(fd, buffers, position); return { bytesWritten, buffers }; }),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
