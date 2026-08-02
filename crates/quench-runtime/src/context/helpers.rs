@@ -108,7 +108,16 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let ast::Program::Script(body) = &program;
     if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
         for statement in body {
-            if let ast::Statement::FunctionDeclaration { name, .. } = statement {
+            let name = match statement {
+                ast::Statement::FunctionDeclaration { name, .. }
+                | ast::Statement::VarDeclaration {
+                    kind: ast::VarKind::Var,
+                    name,
+                    ..
+                } => name,
+                _ => continue,
+            };
+            {
                 if global
                     .borrow()
                     .get_own_property(name)
@@ -776,6 +785,13 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("eval('function NaN(){}')").is_err());
+    }
+
+    #[test]
+    fn eval_rejects_variable_declaration_for_non_definable_global() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("eval('var NaN;')").is_err());
     }
 
     #[test]
