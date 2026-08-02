@@ -11,6 +11,12 @@ cargo run -p quench-node -- --stage 284
 tools/run-node-tests.sh tests/node/test/parallel/test-querystring.js
 tools/compat-coverage.sh
 tools/check-focused-stages.sh
+
+Feature-gated `stream/iter` stages are run with:
+
+```sh
+cargo run -p quench-node -- --experimental-stream-iter --stage 169
+```
 ```
 
 The Node test suite is tracked as the `tests/node` submodule. Compatibility
