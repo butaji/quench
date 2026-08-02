@@ -1508,6 +1508,16 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
     if (typeof args[0] === "number") return new NodeBuffer(args[0]);
     return NodeBuffer.from(...args);
   },
+  construct(_target, args) {
+    if (typeof args[0] === "number") {
+      const error = new TypeError(
+        'The "string" argument must be of type string',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return NodeBuffer.from(...args);
+  },
 });
 NodeBuffer.poolSize = 8192;
 NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
