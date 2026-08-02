@@ -6457,6 +6457,8 @@ globalThis.require = (specifier) => {
       once: globalThis.__nodeEventEmitter.once,
       on: globalThis.__nodeEventEmitter.on,
     };
+  if (name === "internal/event_target")
+    return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
   if (name === "stream/iter") {
     if (!globalThis.__quench_argv.includes("--experimental-stream-iter")) {
