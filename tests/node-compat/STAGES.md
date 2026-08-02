@@ -17,3 +17,4 @@ these small fixtures isolate the currently implemented contract.
 | 7 | `querystring` module | `tools/run-node-tests.sh --stage 7` |
 | 8 | basic `URL` and `URLSearchParams` | `tools/run-node-tests.sh --stage 8` |
 | 9 | URL authority and serialization | `tools/run-node-tests.sh --stage 9` |
+| 10 | asynchronous `fs` callbacks and promises | `tools/run-node-tests.sh --stage 10` |
