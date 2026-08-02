@@ -4361,6 +4361,37 @@ Object.setPrototypeOf = (object, prototype) => {
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
+  isArray: (value) => Array.isArray(value),
+  _extend: (target, source) => {
+    if (source && typeof source === "object") Object.assign(target, source);
+    return target;
+  },
+  toUSVString: (value) => {
+    const input = String(value);
+    let output = "";
+    for (let index = 0; index < input.length; index++) {
+      const code = input.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = input.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          output += input[index++] + input[index];
+        } else output += "\ufffd";
+      } else if (code >= 0xdc00 && code <= 0xdfff) output += "\ufffd";
+      else output += input[index];
+    }
+    return output;
+  },
+  stripVTControlCharacters: (value) => {
+    if (typeof value !== "string") {
+      const error = new TypeError('The "str" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return value.replace(
+      /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
+      "",
+    );
+  },
   promisify:
     (fn) =>
     (...args) =>
