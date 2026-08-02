@@ -143,9 +143,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                 if global
                     .borrow()
                     .get_own_property(name)
-                    .is_some_and(|descriptor| {
-                        descriptor.configurable == Some(false) && descriptor.writable == Some(false)
-                    })
+                    .is_some_and(|descriptor| descriptor.configurable == Some(false))
                 {
                     let (err_val, js_err) = crate::value::error::create_js_error_with_type(
                         "cannot redefine global property",
@@ -912,15 +910,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("Object.preventExtensions(this); try { eval('var evalNewOnly'); false } catch (e) { e instanceof TypeError }").is_ok_and(|value| {
-            matches!(value, Value::Boolean(true))
-        }));
-    }
-
-    #[test]
-    fn eval_updates_writable_non_configurable_global_function() {
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        assert!(ctx.eval("Object.defineProperty(this, 'evalUpdateOnly', { writable: true, configurable: false }); eval('function evalUpdateOnly() {}'); evalUpdateOnly() === undefined").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
     }
