@@ -1424,8 +1424,16 @@ const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
 class NodeTextEncoder {
   encode(value) {
     const output = [];
-    for (const character of String(value)) {
-      const code = character.codePointAt(0);
+    const input = String(value);
+    for (let index = 0; index < input.length; index++) {
+      let code = input.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = input.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
+          index++;
+        } else code = 0xfffd;
+      } else if (code >= 0xdc00 && code <= 0xdfff) code = 0xfffd;
       if (code < 0x80) output.push(code);
       else if (code < 0x800)
         output.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
