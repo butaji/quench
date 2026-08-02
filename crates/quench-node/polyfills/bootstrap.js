@@ -4266,7 +4266,7 @@ globalThis.__nodeOs = {
   tmpdir: () => {
     const candidate =
       process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
-    return candidate.length > 1 ? candidate.replace(/[\\/]+$/, "") : candidate;
+    return candidate.length > 1 ? candidate.replace(/\/+$/, "") : candidate;
   },
   homedir: () => globalThis.__quench_homedir,
   type: () => "Quench",
