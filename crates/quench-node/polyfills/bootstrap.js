@@ -5685,8 +5685,31 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
   }
 };
+const __nodeQuerystringEscape = (value) => {
+  const input = String(value);
+  let normalized = "";
+  for (let index = 0; index < input.length; index++) {
+    const code = input.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (
+        index + 1 < input.length &&
+        input.charCodeAt(index + 1) >= 0xdc00 &&
+        input.charCodeAt(index + 1) <= 0xdfff
+      ) {
+        normalized += input[index] + input[++index];
+      } else {
+        normalized += "\ufffd";
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      normalized += "\ufffd";
+    } else {
+      normalized += input[index];
+    }
+  }
+  return encodeURIComponent(normalized);
+};
 const __nodeQuerystringExports = {
-  escape: (value) => encodeURIComponent(String(value)),
+  escape: __nodeQuerystringEscape,
   unescape: (value) =>
     globalThis.__nodeQuerystring.unescapeBuffer(String(value), true).toString(),
   unescapeBuffer: (value, decodeSpaces = false) => {
