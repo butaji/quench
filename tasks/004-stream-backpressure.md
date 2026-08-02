@@ -32,3 +32,5 @@ Deferred `finish` and `end` callback ordering is covered by
 `tests/node-compat/stage-382/stream-end-order.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
+Shared stream `destroy()` state and error/close events are covered by
+`tests/node-compat/stage-432/stream-destroy.js`.
