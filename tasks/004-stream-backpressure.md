@@ -38,6 +38,8 @@ Readable queued chunk consumption through `read()` is covered by
 `tests/node-compat/stage-446/stream-read.js`.
 EOF delivery after buffered readable data is covered by
 `tests/node-compat/stage-447/stream-eof-order.js`.
+Readable async-iterator consumption does not replay pumped chunks in
+`tests/node-compat/stage-448/stream-iterator-consumption.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
