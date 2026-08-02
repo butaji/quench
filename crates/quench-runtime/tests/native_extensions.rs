@@ -27,6 +27,15 @@ fn generator_method_prototype_is_writable() {
 }
 
 #[test]
+fn yield_star_return_done_getter_error_reaches_catch() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var thrown={}; var done=Object.defineProperty({},'done',{get(){throw thrown;}}); var source={[Symbol.iterator](){return {next(){return {done:false}},return(){return done}}}}; var caught; function* g(){try{yield*source}catch(e){caught=e}} var iter=g(); iter.next(); iter.return(); caught===thrown",
+    );
+    assert_eq!(result.unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn yield_star_preserves_missing_done_property() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

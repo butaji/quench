@@ -517,15 +517,24 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_ref() {
-                match crate::eval::object::call_iterator_return_done(&suspend.iterator)? {
-                    Some(false) => {
+                match crate::eval::object::call_iterator_return_done(&suspend.iterator) {
+                    Err(error) => {
+                        let reason = crate::value::take_thrown_value()
+                            .unwrap_or_else(|| Value::String(error.to_string()));
+                        let mut suspend = suspend.clone();
+                        suspend.abrupt_error = Some((error, reason));
+                        g.yield_delegate_suspend = Some(suspend);
+                        let result = g.next(Value::Undefined)?;
+                        return Ok(result.to_object());
+                    }
+                    Ok(Some(false)) => {
                         return Ok(IteratorResult {
                             value: Value::Undefined,
                             done: false,
                         }
                         .to_object());
                     }
-                    Some(true) | None => {}
+                    Ok(Some(true)) | Ok(None) => {}
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_mut() {
@@ -877,7 +886,7 @@ fn async_delegate_abrupt(
             resume_delegate_completion(generator, state, result.value, proto)
         }
         Ok(result) => resolve_async_result_later(result, proto, Rc::clone(generator)),
-        Err(error) => resume_delegate_error(generator, state, error, proto),
+        Err(error) => resume_async_delegate_error(generator, state, error, proto),
     }
 }
 
@@ -911,7 +920,7 @@ fn resume_delegate_completion(
     }
 }
 
-fn resume_delegate_error(
+fn resume_async_delegate_error(
     generator: &Rc<RefCell<GeneratorObject>>,
     mut state: YieldDelegateSuspend,
     error: JsError,
@@ -959,19 +968,27 @@ fn delegate_abrupt(
             let close = crate::eval::member::eval_object_member(&state.iterator, "return", None)?;
             if !matches!(close, Value::Undefined | Value::Null) {
                 if !close.is_callable() {
-                    return Err(generator_type_error("iterator return is not callable"));
+                    return resume_delegate_error(
+                        generator,
+                        state,
+                        generator_type_error("iterator return is not callable"),
+                    );
                 }
-                let result = crate::eval::function::call_value_with_this(
+                let result = match crate::eval::function::call_value_with_this(
                     close,
                     vec![],
                     Value::Object(Rc::clone(&state.iterator)),
-                )?;
+                ) {
+                    Ok(result) => result,
+                    Err(error) => return resume_delegate_error(generator, state, error),
+                };
                 let _ = crate::eval::object::await_async_iterator_result(result)?;
             }
-            generator.borrow_mut().state = GeneratorState::Completed;
-            return Err(generator_type_error(
-                "iterator does not provide a throw method",
-            ));
+            return resume_delegate_error(
+                generator,
+                state,
+                generator_type_error("iterator does not provide a throw method"),
+            );
         }
         generator.borrow_mut().state = GeneratorState::Completed;
         return Ok(IteratorResult {
@@ -980,18 +997,44 @@ fn delegate_abrupt(
         });
     }
     if !method.is_callable() {
-        return Err(generator_type_error("iterator method is not callable"));
+        return resume_delegate_error(
+            generator,
+            state,
+            generator_type_error("iterator method is not callable"),
+        );
     }
-    let result = crate::eval::function::call_value_with_this(
+    let result = match crate::eval::function::call_value_with_this(
         method,
         vec![argument],
         Value::Object(Rc::clone(&state.iterator)),
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) => return resume_delegate_error(generator, state, error),
+    };
     let result = crate::eval::object::await_async_iterator_result(result)?;
     let Value::Object(result) = result else {
-        return Err(generator_type_error("iterator result is not an object"));
+        return resume_delegate_error(
+            generator,
+            state,
+            generator_type_error("iterator result is not an object"),
+        );
     };
-    finish_delegate_abrupt(generator, state, result)
+    match finish_delegate_abrupt(generator, state.clone(), result) {
+        Ok(result) => Ok(result),
+        Err(error) => resume_delegate_error(generator, state, error),
+    }
+}
+
+fn resume_delegate_error(
+    generator: &Rc<RefCell<GeneratorObject>>,
+    mut state: YieldDelegateSuspend,
+    error: JsError,
+) -> Result<IteratorResult, JsError> {
+    let reason =
+        crate::value::take_thrown_value().unwrap_or_else(|| Value::String(error.to_string()));
+    state.abrupt_error = Some((error, reason));
+    generator.borrow_mut().yield_delegate_suspend = Some(state);
+    Ok(generator.borrow_mut().next(Value::Undefined)?)
 }
 
 fn finish_delegate_abrupt(
