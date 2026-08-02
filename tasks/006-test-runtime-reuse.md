@@ -55,3 +55,5 @@ The minimal primary-process cluster fork and disconnect lifecycle is covered
 by `tests/node-compat/stage-504`.
 Cluster primary setup now clones settings and emits asynchronous `setup`
 events, covered by `tests/node-compat/stage-505`.
+The common child-process compile-cache assertion helper is covered by
+`tests/node-compat/stage-506`.

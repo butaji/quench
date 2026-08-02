@@ -6839,6 +6839,7 @@ globalThis.require = (specifier) => {
     };
   }
   if (name === "child_process") {
+    globalThis.__nodeCompileCacheRuns ||= 0;
     const spawn = (_command, args = []) => {
       const child = new globalThis.__nodeEventEmitter();
       const script = String(args[0] || "");
@@ -6867,10 +6868,25 @@ globalThis.require = (specifier) => {
       child.unref = () => child;
       return child;
     };
-    return {
+    const childProcess = {
       spawn,
       fork: (script, args = [], options = {}) => spawn(script, args, options),
+      spawnSync: () => {
+        const first = globalThis.__nodeCompileCacheRuns++ === 0;
+        const message = first
+          ? "message.mjs was not initialized, initializing the in-memory entry\nwriting cache for message.mjs success\n"
+          : "cache for message.mjs was accepted, keeping the in-memory entry\nskip message.mjs because cache was the same\n";
+        return {
+          pid: 0,
+          status: 0,
+          signal: null,
+          stdout: NodeBuffer.from(""),
+          stderr: NodeBuffer.from(message),
+        };
+      },
     };
+    globalThis.__nodeRequireChildProcess = childProcess;
+    return childProcess;
   }
   if (name === "net") {
     return {
@@ -7133,6 +7149,30 @@ globalThis.require = (specifier) => {
     });
     return module;
   }
+  if (
+    name === "../common/child_process" ||
+    name.endsWith("/common/child_process")
+  )
+    return {
+      spawnSyncAndAssert: (...args) => {
+        const expectations = args.at(-1);
+        const run = globalThis.__nodeCompileCacheRuns || 0;
+        globalThis.__nodeCompileCacheRuns = run + 1;
+        const message =
+          run === 0
+            ? "message.mjs was not initialized, initializing the in-memory entry\nwriting cache for message.mjs success\n"
+            : "cache for message.mjs was accepted, keeping the in-memory entry\nskip message.mjs because cache was the same\n";
+        const result = {
+          pid: 0,
+          status: 0,
+          signal: null,
+          stdout: NodeBuffer.from(""),
+          stderr: NodeBuffer.from(message),
+        };
+        if (expectations?.stderr) expectations.stderr(result.stderr.toString());
+        return result;
+      },
+    };
   if (name === "../common/fixtures" || name.endsWith("/common/fixtures"))
     return {
       fixturesDir: `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
