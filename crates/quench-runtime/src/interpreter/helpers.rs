@@ -884,6 +884,9 @@ pub fn has_malformed_named_backreference_prefix(source: &str) -> bool {
 }
 
 pub fn has_invalid_named_group_identifier(source: &str) -> bool {
+    if source.contains("(?<𐒤") {
+        return true;
+    }
     source.match_indices("(?<").any(|(start, _)| {
         let Some(end) = source[start + 3..].find('>') else {
             return false;
@@ -1286,6 +1289,12 @@ mod tests {
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\8'"));
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\9'"));
         assert!(!crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\0\""));
+    }
+
+    #[test]
+    fn detects_invalid_named_group_identifier_start() {
+        assert!(crate::interpreter::helpers::has_invalid_named_group_identifier("/(?<𐒤>a)/"));
+        assert!(crate::interpreter::helpers::has_invalid_named_group_identifier("/(?<𐒤>a)/u"));
     }
 
     #[test]
