@@ -98,3 +98,4 @@ these small fixtures isolate the currently implemented contract.
 | 88 | async rename/rmdir and duplicate mkdir errors | `tools/run-node-tests.sh --stage 88` |
 | 89 | common invalid-argument diagnostic helper | `tools/run-node-tests.sh --stage 89` |
 | 90 | callback and Buffer-aware `fs.appendFile` | `tools/run-node-tests.sh --stage 90` |
+| 91 | asynchronous chmod and permission metadata | `tools/run-node-tests.sh --stage 91` |

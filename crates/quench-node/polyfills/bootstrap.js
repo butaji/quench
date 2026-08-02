@@ -396,7 +396,7 @@ globalThis.__nodeFs = {
       throw error;
     }
     const file = kind === 'file'; const date = new Date();
-    return new globalThis.__nodeStats(file, kind === 'directory', date);
+    const stats = new globalThis.__nodeStats(file, kind === 'directory', date); stats.mode = globalThis.__nodeModes[path] || 0; return stats;
   },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
@@ -458,9 +458,16 @@ globalThis.__nodeFs = {
   accessSync: (value) => { if (!globalThis.__quench_fs_access(String(value))) throw new Error('ENOENT'); },
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
   rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
-  chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
+  chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeModes = {};
+globalThis.__nodeFs.chmod = (value, mode, callback) => {
+  if (typeof mode === 'function') { callback = mode; mode = undefined; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__nodeFs.chmodSync(path, mode); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
   if (typeof options === 'function') callback = options;
