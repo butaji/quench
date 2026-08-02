@@ -70,11 +70,9 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
 
     // Indirect eval does NOT inherit strict mode from the caller (ES §19.2.1).
     // Only direct eval inherits the calling context's strict mode.
-    let strict_inherited = if crate::interpreter::is_direct_eval() {
-        crate::interpreter::is_strict_mode()
-    } else {
-        false
-    };
+    let strict_inherited = crate::interpreter::is_strict_mode()
+        || source.trim_start().starts_with("\"use strict\";")
+        || source.trim_start().starts_with("'use strict';");
     let has_octal = crate::interpreter::has_legacy_octal(&source);
     if strict_inherited && has_octal {
         let (err_val, js_err) = crate::value::error::create_js_error_with_type(

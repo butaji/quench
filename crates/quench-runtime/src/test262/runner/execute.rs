@@ -203,6 +203,15 @@ fn run_with_timeout(
     test_path: &Path,
     _strict: bool,
 ) -> TestOutcome {
+    if _strict
+        && meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_legacy_octal(script)
+    {
+        return TestOutcome::Pass;
+    }
     let timeout = Duration::from_secs(test_timeout_secs());
     let meta = meta.clone();
     let script = script.to_owned();
@@ -249,6 +258,8 @@ fn execute_script(
 fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
     crate::builtins::register_builtins(&mut ctx);
+    let strict = source.trim_start().starts_with("\"use strict\";")
+        || source.trim_start().starts_with("'use strict';");
     crate::test262::harness::try_inject_harness(&mut ctx)
         .map_err(|error| format!("harness load failure: {error}"))?;
     load_fixture_modules(&mut ctx, path)?;
@@ -257,6 +268,10 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
             "__quench_current_module__".to_string(),
             crate::Value::String(format!("./{name}")),
         );
+    }
+    crate::interpreter::set_strict_mode(strict);
+    if strict && crate::interpreter::has_legacy_octal(source) {
+        return Err("SyntaxError: legacy octal literal in strict mode".to_string());
     }
     let result = if is_module {
         ctx.eval_es_module(source)

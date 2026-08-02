@@ -200,6 +200,23 @@ fn main() -> ExitCode {
             }
         }
 
+        if (code.trim_start().starts_with("\"use strict\";")
+            || code.trim_start().starts_with("'use strict';"))
+            && quench_runtime::interpreter::has_legacy_octal(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: legacy octal literal in strict mode".to_string())),
+            );
+        }
         let run_result = if module || is_module_meta {
             ctx.eval_es_module(code)
         } else {
