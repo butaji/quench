@@ -1108,6 +1108,15 @@ mod tests {
     }
 
     #[test]
+    fn private_method_before_super_returns_in_base_constructor() {
+        let r = eval(
+            "class C { constructor() { this.f(); } } class D extends C { f() { this.#m(); } #m() {} } new D()",
+        );
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(msg.contains("TypeError"), "expected TypeError, got {msg}");
+    }
+
+    #[test]
     fn symbol_toprimitive_computed_field_is_own_property() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
