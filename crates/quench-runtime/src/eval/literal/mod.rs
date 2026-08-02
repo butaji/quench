@@ -231,16 +231,9 @@ pub fn eval_object_literal(
                                 function.is_method = true;
                             }
                         }
-                        if let PropertyKey::Computed(expression) = key {
-                            let computed_key = crate::eval::expression::eval_expression(
-                                expression,
-                                &literal_env,
-                                in_arrow_function,
-                            )?;
-                            if let Value::Symbol(symbol) = computed_key {
-                                home.borrow_mut().set_symbol(&symbol.property_key(), val);
-                                continue;
-                            }
+                        if key_str.contains('\0') {
+                            home.borrow_mut().set_symbol(&key_str, val);
+                            continue;
                         }
                         if matches!(key, PropertyKey::Computed(_)) && key_str == "__proto__" {
                             home.borrow_mut().define(

@@ -1034,3 +1034,14 @@ fn private_field_set_on_foreign_class_instance_throws() {
         .unwrap_err();
     assert!(err.0.contains("TypeError"), "got {}", err.0);
 }
+
+#[test]
+fn computed_object_property_name_evaluates_before_value() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval(
+            "var counter = 0; var o = { [++counter]: ++counter, [++counter]: ++counter, [++counter]: ++counter }; Object.getOwnPropertyNames(o).join(',')",
+        )
+        .unwrap();
+    assert_eq!(value, crate::Value::String("1,3,5".to_string()));
+}
