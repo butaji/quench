@@ -41,3 +41,5 @@ Basic `createWriteStream().end()` lifecycle is covered by
 `tests/node-compat/stage-422/fs-write-stream-end.js`.
 Basic `createReadStream()` byte delivery is covered by
 `tests/node-compat/stage-423/fs-read-stream.js`.
+Read-stream encoding and `bytesRead` accounting are covered by
+`tests/node-compat/stage-424/fs-read-stream-options.js`.
