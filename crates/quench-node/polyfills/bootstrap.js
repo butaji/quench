@@ -2526,6 +2526,7 @@ class NodeWritable extends NodeEventEmitter {
       this.emit("finish");
       if (callback) callback();
     });
+    return this;
   }
 }
 class NodeTransform extends NodeWritable {
