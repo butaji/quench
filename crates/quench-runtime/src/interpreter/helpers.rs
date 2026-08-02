@@ -739,7 +739,11 @@ pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
         let Some(end) = colon else { return false };
         let flags = &rest[..end];
         let Some((added, removed)) = flags.split_once('-') else {
-            return false;
+            return flags.chars().any(|flag| !matches!(flag, 'i' | 'm' | 's'))
+                || flags
+                    .chars()
+                    .enumerate()
+                    .any(|(index, flag)| flags[..index].contains(flag));
         };
         let valid = |flags: &str| {
             flags.chars().all(|flag| matches!(flag, 'i' | 'm' | 's'))
