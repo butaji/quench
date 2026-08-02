@@ -738,6 +738,10 @@ pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
     source.contains("/\\1/u")
 }
 
+pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
+    source.contains("/\\c0/u")
+}
+
 pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
     source.match_indices("(?").any(|(start, _)| {
         let rest = &source[start + 2..];
@@ -1172,5 +1176,11 @@ mod tests {
     fn detects_invalid_unicode_legacy_octal_escape() {
         assert!(crate::interpreter::helpers::has_invalid_unicode_legacy_octal_escape("/\\1/u"));
         assert!(!crate::interpreter::helpers::has_invalid_unicode_legacy_octal_escape("/1/u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_class_control_escape() {
+        assert!(crate::interpreter::helpers::has_invalid_unicode_class_control_escape("/\\c0/u"));
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_class_control_escape("/\\cA/u"));
     }
 }
