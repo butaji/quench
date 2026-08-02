@@ -5685,29 +5685,7 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
   }
 };
-const __nodeQuerystringEscape = (value) => {
-  const input = String(value);
-  let normalized = "";
-  for (let index = 0; index < input.length; index++) {
-    const code = input.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      if (
-        index + 1 < input.length &&
-        input.charCodeAt(index + 1) >= 0xdc00 &&
-        input.charCodeAt(index + 1) <= 0xdfff
-      ) {
-        normalized += input[index] + input[++index];
-      } else {
-        normalized += "\ufffd";
-      }
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      normalized += "\ufffd";
-    } else {
-      normalized += input[index];
-    }
-  }
-  return encodeURIComponent(normalized);
-};
+const __nodeQuerystringEscape = (value) => encodeURIComponent(String(value));
 const __nodeQuerystringExports = {
   escape: __nodeQuerystringEscape,
   unescape: (value) =>
@@ -5769,7 +5747,10 @@ const __nodeQuerystringExports = {
                 ? ""
                 : encode(item);
           } catch (error) {
-            if (error instanceof URIError) error.code = "ERR_INVALID_URI";
+            if (error instanceof URIError) {
+              error.code = "ERR_INVALID_URI";
+              error.message = "URI malformed";
+            }
             throw error;
           }
           return `${encodedKey}${eq}${encodedValue}`;
@@ -5835,6 +5816,10 @@ globalThis.__nodeQuerystring = new Proxy(
       configurable: true,
       value: __nodeQuerystringExports[key],
     }),
+    set: (_, key, value) => {
+      __nodeQuerystringExports[key] = value;
+      return true;
+    },
   },
 );
 class NodeURLSearchParams {

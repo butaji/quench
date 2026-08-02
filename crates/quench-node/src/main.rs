@@ -36,10 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return run_directory(&dir);
     }
     if mode.as_deref() == Some("--reuse-dir") {
-        let dir = PathBuf::from(
-            args.next()
-                .unwrap_or_else(|| "tests/node-compat".into()),
-        );
+        let dir = PathBuf::from(args.next().unwrap_or_else(|| "tests/node-compat".into()));
         return run_directory_reuse(&dir);
     }
     let source = match mode.as_deref() {
@@ -378,7 +375,7 @@ fn run_source_with_runtime(
             }),
         )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
-        let wrapped = format!("try {{\n{source}\n}} catch (error) {{ globalThis.__quench_last_error = String(error && (error.stack || error)); throw error; }}");
+        let wrapped = format!("try {{\n{source}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}");
         ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
             let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}"));
             eprintln!("JavaScript exception: {detail} ({error:?})");
@@ -441,7 +438,10 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
-            && entry.path().extension().is_some_and(|e| e == "js" || e == "mjs")
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|e| e == "js" || e == "mjs")
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
