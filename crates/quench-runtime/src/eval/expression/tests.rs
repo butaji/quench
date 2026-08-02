@@ -295,6 +295,14 @@ fn freezing_array_makes_element_descriptors_read_only() {
 }
 
 #[test]
+fn object_methods_have_no_prototype_property() {
+    assert_eq!(
+        eval("var method = { method() {} }.method; !Object.prototype.hasOwnProperty.call(method, 'prototype') && method.prototype === undefined").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn logical_assignment_infers_anonymous_function_name() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(

@@ -344,7 +344,7 @@ impl ValueFunction {
             names.push("name".to_string());
         }
         // Non-arrow functions always have a .prototype property.
-        if !self.is_arrow {
+        if !self.is_arrow && !self.is_method {
             names.push("prototype".to_string());
         }
         for key in self.properties.borrow().keys() {

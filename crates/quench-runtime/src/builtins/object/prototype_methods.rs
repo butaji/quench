@@ -38,7 +38,7 @@ pub fn object_prototype_has_own_property(args: Vec<Value>) -> Result<Value, JsEr
             if let Some(key_str) = crate::builtins::object::helpers::get_property_key(key_val) {
                 // Non-arrow functions always have a .prototype own property
                 // (even if it hasn't been lazily created yet).
-                if key_str == "prototype" && !f.is_arrow {
+                if key_str == "prototype" && !f.is_arrow && !f.is_method {
                     return Ok(Value::Boolean(true));
                 }
                 if key_str == "name" && !f.is_property_deleted("name")
