@@ -4033,8 +4033,10 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
         globalThis.__nodeFs.writeFileSync(path, NodeBuffer.concat(chunks));
         stream.emit("finish");
         if (callback) callback();
-        globalThis.__nodeFs.closeSync(stream.fd);
-        stream.fd = null;
+        if (options.autoClose !== false) {
+          globalThis.__nodeFs.closeSync(stream.fd);
+          stream.fd = null;
+        }
         stream.emit("close");
       } catch (error) {
         stream.emit("error", error);
@@ -4082,7 +4084,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
         if (!stream._paused && stream._index === stream._chunks.length) {
           stream._ended = true;
           stream.emit("end");
-          if (stream.fd !== null) {
+          if (options.autoClose !== false && stream.fd !== null) {
             globalThis.__nodeFs.closeSync(stream.fd);
             stream.fd = null;
           }
