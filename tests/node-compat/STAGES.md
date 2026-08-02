@@ -61,3 +61,4 @@ these small fixtures isolate the currently implemented contract.
 | 51 | console counters and clear | `tools/run-node-tests.sh --stage 51` |
 | 52 | `assert.strict` namespace | `tools/run-node-tests.sh --stage 52` |
 | 53 | upstream `common.mustCall` helpers | `tools/run-node-tests.sh --stage 53` |
+| 54 | exact callback-count enforcement | `tools/run-node-tests.sh --stage 54` |
