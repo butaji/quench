@@ -12,6 +12,17 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
 }
 globalThis.console.dir = (value) => globalThis.__quench_console_write(globalThis.__nodeFormat([value]));
 globalThis.console.assert = (condition, ...args) => { if (!condition) globalThis.console.error(...args); };
+const consoleTimers = {};
+globalThis.console.time = (label = 'default') => { consoleTimers[label] = BigInt(globalThis.__quench_now_ns()); };
+globalThis.console.timeLog = (label = 'default', ...args) => {
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(`${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms ${globalThis.__nodeFormat(args)}`);
+};
+globalThis.console.timeEnd = (label = 'default') => {
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(`${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms`);
+  delete consoleTimers[label];
+};
 
 globalThis.process = {
   env: new Proxy({}, { get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined }),
