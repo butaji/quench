@@ -4248,6 +4248,7 @@ let __nodePriority = 0;
 const __nodeStartedAt = Date.now();
 globalThis.__nodeOs = {
   EOL: "\n",
+  devNull: "/dev/null",
   platform: () => process.platform,
   arch: () => process.arch,
   release: () => "quench-node",
@@ -4284,6 +4285,7 @@ globalThis.__nodeOs = {
       speed: 0,
       times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
     })),
+  availableParallelism: () => globalThis.__quench_cpu_count,
   userInfo: (options = {}) => {
     const value = {
       username: "quench",
