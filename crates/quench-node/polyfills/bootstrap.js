@@ -1322,6 +1322,10 @@ NodeBuffer.prototype.readUintLE = NodeBuffer.prototype.readUIntLE;
 NodeBuffer.prototype.readUintBE = NodeBuffer.prototype.readUIntBE;
 NodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;
 NodeBuffer.prototype.writeUintBE = NodeBuffer.prototype.writeUIntBE;
+NodeBuffer.prototype.readBigUint64LE = NodeBuffer.prototype.readBigUInt64LE;
+NodeBuffer.prototype.readBigUint64BE = NodeBuffer.prototype.readBigUInt64BE;
+NodeBuffer.prototype.writeBigUint64LE = NodeBuffer.prototype.writeBigUInt64LE;
+NodeBuffer.prototype.writeBigUint64BE = NodeBuffer.prototype.writeBigUInt64BE;
 const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
 const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
 class NodeTextEncoder {
