@@ -299,6 +299,34 @@ class NodeBuffer extends Uint8Array {
   static of(...values) {
     return new NodeBuffer(values);
   }
+  static copyBytesFrom(view, offset = 0, length = view.byteLength) {
+    if (!ArrayBuffer.isView(view)) {
+      const error = new TypeError(
+        'The "view" argument must be an instance of TypedArray',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    offset = Math.trunc(Number(offset));
+    length = Math.trunc(Number(length));
+    if (
+      !Number.isFinite(offset) ||
+      !Number.isFinite(length) ||
+      offset < 0 ||
+      length < 0 ||
+      offset + length > view.byteLength
+    ) {
+      const error = new RangeError(
+        "The requested range is outside the bounds of the view",
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + offset, length);
+    const output = new NodeBuffer(length);
+    output.set(bytes);
+    return output;
+  }
   static isBuffer(value) {
     return value instanceof NodeBuffer;
   }
