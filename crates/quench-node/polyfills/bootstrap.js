@@ -2410,7 +2410,8 @@ class NodeReadable extends NodeEventEmitter {
       if (!this._chunks.length) this._emitEnd();
       return false;
     }
-    if (this._paused) this._chunks.push(chunk);
+    if (this._paused || this.listenerCount("data") === 0)
+      this._chunks.push(chunk);
     else this.emit("data", chunk);
     return true;
   }
@@ -2420,7 +2421,8 @@ class NodeReadable extends NodeEventEmitter {
       if (!this._chunks.length) this._emitEnd();
       return this;
     }
-    if (this._paused) this._chunks.unshift(chunk);
+    if (this._paused || this.listenerCount("data") === 0)
+      this._chunks.unshift(chunk);
     else this.emit("data", chunk);
     return this;
   }
