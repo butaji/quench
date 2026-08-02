@@ -1721,7 +1721,9 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
   } catch (error) {
     thrown = true;
     captured = error;
-    if (typeof expected === "function" && !(error instanceof expected)) {
+    if (typeof expected === "function" && expected.prototype === undefined) {
+      if (!expected(error)) throw error;
+    } else if (typeof expected === "function" && !(error instanceof expected)) {
       const assertion = new globalThis.__nodeAssert.AssertionError(
         `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`,
       );
@@ -1732,6 +1734,8 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
       assertion.expected = expected;
       throw assertion;
     }
+    if (expected instanceof RegExp && !expected.test(String(error)))
+      throw error;
     if (expected && typeof expected === "object") {
       if (expected.name && error.name !== expected.name) throw error;
       if (expected.message && error.message !== expected.message) throw error;
