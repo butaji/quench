@@ -596,6 +596,8 @@ globalThis.__nodeFs.realpath = (value, options, callback) => {
   const path = nodeFsPath(value);
   queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.realpathSync(path); } catch (error) { callback(error); return; } callback(null, result); });
 };
+globalThis.__nodeFs.realpathSync.native = globalThis.__nodeFs.realpathSync;
+globalThis.__nodeFs.realpath.native = globalThis.__nodeFs.realpath;
 globalThis.__nodeStats = function Stats(file = false, directory = false, date = new Date()) {
   if (!(date instanceof Date)) date = new Date(Number(date) || 0);
   this.dev = 0; this.mode = 0; this.nlink = 1; this.uid = 0; this.gid = 0; this.rdev = 0; this.blksize = 4096; this.ino = 0;
