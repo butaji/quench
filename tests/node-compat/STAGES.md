@@ -112,3 +112,4 @@ these small fixtures isolate the currently implemented contract.
 | 102 | numeric and octal-string `fs.open` modes | `tools/run-node-tests.sh --stage 102` |
 | 103 | `fs.close` fd and callback validation | `tools/run-node-tests.sh --stage 103` |
 | 104 | fd mode-mask regression coverage | `tools/run-node-tests.sh --stage 104` |
+| 105 | promise-based readdir Dirents | `tools/run-node-tests.sh --stage 105` |

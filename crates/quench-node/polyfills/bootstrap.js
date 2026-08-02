@@ -361,7 +361,7 @@ class NodeTransform extends NodeWritable {
 }
 globalThis.__nodeStream = { Readable: NodeReadable, Writable: NodeWritable, Transform: NodeTransform, PassThrough: NodeTransform };
 globalThis.__nodeFs = {
-  constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_APPEND: 1024, O_CREAT: 64, O_EXCL: 128, O_RDONLY: 0, O_RDWR: 2, O_SYNC: 1052672, O_DSYNC: 4194304, O_TRUNC: 512, O_WRONLY: 1, COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4, UV_FS_COPYFILE_EXCL: 1, UV_FS_COPYFILE_FICLONE: 2, UV_FS_COPYFILE_FICLONE_FORCE: 4 },
+  constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1, O_APPEND: 1024, O_CREAT: 64, O_EXCL: 128, O_RDONLY: 0, O_RDWR: 2, O_SYNC: 1052672, O_DSYNC: 4194304, O_TRUNC: 512, O_WRONLY: 1, UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2, UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5, UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7, COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4, UV_FS_COPYFILE_EXCL: 1, UV_FS_COPYFILE_FICLONE: 2, UV_FS_COPYFILE_FICLONE_FORCE: 4 },
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value, options) => {
@@ -546,9 +546,9 @@ globalThis.__nodeStats.prototype.isCharacterDevice = function () { return false;
 globalThis.__nodeStats.prototype.isFIFO = function () { return false; };
 globalThis.__nodeStats.prototype.isSymbolicLink = function () { return false; };
 globalThis.__nodeFs.Dirent = class Dirent {
-  constructor(name, directory = false) { this.name = name; this._directory = directory; }
-  isFile() { return !this._directory; } isDirectory() { return this._directory; } isSocket() { return false; }
-  isBlockDevice() { return false; } isCharacterDevice() { return false; } isFIFO() { return false; } isSymbolicLink() { return false; }
+  constructor(name, type = 1) { this.name = name; this._type = type === true ? 2 : type === false ? 1 : type; }
+  isFile() { return this._type === 1; } isDirectory() { return this._type === 2; } isSymbolicLink() { return this._type === 3; }
+  isFIFO() { return this._type === 4; } isSocket() { return this._type === 5; } isCharacterDevice() { return this._type === 6; } isBlockDevice() { return this._type === 7; }
 };
 for (const method of ['statSync', 'lstatSync']) globalThis.__nodeFs[method] = globalThis.__nodeFs.statSync;
 globalThis.__nodeFs.stat = (value, options, callback) => {
@@ -648,7 +648,7 @@ globalThis.__nodeFs.promises = {
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
   rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
-  readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
+  readdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value, options)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
 };
 globalThis.__nodeOs = {
