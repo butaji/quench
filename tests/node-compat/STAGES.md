@@ -63,3 +63,4 @@ these small fixtures isolate the currently implemented contract.
 | 53 | upstream `common.mustCall` helpers | `tools/run-node-tests.sh --stage 53` |
 | 54 | exact callback-count enforcement | `tools/run-node-tests.sh --stage 54` |
 | 55 | process warning emission | `tools/run-node-tests.sh --stage 55` |
+| 56 | process executable identity | `tools/run-node-tests.sh --stage 56` |

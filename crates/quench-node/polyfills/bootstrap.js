@@ -30,7 +30,8 @@ globalThis.console.timeEnd = (label = 'default') => {
 
 globalThis.process = {
   env: new Proxy({}, { get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined }),
-  argv: ['quench-node'],
+  argv: [globalThis.__quench_exec_path],
+  execPath: globalThis.__quench_exec_path,
   pid: globalThis.__quench_pid,
   ppid: globalThis.__quench_ppid,
   getuid: () => globalThis.__quench_getuid,
