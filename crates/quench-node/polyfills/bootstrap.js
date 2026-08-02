@@ -2415,7 +2415,11 @@ class NodeReadable extends NodeEventEmitter {
     return true;
   }
   unshift(chunk) {
-    if (chunk === null) return this;
+    if (chunk === null) {
+      this._ended = true;
+      if (!this._chunks.length) this._emitEnd();
+      return this;
+    }
     if (this._paused) this._chunks.unshift(chunk);
     else this.emit("data", chunk);
     return this;
