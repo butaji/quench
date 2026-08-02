@@ -5067,7 +5067,7 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
   }
 };
-globalThis.__nodeQuerystring = {
+const __nodeQuerystringExports = {
   escape: (value) => encodeURIComponent(String(value)),
   unescape: (value) =>
     globalThis.__nodeQuerystring.unescapeBuffer(String(value), true).toString(),
@@ -5168,6 +5168,24 @@ globalThis.__nodeQuerystring = {
     return result;
   },
 };
+let __nodeQuerystringInstance;
+globalThis.__nodeQuerystringInitialized = false;
+globalThis.__nodeQuerystring = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeQuerystringInitialized = true;
+      __nodeQuerystringInstance ||= __nodeQuerystringExports;
+      return __nodeQuerystringInstance[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeQuerystringExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeQuerystringExports[key],
+    }),
+  },
+);
 class NodeURLSearchParams {
   constructor(init = "") {
     this._pairs = [];
@@ -5624,7 +5642,10 @@ globalThis.require = (specifier) => {
     globalThis.__nodeOsInitialized = true;
     return globalThis.__nodeOs;
   }
-  if (name === "querystring") return globalThis.__nodeQuerystring;
+  if (name === "querystring") {
+    globalThis.__nodeQuerystringInitialized = true;
+    return globalThis.__nodeQuerystring;
+  }
   if (name === "url") {
     globalThis.__nodeUrlInitialized = true;
     return globalThis.__nodeUrlModule;
