@@ -1,6 +1,10 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use rquickjs::{Context, Runtime};
+use rquickjs::{function::Func, Context, Runtime};
 use walkdir::WalkDir;
 
 const BOOTSTRAP: &str = include_str!("../polyfills/bootstrap.js");
@@ -13,7 +17,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return run_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")));
     }
     if mode.as_deref() == Some("--test-dir") {
-        let dir = PathBuf::from(args.next().unwrap_or_else(|| "tests/node/test/parallel".into()));
+        let dir = PathBuf::from(
+            args.next()
+                .unwrap_or_else(|| "tests/node/test/parallel".into()),
+        );
         return run_directory(&dir);
     }
     let source = match mode.as_deref() {
@@ -28,6 +35,27 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new()?;
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> rquickjs::Result<()> {
+        ctx.globals().set(
+            "__quench_fs_exists",
+            Func::from(|path: String| fs::metadata(path).is_ok()),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_mkdtemp",
+            Func::from(|prefix: String| -> rquickjs::Result<String> {
+                let root = std::env::temp_dir();
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                for attempt in 0..100 {
+                    let path = root.join(format!("{prefix}{stamp}-{attempt}"));
+                    if fs::create_dir(&path).is_ok() {
+                        return Ok(path.to_string_lossy().into_owned());
+                    }
+                }
+                Err(rquickjs::Error::new_from_js("fs", "mkdtemp failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;
@@ -51,5 +79,9 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("{total} tests, {} passed, {failed} failed", total - failed);
-    if failed == 0 { Ok(()) } else { Err("Node test harness failures".into()) }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err("Node test harness failures".into())
+    }
 }

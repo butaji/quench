@@ -9,4 +9,4 @@ these small fixtures isolate the currently implemented contract.
 |---:|---|---|
 | 0 | runtime globals and `Buffer` | `tools/run-node-tests.sh --stage 0` |
 | 1 | initial CommonJS built-in shims | `tools/run-node-tests.sh --stage 1` |
-| 2 | filesystem and path host bindings | pending |
+| 2 | filesystem and path host bindings | `tools/run-node-tests.sh --stage 2` |

@@ -80,6 +80,10 @@ globalThis.__nodeCommon = {
   noop: () => {},
   expectWarning: () => {},
 };
+globalThis.__nodeFs = {
+  existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
+  mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
+};
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;
@@ -88,5 +92,6 @@ globalThis.require = (specifier) => {
   if (name === 'events') return { EventEmitter: class {} };
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
+  if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };
