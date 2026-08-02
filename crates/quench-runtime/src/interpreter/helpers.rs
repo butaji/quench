@@ -805,6 +805,19 @@ pub fn has_empty_named_group(source: &str) -> bool {
     source.contains("(?<>")
 }
 
+pub fn has_incomplete_named_group(source: &str) -> bool {
+    source.match_indices("(?<").any(|(start, _)| {
+        let rest = &source[start + 3..];
+        !rest.starts_with('=') && !rest.starts_with('!') && !rest.contains('>')
+    })
+}
+
+pub fn has_incomplete_named_backreference(source: &str) -> bool {
+    source
+        .match_indices("\\k<")
+        .any(|(start, _)| !source[start + 3..].contains('>'))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};

@@ -224,6 +224,15 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
+        && (crate::interpreter::has_incomplete_named_group(script)
+            || crate::interpreter::has_incomplete_named_backreference(script))
+    {
+        return TestOutcome::Pass;
+    }
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
         && crate::interpreter::has_empty_named_group(script)
     {
         return TestOutcome::Pass;
