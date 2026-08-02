@@ -297,11 +297,17 @@ class NodeBuffer extends Uint8Array {
         error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
         throw error;
       }
-      let size =
-        length === undefined
-          ? value.byteLength - offset
-          : Math.trunc(Number(length));
-      if (!Number.isFinite(size) || Number.isNaN(size)) size = 0;
+      let size;
+      if (length === undefined) size = value.byteLength - offset;
+      else {
+        const numericLength = Number(length);
+        if (numericLength === Infinity || numericLength === -Infinity) {
+          const error = new RangeError('"length" is outside of buffer bounds');
+          error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+          throw error;
+        }
+        size = Number.isNaN(numericLength) ? 0 : Math.trunc(numericLength);
+      }
       if (size < 0 || offset + size > value.byteLength) {
         const error = new RangeError('"length" is outside of buffer bounds');
         error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
