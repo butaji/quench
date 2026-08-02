@@ -2411,6 +2411,7 @@ class NodeWritable extends NodeEventEmitter {
     this.destroyed = false;
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
+    this.writableNeedDrain = false;
   }
   destroy(error) {
     if (this.destroyed) return this;
@@ -2429,10 +2430,14 @@ class NodeWritable extends NodeEventEmitter {
       queueMicrotask(() => {
         this.writableLength = Math.max(0, this.writableLength - size);
         callback();
-        if (this.writableLength < this.writableHighWaterMark)
+        if (this.writableLength < this.writableHighWaterMark) {
+          this.writableNeedDrain = false;
           this.emit("drain");
+        }
       });
-    return this.writableLength < this.writableHighWaterMark;
+    const writable = this.writableLength < this.writableHighWaterMark;
+    this.writableNeedDrain = !writable;
+    return writable;
   }
   end(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
