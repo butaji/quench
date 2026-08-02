@@ -271,8 +271,14 @@ globalThis.__nodeTimersPromises = {
     ),
   setImmediate: (value) =>
     new Promise((resolve) => queueMicrotask(() => resolve(value))),
-  setInterval: async function* (_delay = 0, value) {
+  setInterval: async function* (_delay = 0, value, options = {}) {
     while (true) {
+      if (options && options.signal && options.signal.aborted) {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        throw error;
+      }
       if (Number(_delay) > 0)
         globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
       else await new Promise((resolve) => queueMicrotask(resolve));
