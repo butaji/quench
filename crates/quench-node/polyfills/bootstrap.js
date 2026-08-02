@@ -211,6 +211,12 @@ process.emitWarning = (warning, options = {}) => {
 };
 
 class NodeBuffer extends Uint8Array {
+  get parent() {
+    return this.buffer;
+  }
+  get offset() {
+    return this.byteOffset;
+  }
   static from(value, encoding, length) {
     if (value instanceof ArrayBuffer) {
       let offset = Number(encoding);
@@ -1129,6 +1135,7 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
     return NodeBuffer.from(...args);
   },
 });
+NodeBuffer.poolSize = 8192;
 for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
   NodeBuffer.prototype[`readUint${name}`] =
     NodeBuffer.prototype[`readUInt${name}`];
@@ -4153,6 +4160,7 @@ globalThis.require = (specifier) => {
     return {
       Buffer: globalThis.Buffer,
       kMaxLength: 0x7fffffff,
+      poolSize: NodeBuffer.poolSize,
       kStringMaxLength: 0x3fffffff,
       constants: {
         MAX_LENGTH: 0x7fffffff,
