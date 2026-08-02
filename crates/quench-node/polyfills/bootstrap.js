@@ -1770,9 +1770,10 @@ globalThis.__nodePath = {
     return base;
   },
   dirname: (value) => {
-    const parts = __nodePathArg(value).replace(/\\/g, "/").split("/");
+    const input = __nodePathArg(value).replace(/\\/g, "/");
+    const parts = input.split("/");
     parts.pop();
-    return parts.join("/") || ".";
+    return parts.join("/") || (input.startsWith("/") ? "/" : ".");
   },
   extname: (value) => {
     const name = globalThis.__nodePath.basename(__nodePathArg(value));
