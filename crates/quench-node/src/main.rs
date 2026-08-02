@@ -314,7 +314,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         let wrapped = format!("try {{\n{source}\n}} catch (error) {{ globalThis.__quench_last_error = String(error && (error.stack || error)); throw error; }}");
         ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
             let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}"));
-            eprintln!("JavaScript exception: {detail}");
+            eprintln!("JavaScript exception: {detail} ({error:?})");
             error
         })?;
         loop {
