@@ -257,14 +257,21 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         for statement in body {
             if let ast::Statement::FunctionDeclaration { name, .. } = statement {
                 if let Some(value) = ctx.env.borrow().get(name) {
+                    let existing = global.borrow().get_own_property(name);
                     global.borrow_mut().define(
                         name,
                         value,
                         crate::value::PropertyFlags {
                             value: None,
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
+                            writable: existing.as_ref().and_then(|d| d.writable).unwrap_or(true),
+                            enumerable: existing
+                                .as_ref()
+                                .and_then(|d| d.enumerable)
+                                .unwrap_or(true),
+                            configurable: existing
+                                .as_ref()
+                                .and_then(|d| d.configurable)
+                                .unwrap_or(true),
                         },
                     );
                 }
