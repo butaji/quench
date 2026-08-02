@@ -20,3 +20,6 @@ Make Node-compatible `Buffer` operations use typed-array/ArrayBuffer data withou
 ## Status
 
 Implemented and verified by `tests/node-compat/stage-362/buffer-binary-sharing.js`.
+Buffer now exposes Node's legacy slice/write method names used by generic
+Buffer compatibility tests. This is covered by
+`tests/node-compat/stage-497`.

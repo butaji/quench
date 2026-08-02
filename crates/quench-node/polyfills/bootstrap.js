@@ -1683,6 +1683,18 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
   },
 });
 NodeBuffer.poolSize = 8192;
+for (const name of [
+  "ascii",
+  "base64",
+  "base64url",
+  "latin1",
+  "hex",
+  "ucs2",
+  "utf8",
+]) {
+  NodeBuffer.prototype[`${name}Slice`] = NodeBuffer.prototype.slice;
+  NodeBuffer.prototype[`${name}Write`] = NodeBuffer.prototype.write;
+}
 NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
   NodeBuffer.prototype.inspect;
 for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
