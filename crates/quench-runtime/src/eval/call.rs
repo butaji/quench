@@ -346,7 +346,6 @@ pub(crate) fn eval_super_member(
     })?;
     // ES MakeSuperPropertyReference: GetThisBinding before evaluating the property key.
     crate::eval::class::helpers::check_this_access_allowed(env)?;
-    let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     // In static class bodies, super refers to the superclass constructor itself,
     // not its prototype. Dispatch through eval_member_access so static methods
@@ -369,40 +368,46 @@ pub(crate) fn eval_super_member(
         }
         found
     };
+
+    let proto = if is_static {
+        None
+    } else {
+        Some(match &super_val {
+            Value::Class(class) => {
+                crate::eval::class::get_or_create_class_prototype(class, env)?
+            }
+            Value::Object(o) => {
+                if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
+                    Rc::clone(o)
+                } else if let Some(proto_obj) = o.borrow().prototype.clone() {
+                    proto_obj
+                } else {
+                    let (error, js_error) = crate::value::error::create_js_error_with_type(
+                        "Cannot read properties of null or undefined",
+                        "TypeError",
+                    );
+                    crate::value::set_thrown_value(error);
+                    return Err(js_error);
+                }
+            }
+            Value::Null | Value::Undefined => {
+                let (value, error) = crate::value::error::create_js_error_with_type(
+                    "Cannot read properties of null or undefined",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(value);
+                return Err(error);
+            }
+            _ => return Ok(Value::Undefined),
+        })
+    };
+    let prop_name = eval_property_key(property, env, in_arrow_function)?;
     if is_static {
         return crate::eval::member::eval_member_access(&super_val, &prop_name, env);
     }
 
-    // Get the prototype of the superclass
-    let proto = match &super_val {
-        Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
-        Value::Object(o) => {
-            if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
-                Rc::clone(o)
-            } else if let Some(proto_obj) = o.borrow().prototype.clone() {
-                proto_obj
-            } else {
-                let (error, js_error) = crate::value::error::create_js_error_with_type(
-                    "Cannot read properties of null or undefined",
-                    "TypeError",
-                );
-                crate::value::set_thrown_value(error);
-                return Err(js_error);
-            }
-        }
-        Value::Null | Value::Undefined => {
-            let (value, error) = crate::value::error::create_js_error_with_type(
-                "Cannot read properties of null or undefined",
-                "TypeError",
-            );
-            crate::value::set_thrown_value(value);
-            return Err(error);
-        }
-        _ => return Ok(Value::Undefined),
-    };
-
     // Look up property on the prototype chain
-    let mut current: Option<Rc<RefCell<Object>>> = Some(proto);
+    let mut current: Option<Rc<RefCell<Object>>> = proto;
     while let Some(obj_rc) = current {
         let obj = obj_rc.borrow();
         // Check getter first
@@ -443,7 +448,6 @@ pub fn set_super_property(
         JsError("ReferenceError: super is only valid in class methods".to_string())
     })?;
     crate::eval::class::helpers::check_this_access_allowed(env)?;
-    let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     // Check if we're in a static context (static method, static init block).
     let this_val = crate::interpreter::get_this_binding(env);
@@ -461,6 +465,23 @@ pub fn set_super_property(
         }
         found
     };
+
+    let proto = if is_static {
+        None
+    } else {
+        Some(match &super_val {
+            Value::Class(class) => {
+                crate::eval::class::get_or_create_class_prototype(class, env)?
+            }
+            Value::Object(o) => o
+                .borrow()
+                .prototype
+                .clone()
+                .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
+            _ => return Ok(value),
+        })
+    };
+    let prop_name = eval_property_key(property, env, in_arrow_function)?;
 
     if is_static {
         // Static: set property on the superclass constructor.
@@ -482,20 +503,8 @@ pub fn set_super_property(
         return Ok(value);
     }
 
-    // Instance: super [[Set]] — look up the property on the super base prototype,
-    // then call [[Set]] with `this` as receiver so the property ends up on the instance.
-    let proto = match &super_val {
-        Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
-        Value::Object(o) => o
-            .borrow()
-            .prototype
-            .clone()
-            .unwrap_or_else(|| Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)))),
-        _ => return Ok(value),
-    };
-
     // Walk the prototype chain for inherited setters.
-    let mut prototype: Option<Rc<RefCell<Object>>> = Some(proto);
+    let mut prototype: Option<Rc<RefCell<Object>>> = proto;
     let mut setter_clone: Option<crate::value::object::helpers::SetterStorage> = None;
     while let Some(current) = prototype {
         let obj_ref = current.borrow();

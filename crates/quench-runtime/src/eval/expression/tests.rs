@@ -31,6 +31,24 @@ fn bigint_literal_property_name_uses_decimal_digits() {
 }
 
 #[test]
+fn super_property_resolves_base_before_computed_key() {
+    assert_eq!(
+        eval("var proto={p:'ok'}, proto2={p:'bad'}, obj={__proto__:proto,m(){return super[key];}}, key={toString(){Object.setPrototypeOf(obj,proto2);return 'p';}}; obj.m()")
+            .unwrap(),
+        Value::String("ok".into())
+    );
+}
+
+#[test]
+fn super_assignment_resolves_base_before_computed_key() {
+    assert_eq!(
+        eval("var result, proto={set p(v){result='ok';}}, proto2={set p(v){result='bad';}}, obj={__proto__:proto,m(){super[key]=10;}}, key={toString(){Object.setPrototypeOf(obj,proto2);return 'p';}}; obj.m(); result")
+            .unwrap(),
+        Value::String("ok".into())
+    );
+}
+
+#[test]
 fn tagged_template_exposes_cooked_and_raw_values() {
     assert_eq!(
         eval("(function(s) { return s[0] + '|' + s.raw[0]; })`\\u0062`").unwrap(),
