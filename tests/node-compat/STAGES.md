@@ -95,3 +95,4 @@ these small fixtures isolate the currently implemented contract.
 | 85 | realpath and symlink capability helpers | `tools/run-node-tests.sh --stage 85` |
 | 86 | copy-file flags and UV constants | `tools/run-node-tests.sh --stage 86` |
 | 87 | copy-file path, mode, and callback validation | `tools/run-node-tests.sh --stage 87` |
+| 88 | async rename/rmdir and duplicate mkdir errors | `tools/run-node-tests.sh --stage 88` |
