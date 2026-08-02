@@ -118,6 +118,25 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
     };
     let ast::Program::Script(body) = &program;
+    let indirect_new_lexical_names = if !crate::interpreter::is_direct_eval() {
+        body.iter()
+            .filter_map(|statement| match statement {
+                ast::Statement::VarDeclaration {
+                    kind: ast::VarKind::Let | ast::VarKind::Const,
+                    name,
+                    ..
+                }
+                | ast::Statement::ClassDeclaration { name, .. }
+                    if !ctx.env.borrow().has(name) =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
         if !global.borrow().extensible {
             for statement in body {
@@ -289,6 +308,14 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                 .current_scope()
                 .borrow_mut()
                 .remove_binding(name);
+        }
+    } else {
+        for name in indirect_new_lexical_names {
+            ctx.env
+                .borrow()
+                .current_scope()
+                .borrow_mut()
+                .remove_binding(&name);
         }
     }
     CURRENT_CONTEXT.with(|cell| {
@@ -903,6 +930,15 @@ mod tests {
         assert!(ctx.eval("let count = 0; const f = (p = eval(\"var arguments = 'param'\")) => { function arguments() {}; count++; }; f(); count").is_ok_and(|value| {
             matches!(value, Value::Number(number) if number == 1.0)
         }));
+    }
+
+    #[test]
+    fn indirect_eval_lexical_declarations_do_not_leak() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("(0, eval)('let indirectOnly = 1'); typeof indirectOnly")
+            .is_ok_and(|value| { crate::value::to_js_string(&value) == "undefined" }));
     }
 
     #[test]
