@@ -3419,7 +3419,14 @@ globalThis.__nodeFs.fchmod = (fd, mode, callback) => {
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
   globalThis.__nodeFs.fchmodSync(fd, mode);
-  queueMicrotask(() => callback(null));
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.closeSync(fd);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  });
 };
 globalThis.__nodeFs.statfsSync = (value, options = {}) => {
   const path = nodeFsPath(value);
@@ -3882,7 +3889,14 @@ globalThis.__nodeFs.close = (fd, callback) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  queueMicrotask(() => callback(null));
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.closeSync(fd);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  });
 };
 class NodeAbortSignal {
   constructor() {
