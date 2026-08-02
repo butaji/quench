@@ -2502,15 +2502,15 @@ class NodeWritable extends NodeEventEmitter {
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else this.emit("data", chunk);
-    if (callback)
-      queueMicrotask(() => {
-        this.writableLength = Math.max(0, this.writableLength - size);
-        callback();
-        if (this.writableLength < this.writableHighWaterMark) {
-          this.writableNeedDrain = false;
-          this.emit("drain");
-        }
-      });
+    const wasNeedDrain = this.writableNeedDrain;
+    queueMicrotask(() => {
+      this.writableLength = Math.max(0, this.writableLength - size);
+      if (callback) callback();
+      if (wasNeedDrain && this.writableLength < this.writableHighWaterMark) {
+        this.writableNeedDrain = false;
+        this.emit("drain");
+      }
+    });
     const writable = this.writableLength < this.writableHighWaterMark;
     this.writableNeedDrain = !writable;
     return writable;
