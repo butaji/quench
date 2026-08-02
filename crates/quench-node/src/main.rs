@@ -170,6 +170,14 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             "__quench_fs_access",
             Func::from(|path: String| fs::metadata(path).is_ok()),
         )?;
+        ctx.globals().set(
+            "__quench_fs_realpath",
+            Func::from(|path: String| -> rquickjs::Result<String> {
+                fs::canonicalize(path)
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "realpathSync failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;
