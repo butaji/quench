@@ -12,3 +12,4 @@ these small fixtures isolate the currently implemented contract.
 | 2 | filesystem and path host bindings | `tools/run-node-tests.sh --stage 2` |
 | 3 | synchronous file read/write/stat | `tools/run-node-tests.sh --stage 3` |
 | 4 | timers and process event listeners | `tools/run-node-tests.sh --stage 4` |
+| 5 | `events.EventEmitter` | `tools/run-node-tests.sh --stage 5` |
