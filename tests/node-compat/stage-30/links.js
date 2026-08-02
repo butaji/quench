@@ -1,0 +1,12 @@
+const assert = require('assert');
+const fs = require('fs');
+const folder = fs.mkdtempSync('/tmp/quench-node-');
+const target = `${folder}/target`;
+const link = `${folder}/link`;
+fs.writeFileSync(target, 'linked');
+fs.symlinkSync(target, link);
+assert.strictEqual(fs.readlinkSync(link), target);
+assert.strictEqual(fs.readFileSync(link), 'linked');
+fs.unlinkSync(link);
+fs.unlinkSync(target);
+fs.rmdirSync(folder);
