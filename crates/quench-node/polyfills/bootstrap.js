@@ -1805,8 +1805,10 @@ globalThis.__nodePath = {
       throw error;
     }
     const input = String(value);
-    const base = globalThis.__nodePath.basename(input);
-    const dir = globalThis.__nodePath.dirname(input);
+    const trimmed =
+      input.replace(/\/+$/, "") || (input.startsWith("/") ? "/" : "");
+    const base = globalThis.__nodePath.basename(trimmed);
+    const dir = globalThis.__nodePath.dirname(trimmed);
     const ext = globalThis.__nodePath.extname(base);
     return {
       root: input.startsWith("/") ? "/" : "",
