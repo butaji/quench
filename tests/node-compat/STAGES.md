@@ -74,3 +74,5 @@ these small fixtures isolate the currently implemented contract.
 | 64 | Node tmpdir template basename semantics | `tools/run-node-tests.sh --stage 64` |
 | 65 | strict callback receiver semantics | `tools/run-node-tests.sh --stage 65` |
 | 66 | UTF-8 Uint8Array filesystem paths | `tools/run-node-tests.sh --stage 66` |
+| 67 | upstream common platform helpers | `tools/run-node-tests.sh --stage 67` |
+| 68 | callback and recursive `fs.mkdir` compatibility | `tools/run-node-tests.sh --stage 68` |
