@@ -108,3 +108,4 @@ these small fixtures isolate the currently implemented contract.
 | 98 | callback and promise `fs.rm` | `tools/run-node-tests.sh --stage 98` |
 | 99 | file/directory-aware `fs.rmSync` behavior | `tools/run-node-tests.sh --stage 99` |
 | 100 | `fs.readdir` `withFileTypes` Dirent support | `tools/run-node-tests.sh --stage 100` |
+| 101 | internal filesystem open-flag utility | `tools/run-node-tests.sh --stage 101` |
