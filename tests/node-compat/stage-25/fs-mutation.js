@@ -7,7 +7,7 @@ const copy = `${folder}/copy`;
 fs.writeFileSync(first, 'payload');
 fs.renameSync(first, second);
 fs.copyFileSync(second, copy);
-assert.strictEqual(fs.readFileSync(copy), 'payload');
+assert.strictEqual(fs.readFileSync(copy, 'utf8'), 'payload');
 fs.unlinkSync(second);
 fs.unlinkSync(copy);
 fs.rmdirSync(folder);

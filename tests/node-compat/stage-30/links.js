@@ -6,7 +6,7 @@ const link = `${folder}/link`;
 fs.writeFileSync(target, 'linked');
 fs.symlinkSync(target, link);
 assert.strictEqual(fs.readlinkSync(link), target);
-assert.strictEqual(fs.readFileSync(link), 'linked');
+assert.strictEqual(fs.readFileSync(link, 'utf8'), 'linked');
 fs.unlinkSync(link);
 fs.unlinkSync(target);
 fs.rmdirSync(folder);
