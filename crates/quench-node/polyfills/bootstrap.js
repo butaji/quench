@@ -2477,7 +2477,15 @@ globalThis.__nodeFs = {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const path = nodePathValue(value);
+    const path =
+      typeof value === "number"
+        ? globalThis.__nodeFdPaths[value]
+        : nodePathValue(value);
+    if (!path) {
+      const error = new Error("EBADF: bad file descriptor");
+      error.code = "EBADF";
+      throw error;
+    }
     let bytes;
     try {
       bytes = globalThis.__quench_fs_read_bytes(path);
