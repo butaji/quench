@@ -231,6 +231,10 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(if metadata.is_file() { "file".into() } else if metadata.is_dir() { "directory".into() } else { "other".into() })
             }),
         )?;
+        ctx.globals().set("__quench_fs_link_kind", Func::from(|path: String| -> rquickjs::Result<String> {
+            let metadata = fs::symlink_metadata(path).map_err(|_| rquickjs::Error::new_from_js("fs", "lstatSync failed"))?;
+            Ok(if metadata.file_type().is_symlink() { "symlink".into() } else if metadata.is_file() { "file".into() } else if metadata.is_dir() { "directory".into() } else { "other".into() })
+        }))?;
         ctx.globals().set(
             "__quench_fs_rename",
             Func::from(|from: String, to: String| -> rquickjs::Result<()> {
