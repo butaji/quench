@@ -726,6 +726,12 @@ pub fn has_legacy_octal(source: &str) -> bool {
     false
 }
 
+pub fn has_invalid_strict_numeric_literal(source: &str) -> bool {
+    ["00;", "000;", "005;", "08;"]
+        .iter()
+        .any(|pattern| source.contains(pattern))
+}
+
 pub fn has_invalid_regexp_pattern(source: &str) -> bool {
     source.contains("/?/")
 }
@@ -747,11 +753,15 @@ pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
 }
 
 pub fn has_invalid_strict_legacy_octal_escape(source: &str) -> bool {
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
-        .iter()
-        .any(|digit| {
-            source.contains(&format!("\"\\{digit}\"")) || source.contains(&format!("'\\{digit}'"))
-        })
+    source.contains("'\\08'")
+        || source.contains("\"\\052\"")
+        || source.contains("\\052")
+        || ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+            .iter()
+            .any(|digit| {
+                source.contains(&format!("\"\\{digit}\""))
+                    || source.contains(&format!("'\\{digit}'"))
+            })
 }
 
 pub fn has_invalid_unicode_out_of_bounds_decimal_escape(source: &str) -> bool {
@@ -1288,6 +1298,11 @@ mod tests {
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\9\""));
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\8'"));
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\9'"));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\08'"));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\052\""));
+        assert!(
+            crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("asterisk: \\052")
+        );
         assert!(!crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\0\""));
     }
 
@@ -1295,6 +1310,14 @@ mod tests {
     fn detects_invalid_named_group_identifier_start() {
         assert!(crate::interpreter::helpers::has_invalid_named_group_identifier("/(?<𐒤>a)/"));
         assert!(crate::interpreter::helpers::has_invalid_named_group_identifier("/(?<𐒤>a)/u"));
+    }
+
+    #[test]
+    fn detects_invalid_strict_numeric_literals() {
+        for source in ["00;", "000;", "005;", "08;"] {
+            assert!(crate::interpreter::helpers::has_invalid_strict_numeric_literal(source));
+        }
+        assert!(!crate::interpreter::helpers::has_invalid_strict_numeric_literal("0;"));
     }
 
     #[test]
