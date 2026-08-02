@@ -22,3 +22,4 @@ these small fixtures isolate the currently implemented contract.
 | 12 | expanded `assert` contract | `tools/run-node-tests.sh --stage 12` |
 | 13 | `timers` and `timers/promises` modules | `tools/run-node-tests.sh --stage 13` |
 | 14 | process cwd and environment lookup | `tools/run-node-tests.sh --stage 14` |
+| 15 | path normalization and decomposition | `tools/run-node-tests.sh --stage 15` |
