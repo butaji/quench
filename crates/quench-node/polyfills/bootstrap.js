@@ -259,6 +259,8 @@ globalThis.__nodeFs = {
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
   rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
+  symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
+  readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
