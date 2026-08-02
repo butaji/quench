@@ -4153,6 +4153,11 @@ globalThis.require = (specifier) => {
     return {
       Buffer: globalThis.Buffer,
       kMaxLength: 0x7fffffff,
+      kStringMaxLength: 0x3fffffff,
+      constants: {
+        MAX_LENGTH: 0x7fffffff,
+        MAX_STRING_LENGTH: 0x3fffffff,
+      },
       atob: nodeAtob,
       btoa: nodeBtoa,
     };
