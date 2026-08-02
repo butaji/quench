@@ -2952,9 +2952,11 @@ globalThis.__nodeUtil = {
         if (index >= args.length) return token;
         const value = args[index++];
         if (token === "%s")
-          return typeof value === "number" || typeof value === "bigint"
-            ? numeric(value)
-            : String(value);
+          return typeof value === "bigint"
+            ? `${numeric(value)}n`
+            : typeof value === "number"
+              ? numeric(value)
+              : String(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d")
             return `${numeric(value)}n`;
