@@ -2376,6 +2376,7 @@ class NodeReadable extends NodeEventEmitter {
     this._paused = false;
     this.readableFlowing = null;
     this.readableEnded = false;
+    this.readableEncoding = null;
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
   }
@@ -2499,10 +2500,27 @@ class NodeReadable extends NodeEventEmitter {
     const chunk = this._chunks.shift();
     if (size !== undefined && chunk && chunk.length > size) {
       this._chunks.unshift(chunk.subarray(size));
-      return chunk.subarray(0, size);
+      return this._decode(chunk.subarray(0, size));
     }
     if (!this._chunks.length && this._ended) this._emitEnd();
-    return chunk;
+    return this._decode(chunk);
+  }
+
+  setEncoding(encoding) {
+    encoding = String(encoding).toLowerCase();
+    if (!NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
+    this.readableEncoding = encoding;
+    return this;
+  }
+
+  _decode(chunk) {
+    return this.readableEncoding && ArrayBuffer.isView(chunk)
+      ? NodeBuffer.from(chunk).toString(this.readableEncoding)
+      : chunk;
   }
 
   _emitEnd() {

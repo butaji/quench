@@ -48,6 +48,8 @@ Adding a `data` listener drains buffered readable data in
 `tests/node-compat/stage-451/stream-flow-transition.js`.
 Explicit `resume()` drains paused readable data in
 `tests/node-compat/stage-452/stream-resume-queue.js`.
+Readable encoding selection and validation are covered by
+`tests/node-compat/stage-472/stream-set-encoding.js`.
 Writable `drain` transition and callback-free length recovery are covered by
 `tests/node-compat/stage-453/stream-drain-transition.js`.
 Chainable writable `end()` behavior is covered by
