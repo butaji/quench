@@ -35,3 +35,5 @@ Synchronous callback API data validation for `appendFile()` is covered by
 `tests/node-compat/stage-416/fs-append-validation.js`.
 Binary `appendFileSync()` transport is covered by
 `tests/node-compat/stage-417/fs-append-binary.js`.
+Encoded string append transport is covered by
+`tests/node-compat/stage-418/fs-append-encoding.js`.
