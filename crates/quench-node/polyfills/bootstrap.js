@@ -135,6 +135,7 @@ class NodeBuffer extends Uint8Array {
     return new NodeBuffer(value);
   }
   static alloc(size, fill = 0) { return new NodeBuffer(size).fill(fill); }
+  static allocUnsafe(size) { return new NodeBuffer(size); }
   static isBuffer(value) { return value instanceof NodeBuffer; }
   static byteLength(value) { return new NodeTextEncoder().encode(String(value)).length; }
   static concat(list, totalLength) {
@@ -456,7 +457,7 @@ globalThis.__nodeFs.stat = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.statSync(path, options)); } catch (error) { callback(error); } });
+  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.statSync(path, options); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeFs.lstat = globalThis.__nodeFs.stat;
 globalThis.__nodeFs.fstatSync = (fd) => {
@@ -467,7 +468,7 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.fstatSync(fd)); } catch (error) { callback(error); } });
+  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.fstatSync(fd); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeFs.Stats = globalThis.__nodeStats;
 globalThis.__nodeFs.close = (_fd, callback) => { if (typeof callback === 'function') queueMicrotask(() => callback(null)); };
@@ -481,7 +482,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
     throw error;
   }
   const path = nodeFsPath(value);
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.openSync(path, flags, mode)); } catch (error) { callback(error); } });
+  queueMicrotask(() => { let fd; try { fd = globalThis.__nodeFs.openSync(path, flags, mode); } catch (error) { callback(error); return; } callback(null, fd); });
 };
 globalThis.__nodeFs.readdir = (value, options, callback) => {
   if (typeof options === 'function') callback = options;

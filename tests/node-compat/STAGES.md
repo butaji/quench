@@ -83,3 +83,4 @@ these small fixtures isolate the currently implemented contract.
 | 73 | synchronous filesystem open validation and `ENOENT` | `tools/run-node-tests.sh --stage 73` |
 | 74 | filesystem stat/lstat/fstat metadata contracts | `tools/run-node-tests.sh --stage 74` |
 | 75 | stat options and missing-entry behavior | `tools/run-node-tests.sh --stage 75` |
+| 76 | `Buffer.allocUnsafe` compatibility | `tools/run-node-tests.sh --stage 76` |
