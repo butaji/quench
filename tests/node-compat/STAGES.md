@@ -114,3 +114,4 @@ these small fixtures isolate the currently implemented contract.
 | 104 | fd mode-mask regression coverage | `tools/run-node-tests.sh --stage 104` |
 | 105 | promise-based readdir Dirents | `tools/run-node-tests.sh --stage 105` |
 | 106 | sync/async/promise directory handles | `tools/run-node-tests.sh --stage 106` |
+| 107 | async symlink and readlink callbacks | `tools/run-node-tests.sh --stage 107` |
