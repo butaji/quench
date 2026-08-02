@@ -487,6 +487,20 @@ pub fn has_legacy_octal(source: &str) -> bool {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
+        if b == b'\\' && i + 1 < bytes.len() && bytes[i + 1] == b'u' {
+            i += 2;
+            if bytes.get(i) == Some(&b'{') {
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else {
+                i += 4.min(bytes.len() - i);
+            }
+            continue;
+        }
         // Skip string literals
         if b == b'"' || b == b'\'' {
             let quote = b;
@@ -1318,6 +1332,16 @@ mod tests {
             assert!(crate::interpreter::helpers::has_invalid_strict_numeric_literal(source));
         }
         assert!(!crate::interpreter::helpers::has_invalid_strict_numeric_literal("0;"));
+    }
+
+    #[test]
+    fn ignores_octal_like_digits_inside_unicode_identifier_escapes() {
+        assert!(!crate::interpreter::helpers::has_legacy_octal(
+            r#"class _ { #_\u0AFA\u0D00; }"#
+        ));
+        assert!(!crate::interpreter::helpers::has_legacy_octal(
+            r#"class _ { #_\u{11A01}\u{11A02}; }"#
+        ));
     }
 
     #[test]
