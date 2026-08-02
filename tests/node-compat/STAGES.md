@@ -37,3 +37,4 @@ these small fixtures isolate the currently implemented contract.
 | 27 | filesystem realpath and rm aliases | `tools/run-node-tests.sh --stage 27` |
 | 28 | promise directory filesystem APIs | `tools/run-node-tests.sh --stage 28` |
 | 29 | POSIX `fs.chmodSync` | `tools/run-node-tests.sh --stage 29` |
+| 30 | POSIX symbolic link APIs | `tools/run-node-tests.sh --stage 30` |

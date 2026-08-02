@@ -193,6 +193,18 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_symlink",
+            Func::from(|target: String, link: String| -> rquickjs::Result<()> {
+                std::os::unix::fs::symlink(target, link).map_err(|_| rquickjs::Error::new_from_js("fs", "symlinkSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_readlink",
+            Func::from(|path: String| -> rquickjs::Result<String> {
+                std::fs::read_link(path).map(|value| value.to_string_lossy().into_owned()).map_err(|_| rquickjs::Error::new_from_js("fs", "readlinkSync failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;
