@@ -30,6 +30,8 @@ Pipe backpressure propagation is covered by
 `tests/node-compat/stage-373/stream-pipe-backpressure.js`.
 Deferred `finish` and `end` callback ordering is covered by
 `tests/node-compat/stage-382/stream-end-order.js`.
+Readable chunk delivery and end signaling through `push()` are covered by
+`tests/node-compat/stage-444/stream-push.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
