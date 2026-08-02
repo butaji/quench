@@ -84,3 +84,4 @@ these small fixtures isolate the currently implemented contract.
 | 74 | filesystem stat/lstat/fstat metadata contracts | `tools/run-node-tests.sh --stage 74` |
 | 75 | stat options and missing-entry behavior | `tools/run-node-tests.sh --stage 75` |
 | 76 | `Buffer.allocUnsafe` compatibility | `tools/run-node-tests.sh --stage 76` |
+| 77 | binary Buffer-backed filesystem read/write | `tools/run-node-tests.sh --stage 77` |
