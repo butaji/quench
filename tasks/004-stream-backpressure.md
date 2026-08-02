@@ -40,3 +40,5 @@ Writable `writableNeedDrain` transitions are covered by
 `tests/node-compat/stage-438/stream-writable-need-drain.js`.
 Readable and writable completion flags are covered by
 `tests/node-compat/stage-439/stream-completion-state.js`.
+Readable/writable lifecycle state flags are covered by
+`tests/node-compat/stage-440/stream-readable-writable-state.js`.

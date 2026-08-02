@@ -2352,6 +2352,7 @@ class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
     this.destroyed = false;
+    this.readable = true;
     this._paused = false;
     this.readableEnded = false;
     this._chunks = [];
@@ -2360,6 +2361,7 @@ class NodeReadable extends NodeEventEmitter {
   destroy(error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    this.readable = false;
     if (error) this.emit("error", error);
     queueMicrotask(() => this.emit("close"));
     return this;
@@ -2411,6 +2413,7 @@ class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
     this.destroyed = false;
+    this.writable = true;
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
@@ -2420,6 +2423,7 @@ class NodeWritable extends NodeEventEmitter {
   destroy(error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    this.writable = false;
     if (error) this.emit("error", error);
     queueMicrotask(() => this.emit("close"));
     return this;
@@ -2450,6 +2454,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableEnded = true;
     queueMicrotask(() => {
       this.writableFinished = true;
+      this.writable = false;
       this.emit("finish");
       if (callback) callback();
     });
