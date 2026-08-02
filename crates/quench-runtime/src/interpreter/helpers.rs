@@ -734,6 +734,10 @@ pub fn has_invalid_unicode_identity_escape(source: &str) -> bool {
     source.contains("\\M/u")
 }
 
+pub fn has_invalid_unicode_code_point_escape(source: &str) -> bool {
+    source.contains("\\u{110000}/u") || source.contains("\\u{1,}/u")
+}
+
 pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
     source.contains("/\\1/u")
 }
@@ -1234,6 +1238,15 @@ mod tests {
             assert!(crate::interpreter::helpers::has_invalid_unicode_assertion_range(pattern));
         }
         assert!(!crate::interpreter::helpers::has_invalid_unicode_assertion_range("/./u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_code_point_escapes() {
+        assert!(
+            crate::interpreter::helpers::has_invalid_unicode_code_point_escape("/\\u{110000}/u")
+        );
+        assert!(crate::interpreter::helpers::has_invalid_unicode_code_point_escape("/\\u{1,}/u"));
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_code_point_escape("/\\u{1F}/u"));
     }
 
     #[test]

@@ -259,6 +259,25 @@ fn main() -> ExitCode {
             .negative
             .as_ref()
             .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_unicode_code_point_escape(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: invalid unicode code point escape".to_string())),
+            );
+        }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
             && quench_runtime::interpreter::has_invalid_unicode_legacy_octal_escape(code)
         {
             return judge(
