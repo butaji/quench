@@ -1062,6 +1062,24 @@ mod tests {
     }
 
     #[test]
+    fn yield_star_catches_throw_method_getter_error() {
+        let mut ctx = new_ctx();
+        let value = ctx
+            .eval("var thrown={}, caught; var iter={next(){return {done:false};}}; Object.defineProperty(iter, 'throw', {get(){throw thrown;}}); iter[Symbol.iterator]=function(){return this;}; function* g(){try { yield* iter; } catch (error) { caught=error; }} var i=g(); i.next(); var result=i.throw(); [result.done, caught===thrown].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("true|true".into()));
+    }
+
+    #[test]
+    fn yield_star_catches_return_method_getter_error_after_missing_throw() {
+        let mut ctx = new_ctx();
+        let value = ctx
+            .eval("var thrown={}, caught, count=0; var iter={next(){return {done:false};}}; Object.defineProperty(iter, 'throw', {get(){count++;}}); Object.defineProperty(iter, 'return', {get(){throw thrown;}}); iter[Symbol.iterator]=function(){return this;}; function* g(){try { yield* iter; } catch (error) { caught=error; }} var i=g(); i.next(); i.throw(); [count, caught===thrown].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("1|true".into()));
+    }
+
+    #[test]
     fn for_await_of_awaits_values_from_sync_iterables() {
         let mut ctx = new_ctx();
         ctx.eval("var result = 0; async function f() { for await (var value of [Promise.resolve(7)]) { result = value; } } f();")

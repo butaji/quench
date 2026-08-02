@@ -962,10 +962,20 @@ fn delegate_abrupt(
         .yield_delegate_suspend
         .take()
         .unwrap();
-    let method = crate::eval::member::eval_object_member(&state.iterator, method_name, None)?;
+    let method = match crate::eval::member::eval_object_member(&state.iterator, method_name, None) {
+        Ok(method) => method,
+        Err(error) => return resume_delegate_error(generator, state, error),
+    };
     if matches!(method, Value::Undefined | Value::Null) {
         if method_name == "throw" {
-            let close = crate::eval::member::eval_object_member(&state.iterator, "return", None)?;
+            let close = match crate::eval::member::eval_object_member(
+                &state.iterator,
+                "return",
+                None,
+            ) {
+                Ok(close) => close,
+                Err(error) => return resume_delegate_error(generator, state, error),
+            };
             if !matches!(close, Value::Undefined | Value::Null) {
                 if !close.is_callable() {
                     return resume_delegate_error(
