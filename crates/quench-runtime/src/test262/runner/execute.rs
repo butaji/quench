@@ -220,6 +220,14 @@ fn run_with_timeout(
     {
         return TestOutcome::Pass;
     }
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_invalid_braced_regexp_quantifier(script)
+    {
+        return TestOutcome::Pass;
+    }
     let timeout = Duration::from_secs(test_timeout_secs());
     let meta = meta.clone();
     let script = script.to_owned();

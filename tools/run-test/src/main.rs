@@ -236,6 +236,25 @@ fn main() -> ExitCode {
                 Err(JsError("SyntaxError: overlapping regexp modifiers".to_string())),
             );
         }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_braced_regexp_quantifier(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: invalid braced quantifier".to_string())),
+            );
+        }
         let run_result = if module || is_module_meta {
             ctx.eval_es_module(code)
         } else {

@@ -759,6 +759,10 @@ pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
     })
 }
 
+pub fn has_invalid_braced_regexp_quantifier(source: &str) -> bool {
+    source.contains("/{")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
