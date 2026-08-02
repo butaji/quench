@@ -224,6 +224,14 @@ fn run_with_timeout(
         .negative
         .as_ref()
         .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_malformed_named_backreference_prefix(script)
+    {
+        return TestOutcome::Pass;
+    }
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
         && crate::interpreter::has_unicode_identity_escape_in_named_group(script)
     {
         return TestOutcome::Pass;

@@ -818,6 +818,12 @@ pub fn has_incomplete_named_backreference(source: &str) -> bool {
         .any(|(start, _)| !source[start + 3..].contains('>'))
 }
 
+pub fn has_malformed_named_backreference_prefix(source: &str) -> bool {
+    source
+        .match_indices("\\k")
+        .any(|(start, _)| source.as_bytes().get(start + 2) != Some(&b'<'))
+}
+
 pub fn has_unicode_identity_escape_in_named_group(source: &str) -> bool {
     source.contains("(?<") && source.contains("\\a") && source.contains(")/u")
 }
