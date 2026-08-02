@@ -552,6 +552,53 @@ class NodeBuffer extends Uint8Array {
   swap64() {
     return this._swap(8);
   }
+  _readBigInt(offset, littleEndian, signed) {
+    this._integerOffset(offset, 8);
+    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
+    return signed
+      ? view.getBigInt64(offset, littleEndian)
+      : view.getBigUint64(offset, littleEndian);
+  }
+  _writeBigInt(value, offset, littleEndian, signed) {
+    this._integerOffset(offset, 8);
+    if (typeof value !== "bigint")
+      throw new TypeError('The "value" argument must be a bigint');
+    const min = signed ? -(1n << 63n) : 0n;
+    const max = signed ? (1n << 63n) - 1n : (1n << 64n) - 1n;
+    if (value < min || value > max) {
+      const error = new RangeError('The value of "value" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
+    if (signed) view.setBigInt64(offset, value, littleEndian);
+    else view.setBigUint64(offset, value, littleEndian);
+    return offset + 8;
+  }
+  readBigInt64LE(offset = 0) {
+    return this._readBigInt(offset, true, true);
+  }
+  readBigInt64BE(offset = 0) {
+    return this._readBigInt(offset, false, true);
+  }
+  readBigUInt64LE(offset = 0) {
+    return this._readBigInt(offset, true, false);
+  }
+  readBigUInt64BE(offset = 0) {
+    return this._readBigInt(offset, false, false);
+  }
+  writeBigInt64LE(value, offset = 0) {
+    return this._writeBigInt(value, offset, true, true);
+  }
+  writeBigInt64BE(value, offset = 0) {
+    return this._writeBigInt(value, offset, false, true);
+  }
+  writeBigUInt64LE(value, offset = 0) {
+    return this._writeBigInt(value, offset, true, false);
+  }
+  writeBigUInt64BE(value, offset = 0) {
+    return this._writeBigInt(value, offset, false, false);
+  }
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
   }
