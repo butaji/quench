@@ -1,6 +1,17 @@
 /* Small, dependency-free globals available before user code. */
 globalThis.global = globalThis;
 globalThis.globalThis = globalThis;
+const __quenchQueueMicrotask = globalThis.queueMicrotask;
+globalThis.__quench_async_error = "";
+globalThis.queueMicrotask = (callback) =>
+  __quenchQueueMicrotask(() => {
+    try {
+      callback();
+    } catch (error) {
+      if (!globalThis.__quench_async_error)
+        globalThis.__quench_async_error = String(error && (error.stack || error));
+    }
+  });
 
 globalThis.__nodeFormat = (args) =>
   args
