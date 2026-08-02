@@ -154,6 +154,8 @@ class NodeBuffer extends Uint8Array {
   }
 }
 globalThis.Buffer = NodeBuffer;
+const nodeAtob = (value) => NodeBuffer.from(String(value), 'base64').toString();
+const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString('base64');
 class NodeTextEncoder {
   encode(value) {
     const output = [];
@@ -512,7 +514,7 @@ globalThis.require = (specifier) => {
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name.endsWith('/common/tmpdir')) return globalThis.__nodeTmpdir;
-  if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff };
+  if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff, atob: nodeAtob, btoa: nodeBtoa };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };
