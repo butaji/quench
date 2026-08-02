@@ -4004,6 +4004,42 @@ globalThis.__nodeFs.close = (fd, callback) => {
     }
   });
 };
+globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
+  const stream = new NodeWritable(options);
+  const path = nodeFsPath(value);
+  const chunks = [];
+  stream.path = path;
+  stream.fd = null;
+  stream.write = (chunk) => {
+    chunks.push(
+      typeof chunk === "string"
+        ? NodeBuffer.from(chunk, options.encoding || "utf8")
+        : NodeBuffer.from(chunk),
+    );
+    return true;
+  };
+  stream.end = (chunk, encoding, callback) => {
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = undefined;
+    }
+    if (chunk !== undefined) stream.write(chunk, encoding);
+    queueMicrotask(() => {
+      try {
+        stream.fd = globalThis.__nodeFs.openSync(path, "w");
+        stream.emit("open", stream.fd);
+        globalThis.__nodeFs.writeFileSync(path, NodeBuffer.concat(chunks));
+        stream.emit("finish");
+        if (callback) callback();
+        stream.emit("close");
+      } catch (error) {
+        stream.emit("error", error);
+      }
+    });
+    return stream;
+  };
+  return stream;
+};
 class NodeAbortSignal {
   constructor() {
     this.aborted = false;
