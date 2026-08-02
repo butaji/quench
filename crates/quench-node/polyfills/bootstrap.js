@@ -2353,6 +2353,7 @@ class NodeReadable extends NodeEventEmitter {
     super();
     this.destroyed = false;
     this.readable = true;
+    this.readableObjectMode = options.objectMode === true;
     this._paused = false;
     this.readableFlowing = null;
     this.readableEnded = false;
@@ -2497,6 +2498,7 @@ class NodeWritable extends NodeEventEmitter {
     super();
     this.destroyed = false;
     this.writable = true;
+    this.writableObjectMode = options.objectMode === true;
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
