@@ -37,3 +37,5 @@ Binary `appendFileSync()` transport is covered by
 `tests/node-compat/stage-417/fs-append-binary.js`.
 Encoded string append transport is covered by
 `tests/node-compat/stage-418/fs-append-encoding.js`.
+Basic `createWriteStream().end()` lifecycle is covered by
+`tests/node-compat/stage-422/fs-write-stream-end.js`.
