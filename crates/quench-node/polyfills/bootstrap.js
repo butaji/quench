@@ -1643,13 +1643,23 @@ globalThis.__nodeAssert.AssertionError = class AssertionError extends Error {
 };
 const __nodeAssertionFailure = (message) => {
   if (message instanceof Error) throw message;
-  throw new globalThis.__nodeAssert.AssertionError(
+  const error = new globalThis.__nodeAssert.AssertionError(
     message || "Assertion failed",
   );
+  error.code = "ERR_ASSERTION";
+  throw error;
 };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
-  if (!Object.is(actual, expected))
-    __nodeAssertionFailure(message || `${actual} !== ${expected}`);
+  if (!Object.is(actual, expected)) {
+    const detail =
+      actual &&
+      expected &&
+      typeof actual === "object" &&
+      typeof expected === "object"
+        ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
+        : `${actual} !== ${expected}`;
+    __nodeAssertionFailure(message || detail);
+  }
 };
 globalThis.__nodeAssert.equal = (actual, expected, message) => {
   if (actual != expected)
