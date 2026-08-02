@@ -335,6 +335,21 @@ globalThis.__nodeUrlModule = {
   format: (value) => value instanceof globalThis.__nodeURL ? value.href : String(value),
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
 };
+globalThis.__nodeCrypto = {
+  createHash: (algorithm) => {
+    if (algorithm !== 'sha256') throw new Error(`Unsupported hash: ${algorithm}`);
+    let input = '';
+    const hash = {
+      update: (value) => { input += String(value); return hash; },
+      digest: (encoding = 'hex') => {
+        const result = globalThis.__quench_sha256(input);
+        if (encoding === 'hex') return result;
+        throw new Error(`Unsupported digest encoding: ${encoding}`);
+      },
+    };
+    return hash;
+  },
+};
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;
@@ -343,6 +358,7 @@ globalThis.require = (specifier) => {
   if (name === 'os') return globalThis.__nodeOs;
   if (name === 'querystring') return globalThis.__nodeQuerystring;
   if (name === 'url') return globalThis.__nodeUrlModule;
+  if (name === 'crypto') return globalThis.__nodeCrypto;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === 'stream') return globalThis.__nodeStream;
   if (name === 'timers') return globalThis.__nodeTimers;
