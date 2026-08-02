@@ -4421,6 +4421,11 @@ globalThis.__nodeUtil = {
     const inspect = (value) => {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
+      if (
+        typeof SharedArrayBuffer !== "undefined" &&
+        value instanceof SharedArrayBuffer
+      )
+        return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
       if (value instanceof Date) return value.toISOString();
       if (value instanceof Error)
         return value.stack || `${value.name}: ${value.message}`;
