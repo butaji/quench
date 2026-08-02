@@ -5473,6 +5473,41 @@ const __createNodeCrypto = () => ({
   pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
     if (typeof callback !== "function")
       throw new TypeError('The "callback" argument must be of type function');
+    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "password" argument must be of type string or an instance of Buffer',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "salt" argument must be of type string or an instance of Buffer',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isInteger(iterations) ||
+      iterations <= 0 ||
+      iterations > 0x7fffffff
+    ) {
+      const error = new RangeError('The value of "iterations" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      const error = new RangeError('The value of "keylen" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof digest !== "string") {
+      const error = new TypeError(
+        'The "digest" argument must be of type string',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     let result;
     try {
       result = globalThis.__nodeCrypto.pbkdf2Sync(
