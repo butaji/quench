@@ -31,3 +31,6 @@ OS module initialization timing is covered by
 `tests/node-compat/stage-389/bootstrap-lazy-os.js`.
 Querystring module initialization timing is covered by
 `tests/node-compat/stage-393/bootstrap-lazy-querystring.js`.
+Querystring escaping now replaces unpaired UTF-16 surrogates with U+FFFD
+before percent-encoding, matching Node's non-throwing `querystring.escape`
+behavior. This is covered by `tests/node-compat/stage-489`.
