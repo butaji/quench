@@ -421,7 +421,8 @@ pub fn register_date(ctx: &mut Context) {
     date_proto_rc.borrow_mut().set(
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
-            Ok(Value::String(format!("Date @ {}", chrono_now())))
+            let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+            Ok(Value::String(format!("Date @ {}", date_timestamp(&this_val))))
         }))),
     );
     date_proto_rc.borrow_mut().set(
@@ -744,6 +745,24 @@ mod tests {
         let overflow = ctx.eval("new Date(2024, 13, 1).getTime()").unwrap();
         let expected = ctx.eval("new Date(2025, 1, 1).getTime()").unwrap();
         assert_eq!(overflow, expected);
+    }
+
+    #[test]
+    fn date_addition_uses_string_hint() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var date = new Date(0); date + true === date.toString() + 'true'"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn date_to_string_uses_date_timestamp() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("new Date(0).toString()"),
+            Ok(Value::String("Date @ 0".to_string()))
+        );
     }
 
     fn eval_num(src: &str) -> f64 {
