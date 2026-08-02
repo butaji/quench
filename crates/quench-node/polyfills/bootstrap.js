@@ -470,6 +470,14 @@ globalThis.__nodeFs = {
     for (const buffer of buffers) { if (buffer.length) { const count = globalThis.__nodeFs.readSync(fd, buffer, 0, buffer.length, at); total += count; at += count; if (count < buffer.length) break; } }
     return total;
   },
+  writeSync: (fd, buffer, offset = 0, length = buffer.length - offset, position = null) => {
+    if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0) { const error = new RangeError('The write range is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
+    const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
+    const bytes = buffer.subarray(offset, offset + length); globalThis.__quench_fs_write_hex(path, NodeBuffer.from(bytes).toString('hex')); return bytes.length;
+  },
+  writevSync: (fd, buffers, position = null) => { if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } return globalThis.__nodeFs.writeSync(fd, NodeBuffer.concat(buffers)); },
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
     if (typeof mode !== 'number') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -519,6 +527,8 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.readv = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readvSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.write = (fd, buffer, offset, length, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writeSync(fd, buffer, offset, length, position), buffer); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.writev = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writevSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
 const nodeMode = (mode) => {
