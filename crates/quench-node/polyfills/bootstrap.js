@@ -4041,6 +4041,18 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
   return stream;
 };
 globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+  const start = options.start === undefined ? 0 : Number(options.start);
+  const end = options.end === undefined ? undefined : Number(options.end);
+  if (!Number.isInteger(start) || start < 0) {
+    const error = new RangeError('The "start" option is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (end !== undefined && (!Number.isInteger(end) || end < 0 || start > end)) {
+    const error = new RangeError('The "end" option is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
   const stream = new NodeReadable(options);
   const path = nodePathValue(value);
   stream.path = path;
@@ -4051,9 +4063,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
       stream.fd = globalThis.__nodeFs.openSync(path, "r");
       stream.emit("open", stream.fd);
       const bytes = globalThis.__nodeFs.readFileSync(path);
-      const start = Number(options.start || 0);
-      const end =
-        options.end === undefined ? bytes.length : Number(options.end) + 1;
+      const end = options.end === undefined ? bytes.length : options.end + 1;
       stream._chunks = [bytes.subarray(start, Math.min(end, bytes.length))];
       stream._index = 0;
       stream._pump = () => {
