@@ -27,3 +27,5 @@ retain only JavaScript-side conversions where required by the public API.
 The task is complete for the scoped fs APIs.
 FileHandle promise reads from the current descriptor position are covered by
 `tests/node-compat/stage-413/fs-filehandle-read-position.js`.
+FileHandle read encoding behavior is covered by
+`tests/node-compat/stage-414/fs-filehandle-read-encoding.js`.
