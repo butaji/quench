@@ -209,6 +209,7 @@ globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) => Promise.resolv
 globalThis.__nodeAssert.match = (value, expression) => {
   if (!expression.test(String(value))) throw new Error('Value did not match expression');
 };
+globalThis.__nodeAssert.strict = globalThis.__nodeAssert;
 
 globalThis.__nodePath = {
   sep: '/',

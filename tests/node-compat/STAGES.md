@@ -59,3 +59,4 @@ these small fixtures isolate the currently implemented contract.
 | 49 | harness `.js` and `.mjs` coverage | `tools/run-node-tests.sh --stage 49` |
 | 50 | console timing APIs | `tools/run-node-tests.sh --stage 50` |
 | 51 | console counters and clear | `tools/run-node-tests.sh --stage 51` |
+| 52 | `assert.strict` namespace | `tools/run-node-tests.sh --stage 52` |
