@@ -31,6 +31,12 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn derived_constructor_arrow_this_before_super_throws() {
+    let value = eval("var probe, result; class Base { constructor() { try { probe(); result = false; } catch (e) { result = e instanceof ReferenceError; } } } class C extends Base { field = 1; constructor() { probe = () => this; try { probe(); } catch (e) {} super(); } } new C(); result").unwrap();
+    assert_eq!(value, Value::Boolean(true));
+}
+
+#[test]
 fn dynamic_import_missing_module_rejects_with_type_error() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

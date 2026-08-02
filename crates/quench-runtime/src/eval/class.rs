@@ -295,6 +295,7 @@ pub fn call_super_constructor(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _proto_rc = get_or_create_class_prototype(&class, env)?;
+    let outer_constructing_class = crate::eval::class::helpers::current_constructing_class();
 
     let body = class.constructor_body.clone();
     let call_env = Rc::new(RefCell::new(build_constructor_env(
@@ -316,6 +317,7 @@ pub fn call_super_constructor(
         crate::eval::statement::eval_function_body(&body, &call_env, false)
     };
     crate::interpreter::pop_inside_super_call();
+    crate::eval::class::helpers::set_constructing_class(outer_constructing_class);
     let result = result?;
     let _ = crate::interpreter::take_control_flow();
     finish_constructor(result, &this_val)

@@ -17,11 +17,20 @@ thread_local! {
 }
 
 pub fn set_constructing_class(class: Option<ClassValue>) {
-    CONSTRUCTING_CLASS.with(|cell| *cell.borrow_mut() = class);
+    CONSTRUCTING_CLASS.with(|cell| {
+        if class.is_some() && cell.borrow().is_some() {
+            return;
+        }
+        *cell.borrow_mut() = class;
+    });
 }
 
 fn constructing_class() -> Option<ClassValue> {
     CONSTRUCTING_CLASS.with(|cell| cell.borrow().clone())
+}
+
+pub(crate) fn current_constructing_class() -> Option<ClassValue> {
+    constructing_class()
 }
 
 pub(crate) fn constructing_class_for_super() -> Option<ClassValue> {
@@ -54,9 +63,6 @@ pub(crate) fn throw_this_before_super() -> Result<Value, JsError> {
 }
 
 pub(crate) fn check_this_access_allowed(env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
-    if crate::interpreter::is_inside_super_call() {
-        return Ok(());
-    }
     if let Some(class) = constructing_class_for_super() {
         if class.super_class.is_some() && !crate::interpreter::is_this_binding_initialized(env) {
             throw_this_before_super()?;

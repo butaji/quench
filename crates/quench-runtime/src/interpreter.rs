@@ -266,10 +266,6 @@ pub(crate) fn pop_inside_super_call() {
     INSIDE_SUPER_CALL.with(|cell| cell.set(cell.get().saturating_sub(1)));
 }
 
-pub(crate) fn is_inside_super_call() -> bool {
-    INSIDE_SUPER_CALL.with(|cell| cell.get() > 0)
-}
-
 thread_local! {
     static CURRENT_THIS: Cell<Option<Value>> = const { Cell::new(None) };
 }
