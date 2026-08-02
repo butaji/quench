@@ -21,3 +21,5 @@ Make native failures expose the Node-compatible error type, code, message, and r
 Missing-file `ENOENT` metadata is covered by
 `tests/node-compat/stage-376/error-enoent.js`. Additional permission,
 validation, and encoding error contracts remain in progress.
+Invalid object paths are covered by
+`tests/node-compat/stage-377/error-invalid-path.js`.
