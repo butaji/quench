@@ -66,27 +66,47 @@ process.emit = (event, ...args) => {
   return listeners.length > 0;
 };
 
-class Buffer extends Uint8Array {
+class NodeBuffer extends Uint8Array {
   static from(value, encoding) {
     if (typeof value === 'string') {
       if (encoding === 'hex') {
-        const output = new Buffer(value.length / 2);
+        const output = new NodeBuffer(value.length / 2);
         for (let i = 0; i < output.length; i++) output[i] = parseInt(value.slice(i * 2, i * 2 + 2), 16);
         return output;
       }
-      const output = new Buffer(value.length);
+      if (encoding === 'base64') {
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        const clean = value.replace(/=+$/, ''); const output = new NodeBuffer(Math.floor(clean.length * 6 / 8));
+        let buffer = 0; let bits = 0; let index = 0;
+        for (const char of clean) { buffer = (buffer << 6) | alphabet.indexOf(char); bits += 6; if (bits >= 8) { bits -= 8; output[index++] = (buffer >> bits) & 255; } }
+        return output;
+      }
+      const output = new NodeBuffer(value.length);
       for (let i = 0; i < value.length; i++) output[i] = value.charCodeAt(i) & 255;
       return output;
     }
-    return new Buffer(value);
+    return new NodeBuffer(value);
   }
-  static alloc(size, fill = 0) { return new Buffer(size).fill(fill); }
+  static alloc(size, fill = 0) { return new NodeBuffer(size).fill(fill); }
+  static isBuffer(value) { return value instanceof NodeBuffer; }
+  static byteLength(value) { return String(value).length; }
+  static concat(list, totalLength) {
+    const length = totalLength === undefined ? list.reduce((sum, item) => sum + item.length, 0) : totalLength;
+    const output = new NodeBuffer(length); let offset = 0;
+    list.forEach((item) => { output.set(item.subarray(0, length - offset), offset); offset += item.length; });
+    return output;
+  }
   toString(encoding = 'utf8') {
     if (encoding === 'hex') return Array.from(this, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (encoding === 'base64') {
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; let result = '';
+      for (let i = 0; i < this.length; i += 3) { const n = (this[i] << 16) | ((this[i + 1] || 0) << 8) | (this[i + 2] || 0); result += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] + (i + 1 < this.length ? alphabet[(n >> 6) & 63] : '=') + (i + 2 < this.length ? alphabet[n & 63] : '='); }
+      return result;
+    }
     return String.fromCharCode(...this);
   }
 }
-globalThis.Buffer = Buffer;
+globalThis.Buffer = NodeBuffer;
 
 globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
@@ -365,7 +385,7 @@ globalThis.require = (specifier) => {
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
-  if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
+  if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };
