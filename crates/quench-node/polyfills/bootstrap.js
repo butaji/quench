@@ -833,7 +833,7 @@ class NodeBuffer extends Uint8Array {
       this.every((value, index) => value === other[index])
     );
   }
-  compare(target) {
+  compare(target, targetStart, targetEnd, sourceStart, sourceEnd) {
     if (!(target instanceof Uint8Array)) {
       const error = new TypeError(
         'The "target" argument must be an instance of Buffer or Uint8Array',
@@ -841,7 +841,33 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    return NodeBuffer.compare(this, target);
+    const values = [targetStart, targetEnd, sourceStart, sourceEnd];
+    for (const value of values) {
+      if (value !== undefined && typeof value !== "number") {
+        const error = new TypeError("offset arguments must be numbers");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+        const error = new RangeError("offset is out of range");
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
+    const targetBegin = targetStart === undefined ? 0 : Math.trunc(targetStart);
+    const targetFinish =
+      targetEnd === undefined ? target.length : Math.trunc(targetEnd);
+    const sourceBegin = sourceStart === undefined ? 0 : Math.trunc(sourceStart);
+    const sourceFinish =
+      sourceEnd === undefined ? this.length : Math.trunc(sourceEnd);
+    if (targetFinish > target.length || sourceFinish > this.length) {
+      const error = new RangeError("offset is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const left = target.subarray(targetBegin, targetFinish);
+    const right = this.subarray(sourceBegin, sourceFinish);
+    return NodeBuffer.compare(right, left);
   }
   _swap(width) {
     if (this.length % width !== 0)
