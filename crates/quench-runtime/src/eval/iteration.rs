@@ -326,7 +326,7 @@ fn continue_yield_delegate(
         &state.iterator,
         &mut state.index,
         env,
-        next_value,
+        next_value.clone(),
     )?;
     state.done_present = crate::eval::object::take_last_done_present();
     if done {
@@ -336,9 +336,9 @@ fn continue_yield_delegate(
         return Ok(Value::Undefined);
     }
     crate::interpreter::set_generator_yield(value);
-    crate::value::generator_replay::record_fresh_yield_resume(resume_val.clone());
+    crate::value::generator_replay::record_fresh_yield_resume(next_value.clone());
     stage_yield_delegate_suspend(state);
-    Ok(resume_val)
+    Ok(next_value)
 }
 
 fn eval_for_of_body_tail(
@@ -1050,6 +1050,15 @@ mod tests {
             .eval("function* g(){ yield* 'abc'; } var i = g(); [i.next().value, i.next().value, i.next().value].join('')")
             .unwrap();
         assert_eq!(value, Value::String("abc".into()));
+    }
+
+    #[test]
+    fn yield_star_does_not_assign_before_following_yield() {
+        let mut ctx = new_ctx();
+        let value = ctx
+            .eval("var value; Boolean.prototype[Symbol.iterator] = function*(){ yield this.valueOf(); }; function* g(){ value = yield * 'hit' in Object.create({hit:true}); value = yield * 'miss' in Object.create({}); } var i=g(); i.next('first'); var before=value; i.next('second'); [before, value].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("undefined|undefined".into()));
     }
 
     #[test]
