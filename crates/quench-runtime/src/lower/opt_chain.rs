@@ -59,12 +59,24 @@ fn lower_chain_recursive(
                     alternate: Box::new(member_access),
                 })
             } else {
-                // First element: direct member access
-                Ok(Expression::Member {
+                let guarded = is_nullish_guard(&object_expr);
+                let member_access = Expression::Member {
                     object: Box::new(object_expr),
                     property,
                     computed: false,
-                })
+                };
+                if guarded {
+                    Ok(Expression::Conditional {
+                        condition: Box::new(make_nullish_check(match &member_access {
+                            Expression::Member { object, .. } => object,
+                            _ => unreachable!(),
+                        })),
+                        consequent: Box::new(Expression::Undefined),
+                        alternate: Box::new(member_access),
+                    })
+                } else {
+                    Ok(member_access)
+                }
             }
         }
         ast::ChainElement::ComputedMemberExpression(member) => {
@@ -134,7 +146,12 @@ fn lower_chain_recursive(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let callee = lower_expr(&call.callee)?;
+            let callee = lower_chain_base(&call.callee)?;
+            let guarded = !call.optional && is_nullish_guard(&callee);
+            let guard_condition = guarded.then(|| match &callee {
+                Expression::Conditional { condition, .. } => (**condition).clone(),
+                _ => unreachable!(),
+            });
             let full_call = Expression::Call {
                 callee: Box::new(if call.optional {
                     if matches!(callee, Expression::Member { .. }) {
@@ -165,6 +182,12 @@ fn lower_chain_recursive(
                 Ok(Expression::Conditional {
                     condition: Box::new(is_nullish),
                     consequent: Box::new(undefined),
+                    alternate: Box::new(full_call),
+                })
+            } else if guarded {
+                Ok(Expression::Conditional {
+                    condition: Box::new(guard_condition.unwrap()),
+                    consequent: Box::new(Expression::Undefined),
                     alternate: Box::new(full_call),
                 })
             } else {
@@ -219,37 +242,88 @@ fn lower_chain_recursive(
 /// Lower the object side of a chain element, preserving `?.` on nested members.
 fn lower_chain_base(object: &ast::Expression) -> Result<Expression, LowerError> {
     match object {
-        ast::Expression::StaticMemberExpression(member) if member.optional => {
-            let object_expr = lower_expr(&member.object)?;
+        ast::Expression::StaticMemberExpression(member) => {
+            let object_expr = lower_chain_base(&member.object)?;
             let property = PropertyKey::Ident(member.property.name.as_str().to_string());
             let member_access = Expression::Member {
                 object: Box::new(object_expr.clone()),
                 property,
                 computed: false,
             };
-            Ok(Expression::Conditional {
-                condition: Box::new(make_nullish_check(&object_expr)),
-                consequent: Box::new(Expression::Undefined),
-                alternate: Box::new(member_access),
-            })
+            if member.optional || is_nullish_guard(&object_expr) {
+                Ok(Expression::Conditional {
+                    condition: Box::new(make_nullish_check(&object_expr)),
+                    consequent: Box::new(Expression::Undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else {
+                Ok(member_access)
+            }
         }
-        ast::Expression::ComputedMemberExpression(member) if member.optional => {
-            let object_expr = lower_expr(&member.object)?;
+        ast::Expression::ComputedMemberExpression(member) => {
+            let object_expr = lower_chain_base(&member.object)?;
             let prop_expr = lower_expr(&member.expression)?;
             let member_access = Expression::Member {
                 object: Box::new(object_expr.clone()),
                 property: PropertyKey::Computed(Box::new(prop_expr)),
                 computed: true,
             };
-            Ok(Expression::Conditional {
-                condition: Box::new(make_nullish_check(&object_expr)),
-                consequent: Box::new(Expression::Undefined),
-                alternate: Box::new(member_access),
-            })
+            if member.optional || is_nullish_guard(&object_expr) {
+                Ok(Expression::Conditional {
+                    condition: Box::new(make_nullish_check(&object_expr)),
+                    consequent: Box::new(Expression::Undefined),
+                    alternate: Box::new(member_access),
+                })
+            } else {
+                Ok(member_access)
+            }
         }
         ast::Expression::ChainExpression(chain) => lower_opt_chain(chain),
+        ast::Expression::CallExpression(call) => lower_chain_call(call),
         _ => lower_expr(object),
     }
+}
+
+fn lower_chain_call(call: &ast::CallExpression) -> Result<Expression, LowerError> {
+    let arguments = call
+        .arguments
+        .iter()
+        .map(|arg| match arg {
+            ast::Argument::SpreadElement(spread) => {
+                Ok(Expression::Spread(Box::new(lower_expr(&spread.argument)?)))
+            }
+            _ => Ok(lower_expr(arg.as_expression().ok_or(LowerError::new(
+                "Invalid argument in optional chain",
+            ))?)?),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let callee = lower_chain_base(&call.callee)?;
+    let full_call = Expression::Call {
+        callee: Box::new(callee.clone()),
+        arguments,
+    };
+    if call.optional || is_nullish_guard(&callee) {
+        let base = if call.optional {
+            extract_base_from_callee(&call.callee)?
+        } else {
+            match callee {
+                Expression::Conditional { condition, .. } => {
+                    return Ok(Expression::Conditional {
+                        condition,
+                        consequent: Box::new(Expression::Undefined),
+                        alternate: Box::new(full_call),
+                    });
+                }
+                _ => unreachable!(),
+            }
+        };
+        return Ok(Expression::Conditional {
+            condition: Box::new(make_nullish_check(&base)),
+            consequent: Box::new(Expression::Undefined),
+            alternate: Box::new(full_call),
+        });
+    }
+    Ok(full_call)
 }
 
 fn is_super_call(expression: &ast::Expression) -> bool {
