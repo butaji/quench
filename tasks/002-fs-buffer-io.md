@@ -33,3 +33,5 @@ Numeric descriptor resolution for `readFileSync()` is covered by
 `tests/node-compat/stage-415/fs-read-file-fd.js`.
 Synchronous callback API data validation for `appendFile()` is covered by
 `tests/node-compat/stage-416/fs-append-validation.js`.
+Binary `appendFileSync()` transport is covered by
+`tests/node-compat/stage-417/fs-append-binary.js`.
