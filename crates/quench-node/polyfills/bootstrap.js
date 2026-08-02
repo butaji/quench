@@ -3653,6 +3653,17 @@ globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
   if (typeof options === "function") callback = options;
   if (typeof callback !== "function")
     throw new TypeError('The "callback" argument must be of type function');
+  if (
+    typeof data !== "string" &&
+    !(data instanceof NodeBuffer) &&
+    !(data instanceof Uint8Array)
+  ) {
+    const error = new TypeError(
+      'The "data" argument must be of type string or an instance of Buffer',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   queueMicrotask(() => {
     try {
       globalThis.__nodeFs.appendFileSync(value, data, options);
