@@ -276,6 +276,8 @@ globalThis.__nodeCommon = {
   }),
   mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
+  printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
+  expectsError: (_expected) => (error) => { if (!error) throw new Error('Expected filesystem error'); },
   expectWarning: (_type, _message) => {},
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === 'linux',
@@ -288,6 +290,7 @@ globalThis.__quench_verify_calls = () => {
 };
 globalThis.__nodeTmpdir = {
   path: `/tmp/quench-node-${process.pid}`,
+  hasEnoughSpace: (_bytes) => false,
   refresh: () => { try { globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path); } catch (_) {} },
   resolve: (name = '') => globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
   fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))}`),
@@ -355,8 +358,15 @@ globalThis.__nodeFs = {
   constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
-  readFileSync: (value) => globalThis.__quench_fs_read_file(nodePathValue(value)),
-  writeFileSync: (value, data) => globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
+  readFileSync: (value, options) => {
+    const path = nodePathValue(value); const hex = globalThis.__quench_fs_read_hex(path);
+    if (options === undefined || options === null) {
+      const bytes = NodeBuffer.from(hex, 'hex'); const text = bytes.toString();
+      return NodeBuffer.from(text).toString('hex') === hex ? text : bytes;
+    }
+    return globalThis.__quench_fs_read_file(path);
+  },
+  writeFileSync: (value, data) => data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(nodePathValue(value), data.toString('hex')) : globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
   openSync: (value, flags = 'r', mode) => {
     const path = nodeFsPath(value);
     if (mode !== undefined && mode !== null && typeof mode !== 'number') {
