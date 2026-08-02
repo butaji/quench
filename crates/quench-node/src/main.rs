@@ -28,6 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return run_directory(&dir);
     }
+    if mode.as_deref() == Some("--reuse-dir") {
+        let dir = PathBuf::from(
+            args.next()
+                .unwrap_or_else(|| "tests/node-compat".into()),
+        );
+        return run_directory_reuse(&dir);
+    }
     let source = match mode.as_deref() {
         Some("-e") | Some("--eval") => args.next().unwrap_or_default(),
         Some(path) => fs::read_to_string(path)?,
@@ -38,6 +45,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new()?;
+    run_source_with_runtime(source, &runtime)
+}
+
+fn run_source_with_runtime(
+    source: &str,
+    runtime: &Runtime,
+) -> Result<(), Box<dyn std::error::Error>> {
     let context = Context::full(&runtime)?;
     context.with(|ctx| -> rquickjs::Result<()> {
         ctx.globals().set(
@@ -397,5 +411,34 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     } else {
         Err("Node test harness failures".into())
+    }
+}
+
+fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Runtime::new()?;
+    let mut failed = 0;
+    let mut total = 0;
+    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file()
+            && entry.path().extension().is_some_and(|e| e == "js" || e == "mjs")
+        {
+            total += 1;
+            let source = fs::read_to_string(entry.path())?;
+            match run_source_with_runtime(&source, &runtime) {
+                Ok(()) => println!("ok {}", entry.path().display()),
+                Err(error) => {
+                    failed += 1;
+                    eprintln!("not ok {}: {error:?}", entry.path().display());
+                }
+            }
+        }
+    }
+    println!("{total} tests, {} passed, {failed} failed", total - failed);
+    if total == 0 {
+        Err("Node reusable harness found no JavaScript tests".into())
+    } else if failed == 0 {
+        Ok(())
+    } else {
+        Err("Node reusable harness failures".into())
     }
 }

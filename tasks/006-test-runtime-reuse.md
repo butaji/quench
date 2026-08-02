@@ -15,3 +15,9 @@ Reduce harness startup overhead without weakening the existing per-test isolatio
 
 - Existing isolated execution remains unchanged.
 - Reusable execution has focused tests proving state does not leak between scripts.
+
+## Status
+
+The explicit `--reuse-dir` mode reuses one rquickjs runtime while creating a
+fresh context per script. Isolation and state-reset behavior are covered by
+`tests/node-compat/stage-383/runtime-reuse.js` and its companion script.
