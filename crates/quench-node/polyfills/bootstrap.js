@@ -5354,6 +5354,50 @@ globalThis.__nodeCrypto = {
     };
     return hash;
   },
+  createHmac: (algorithm, key) => {
+    if (algorithm !== "sha256")
+      throw new Error(`Unsupported hmac: ${algorithm}`);
+    let keyBytes =
+      typeof key === "string"
+        ? new NodeTextEncoder().encode(key)
+        : NodeBuffer.from(key);
+    if (keyBytes.length > 64)
+      keyBytes = NodeBuffer.from(
+        globalThis.__quench_sha256_bytes(Array.from(keyBytes)),
+      );
+    const padded = NodeBuffer.alloc(64);
+    padded.set(keyBytes);
+    const inner = new NodeBuffer(64);
+    const outer = new NodeBuffer(64);
+    for (let i = 0; i < 64; i++) {
+      inner[i] = padded[i] ^ 0x36;
+      outer[i] = padded[i] ^ 0x5c;
+    }
+    const chunks = [];
+    const hmac = {
+      update: (value) => {
+        chunks.push(
+          typeof value === "string"
+            ? new NodeTextEncoder().encode(value)
+            : NodeBuffer.from(value),
+        );
+        return hmac;
+      },
+      digest: (encoding = "hex") => {
+        const message = [];
+        for (const chunk of chunks) message.push(...chunk);
+        const innerDigest = globalThis.__quench_sha256_bytes([
+          ...inner,
+          ...message,
+        ]);
+        const result = NodeBuffer.from(
+          globalThis.__quench_sha256_bytes([...outer, ...innerDigest]),
+        );
+        return encoding === "hex" ? result.toString("hex") : result;
+      },
+    };
+    return hmac;
+  },
 };
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, "");
