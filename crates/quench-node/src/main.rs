@@ -228,7 +228,9 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     println!("{total} tests, {} passed, {failed} failed", total - failed);
-    if failed == 0 {
+    if total == 0 {
+        Err("Node test harness found no JavaScript tests".into())
+    } else if failed == 0 {
         Ok(())
     } else {
         Err("Node test harness failures".into())
