@@ -6282,6 +6282,11 @@ const __createNodeCrypto = () => ({
         throw error;
       },
       copy: () => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
         const clone = globalThis.__nodeCrypto.createHash("sha256");
         for (const chunk of chunks) clone.update(chunk);
         return clone;
@@ -6348,6 +6353,11 @@ const __createNodeCrypto = () => ({
         throw error;
       },
       copy: () => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
         const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);
         for (const chunk of chunks) clone.update(chunk);
         return clone;
