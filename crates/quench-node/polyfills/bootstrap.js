@@ -509,6 +509,12 @@ globalThis.__nodeFs.rmdir = (value, options, callback) => {
   const path = nodeFsPath(value);
   queueMicrotask(() => { try { globalThis.__nodeFs.rmdirSync(path); } catch (error) { callback(error); return; } callback(null); });
 };
+globalThis.__nodeFs.rm = (value, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__quench_fs_remove_dir(path); } catch (error) { callback(error); return; } callback(null); });
+};
 globalThis.__nodeFs.rename = (from, to, callback) => {
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const source = nodeFsPath(from); const destination = nodeFsPath(to);
@@ -637,6 +643,7 @@ globalThis.__nodeFs.promises = {
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
   access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
+  rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
