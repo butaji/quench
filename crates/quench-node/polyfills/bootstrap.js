@@ -219,6 +219,15 @@ class NodeBuffer extends Uint8Array {
   }
   static from(value, encoding, length) {
     if (typeof encoding === "string") encoding = encoding.toLowerCase();
+    if (
+      typeof value === "string" &&
+      encoding !== undefined &&
+      !NodeBuffer.isEncoding(encoding)
+    ) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     if (value instanceof ArrayBuffer) {
       let offset = Number(encoding);
       if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
@@ -266,9 +275,12 @@ class NodeBuffer extends Uint8Array {
         return output.subarray(0, written);
       }
       if (encoding === "base64" || encoding === "base64url") {
+        if (/^\s*=/.test(value)) return new NodeBuffer(0);
         const alphabet =
           "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         const clean = value
+          .replace(/\s+/g, "")
+          .replace(/[^A-Za-z0-9+/_-]/g, "")
           .replace(/=+$/, "")
           .replace(/-/g, "+")
           .replace(/_/g, "/");
@@ -310,7 +322,22 @@ class NodeBuffer extends Uint8Array {
         }
         return output;
       }
-      return new NodeBuffer(new NodeTextEncoder().encode(value));
+      let normalized = "";
+      for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code >= 0xd800 && code <= 0xdbff) {
+          if (i + 1 < value.length) {
+            const next = value.charCodeAt(i + 1);
+            if (next >= 0xdc00 && next <= 0xdfff) {
+              normalized += value[i++] + value[i];
+              continue;
+            }
+          }
+          normalized += "\ufffd";
+        } else if (code >= 0xdc00 && code <= 0xdfff) normalized += "\ufffd";
+        else normalized += value[i];
+      }
+      return new NodeBuffer(new NodeTextEncoder().encode(normalized));
     }
     if (value && value.type === "Buffer" && Array.isArray(value.data))
       return new NodeBuffer(value.data);
@@ -326,8 +353,8 @@ class NodeBuffer extends Uint8Array {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  static alloc(size, fill = 0) {
-    return new NodeBuffer(size).fill(fill);
+  static alloc(size, fill = 0, encoding) {
+    return new NodeBuffer(size).fill(fill, 0, size, encoding);
   }
   static allocUnsafe(size) {
     return new NodeBuffer(size);
@@ -735,6 +762,9 @@ class NodeBuffer extends Uint8Array {
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
   }
+  inspect() {
+    return `<Buffer ${Array.from(this, (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>`;
+  }
   includes(value, byteOffset = 0, encoding) {
     if (
       typeof value !== "number" &&
@@ -859,6 +889,15 @@ class NodeBuffer extends Uint8Array {
         : Math.max(0, Math.trunc(Number(length)) || 0);
     let count = Math.min(requested, this.length - offset, bytes.length);
     const normalized = String(encoding).toLowerCase();
+    if (normalized === "utf8" || normalized === "utf-8") {
+      let complete = 0;
+      for (let i = 1; i <= String(value).length; i++) {
+        const size = NodeBuffer.from(String(value).slice(0, i), "utf8").length;
+        if (size > count) break;
+        complete = size;
+      }
+      count = complete;
+    }
     if (
       (normalized === "ucs2" ||
         normalized === "ucs-2" ||
