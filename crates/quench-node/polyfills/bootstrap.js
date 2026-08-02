@@ -4510,7 +4510,8 @@ globalThis.__nodeQuerystring = {
             encodedValue =
               item === null ||
               typeof item === "object" ||
-              typeof item === "function"
+              typeof item === "function" ||
+              (typeof item === "number" && !Number.isFinite(item))
                 ? ""
                 : encode(item);
           } catch (error) {
@@ -4527,15 +4528,24 @@ globalThis.__nodeQuerystring = {
     if (input == null || input === "") return result;
     const decode = (value) =>
       globalThis.__nodeQuerystring.unescape(String(value).replace(/\+/g, " "));
-    const maxKeys = options && options.maxKeys === 0 ? Infinity : 1000;
+    const separator = sep == null ? "&" : String(sep);
+    const equals = eq == null ? "=" : String(eq);
+    const maxKeys =
+      options && options.maxKeys !== undefined
+        ? options.maxKeys === 0
+          ? Infinity
+          : Number(options.maxKeys)
+        : 1000;
     String(input)
-      .split(sep)
+      .split(separator)
       .filter(Boolean)
       .slice(0, maxKeys)
       .forEach((part) => {
-        const index = part.indexOf(eq);
+        const index = part.indexOf(equals);
         const key = decode(index < 0 ? part : part.slice(0, index));
-        const value = decode(index < 0 ? "" : part.slice(index + eq.length));
+        const value = decode(
+          index < 0 ? "" : part.slice(index + equals.length),
+        );
         result[key] =
           result[key] === undefined
             ? value
