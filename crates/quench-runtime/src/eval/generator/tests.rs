@@ -447,7 +447,10 @@ mod generator_tests {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var values = []; async function* g() { yield Promise.resolve(42); yield Promise.resolve(39); } var iterator = g(); var a = iterator.next(); var b = iterator.next(); a.then(function(step) { values.push(step.value); }); b.then(function(step) { values.push(step.value); });")
             .unwrap();
-        assert_eq!(ctx.eval("values.join(',')").unwrap(), Value::String("42,39".into()));
+        assert_eq!(
+            ctx.eval("values.join(',')").unwrap(),
+            Value::String("42,39".into())
+        );
     }
 
     #[test]
@@ -460,7 +463,10 @@ mod generator_tests {
         crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
         ctx.eval("var values = []; var lastError; async function* g() { yield import('./for-await-resolution-and-error-a_FIXTURE.js'); yield import('./for-await-resolution-and-error-b_FIXTURE.js'); yield import('./for-await-resolution-and-error-poisoned_FIXTURE.js'); } async function* h() { yield await import('./for-await-resolution-and-error-a_FIXTURE.js'); yield await import('./for-await-resolution-and-error-b_FIXTURE.js'); yield await import('./for-await-resolution-and-error-poisoned_FIXTURE.js'); } var iterator = g(); var other = h(); var a = iterator.next(); var b = iterator.next(); var c = iterator.next(); var d = other.next(); var e = other.next(); var f = other.next(); a.then(function(step) { values.push('a:' + step.value.x); }); b.then(function(step) { values.push('b:' + step.value.x); }); c.catch(function() {}); d.catch(function() {}); e.catch(function() {}); f.catch(function(error) { lastError = error; });")
             .unwrap();
-        assert_eq!(ctx.eval("values.join(',')").unwrap(), Value::String("a:42,b:39".into()));
+        assert_eq!(
+            ctx.eval("values.join(',')").unwrap(),
+            Value::String("a:42,b:39".into())
+        );
         assert_eq!(ctx.eval("lastError").unwrap(), Value::String("foo".into()));
     }
 }

@@ -2168,6 +2168,12 @@ pub(crate) fn dynamic_import(
                 Value::String(message) => {
                     crate::value::error::create_js_error_with_type(&message, "SyntaxError").0
                 }
+                Value::Object(boxed) if boxed.borrow().has("__quench_cached_module_reason__") => {
+                    boxed
+                        .borrow()
+                        .get("__quench_cached_module_reason__")
+                        .unwrap_or(Value::Undefined)
+                }
                 reason => reason,
             };
             return Ok(Value::Object(
@@ -2183,7 +2189,11 @@ pub(crate) fn dynamic_import(
                 value
             });
             if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
-                errors.borrow_mut().set(source, reason.clone());
+                let mut cached = Object::new(ObjectKind::Ordinary);
+                cached.set("__quench_cached_module_reason__", reason.clone());
+                errors
+                    .borrow_mut()
+                    .set(source, Value::Object(Rc::new(RefCell::new(cached))));
             }
             return Ok(Value::Object(
                 crate::builtins::promise::create_rejected_promise(reason)?,

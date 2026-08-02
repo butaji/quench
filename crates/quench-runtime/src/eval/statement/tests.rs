@@ -101,7 +101,10 @@ fn repeated_errored_module_import_preserves_error_type() {
     crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
     ctx.eval("var types = []; import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); return import('./import-errored-module_FIXTURE.js').catch(function(error) { types.push(error.name); }); });")
         .unwrap();
-    assert_eq!(ctx.eval("types.join(',')").unwrap(), Value::String("Error,Error".into()));
+    assert_eq!(
+        ctx.eval("types.join(',')").unwrap(),
+        Value::String("Error,Error".into())
+    );
 }
 
 #[test]
