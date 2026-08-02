@@ -2335,12 +2335,19 @@ class NodeTransform extends NodeWritable {
     return true;
   }
 }
-globalThis.__nodeStream = {
+const __nodeStreamExports = {
   Readable: NodeReadable,
   Writable: NodeWritable,
   Transform: NodeTransform,
   PassThrough: NodeTransform,
 };
+globalThis.__nodeStreamInitialized = false;
+globalThis.__nodeStream = new Proxy(__nodeStreamExports, {
+  get: (target, key) => {
+    globalThis.__nodeStreamInitialized = true;
+    return target[key];
+  },
+});
 globalThis.__nodeFs = {
   constants: {
     F_OK: 0,

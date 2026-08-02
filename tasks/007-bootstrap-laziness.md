@@ -23,3 +23,5 @@ covered by `tests/node-compat/stage-384/bootstrap-lazy-crypto.js`. Other
 optional bootstrap sections remain in progress.
 Deferred initialization timing is verified by
 `tests/node-compat/stage-385/bootstrap-lazy-state.js`.
+Stream export initialization timing is covered by
+`tests/node-compat/stage-386/bootstrap-lazy-stream.js`.
