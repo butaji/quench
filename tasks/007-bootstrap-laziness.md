@@ -27,3 +27,5 @@ Stream export initialization timing is covered by
 `tests/node-compat/stage-386/bootstrap-lazy-stream.js`.
 URL module initialization timing is covered by
 `tests/node-compat/stage-388/bootstrap-lazy-url.js`.
+OS module initialization timing is covered by
+`tests/node-compat/stage-389/bootstrap-lazy-os.js`.

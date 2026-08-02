@@ -4475,7 +4475,7 @@ globalThis.__nodeFs.promises.open = async (...args) => {
 };
 let __nodePriority = 0;
 const __nodeStartedAt = Date.now();
-globalThis.__nodeOs = {
+const __nodeOsExports = {
   EOL: "\n",
   devNull: "/dev/null",
   platform: () => process.platform,
@@ -4548,6 +4548,7 @@ globalThis.__nodeOs = {
     },
   },
 };
+globalThis.__nodeOs = __nodeOsExports;
 for (const [name, getter] of [
   ["uptime", () => globalThis.__nodeOs.uptime()],
   ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
@@ -4571,6 +4572,22 @@ for (const name of [
   globalThis.__nodeOs[name].toString = () =>
     String(globalThis.__nodeOs[name]());
 }
+globalThis.__nodeOsInitialized = false;
+globalThis.__nodeOs = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeOsInitialized = true;
+      return __nodeOsExports[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeOsExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeOsExports[key],
+    }),
+  },
+);
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
@@ -5462,7 +5479,10 @@ globalThis.require = (specifier) => {
   if (name === "assert") return globalThis.__nodeAssert;
   if (name === "path" || name === "path/posix") return globalThis.__nodePath;
   if (name === "util") return globalThis.__nodeUtil;
-  if (name === "os") return globalThis.__nodeOs;
+  if (name === "os") {
+    globalThis.__nodeOsInitialized = true;
+    return globalThis.__nodeOs;
+  }
   if (name === "querystring") return globalThis.__nodeQuerystring;
   if (name === "url") {
     globalThis.__nodeUrlInitialized = true;
