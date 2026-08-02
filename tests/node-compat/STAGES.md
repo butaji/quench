@@ -86,3 +86,4 @@ these small fixtures isolate the currently implemented contract.
 | 76 | `Buffer.allocUnsafe` compatibility | `tools/run-node-tests.sh --stage 76` |
 | 77 | binary Buffer-backed filesystem read/write | `tools/run-node-tests.sh --stage 77` |
 | 78 | AbortSignal-aware `fs.readFile` behavior | `tools/run-node-tests.sh --stage 78` |
+| 79 | empty-file and encoding-aware `fs.readFile` behavior | `tools/run-node-tests.sh --stage 79` |
