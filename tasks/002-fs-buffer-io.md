@@ -39,3 +39,5 @@ Encoded string append transport is covered by
 `tests/node-compat/stage-418/fs-append-encoding.js`.
 Basic `createWriteStream().end()` lifecycle is covered by
 `tests/node-compat/stage-422/fs-write-stream-end.js`.
+Basic `createReadStream()` byte delivery is covered by
+`tests/node-compat/stage-423/fs-read-stream.js`.
