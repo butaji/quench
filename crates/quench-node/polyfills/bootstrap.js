@@ -5478,6 +5478,28 @@ const __createNodeCrypto = () => ({
     buffer.set(bytes, offset);
     return buffer;
   },
+  randomFill: (buffer, offset, size, callback) => {
+    if (typeof offset === "function") {
+      callback = offset;
+      offset = 0;
+      size = buffer.length;
+    } else if (typeof size === "function") {
+      callback = size;
+      size = buffer.length - (offset || 0);
+    }
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    try {
+      const result = globalThis.__nodeCrypto.randomFillSync(
+        buffer,
+        offset || 0,
+        size === undefined ? buffer.length - (offset || 0) : size,
+      );
+      queueMicrotask(() => callback(null, result));
+    } catch (error) {
+      queueMicrotask(() => callback(error));
+    }
+  },
   pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
     if (typeof password !== "string" && !(password instanceof Uint8Array)) {
       const error = new TypeError(
