@@ -31,9 +31,11 @@ globalThis.console.timeEnd = (label = 'default') => {
 globalThis.process = {
   env: new Proxy({}, {
     get: (_, key) => typeof key === 'string' ? globalThis.__quench_env_get(key) : undefined,
-    set: (_, key, value) => { globalThis.__quench_env_set(String(key), String(value)); return true; },
-    deleteProperty: (_, key) => { globalThis.__quench_env_delete(String(key)); return true; },
+    set: (_, key, value) => { globalThis.__quench_env_set(String(key), String(value)); globalThis.__quench_env_keys = [...new Set([...globalThis.__quench_env_keys, String(key)])]; return true; },
+    deleteProperty: (_, key) => { globalThis.__quench_env_delete(String(key)); globalThis.__quench_env_keys = globalThis.__quench_env_keys.filter((item) => item !== String(key)); return true; },
     has: (_, key) => typeof key === 'string' && globalThis.__quench_env_get(key) !== undefined,
+    ownKeys: () => globalThis.__quench_env_keys,
+    getOwnPropertyDescriptor: (_, key) => ({ enumerable: true, configurable: true, value: globalThis.__quench_env_get(String(key)) }),
   }),
   argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
   execPath: globalThis.__quench_exec_path,
