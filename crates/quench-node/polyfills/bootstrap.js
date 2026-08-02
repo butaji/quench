@@ -692,6 +692,7 @@ globalThis.require = (specifier) => {
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter, once: globalThis.__nodeEventEmitter.once, on: globalThis.__nodeEventEmitter.on };
   if (name === 'stream') return globalThis.__nodeStream;
   if (name === 'worker_threads') return { isMainThread: true };
+  if (name === 'internal/test/binding') return { internalBinding: (_name) => ({ fstat: () => undefined }) };
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
