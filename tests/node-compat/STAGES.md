@@ -52,3 +52,4 @@ these small fixtures isolate the currently implemented contract.
 | 42 | Rust-backed process identity | `tools/run-node-tests.sh --stage 42` |
 | 43 | Rust-derived process platform and arch | `tools/run-node-tests.sh --stage 43` |
 | 44 | Node process version metadata | `tools/run-node-tests.sh --stage 44` |
+| 45 | process feature/config metadata | `tools/run-node-tests.sh --stage 45` |
