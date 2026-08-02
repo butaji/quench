@@ -23,6 +23,8 @@ globalThis.process = {
   version: 'v20.0.0',
   versions: { node: '20.0.0', v8: '0.0.0-quench', uv: '0.0.0' },
   release: { name: 'node', lts: 'Quench' },
+  config: { variables: { v8_enable_i18n_support: false, v8_enable_temporal_support: false, node_shared: false, node_use_ffi: false } },
+  features: { inspector: false, tls: false, quic: false, dtls: false },
   cwd: () => globalThis.__quench_cwd_get(),
   chdir: (value) => globalThis.__quench_chdir(String(value)),
   exitCode: 0,
