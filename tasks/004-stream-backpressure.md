@@ -72,6 +72,8 @@ Readable flowing-state transitions are covered by
 `tests/node-compat/stage-463/stream-flowing-state.js`.
 Readable and writable object-mode state is covered by
 `tests/node-compat/stage-464/stream-object-mode.js`.
+Readable destroy callbacks are covered by
+`tests/node-compat/stage-465/stream-destroy-callback.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
