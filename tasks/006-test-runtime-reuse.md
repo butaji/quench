@@ -49,3 +49,5 @@ and signal values for harness fixture scripts, covered by
 `tests/node-compat/stage-501`.
 The minimal `net.createServer()` and child IPC send/backpressure contracts are
 covered by `tests/node-compat/stage-502`.
+Child processes launched with `-e` now report successful exit status and no
+signal, covered by `tests/node-compat/stage-503`.
