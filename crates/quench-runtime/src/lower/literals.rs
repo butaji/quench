@@ -72,13 +72,11 @@ pub fn lower_tagged_template(
             .quasis
             .iter()
             .map(|q| {
-                Expression::String(
-                    q.value
-                        .cooked
-                        .as_ref()
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| q.value.raw.to_string()),
-                )
+                q.value
+                    .cooked
+                    .as_ref()
+                    .map(|value| Expression::String(value.to_string()))
+                    .unwrap_or(Expression::Undefined)
             })
             .collect(),
     );

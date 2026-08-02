@@ -39,6 +39,14 @@ fn tagged_template_exposes_cooked_and_raw_values() {
 }
 
 #[test]
+fn tagged_template_invalid_escape_has_undefined_cooked_value() {
+    assert_eq!(
+        eval("(function(s) { return [s[0], s.raw[0]].join('|'); })`\\01`").unwrap(),
+        Value::String("undefined|\\01".to_string())
+    );
+}
+
+#[test]
 fn tagged_template_objects_are_frozen() {
     assert_eq!(
         eval("(function(s) { s.x = 1; s.raw.x = 1; return [Object.isFrozen(s), Object.isFrozen(s.raw), s.x, s.raw.x].join('|'); })`x`").unwrap(),
