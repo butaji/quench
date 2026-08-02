@@ -4489,21 +4489,34 @@ globalThis.__nodeQuerystring = {
       return String(value);
     }
   },
-  stringify: (object, sep = "&", eq = "=") => {
+  stringify: (object, sep = "&", eq = "=", options = {}) => {
     if (!object || typeof object !== "object") return "";
+    sep = sep == null ? "&" : String(sep);
+    eq = eq == null ? "=" : String(eq);
+    const encode =
+      options && options.encodeURIComponent
+        ? options.encodeURIComponent
+        : globalThis.__nodeQuerystring.escape;
     return Object.keys(object)
       .flatMap((key) => {
         const value = object[key];
         if (Array.isArray(value) && value.length === 0) return [];
         const values = Array.isArray(value) ? value : [value];
         return values.map((item) => {
-          const encodedKey = globalThis.__nodeQuerystring.escape(key);
-          const encodedValue =
-            item === null ||
-            typeof item === "object" ||
-            typeof item === "function"
-              ? ""
-              : globalThis.__nodeQuerystring.escape(item);
+          let encodedKey;
+          let encodedValue;
+          try {
+            encodedKey = encode(key);
+            encodedValue =
+              item === null ||
+              typeof item === "object" ||
+              typeof item === "function"
+                ? ""
+                : encode(item);
+          } catch (error) {
+            if (error instanceof URIError) error.code = "ERR_INVALID_URI";
+            throw error;
+          }
           return `${encodedKey}${eq}${encodedValue}`;
         });
       })
