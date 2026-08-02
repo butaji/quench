@@ -80,3 +80,4 @@ these small fixtures isolate the currently implemented contract.
 | 70 | callback and promise filesystem open handles | `tools/run-node-tests.sh --stage 70` |
 | 71 | common success callbacks and isolated tmpdir paths | `tools/run-node-tests.sh --stage 71` |
 | 72 | `__filename` initialization and async `fs.readdir` errors | `tools/run-node-tests.sh --stage 72` |
+| 73 | synchronous filesystem open validation and `ENOENT` | `tools/run-node-tests.sh --stage 73` |
