@@ -260,6 +260,7 @@ fn lower_chain_recursive(
 /// Lower the object side of a chain element, preserving `?.` on nested members.
 fn lower_chain_base(object: &ast::Expression) -> Result<Expression, LowerError> {
     match object {
+        ast::Expression::Super(_) => Ok(Expression::Identifier("super".to_string())),
         ast::Expression::StaticMemberExpression(member) => {
             let object_expr = lower_chain_base(&member.object)?;
             let property = PropertyKey::Ident(member.property.name.as_str().to_string());

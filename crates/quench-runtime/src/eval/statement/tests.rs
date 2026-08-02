@@ -2516,6 +2516,12 @@ mod optional_chaining {
     }
 
     #[test]
+    fn optional_super_member_chain_returns_undefined() {
+        let value = eval("class A { undf () { return super.a?.c; } } new A().undf()").unwrap();
+        assert_eq!(value, Value::Undefined);
+    }
+
+    #[test]
     fn optional_member_skips_computed_key_after_nullish_chain() {
         let r = eval("var count = 0; function key() { count++; } undefined?.arr[key()]; count")
             .unwrap();
