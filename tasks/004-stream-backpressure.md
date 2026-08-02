@@ -44,6 +44,8 @@ Readable `unshift(null)` EOF ordering is covered by
 `tests/node-compat/stage-449/stream-unshift-eof.js`.
 Default readable buffering before a `data` listener is covered by
 `tests/node-compat/stage-450/stream-default-buffer.js`.
+Adding a `data` listener drains buffered readable data in
+`tests/node-compat/stage-451/stream-flow-transition.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by

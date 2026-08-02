@@ -2358,6 +2358,18 @@ class NodeReadable extends NodeEventEmitter {
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
   }
+  on(event, listener) {
+    super.on(event, listener);
+    if (event === "data") {
+      this._paused = false;
+      queueMicrotask(() => {
+        while (!this._paused && this._chunks.length)
+          this.emit("data", this._chunks.shift());
+        if (!this._chunks.length && this._ended) this._emitEnd();
+      });
+    }
+    return this;
+  }
   destroy(error) {
     if (this.destroyed) return this;
     this.destroyed = true;
