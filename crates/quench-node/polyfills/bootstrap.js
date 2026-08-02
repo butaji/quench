@@ -528,7 +528,71 @@ globalThis.__nodePath = {
   },
 };
 globalThis.__nodePath.posix = globalThis.__nodePath;
-globalThis.__nodePath.win32 = globalThis.__nodePath;
+const __nodeWinPath = {
+  sep: "\\",
+  parse(value) {
+    if (typeof value !== "string") {
+      const error = new TypeError('The "path" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const input = value.replace(/\//g, "\\").replace(/\\{2,}/g, "\\");
+    let root = "";
+    if (/^[A-Za-z]:\\/.test(input)) root = input.slice(0, 3);
+    else if (/^[A-Za-z]:/.test(input)) root = input.slice(0, 2);
+    else if (input.startsWith("\\")) root = "\\";
+    const trimmed = input.replace(/[\\]+$/, "") || root;
+    const index = trimmed.lastIndexOf("\\");
+    const dir = index >= 0 ? trimmed.slice(0, index) || root : "";
+    const base = index >= 0 ? trimmed.slice(index + 1) : trimmed;
+    const dot = base.lastIndexOf(".");
+    const ext = dot > 0 ? base.slice(dot) : "";
+    return {
+      root,
+      dir,
+      base,
+      ext,
+      name: ext ? base.slice(0, -ext.length) : base,
+    };
+  },
+  format(parts) {
+    if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
+      const error = new TypeError(
+        'The "pathObject" argument must be of type object',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const extension = parts.ext
+      ? String(parts.ext).startsWith(".")
+        ? String(parts.ext)
+        : `.${parts.ext}`
+      : "";
+    const base = parts.base || `${parts.name || ""}${extension}`;
+    const dir = parts.dir || parts.root || "";
+    if (!dir) return base;
+    if (dir.endsWith("\\")) return `${dir}${base}`;
+    return `${dir}\\${base}`;
+  },
+  basename: (value) =>
+    String(value)
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || "",
+  dirname: (value) => {
+    const input = String(value).replace(/[\\/]+$/, "");
+    const index = input.lastIndexOf("\\");
+    return index < 0 ? "" : input.slice(0, index) || "\\";
+  },
+  extname(value) {
+    const base = this.basename(value);
+    const index = base.lastIndexOf(".");
+    return index > 0 ? base.slice(index) : "";
+  },
+};
+__nodeWinPath.posix = globalThis.__nodePath;
+__nodeWinPath.win32 = __nodeWinPath;
+globalThis.__nodePath.win32 = __nodeWinPath;
 
 globalThis.__nodeCommon = {
   mustCall: (fn, exact = 1) => {
