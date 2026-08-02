@@ -2594,7 +2594,9 @@ class NodeWritable extends NodeEventEmitter {
       return false;
     }
     const size =
-      typeof chunk === "string" ? chunk.length : chunk?.byteLength || 1;
+      typeof chunk === "string"
+        ? NodeBuffer.byteLength(chunk, encoding || "utf8")
+        : chunk?.byteLength || 1;
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else this.emit("data", chunk);
