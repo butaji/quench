@@ -327,6 +327,13 @@ pub fn resolve_super_class_value(
 ) -> Result<Value, JsError> {
     if let Some(def_env) = class.get_class_def_env() {
         if let Some(cached) = def_env.borrow().get_super_class() {
+            if let Some(own_proto) = class.get_own_prototype() {
+                if matches!(own_proto, Value::NativeFunction(_))
+                    && !is_constructor_value(&own_proto)
+                {
+                    return Ok(own_proto);
+                }
+            }
             return Ok(cached);
         }
     }
@@ -437,6 +444,14 @@ pub fn call_super_or_default(
     this_val: &Value,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    if !is_constructor_value(super_val) {
+        let (thrown, error) = crate::value::error::create_js_error_with_type(
+            "super is not a constructor",
+            "TypeError",
+        );
+        crate::value::error::set_thrown_value(thrown);
+        return Err(error);
+    }
     match super_val {
         Value::Class(super_class) => crate::eval::class::call_super_constructor(
             super_class.as_ref().clone(),
@@ -462,6 +477,7 @@ pub fn call_super_or_default(
         Value::NativeFunction(nf) if nf.prototype.borrow().is_some() => {
             call_super_callable(Value::NativeFunction(nf.clone()), args, this_val)
         }
+        Value::NativeFunction(_) => Err(JsError("TypeError: super is not a constructor".into())),
         Value::Function(f) => call_super_callable(Value::Function(f.clone()), args, this_val),
         _ => Ok(this_val.clone()),
     }

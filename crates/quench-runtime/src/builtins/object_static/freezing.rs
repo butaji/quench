@@ -284,7 +284,11 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
 
     // null is allowed as a prototype (creates a null prototype object)
     let proto = match &proto_arg {
-        Value::Object(o) => Some(Rc::clone(o)),
+        Value::Object(o) => Some(Value::Object(Rc::clone(o))),
+        Value::Function(_)
+        | Value::NativeFunction(_)
+        | Value::NativeConstructor(_)
+        | Value::Class(_) => Some(proto_arg.clone()),
         Value::Null => None,
         _ => {
             return Err(JsError::from(
@@ -300,11 +304,14 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
                     "TypeError: Cannot set prototype of module namespace object",
                 ));
             }
-            o.borrow_mut().prototype = proto;
+            o.borrow_mut().prototype = match proto {
+                Some(Value::Object(proto)) => Some(proto),
+                _ => None,
+            };
             Ok(Value::Object(Rc::clone(o)))
         }
         Value::Class(class) => {
-            class.set_super_class_own_proto(proto.map(Value::Object));
+            class.set_super_class_own_proto(proto);
             Ok(Value::Class(class.clone()))
         }
         Value::Function(_) => Err(JsError::from(
@@ -542,6 +549,20 @@ mod tests {
         let result =
             ctx.eval("class C {}; Object.setPrototypeOf(C, null); Object.getPrototypeOf(C)");
         assert_eq!(result, Ok(Value::Null));
+    }
+
+    #[test]
+    fn test_set_prototype_of_class_allows_callable_prototype() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        let result = ctx.eval("class C {}; Object.setPrototypeOf(C, parseInt); Object.getPrototypeOf(C) === parseInt");
+        assert_eq!(result, Ok(Value::Boolean(true)));
+        let parse_int = ctx.eval("parseInt").unwrap();
+        assert!(!crate::eval::class::helpers::is_constructor_value(&parse_int));
+        let result = ctx.eval(
+            "var caught; class D extends Object { constructor() { try { super(true); } catch (e) { caught = e; } } }; Object.setPrototypeOf(D, parseInt); try { new D(); } catch (e) {} typeof caught",
+        );
+        assert_eq!(result, Ok(Value::String("object".to_string())));
     }
 
     #[test]

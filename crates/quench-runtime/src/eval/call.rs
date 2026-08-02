@@ -178,6 +178,11 @@ fn eval_super_call(
     })?;
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
     let this_val = get_this_binding(env);
+    if !crate::eval::class::helpers::is_constructor_value(&super_val) {
+        let (thrown, error) = create_js_error_with_type("super is not a constructor", "TypeError");
+        crate::value::error::set_thrown_value(thrown);
+        return Err(error);
+    }
 
     // Capture the inner Object for field init (after this_val is consumed
     // by the super constructor call below).
