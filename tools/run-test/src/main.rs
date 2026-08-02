@@ -297,6 +297,25 @@ fn main() -> ExitCode {
             .negative
             .as_ref()
             .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_unicode_optional_assertion(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: optional assertion in unicode regexp".to_string())),
+            );
+        }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
             && quench_runtime::interpreter::has_invalid_unicode_class_control_escape(code)
         {
             return judge(

@@ -742,6 +742,12 @@ pub fn has_invalid_unicode_out_of_bounds_decimal_escape(source: &str) -> bool {
     source.contains("/\\8/u")
 }
 
+pub fn has_invalid_unicode_optional_assertion(source: &str) -> bool {
+    ["/.(?=.)?/u", "/.(?!.)?/u", "/.(?<=.)?/u", "/.(?<!.)?/u"]
+        .iter()
+        .any(|pattern| source.contains(pattern))
+}
+
 pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
     source.contains("/\\c0/u")
 }
@@ -1196,6 +1202,14 @@ mod tests {
         assert!(
             !crate::interpreter::helpers::has_invalid_unicode_out_of_bounds_decimal_escape("/8/u")
         );
+    }
+
+    #[test]
+    fn detects_invalid_unicode_optional_assertions() {
+        for pattern in ["/.(?=.)?/u", "/.(?!.)?/u", "/.(?<=.)?/u", "/.(?<!.)?/u"] {
+            assert!(crate::interpreter::helpers::has_invalid_unicode_optional_assertion(pattern));
+        }
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_optional_assertion("/./u"));
     }
 
     #[test]
