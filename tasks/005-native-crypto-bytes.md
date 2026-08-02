@@ -1,0 +1,17 @@
+# Reduce crypto byte and string conversions
+
+## Goal
+
+Keep Node crypto operations on byte-oriented values across the Rust/JavaScript boundary.
+
+## Scope
+
+- Inspect `crypto` polyfills and existing native hashing/randomness bindings.
+- Add byte-oriented paths for hashes, HMAC, random bytes, UUIDs, and supported signing/verification APIs.
+- Preserve encodings, stream methods, validation, and error codes.
+- Avoid changing algorithms or security policy as part of this task.
+
+## Done when
+
+- Focused crypto compatibility stages pass.
+- Byte inputs and outputs avoid unnecessary intermediate strings.
