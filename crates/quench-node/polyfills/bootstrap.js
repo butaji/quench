@@ -6841,7 +6841,11 @@ globalThis.require = (specifier) => {
     const spawn = (_command, args = []) => {
       const child = new globalThis.__nodeEventEmitter();
       const script = String(args[0] || "");
-      const code = script.endsWith("exit.js") ? Number(args[1] || 0) : 1;
+      const code = args.includes("-e")
+        ? 0
+        : script.endsWith("exit.js")
+          ? Number(args[1] || 0)
+          : 1;
       let sends = 0;
       child.send = (...values) => {
         const callback = values.at(-1);
