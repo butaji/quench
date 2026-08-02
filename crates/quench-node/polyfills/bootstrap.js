@@ -659,6 +659,8 @@ globalThis.__nodeFs.promises = {
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
   rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
   opendir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),
+  symlink: (target, link, type) => new Promise((resolve, reject) => globalThis.__nodeFs.symlink(target, link, type, (error) => error ? reject(error) : resolve())),
+  readlink: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readlink(value, options, (error, result) => error ? reject(error) : resolve(result))),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value, options)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),

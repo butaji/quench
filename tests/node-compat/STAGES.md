@@ -116,3 +116,4 @@ these small fixtures isolate the currently implemented contract.
 | 106 | sync/async/promise directory handles | `tools/run-node-tests.sh --stage 106` |
 | 107 | async symlink and readlink callbacks | `tools/run-node-tests.sh --stage 107` |
 | 108 | symlink-aware `lstat` metadata | `tools/run-node-tests.sh --stage 108` |
+| 109 | promise-based symlink and readlink | `tools/run-node-tests.sh --stage 109` |
