@@ -2407,8 +2407,7 @@ class NodeReadable extends NodeEventEmitter {
   push(chunk) {
     if (chunk === null) {
       this._ended = true;
-      this.readableEnded = true;
-      this.emit("end");
+      if (!this._chunks.length) this._emitEnd();
       return false;
     }
     if (this._paused) this._chunks.push(chunk);
@@ -2423,13 +2422,19 @@ class NodeReadable extends NodeEventEmitter {
   }
   read(size) {
     if (!this._chunks || this._chunks.length === 0) return null;
-    if (size === undefined) return this._chunks.shift();
     const chunk = this._chunks.shift();
-    if (chunk && chunk.length > size) {
+    if (size !== undefined && chunk && chunk.length > size) {
       this._chunks.unshift(chunk.subarray(size));
       return chunk.subarray(0, size);
     }
+    if (!this._chunks.length && this._ended) this._emitEnd();
     return chunk;
+  }
+
+  _emitEnd() {
+    if (this.readableEnded) return;
+    this.readableEnded = true;
+    this.emit("end");
   }
 
   async *[Symbol.asyncIterator]() {
