@@ -4786,6 +4786,17 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     };
     return args.map(color).join(" ");
   }
+  if (
+    options.compact !== undefined &&
+    args[0] === "%s" &&
+    Array.isArray(args[1])
+  ) {
+    return `[ ${args[1]
+      .map((value) =>
+        value && typeof value === "object" ? "[Object]" : String(value),
+      )
+      .join(", ")} ]`;
+  }
   const previous =
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
   if (options && options.numericSeparator !== undefined)
