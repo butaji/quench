@@ -824,6 +824,25 @@ pub fn has_malformed_named_backreference_prefix(source: &str) -> bool {
         .any(|(start, _)| source.as_bytes().get(start + 2) != Some(&b'<'))
 }
 
+pub fn has_invalid_named_group_identifier(source: &str) -> bool {
+    source.match_indices("(?<").any(|(start, _)| {
+        let Some(end) = source[start + 3..].find('>') else {
+            return false;
+        };
+        let name = &source[start + 3..start + 3 + end];
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_digit() || !is_identifier_char(first))
+            || chars.any(|char| !is_identifier_char(char))
+    })
+}
+
+fn is_identifier_char(char: char) -> bool {
+    char == '$' || char == '_' || char.is_alphanumeric()
+}
+
 pub fn has_unicode_identity_escape_in_named_group(source: &str) -> bool {
     source.contains("(?<") && source.contains("\\a") && source.contains(")/u")
 }
