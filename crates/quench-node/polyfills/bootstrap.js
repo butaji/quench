@@ -849,6 +849,9 @@ class NodeBuffer extends Uint8Array {
   inspect() {
     return `<Buffer ${Array.from(this, (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>`;
   }
+  toLocaleString(...args) {
+    return this.toString(...args);
+  }
   includes(value, byteOffset = 0, encoding) {
     if (
       typeof value !== "number" &&
@@ -1312,6 +1315,8 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
   },
 });
 NodeBuffer.poolSize = 8192;
+NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
+  NodeBuffer.prototype.inspect;
 for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
   NodeBuffer.prototype[`readUint${name}`] =
     NodeBuffer.prototype[`readUInt${name}`];
