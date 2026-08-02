@@ -4427,8 +4427,11 @@ globalThis.__nodeUtil = {
       )
         return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
       if (value instanceof Date) return value.toISOString();
-      if (value instanceof Error)
+      if (value instanceof Error) {
+        if (!Object.prototype.hasOwnProperty.call(value, "stack"))
+          return `[${value.name}: ${value.message}]`;
         return value.stack || `${value.name}: ${value.message}`;
+      }
       if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
       if (typeof value === "function")
