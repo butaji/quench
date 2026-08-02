@@ -847,7 +847,11 @@ class NodeBuffer extends Uint8Array {
     return { type: "Buffer", data: Array.from(this) };
   }
   inspect() {
-    return `<Buffer ${Array.from(this, (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>`;
+    const limit = Math.min(this.length, NodeBuffer.INSPECT_MAX_BYTES);
+    const bytes = Array.from(this.subarray(0, limit), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    );
+    return `<Buffer ${bytes.join(" ")}${limit < this.length ? ` ... ${this.length - limit} more byte${this.length - limit === 1 ? "" : "s"}` : ""}>`;
   }
   toLocaleString(...args) {
     return this.toString(...args);
@@ -4058,13 +4062,21 @@ globalThis.__nodeUtil = {
         .join("")
     );
   },
-  inspect: (value) => JSON.stringify(value),
+  inspect: (value) => {
+    if (
+      value &&
+      typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
+    )
+      return value[Symbol.for("nodejs.util.inspect.custom")]();
+    return JSON.stringify(value);
+  },
   types: {
     isDate: (value) => value instanceof Date,
     isPromise: (value) => value instanceof Promise,
   },
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
+NodeBuffer.INSPECT_MAX_BYTES = 50;
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   const previous =
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
