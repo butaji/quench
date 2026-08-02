@@ -2021,7 +2021,7 @@ globalThis.__nodeCommon = {
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === "linux",
   hasIntl: typeof Intl !== "undefined",
-  isDebug: true,
+  isDebug: false,
   isMacOS: process.platform === "darwin",
   isWindows: process.platform === "win32",
   isAIX: false,
