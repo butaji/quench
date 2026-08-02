@@ -31,6 +31,20 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn dynamic_import_refreshes_fixture_exports_after_initialization() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/test262/test/language/expressions/dynamic-import/await-import-evaluation.js");
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("import('./await-import-evaluation_FIXTURE.js').then(ns => globalThis.__time = ns.time)")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    let value = ctx.eval("__time").unwrap();
+    assert!(matches!(value, Value::Number(time) if time > 100.0));
+}
+
+#[test]
 fn non_strict_super_set_ignores_failed_receiver_set() {
     let value = eval("var obj = { method() { super.x = 8; Object.freeze(obj); super.y = 9; } }; obj.method(); Object.prototype.hasOwnProperty.call(obj, 'y')").unwrap();
     assert_eq!(value, Value::Boolean(false));

@@ -2211,10 +2211,49 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
     let program = crate::parser::parse_script(&script)?;
     let mut eval_env = Rc::clone(env);
     crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false)?;
+    refresh_fixture_module_exports(source, env);
     if let Some(Value::Object(done)) = done {
         done.borrow_mut().set(source, Value::Boolean(true));
     }
     Ok(())
+}
+
+fn refresh_fixture_module_exports(source: &str, env: &Rc<RefCell<Environment>>) {
+    let refresh = env.borrow().get("__quench_fixture_refresh_required__");
+    let Some(Value::Object(refresh)) = refresh else {
+        return;
+    };
+    if refresh.borrow().get(source) != Some(Value::Boolean(true)) {
+        return;
+    }
+    let bindings = env.borrow().get("__quench_fixture_export_bindings__");
+    let Some(Value::Object(bindings)) = bindings else {
+        return;
+    };
+    let Some(Value::Object(module_bindings)) = bindings.borrow().get(source) else {
+        return;
+    };
+    let Some(Value::Object(modules)) = env.borrow().get("__quench_modules__") else {
+        return;
+    };
+    let Some(Value::Object(module)) = modules.borrow().get(&normalize_module_path(source)) else {
+        return;
+    };
+    for exported in module_bindings.borrow().own_property_names() {
+        let Some(Value::String(local)) = module_bindings.borrow().get(&exported) else {
+            continue;
+        };
+        let value = env.borrow().get(&local).unwrap_or(Value::Undefined);
+        let flags = module.borrow().get_descriptor(&exported).unwrap_or(
+            crate::value::PropertyFlags {
+                value: None,
+                writable: true,
+                enumerable: true,
+                configurable: false,
+            },
+        );
+        module.borrow_mut().define(&exported, value, flags);
+    }
 }
 
 #[derive(Clone, Copy)]
