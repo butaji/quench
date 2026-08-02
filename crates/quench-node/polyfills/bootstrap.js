@@ -1124,23 +1124,23 @@ class NodeBuffer extends Uint8Array {
     return this;
   }
   swap16() {
-    return this._swap(2);
+    return NodeBuffer.prototype._swap.call(this, 2);
   }
   swap32() {
-    return this._swap(4);
+    return NodeBuffer.prototype._swap.call(this, 4);
   }
   swap64() {
-    return this._swap(8);
+    return NodeBuffer.prototype._swap.call(this, 8);
   }
   _readBigInt(offset, littleEndian, signed) {
-    this._integerOffset(offset, 8);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 8);
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
     return signed
       ? view.getBigInt64(offset, littleEndian)
       : view.getBigUint64(offset, littleEndian);
   }
   _writeBigInt(value, offset, littleEndian, signed) {
-    this._integerOffset(offset, 8);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 8);
     if (typeof value !== "bigint")
       throw new TypeError('The "value" argument must be a bigint');
     const min = signed ? -(1n << 63n) : 0n;
@@ -1156,28 +1156,52 @@ class NodeBuffer extends Uint8Array {
     return offset + 8;
   }
   readBigInt64LE(offset = 0) {
-    return this._readBigInt(offset, true, true);
+    return NodeBuffer.prototype._readBigInt.call(this, offset, true, true);
   }
   readBigInt64BE(offset = 0) {
-    return this._readBigInt(offset, false, true);
+    return NodeBuffer.prototype._readBigInt.call(this, offset, false, true);
   }
   readBigUInt64LE(offset = 0) {
-    return this._readBigInt(offset, true, false);
+    return NodeBuffer.prototype._readBigInt.call(this, offset, true, false);
   }
   readBigUInt64BE(offset = 0) {
-    return this._readBigInt(offset, false, false);
+    return NodeBuffer.prototype._readBigInt.call(this, offset, false, false);
   }
   writeBigInt64LE(value, offset = 0) {
-    return this._writeBigInt(value, offset, true, true);
+    return NodeBuffer.prototype._writeBigInt.call(
+      this,
+      value,
+      offset,
+      true,
+      true,
+    );
   }
   writeBigInt64BE(value, offset = 0) {
-    return this._writeBigInt(value, offset, false, true);
+    return NodeBuffer.prototype._writeBigInt.call(
+      this,
+      value,
+      offset,
+      false,
+      true,
+    );
   }
   writeBigUInt64LE(value, offset = 0) {
-    return this._writeBigInt(value, offset, true, false);
+    return NodeBuffer.prototype._writeBigInt.call(
+      this,
+      value,
+      offset,
+      true,
+      false,
+    );
   }
   writeBigUInt64BE(value, offset = 0) {
-    return this._writeBigInt(value, offset, false, false);
+    return NodeBuffer.prototype._writeBigInt.call(
+      this,
+      value,
+      offset,
+      false,
+      false,
+    );
   }
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
@@ -1355,10 +1379,10 @@ class NodeBuffer extends Uint8Array {
     return count;
   }
   writeDoubleLE(value, offset = 0) {
-    return this._writeDouble(value, offset, true);
+    return NodeBuffer.prototype._writeDouble.call(this, value, offset, true);
   }
   writeDoubleBE(value, offset = 0) {
-    return this._writeDouble(value, offset, false);
+    return NodeBuffer.prototype._writeDouble.call(this, value, offset, false);
   }
   _writeDouble(value, offset, littleEndian) {
     if (typeof offset !== "number") {
@@ -1393,10 +1417,10 @@ class NodeBuffer extends Uint8Array {
     return offset + 8;
   }
   readDoubleLE(offset = 0) {
-    return this._readDouble(offset, true);
+    return NodeBuffer.prototype._readDouble.call(this, offset, true);
   }
   readDoubleBE(offset = 0) {
-    return this._readDouble(offset, false);
+    return NodeBuffer.prototype._readDouble.call(this, offset, false);
   }
   _readDouble(offset, littleEndian) {
     if (typeof offset !== "number") {
@@ -1447,7 +1471,7 @@ class NodeBuffer extends Uint8Array {
     return offset;
   }
   _writeInteger(value, offset, size, littleEndian, signed) {
-    this._integerOffset(offset, size);
+    NodeBuffer.prototype._integerOffset.call(this, offset, size);
     const max = signed ? 2 ** (size * 8 - 1) - 1 : 2 ** (size * 8) - 1;
     const min = signed ? -(2 ** (size * 8 - 1)) : 0;
     if (
@@ -1473,7 +1497,7 @@ class NodeBuffer extends Uint8Array {
     return offset + size;
   }
   _readInteger(offset, size, littleEndian, signed) {
-    this._integerOffset(offset, size);
+    NodeBuffer.prototype._integerOffset.call(this, offset, size);
     const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
     if (size === 1)
       return signed ? view.getInt8(offset) : view.getUint8(offset);
@@ -1486,67 +1510,155 @@ class NodeBuffer extends Uint8Array {
       : view.getUint32(offset, littleEndian);
   }
   readUInt8(offset = 0) {
-    return this._readInteger(offset, 1, false, false);
+    return NodeBuffer.prototype._readInteger.call(
+      this,
+      offset,
+      1,
+      false,
+      false,
+    );
   }
   readUInt16LE(offset = 0) {
-    return this._readInteger(offset, 2, true, false);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 2, true, false);
   }
   readUInt16BE(offset = 0) {
-    return this._readInteger(offset, 2, false, false);
+    return NodeBuffer.prototype._readInteger.call(
+      this,
+      offset,
+      2,
+      false,
+      false,
+    );
   }
   readUInt32LE(offset = 0) {
-    return this._readInteger(offset, 4, true, false);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 4, true, false);
   }
   readUInt32BE(offset = 0) {
-    return this._readInteger(offset, 4, false, false);
+    return NodeBuffer.prototype._readInteger.call(
+      this,
+      offset,
+      4,
+      false,
+      false,
+    );
   }
   writeUInt8(value, offset = 0) {
-    return this._writeInteger(value, offset, 1, false, false);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      1,
+      false,
+      false,
+    );
   }
   writeUInt16LE(value, offset = 0) {
-    return this._writeInteger(value, offset, 2, true, false);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      2,
+      true,
+      false,
+    );
   }
   writeUInt16BE(value, offset = 0) {
-    return this._writeInteger(value, offset, 2, false, false);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      2,
+      false,
+      false,
+    );
   }
   writeUInt32LE(value, offset = 0) {
-    return this._writeInteger(value, offset, 4, true, false);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      4,
+      true,
+      false,
+    );
   }
   writeUInt32BE(value, offset = 0) {
-    return this._writeInteger(value, offset, 4, false, false);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      4,
+      false,
+      false,
+    );
   }
   readInt8(offset = 0) {
-    return this._readInteger(offset, 1, false, true);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 1, false, true);
   }
   readInt16LE(offset = 0) {
-    return this._readInteger(offset, 2, true, true);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 2, true, true);
   }
   readInt16BE(offset = 0) {
-    return this._readInteger(offset, 2, false, true);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 2, false, true);
   }
   readInt32LE(offset = 0) {
-    return this._readInteger(offset, 4, true, true);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 4, true, true);
   }
   readInt32BE(offset = 0) {
-    return this._readInteger(offset, 4, false, true);
+    return NodeBuffer.prototype._readInteger.call(this, offset, 4, false, true);
   }
   writeInt8(value, offset = 0) {
-    return this._writeInteger(value, offset, 1, false, true);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      1,
+      false,
+      true,
+    );
   }
   writeInt16LE(value, offset = 0) {
-    return this._writeInteger(value, offset, 2, true, true);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      2,
+      true,
+      true,
+    );
   }
   writeInt16BE(value, offset = 0) {
-    return this._writeInteger(value, offset, 2, false, true);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      2,
+      false,
+      true,
+    );
   }
   writeInt32LE(value, offset = 0) {
-    return this._writeInteger(value, offset, 4, true, true);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      4,
+      true,
+      true,
+    );
   }
   writeInt32BE(value, offset = 0) {
-    return this._writeInteger(value, offset, 4, false, true);
+    return NodeBuffer.prototype._writeInteger.call(
+      this,
+      value,
+      offset,
+      4,
+      false,
+      true,
+    );
   }
   readFloatLE(offset = 0) {
-    this._integerOffset(offset, 4);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
     return new DataView(
       this.buffer,
       this.byteOffset,
@@ -1554,7 +1666,7 @@ class NodeBuffer extends Uint8Array {
     ).getFloat32(offset, true);
   }
   readFloatBE(offset = 0) {
-    this._integerOffset(offset, 4);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
     return new DataView(
       this.buffer,
       this.byteOffset,
@@ -1562,7 +1674,7 @@ class NodeBuffer extends Uint8Array {
     ).getFloat32(offset, false);
   }
   writeFloatLE(value, offset = 0) {
-    this._integerOffset(offset, 4);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
     new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
       offset,
       value,
@@ -1571,7 +1683,7 @@ class NodeBuffer extends Uint8Array {
     return offset + 4;
   }
   writeFloatBE(value, offset = 0) {
-    this._integerOffset(offset, 4);
+    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
     new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
       offset,
       value,
@@ -1580,20 +1692,36 @@ class NodeBuffer extends Uint8Array {
     return offset + 4;
   }
   readUIntLE(offset, byteLength) {
-    this._validateVariableInteger(0, offset, byteLength);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      0,
+      offset,
+      byteLength,
+    );
     let value = 0;
     for (let i = 0; i < byteLength; i++)
       value += this[offset + i] * 2 ** (8 * i);
     return value;
   }
   readUIntBE(offset, byteLength) {
-    this._validateVariableInteger(0, offset, byteLength);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      0,
+      offset,
+      byteLength,
+    );
     let value = 0;
     for (let i = 0; i < byteLength; i++) value = value * 256 + this[offset + i];
     return value;
   }
   writeUIntLE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength, false);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      value,
+      offset,
+      byteLength,
+      false,
+    );
     for (let i = 0; i < byteLength; i++) {
       this[offset + i] = value & 0xff;
       value = Math.floor(value / 256);
@@ -1601,7 +1729,13 @@ class NodeBuffer extends Uint8Array {
     return offset + byteLength;
   }
   writeUIntBE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength, false);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      value,
+      offset,
+      byteLength,
+      false,
+    );
     for (let i = byteLength - 1; i >= 0; i--) {
       this[offset + i] = value & 0xff;
       value = Math.floor(value / 256);
@@ -1609,28 +1743,50 @@ class NodeBuffer extends Uint8Array {
     return offset + byteLength;
   }
   readIntLE(offset, byteLength) {
-    const value = this.readUIntLE(offset, byteLength);
+    const value = NodeBuffer.prototype.readUIntLE.call(
+      this,
+      offset,
+      byteLength,
+    );
     const limit = 2 ** (byteLength * 8 - 1);
     return value >= limit ? value - 2 ** (byteLength * 8) : value;
   }
   readIntBE(offset, byteLength) {
-    const value = this.readUIntBE(offset, byteLength);
+    const value = NodeBuffer.prototype.readUIntBE.call(
+      this,
+      offset,
+      byteLength,
+    );
     const limit = 2 ** (byteLength * 8 - 1);
     return value >= limit ? value - 2 ** (byteLength * 8) : value;
   }
   writeIntLE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength, true);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      value,
+      offset,
+      byteLength,
+      true,
+    );
     const modulus = 2 ** (byteLength * 8);
-    return this.writeUIntLE(
+    return NodeBuffer.prototype.writeUIntLE.call(
+      this,
       value < 0 ? modulus + value : value,
       offset,
       byteLength,
     );
   }
   writeIntBE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength, true);
+    NodeBuffer.prototype._validateVariableInteger.call(
+      this,
+      value,
+      offset,
+      byteLength,
+      true,
+    );
     const modulus = 2 ** (byteLength * 8);
-    return this.writeUIntBE(
+    return NodeBuffer.prototype.writeUIntBE.call(
+      this,
       value < 0 ? modulus + value : value,
       offset,
       byteLength,
@@ -1649,7 +1805,7 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    this._integerOffset(offset, byteLength);
+    NodeBuffer.prototype._integerOffset.call(this, offset, byteLength);
     const min = signed ? -(2 ** (8 * byteLength - 1)) : 0;
     const max = signed
       ? 2 ** (8 * byteLength - 1) - 1
@@ -1712,6 +1868,13 @@ NodeBuffer.prototype.readBigUint64LE = NodeBuffer.prototype.readBigUInt64LE;
 NodeBuffer.prototype.readBigUint64BE = NodeBuffer.prototype.readBigUInt64BE;
 NodeBuffer.prototype.writeBigUint64LE = NodeBuffer.prototype.writeBigUInt64LE;
 NodeBuffer.prototype.writeBigUint64BE = NodeBuffer.prototype.writeBigUInt64BE;
+const __nodeGetOwnPropertyNames = Object.getOwnPropertyNames;
+Object.getOwnPropertyNames = (value) => {
+  const names = __nodeGetOwnPropertyNames(value);
+  return value === NodeBuffer.prototype
+    ? names.filter((name) => !name.startsWith("_"))
+    : names;
+};
 const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
 const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
 class NodeTextEncoder {
