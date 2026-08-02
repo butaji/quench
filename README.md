@@ -34,6 +34,10 @@ inventory. It deliberately reports Node API coverage as `unmeasured`: a count
 of focused fixtures is not a valid percentage of the full Node API surface.
 `tools/check-focused-stages.sh` runs every focused stage and reports concrete
 pass/fail counts; it does not turn those counts into an API percentage.
+For the empirical test-file percentage requested during development, run
+`tools/measure-node-tests.sh [directory]`. It builds once and executes each
+JavaScript file individually, reporting passed, failed, skipped, and the
+resulting file pass rate.
 
 ## Runtime boundary
 
