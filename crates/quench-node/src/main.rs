@@ -111,6 +111,27 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_mkdir",
+            Func::from(|path: String| -> rquickjs::Result<()> {
+                fs::create_dir_all(path).map_err(|_| rquickjs::Error::new_from_js("fs", "mkdirSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_readdir",
+            Func::from(|path: String| -> rquickjs::Result<Vec<String>> {
+                fs::read_dir(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "readdirSync failed"))?
+                    .map(|entry| entry.map(|item| item.file_name().to_string_lossy().into_owned()).map_err(|_| rquickjs::Error::new_from_js("fs", "readdirSync failed")))
+                    .collect()
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_remove_dir",
+            Func::from(|path: String| -> rquickjs::Result<()> {
+                fs::remove_dir_all(path).map_err(|_| rquickjs::Error::new_from_js("fs", "rmdirSync failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;

@@ -248,6 +248,9 @@ globalThis.__nodeFs = {
   readFileSync: (value) => globalThis.__quench_fs_read_file(String(value)),
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
   statSync: () => ({ isFile: () => true, isDirectory: () => false }),
+  mkdirSync: (value) => globalThis.__quench_fs_mkdir(String(value)),
+  readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
+  rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
