@@ -4618,8 +4618,30 @@ globalThis.__nodeUrlModule = {
     new globalThis.__nodeURL(
       `file://${globalThis.__nodePath.resolve(String(value))}`,
     ),
-  format: (value) =>
-    value instanceof globalThis.__nodeURL ? value.href : String(value),
+  format: (value) => {
+    if (value instanceof globalThis.__nodeURL) return value.href;
+    if (typeof value === "string") {
+      try {
+        const href = new globalThis.__nodeURL(value).href;
+        return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;
+      } catch (_) {
+        return value;
+      }
+    }
+    if (value && typeof value === "object") {
+      const protocol = value.protocol || "";
+      const host = value.host || value.hostname || "";
+      const prefix =
+        protocol && (value.slashes || host) ? `${protocol}//` : protocol;
+      const pathname = value.pathname || (host ? "/" : "");
+      let search = value.search;
+      if (search === undefined && value.query !== undefined) {
+        search = typeof value.query === "string" ? `?${value.query}` : "";
+      }
+      return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;
+    }
+    return String(value);
+  },
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
 };
 globalThis.__nodeCrypto = {
