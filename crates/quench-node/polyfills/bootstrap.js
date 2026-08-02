@@ -13,6 +13,10 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
 globalThis.console.dir = (value) => globalThis.__quench_console_write(globalThis.__nodeFormat([value]));
 globalThis.console.assert = (condition, ...args) => { if (!condition) globalThis.console.error(...args); };
 const consoleTimers = {};
+const consoleCounts = {};
+globalThis.console.count = (label = 'default') => { consoleCounts[label] = (consoleCounts[label] || 0) + 1; globalThis.__quench_console_write(`${label}: ${consoleCounts[label]}`); };
+globalThis.console.countReset = (label = 'default') => { consoleCounts[label] = 0; };
+globalThis.console.clear = () => undefined;
 globalThis.console.time = (label = 'default') => { consoleTimers[label] = BigInt(globalThis.__quench_now_ns()); };
 globalThis.console.timeLog = (label = 'default', ...args) => {
   if (consoleTimers[label] === undefined) return;
