@@ -16,7 +16,11 @@ use std::sync::Arc;
 pub fn parse_script(source: &str) -> Result<Program, JsError> {
     // Explicitly mark as script so `await` is not reserved (§11.6.2).
     // SourceType::default() is module-first in OXC.
-    let source_type = SourceType::default().with_script(true).with_jsx(true);
+    let source_type = SourceType::default()
+        .with_script(true)
+        .with_jsx(true)
+        .with_commonjs(crate::interpreter::is_direct_eval()
+            && crate::interpreter::is_eval_in_class_field());
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.diagnostics.is_empty() {

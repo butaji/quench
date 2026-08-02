@@ -140,8 +140,17 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     if !crate::interpreter::is_direct_eval() {
         crate::interpreter::set_strict_mode(false);
     }
+    let saved_new_target = crate::interpreter::get_new_target();
+    if crate::interpreter::is_direct_eval() && in_class_field {
+        crate::interpreter::set_new_target(None);
+    }
     let result = if crate::interpreter::is_direct_eval() {
         if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
+            if in_class_field {
+                eval_env
+                    .borrow_mut()
+                    .define("new.target".to_string(), Value::Undefined);
+            }
             crate::interpreter::eval_program(&program, &mut eval_env, Some(&source), false)
         } else {
             let this_value = if strict_inherited {
@@ -164,6 +173,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         crate::interpreter::set_this_binding(&ctx.env, this_value);
         crate::interpreter::eval_program(&program, &mut ctx.env, Some(&source), false)
     };
+    crate::interpreter::set_new_target(saved_new_target);
     // Restore strict mode after eval (indirect eval may have changed it).
     crate::interpreter::set_strict_mode(saved_strict);
     // Exit eval: restore label stack and clear barrier.

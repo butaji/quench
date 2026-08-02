@@ -56,6 +56,9 @@ pub fn eval_identifier(
         return eval_super(env);
     }
     if name == "new.target" {
+        if crate::interpreter::is_direct_eval() && crate::interpreter::is_eval_in_class_field() {
+            return Ok(Value::Undefined);
+        }
         // Per ES §13.2.6 GetNewTarget: arrow functions inherit new.target
         // via lexical scope (the enclosing function's env binding). For
         // ordinary functions, call_js_function_impl binds new.target in

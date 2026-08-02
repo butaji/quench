@@ -37,6 +37,12 @@ fn non_strict_super_set_ignores_failed_receiver_set() {
 }
 
 #[test]
+fn direct_eval_new_target_in_class_field_is_runtime_undefined() {
+    let value = eval("var executed = false; var C = class { x = eval('executed = true; new.target;'); }; var c = new C(); [executed, c.x].join('|')").unwrap();
+    assert_eq!(value, Value::String("true|undefined".into()));
+}
+
+#[test]
 fn derived_constructor_arrow_this_before_super_throws() {
     let value = eval("var probe, result; class Base { constructor() { try { probe(); result = false; } catch (e) { result = e instanceof ReferenceError; } } } class C extends Base { field = 1; constructor() { probe = () => this; try { probe(); } catch (e) {} super(); } } new C(); result").unwrap();
     assert_eq!(value, Value::Boolean(true));
