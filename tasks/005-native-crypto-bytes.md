@@ -26,3 +26,5 @@ HMAC-SHA256 byte input is covered by
 `tests/node-compat/stage-380/crypto-hmac-bytes.js`.
 Default binary digest output is covered by
 `tests/node-compat/stage-381/crypto-digest-buffer.js`.
+SHA-256 PBKDF2 sync and callback APIs are covered by
+`tests/node-compat/stage-391/crypto-pbkdf2.js`.
