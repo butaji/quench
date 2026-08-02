@@ -361,7 +361,7 @@ globalThis.__nodeFs = {
   readFileSync: (value, options) => {
     const path = nodePathValue(value); const hex = globalThis.__quench_fs_read_hex(path);
     if (options === undefined || options === null) {
-      const bytes = NodeBuffer.from(hex, 'hex'); const text = bytes.toString();
+      const bytes = NodeBuffer.from(hex, 'hex'); if (hex === '') return bytes; const text = bytes.toString();
       return NodeBuffer.from(text).toString('hex') === hex ? text : bytes;
     }
     return globalThis.__quench_fs_read_file(path);
@@ -690,6 +690,7 @@ globalThis.require = (specifier) => {
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name.endsWith('/common/tmpdir')) return globalThis.__nodeTmpdir;
   if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff, atob: nodeAtob, btoa: nodeBtoa };
+  if (name === '../common/fixtures' || name.endsWith('/common/fixtures')) return { path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}` };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };
