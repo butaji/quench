@@ -348,6 +348,14 @@ pub(crate) fn eval_super_member(
                 }
             }
         }
+        Value::Null | Value::Undefined => {
+            let (value, error) = crate::value::error::create_js_error_with_type(
+                "Cannot read properties of null or undefined",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(value);
+            return Err(error);
+        }
         _ => return Ok(Value::Undefined),
     };
 
