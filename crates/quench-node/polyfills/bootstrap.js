@@ -455,6 +455,9 @@ globalThis.__nodeFs = {
     if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (buffer.length === 0 && Number(length) > 0) { const error = new TypeError('The argument \'buffer\' is empty and cannot be written.'); error.code = 'ERR_INVALID_ARG_VALUE'; throw error; }
+    if (!Number.isInteger(offset) || offset < 0) { const error = new RangeError('The value of "offset" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
+    if (!Number.isInteger(length) || length < 0) { const error = new RangeError('The value of "length" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
+    if (position !== null && position !== undefined && typeof position !== 'number' && typeof position !== 'bigint') { const error = new TypeError('The "position" argument must be of type number or bigint'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
     const numericPosition = position === null || Number(position) < 0 ? 0 : Number(position);
     const hex = globalThis.__quench_fs_read_range_hex(path, numericPosition, Number(length));
@@ -502,6 +505,10 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   else if (typeof position === 'function') { callback = position; position = null; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   if (buffer.length === 0 && Number(length) > 0) { const error = new TypeError('The argument \'buffer\' is empty and cannot be written.'); error.code = 'ERR_INVALID_ARG_VALUE'; throw error; }
+  if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+  if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+  if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0) { const error = new RangeError('The read range is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
+  if (position !== null && position !== undefined && typeof position !== 'number' && typeof position !== 'bigint') { const error = new TypeError('The "position" argument must be of type number or bigint'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
   queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
 };
 globalThis.__nodeModes = {};
