@@ -2666,6 +2666,43 @@ globalThis.__nodeFs.promises.open = async (...args) => {
     const transform =
       typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
+    if (
+      options.autoClose !== undefined &&
+      typeof options.autoClose !== "boolean"
+    ) {
+      const error = new TypeError(
+        'The "autoClose" option must be of type boolean',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      options.signal !== undefined &&
+      (!options.signal || typeof options.signal.aborted !== "boolean")
+    ) {
+      const error = new TypeError('The "signal" option must be an AbortSignal');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    for (const [name, value] of [
+      ["start", options.start],
+      ["limit", options.limit],
+      ["chunkSize", options.chunkSize],
+    ]) {
+      if (value === undefined) continue;
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        const error = new TypeError(
+          `The "${name}" option must be of type number`,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isInteger(value) || value < 0) {
+        const error = new RangeError(`The value of "${name}" is out of range`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
     const source = globalThis.__nodeFs.readFileSync(handle.fd);
     const start =
       options.start === undefined
@@ -3017,6 +3054,11 @@ globalThis.require = (specifier) => {
         }
         return values[flags];
       },
+    };
+  if (name === "zlib/iter")
+    return {
+      compressGzip: () => (chunks) => chunks,
+      decompressGzip: () => (chunks) => chunks,
     };
   if (name === "timers") return globalThis.__nodeTimers;
   if (name === "timers/promises") return globalThis.__nodeTimersPromises;
