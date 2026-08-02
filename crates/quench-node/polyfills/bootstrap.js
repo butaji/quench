@@ -2570,6 +2570,15 @@ class NodeWritable extends NodeEventEmitter {
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
+    if (this.destroyed) {
+      const error = new Error("Cannot call write after a stream was destroyed");
+      error.code = "ERR_STREAM_DESTROYED";
+      queueMicrotask(() => {
+        if (callback) callback(error);
+        else this.emit("error", error);
+      });
+      return false;
+    }
     if (this.writableEnded) {
       const error = new Error("write after end");
       error.code = "ERR_STREAM_WRITE_AFTER_END";
