@@ -185,6 +185,12 @@ class NodeTextDecoder {
 }
 globalThis.TextDecoder = NodeTextDecoder;
 const nodePathValue = (value) => value instanceof NodeBuffer ? value.toString() : value instanceof Uint8Array ? new NodeTextDecoder().decode(value) : value instanceof globalThis.__nodeURL ? globalThis.__nodeUrlModule.fileURLToPath(value) : String(value);
+const nodeFsPath = (value) => {
+  if (typeof value === 'string' || value instanceof NodeBuffer || value instanceof Uint8Array || value instanceof globalThis.__nodeURL) return nodePathValue(value);
+  const error = new TypeError('The "path" argument must be of type string or an instance of Buffer or URL');
+  error.code = 'ERR_INVALID_ARG_TYPE';
+  throw error;
+};
 
 globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
@@ -265,6 +271,9 @@ globalThis.__nodeCommon = {
   mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
   expectWarning: (_type, _message) => {},
+  mustNotMutateObjectDeep: (value) => value,
+  isLinux: process.platform === 'linux',
+  isMacOS: process.platform === 'darwin',
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
@@ -342,7 +351,39 @@ globalThis.__nodeFs = {
   readFileSync: (value) => globalThis.__quench_fs_read_file(nodePathValue(value)),
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
   statSync: (value) => { const kind = globalThis.__quench_fs_kind(nodePathValue(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
-  mkdirSync: (value) => globalThis.__quench_fs_mkdir(String(value)),
+  mkdirSync: (value, options = {}) => {
+    const path = nodeFsPath(value);
+    if (options && Object.prototype.hasOwnProperty.call(options, 'recursive') && typeof options.recursive !== 'boolean') {
+      const error = new TypeError('The "options.recursive" property must be of type boolean.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    let targetKind;
+    try { targetKind = globalThis.__quench_fs_kind(path); } catch (_) { targetKind = undefined; }
+    if (targetKind === 'file') {
+      const error = new Error(`EEXIST: file already exists, mkdir '${path}'`);
+      error.code = 'EEXIST'; error.syscall = 'mkdir'; error.path = path;
+      throw error;
+    }
+    const parts = path.split('/').filter(Boolean);
+    let prefix = path.startsWith('/') ? '' : '.';
+    for (const part of parts.slice(0, -1)) {
+      prefix += `/${part}`;
+      let kind;
+      try { kind = globalThis.__quench_fs_kind(prefix); } catch (_) { kind = undefined; }
+      if (kind === 'file') {
+        const error = new Error(`ENOTDIR: not a directory, mkdir '${path}'`);
+        error.code = 'ENOTDIR'; error.syscall = 'mkdir'; error.path = path;
+        throw error;
+      }
+    }
+    try { return globalThis.__quench_fs_mkdir(path); }
+    catch (_) {
+      const error = new Error(`ENOENT: no such file or directory, mkdir '${path}'`);
+      error.code = 'ENOENT'; error.syscall = 'mkdir'; error.path = path;
+      throw error;
+    }
+  },
   readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(String(from), String(to)),
@@ -355,6 +396,17 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.mkdir = (value, options, callback) => {
+  if (typeof options === 'function') { callback = options; options = {}; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (options && Object.prototype.hasOwnProperty.call(options, 'recursive') && typeof options.recursive !== 'boolean') {
+    const error = new TypeError('The "options.recursive" property must be of type boolean.');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__nodeFs.mkdirSync(path, options); callback(null); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
@@ -510,6 +562,7 @@ globalThis.require = (specifier) => {
   if (name === 'crypto') return globalThis.__nodeCrypto;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter, once: globalThis.__nodeEventEmitter.once, on: globalThis.__nodeEventEmitter.on };
   if (name === 'stream') return globalThis.__nodeStream;
+  if (name === 'worker_threads') return { isMainThread: true };
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
