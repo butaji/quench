@@ -289,7 +289,8 @@ class NodeBuffer extends Uint8Array {
       if (
         encoding === "ucs2" ||
         encoding === "ucs-2" ||
-        encoding === "utf16le"
+        encoding === "utf16le" ||
+        encoding === "utf-16le"
       ) {
         const output = new NodeBuffer(value.length * 2);
         for (let i = 0; i < value.length; i++) {
@@ -798,6 +799,11 @@ class NodeBuffer extends Uint8Array {
     if (typeof length === "string") {
       encoding = length;
       length = undefined;
+    }
+    if (typeof encoding !== "string" || !NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
     }
     if (
       typeof offset !== "number" ||
