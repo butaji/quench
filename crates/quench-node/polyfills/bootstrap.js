@@ -2387,7 +2387,7 @@ class NodeReadable extends NodeEventEmitter {
     return this;
   }
   static from(iterable) {
-    const stream = new NodeReadable();
+    const stream = new NodeReadable({ objectMode: true });
     stream._sourceChunks = Array.from(iterable);
     stream._index = 0;
     stream._pump = () => {
