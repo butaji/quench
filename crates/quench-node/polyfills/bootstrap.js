@@ -448,6 +448,7 @@ globalThis.__nodeFs = {
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
+  truncateSync: (value, length = 0) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
     if (typeof mode !== 'number') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -466,6 +467,12 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.truncate = (value, length, callback) => {
+  if (typeof length === 'function') { callback = length; length = 0; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__quench_fs_truncate(path, Number(length)); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeFs.access = (value, mode, callback) => {
   if (typeof mode === 'function') callback = mode;
@@ -629,6 +636,7 @@ globalThis.__nodeFs.promises = {
   writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
   access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
+  truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
