@@ -295,7 +295,7 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
 
     match &obj {
         Value::Object(o) => {
-            if o.borrow().kind == crate::value::ObjectKind::ModuleNamespace {
+            if o.borrow().kind == crate::value::ObjectKind::ModuleNamespace && proto.is_some() {
                 return Err(JsError::from(
                     "TypeError: Cannot set prototype of module namespace object",
                 ));
