@@ -2382,7 +2382,14 @@ globalThis.__nodeFs = {
         globalThis.__quench_fs_write_bytes(path, []);
         globalThis.__nodeModes[path] = 0o666 & ~process.umask();
         bytes = [];
-      } else throw error;
+      } else {
+        if (!error.code) {
+          error.code = "ENOENT";
+          error.syscall = "open";
+          error.path = path;
+        }
+        throw error;
+      }
     }
     const hex = NodeBuffer.from(bytes).toString("hex");
     if (options === undefined || options === null)
