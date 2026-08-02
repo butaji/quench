@@ -50,3 +50,5 @@ HMAC digest encoding validation is covered by
 `tests/node-compat/stage-484/crypto-hmac-encoding-validation.js`.
 Hash digest encoding validation is covered by
 `tests/node-compat/stage-485/crypto-hash-encoding-validation.js`.
+Finalized hash and HMAC copy validation is covered by
+`tests/node-compat/stage-486/crypto-copy-finalized.js`.
