@@ -301,13 +301,19 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                 }
                 | ast::Statement::ClassDeclaration { name, .. } => name,
                 ast::Statement::FunctionDeclaration { name, .. } if eval_strict => name,
+                ast::Statement::VarDeclaration {
+                    kind: ast::VarKind::Var,
+                    name,
+                    ..
+                } if eval_strict => name,
                 _ => continue,
             };
-            eval_env
-                .borrow()
-                .current_scope()
-                .borrow_mut()
-                .remove_binding(name);
+            let scope = if eval_strict {
+                Rc::clone(&eval_env.borrow().scopes[0])
+            } else {
+                eval_env.borrow().current_scope()
+            };
+            scope.borrow_mut().remove_binding(name);
         }
     } else {
         for name in indirect_new_lexical_names {
@@ -946,6 +952,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("function check() { 'use strict'; eval('function localOnly() {}'); return typeof localOnly; } check()").is_ok_and(|value| {
+            crate::value::to_js_string(&value) == "undefined"
+        }));
+    }
+
+    #[test]
+    fn strict_eval_var_does_not_leak_from_function() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("function check() { 'use strict'; eval('var strictVarOnly = 1'); return typeof strictVarOnly; } check()").is_ok_and(|value| {
             crate::value::to_js_string(&value) == "undefined"
         }));
     }
