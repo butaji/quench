@@ -159,6 +159,9 @@ fn lower_call_expr(call: &ast::CallExpression) -> Result<Expression, LowerError>
             if let Some(options) = &import.options {
                 arguments.push(lower_expr_inner(options)?);
             }
+            if import.phase.is_some() {
+                arguments.push(Expression::Boolean(true));
+            }
             return Ok(Expression::Call {
                 callee: Box::new(Expression::Identifier("__dynamic_import__".to_string())),
                 arguments,

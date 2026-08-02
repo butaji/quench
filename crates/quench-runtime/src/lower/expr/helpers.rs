@@ -58,6 +58,9 @@ pub fn lower_expr(expr: &ast::Expression) -> Result<Expression, LowerError> {
                 if let Some(options) = &import.options {
                     arguments.push(lower_expr(options)?);
                 }
+                if import.phase.is_some() {
+                    arguments.push(Expression::Boolean(true));
+                }
                 arguments
             },
         }),

@@ -2080,7 +2080,17 @@ pub(crate) fn dynamic_import(
     source: &str,
     env: &Rc<RefCell<Environment>>,
     options: Option<&Value>,
+    source_phase: bool,
 ) -> Result<Value, JsError> {
+    if source_phase {
+        let (reason, _) = crate::value::error::create_js_error_with_type(
+            "Source phase import is not available",
+            "SyntaxError",
+        );
+        return Ok(Value::Object(
+            crate::builtins::promise::create_rejected_promise(reason)?,
+        ));
+    }
     let import_type = match import_type_from_options(options, env) {
         Ok(import_type) => import_type,
         Err(reason) => {

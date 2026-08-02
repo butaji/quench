@@ -77,6 +77,19 @@ fn dynamic_import_namespace_has_symbol_to_string_tag() {
 }
 
 #[test]
+fn dynamic_import_source_rejects_with_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval("var result; import.source('module-name').then(() => { result = 'fulfilled'; }, error => { result = error.name; });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("SyntaxError".into())
+    );
+}
+
+#[test]
 fn dynamic_import_json_fixture_with_type_text_returns_raw_default() {
     let dir = std::env::temp_dir().join(format!("quench-json-import-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
