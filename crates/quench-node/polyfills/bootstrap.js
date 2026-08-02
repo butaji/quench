@@ -455,12 +455,18 @@ globalThis.__nodeFs = {
     return globalThis.__quench_fs_copy(source, destination);
   },
   appendFileSync: (value, data) => globalThis.__quench_fs_append(String(value), String(data)),
-  accessSync: (value) => { if (!globalThis.__quench_fs_access(String(value))) throw new Error('ENOENT'); },
+  accessSync: (value) => { const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
   rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.access = (value, mode, callback) => {
+  if (typeof mode === 'function') callback = mode;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { globalThis.__nodeFs.accessSync(path, mode); } catch (error) { callback(error); return; } callback(null); });
 };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
@@ -615,6 +621,7 @@ globalThis.__nodeFs.promises = {
   readFile: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readFile(value, options, (error, data) => error ? reject(error) : resolve(data))),
   writeFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.writeFile(value, data, options, (error) => error ? reject(error) : resolve())),
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
+  access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
