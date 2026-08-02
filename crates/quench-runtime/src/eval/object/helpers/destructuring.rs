@@ -4,8 +4,13 @@ use crate::ast::*;
 use crate::env::Environment;
 use crate::eval::expression::eval_expression;
 use crate::value::{JsError, Object, ObjectKind, PropertyFlags, Value};
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+thread_local! {
+    static LAST_DONE_PRESENT: Cell<bool> = const { Cell::new(true) };
+}
 
 /// Box a primitive value for property assignment (ES §10.2.9 [[Set]]).
 pub fn box_primitive_for_set(
@@ -511,6 +516,10 @@ pub fn take_iterator_step_with_value(
         .and_then(|result| to_iterator_tuple(result, env, true, index))
 }
 
+pub fn take_last_done_present() -> bool {
+    LAST_DONE_PRESENT.with(|cell| cell.replace(true))
+}
+
 fn take_iterator_step_with_args(
     iterator: &Rc<RefCell<Object>>,
     index: &mut usize,
@@ -679,6 +688,7 @@ fn iterator_result_to_tuple(
         return Err(js_err);
     };
     let done = crate::eval::member::eval_object_member(&result_obj, "done", Some(env))?;
+    LAST_DONE_PRESENT.with(|cell| cell.set(has_property(&result_obj, "done")));
     if crate::value::to_bool(&done) {
         let value = if read_done_value {
             crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?
@@ -690,6 +700,19 @@ fn iterator_result_to_tuple(
     let value = crate::eval::member::eval_object_member(&result_obj, "value", Some(env))?;
     *index += 1;
     Ok((value, false))
+}
+
+fn has_property(object: &Rc<RefCell<Object>>, key: &str) -> bool {
+    let borrowed = object.borrow();
+    if borrowed.properties.contains_key(key)
+        || borrowed.getters.contains_key(key)
+        || borrowed.setters.contains_key(key)
+    {
+        return true;
+    }
+    let prototype = borrowed.prototype.clone();
+    drop(borrowed);
+    prototype.is_some_and(|prototype| has_property(&prototype, key))
 }
 
 pub(crate) fn await_async_iterator_result(result: Value) -> Result<Value, JsError> {

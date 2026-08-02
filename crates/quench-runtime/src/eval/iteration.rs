@@ -241,6 +241,7 @@ pub fn eval_yield_delegate(
             await_values,
             abrupt_error: None,
             completion: None,
+            done_present: true,
         },
         env,
     )
@@ -303,6 +304,7 @@ fn continue_yield_delegate(
         env,
         next_value,
     )?;
+    state.done_present = crate::eval::object::take_last_done_present();
     if done {
         return Ok(value);
     }

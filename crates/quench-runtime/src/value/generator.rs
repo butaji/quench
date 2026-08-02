@@ -79,6 +79,7 @@ pub struct GeneratorObject {
     pub for_of_suspend: Option<ForOfSuspend>,
     /// Mid-yield* delegation state.
     pub yield_delegate_suspend: Option<YieldDelegateSuspend>,
+    pub yielded_done_present: bool,
     pub await_completion: bool,
     pub await_resume: bool,
 }
@@ -91,6 +92,7 @@ pub struct YieldDelegateSuspend {
     pub await_values: bool,
     pub abrupt_error: Option<(JsError, Value)>,
     pub completion: Option<Value>,
+    pub done_present: bool,
 }
 
 impl GeneratorObject {
@@ -118,6 +120,7 @@ impl GeneratorObject {
             call_env: None,
             for_of_suspend: None,
             yield_delegate_suspend: None,
+            yielded_done_present: true,
             await_completion: false,
             await_resume: false,
         }
@@ -287,6 +290,7 @@ impl GeneratorObject {
                         self.for_of_suspend = Some(s);
                     }
                     if let Some(s) = crate::eval::iteration::take_pending_yield_delegate_suspend() {
+                        self.yielded_done_present = s.done_present;
                         self.yield_delegate_suspend = Some(s);
                     }
                     self.await_completion = self.is_async
@@ -340,6 +344,7 @@ impl GeneratorObject {
                         if let Some(s) =
                             crate::eval::iteration::take_pending_yield_delegate_suspend()
                         {
+                            self.yielded_done_present = s.done_present;
                             self.yield_delegate_suspend = Some(s);
                         }
                         self.await_completion = self.is_async
@@ -427,6 +432,16 @@ impl IteratorResult {
         obj.set("done", Value::Boolean(self.done));
         Value::Object(Rc::new(RefCell::new(obj)))
     }
+
+    fn to_object_with_done(&self, done_present: bool) -> Value {
+        if done_present || self.done {
+            return self.to_object();
+        }
+        let mut obj = Object::new(ObjectKind::Ordinary);
+        obj.prototype = crate::builtins::get_object_prototype();
+        obj.set("value", self.value.clone());
+        Value::Object(Rc::new(RefCell::new(obj)))
+    }
 }
 
 /// Wrap a generator as an iterator object ({ next, return }) for destructuring.
@@ -453,7 +468,8 @@ pub fn generator_next_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 .try_borrow_mut()
                 .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?
                 .next(arg)?;
-            Ok(result.to_object())
+            let done_present = gen.borrow().yielded_done_present;
+            Ok(result.to_object_with_done(done_present))
         },
     )))
 }

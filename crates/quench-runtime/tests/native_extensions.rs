@@ -18,6 +18,15 @@ fn native_js_eval() {
 }
 
 #[test]
+fn yield_star_preserves_missing_done_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var i={next(){return {value:1};}};var g=(function*(){yield*{[Symbol.iterator](){return i;}}})();g.next().done")
+        .unwrap();
+    assert_eq!(result, Value::Undefined);
+}
+
+#[test]
 fn tagged_template_reuses_template_object_at_one_site() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
