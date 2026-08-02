@@ -25,8 +25,16 @@ globalThis.process = {
   exitCode: 0,
   umask: (mask) => globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
-  hrtime: { bigint: () => BigInt(Date.now()) * 1000000n },
+  hrtime: (previous) => {
+    const ns = BigInt(globalThis.__quench_now_ns());
+    const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];
+    if (!previous) return current;
+    let seconds = current[0] - previous[0]; let nanos = current[1] - previous[1];
+    if (nanos < 0) { seconds--; nanos += 1000000000; }
+    return [seconds, nanos];
+  },
 };
+process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
 
 globalThis.setImmediate = (callback, ...args) => queueMicrotask(() => callback(...args));
 globalThis.clearImmediate = () => undefined;

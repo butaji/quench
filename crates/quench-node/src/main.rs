@@ -84,6 +84,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.globals().set(
+            "__quench_now_ns",
+            Func::from(|| {
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().to_string()
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_sha256",
             Func::from(|value: String| {
                 let digest = Sha256::digest(value.as_bytes());
