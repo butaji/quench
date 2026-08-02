@@ -243,6 +243,7 @@ class NodeTransform extends NodeWritable {
 }
 globalThis.__nodeStream = { Readable: NodeReadable, Writable: NodeWritable, Transform: NodeTransform, PassThrough: NodeTransform };
 globalThis.__nodeFs = {
+  constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
   existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
   readFileSync: (value) => globalThis.__quench_fs_read_file(String(value)),
@@ -294,6 +295,7 @@ globalThis.__nodeOs = {
   hostname: () => 'quench-node',
   cpus: () => [],
   userInfo: () => ({ username: '', homedir: '/' }),
+  constants: { signals: { SIGTERM: 15, SIGINT: 2 }, errno: { ENOENT: -2, EACCES: -13 } },
 };
 globalThis.__nodeUtil = {
   format: (...args) => {
