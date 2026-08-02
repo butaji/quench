@@ -1652,12 +1652,14 @@ const __nodeAssertionFailure = (message) => {
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
   if (!Object.is(actual, expected)) {
     const detail =
-      actual &&
-      expected &&
-      typeof actual === "object" &&
-      typeof expected === "object"
-        ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
-        : `${actual} !== ${expected}`;
+      actual instanceof Error && expected instanceof Error
+        ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
+        : actual &&
+            expected &&
+            typeof actual === "object" &&
+            typeof expected === "object"
+          ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
+          : `${actual} !== ${expected}`;
     __nodeAssertionFailure(message || detail);
   }
 };
@@ -1723,7 +1725,7 @@ globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
   )
     __nodeAssertionFailure(message || "values are deeply equal");
 };
-globalThis.__nodeAssert.throws = (fn, expected) => {
+globalThis.__nodeAssert.throws = (fn, expected, message) => {
   let thrown = false;
   let captured;
   try {
@@ -1763,8 +1765,14 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
     }
   }
   if (!thrown) {
+    const label =
+      typeof expected === "function"
+        ? ` (${expected.name})`
+        : typeof expected === "string"
+          ? `: ${expected}`
+          : ".";
     const assertion = new globalThis.__nodeAssert.AssertionError(
-      `Missing expected exception${typeof expected === "function" ? ` (${expected.name})` : "."}`,
+      `Missing expected exception${label}${message ? `: ${message}` : ""}`,
     );
     assertion.code = "ERR_ASSERTION";
     assertion.operator = "throws";
