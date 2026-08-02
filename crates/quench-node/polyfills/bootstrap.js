@@ -703,6 +703,7 @@ class NodeBuffer extends Uint8Array {
       };
       const first = normalize(start, 0);
       const last = normalize(end, this.length);
+      if (last <= first) return "";
       return this.subarray(first, Math.max(first, last)).toString(encoding);
     }
     encoding = String(encoding).toLowerCase();
