@@ -546,6 +546,36 @@ class NodeBuffer extends Uint8Array {
   writeUInt32BE(value, offset = 0) {
     return this._writeInteger(value, offset, 4, false, false);
   }
+  readInt8(offset = 0) {
+    return this._readInteger(offset, 1, false, true);
+  }
+  readInt16LE(offset = 0) {
+    return this._readInteger(offset, 2, true, true);
+  }
+  readInt16BE(offset = 0) {
+    return this._readInteger(offset, 2, false, true);
+  }
+  readInt32LE(offset = 0) {
+    return this._readInteger(offset, 4, true, true);
+  }
+  readInt32BE(offset = 0) {
+    return this._readInteger(offset, 4, false, true);
+  }
+  writeInt8(value, offset = 0) {
+    return this._writeInteger(value, offset, 1, false, true);
+  }
+  writeInt16LE(value, offset = 0) {
+    return this._writeInteger(value, offset, 2, true, true);
+  }
+  writeInt16BE(value, offset = 0) {
+    return this._writeInteger(value, offset, 2, false, true);
+  }
+  writeInt32LE(value, offset = 0) {
+    return this._writeInteger(value, offset, 4, true, true);
+  }
+  writeInt32BE(value, offset = 0) {
+    return this._writeInteger(value, offset, 4, false, true);
+  }
   readUIntLE(offset, byteLength) {
     this._validateVariableInteger(0, offset, byteLength);
     let value = 0;
@@ -560,7 +590,7 @@ class NodeBuffer extends Uint8Array {
     return value;
   }
   writeUIntLE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength);
+    this._validateVariableInteger(value, offset, byteLength, false);
     for (let i = 0; i < byteLength; i++) {
       this[offset + i] = value & 0xff;
       value = Math.floor(value / 256);
@@ -568,25 +598,64 @@ class NodeBuffer extends Uint8Array {
     return offset + byteLength;
   }
   writeUIntBE(value, offset, byteLength) {
-    this._validateVariableInteger(value, offset, byteLength);
+    this._validateVariableInteger(value, offset, byteLength, false);
     for (let i = byteLength - 1; i >= 0; i--) {
       this[offset + i] = value & 0xff;
       value = Math.floor(value / 256);
     }
     return offset + byteLength;
   }
-  _validateVariableInteger(value, offset, byteLength) {
+  readIntLE(offset, byteLength) {
+    const value = this.readUIntLE(offset, byteLength);
+    const limit = 2 ** (byteLength * 8 - 1);
+    return value >= limit ? value - 2 ** (byteLength * 8) : value;
+  }
+  readIntBE(offset, byteLength) {
+    const value = this.readUIntBE(offset, byteLength);
+    const limit = 2 ** (byteLength * 8 - 1);
+    return value >= limit ? value - 2 ** (byteLength * 8) : value;
+  }
+  writeIntLE(value, offset, byteLength) {
+    this._validateVariableInteger(value, offset, byteLength, true);
+    const modulus = 2 ** (byteLength * 8);
+    return this.writeUIntLE(
+      value < 0 ? modulus + value : value,
+      offset,
+      byteLength,
+    );
+  }
+  writeIntBE(value, offset, byteLength) {
+    this._validateVariableInteger(value, offset, byteLength, true);
+    const modulus = 2 ** (byteLength * 8);
+    return this.writeUIntBE(
+      value < 0 ? modulus + value : value,
+      offset,
+      byteLength,
+    );
+  }
+  _validateVariableInteger(value, offset, byteLength, signed = false) {
+    if (typeof byteLength !== "number") {
+      const error = new TypeError(
+        'The "byteLength" argument must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     if (!Number.isInteger(byteLength) || byteLength < 1 || byteLength > 6) {
       const error = new RangeError('The value of "byteLength" is out of range');
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     this._integerOffset(offset, byteLength);
+    const min = signed ? -(2 ** (8 * byteLength - 1)) : 0;
+    const max = signed
+      ? 2 ** (8 * byteLength - 1) - 1
+      : 2 ** (8 * byteLength) - 1;
     if (
       typeof value !== "number" ||
       !Number.isSafeInteger(value) ||
-      value < 0 ||
-      value > 2 ** (8 * byteLength) - 1
+      value < min ||
+      value > max
     ) {
       const error = new RangeError('The value of "value" is out of range');
       error.code = "ERR_OUT_OF_RANGE";
