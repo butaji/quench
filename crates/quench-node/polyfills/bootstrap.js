@@ -4284,7 +4284,23 @@ globalThis.__nodeOs = {
       speed: 0,
       times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },
     })),
-  userInfo: () => ({ username: "", homedir: "/" }),
+  userInfo: (options = {}) => {
+    const value = {
+      username: "quench",
+      uid: 0,
+      gid: 0,
+      shell: "/bin/sh",
+      homedir: globalThis.__quench_homedir || "/",
+    };
+    if (options.encoding === "buffer")
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          typeof item === "string" ? NodeBuffer.from(item) : item,
+        ]),
+      );
+    return value;
+  },
   constants: {
     signals: { SIGTERM: 15, SIGINT: 2 },
     errno: { ENOENT: -2, EACCES: -13 },
