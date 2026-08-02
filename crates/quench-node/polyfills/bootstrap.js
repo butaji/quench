@@ -4263,7 +4263,11 @@ globalThis.__nodeOs = {
   release: () => "quench-node",
   version: () => "v0.1.0",
   machine: () => process.arch,
-  tmpdir: () => globalThis.__quench_tmpdir,
+  tmpdir: () => {
+    const candidate =
+      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+    return candidate.length > 1 ? candidate.replace(/[\\/]+$/, "") : candidate;
+  },
   homedir: () => globalThis.__quench_homedir,
   type: () => "Quench",
   endianness: () => "LE",
