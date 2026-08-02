@@ -4090,7 +4090,11 @@ globalThis.__nodeUtil = {
       typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
     )
       return value[Symbol.for("nodejs.util.inspect.custom")]();
-    return JSON.stringify(value);
+    try {
+      return JSON.stringify(value);
+    } catch (_) {
+      return String(value);
+    }
   },
   types: {
     isDate: (value) => value instanceof Date,
@@ -4119,7 +4123,9 @@ globalThis.__nodeUtil = {
     isAnyArrayBuffer: (value) =>
       value instanceof ArrayBuffer || value instanceof SharedArrayBuffer,
     isArrayBufferView: (value) => ArrayBuffer.isView(value),
-    isDataView: (value) => value instanceof DataView,
+    isDataView: (value) =>
+      ArrayBuffer.isView(value) &&
+      Object.prototype.toString.call(value) === "[object DataView]",
     isBoxedPrimitive: (value) =>
       value instanceof Boolean ||
       value instanceof Number ||
@@ -4133,20 +4139,44 @@ globalThis.__nodeUtil = {
     isSetIterator: (value) =>
       Object.prototype.toString.call(value) === "[object Set Iterator]",
     isTypedArray: (value) =>
-      ArrayBuffer.isView(value) && !(value instanceof DataView),
-    isUint8Array: (value) => value instanceof Uint8Array,
-    isUint8ClampedArray: (value) => value instanceof Uint8ClampedArray,
-    isInt8Array: (value) => value instanceof Int8Array,
-    isUint16Array: (value) => value instanceof Uint16Array,
-    isInt16Array: (value) => value instanceof Int16Array,
-    isUint32Array: (value) => value instanceof Uint32Array,
-    isInt32Array: (value) => value instanceof Int32Array,
-    isFloat32Array: (value) => value instanceof Float32Array,
-    isFloat64Array: (value) => value instanceof Float64Array,
+      ArrayBuffer.isView(value) && !__nodeUtil.types.isDataView(value),
+    isUint8Array: (value) =>
+      value instanceof Uint8Array ||
+      Object.prototype.toString.call(value) === "[object Uint8Array]",
+    isUint8ClampedArray: (value) =>
+      value instanceof Uint8ClampedArray ||
+      Object.prototype.toString.call(value) === "[object Uint8ClampedArray]",
+    isInt8Array: (value) =>
+      value instanceof Int8Array ||
+      Object.prototype.toString.call(value) === "[object Int8Array]",
+    isUint16Array: (value) =>
+      value instanceof Uint16Array ||
+      Object.prototype.toString.call(value) === "[object Uint16Array]",
+    isInt16Array: (value) =>
+      value instanceof Int16Array ||
+      Object.prototype.toString.call(value) === "[object Int16Array]",
+    isUint32Array: (value) =>
+      value instanceof Uint32Array ||
+      Object.prototype.toString.call(value) === "[object Uint32Array]",
+    isInt32Array: (value) =>
+      value instanceof Int32Array ||
+      Object.prototype.toString.call(value) === "[object Int32Array]",
+    isFloat32Array: (value) =>
+      value instanceof Float32Array ||
+      Object.prototype.toString.call(value) === "[object Float32Array]",
+    isFloat64Array: (value) =>
+      value instanceof Float64Array ||
+      Object.prototype.toString.call(value) === "[object Float64Array]",
     isFloat16Array: (value) =>
-      typeof Float16Array !== "undefined" && value instanceof Float16Array,
-    isBigInt64Array: (value) => value instanceof BigInt64Array,
-    isBigUint64Array: (value) => value instanceof BigUint64Array,
+      typeof Float16Array !== "undefined" &&
+      (value instanceof Float16Array ||
+        Object.prototype.toString.call(value) === "[object Float16Array]"),
+    isBigInt64Array: (value) =>
+      value instanceof BigInt64Array ||
+      Object.prototype.toString.call(value) === "[object BigInt64Array]",
+    isBigUint64Array: (value) =>
+      value instanceof BigUint64Array ||
+      Object.prototype.toString.call(value) === "[object BigUint64Array]",
     isProxy: (value) => __nodeProxySet.has(value),
     isExternal: (value) => value && value.__quench_external === true,
   },
