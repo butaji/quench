@@ -3049,10 +3049,11 @@ globalThis.__nodeFs = {
       error.code = "EBADF";
       throw error;
     }
-    const result =
-      data instanceof Uint8Array
-        ? globalThis.__quench_fs_append_bytes(path, Array.from(data))
-        : globalThis.__quench_fs_append(path, String(data));
+    const bytes =
+      typeof data === "string"
+        ? NodeBuffer.from(data, (options && options.encoding) || "utf8")
+        : NodeBuffer.from(data);
+    const result = globalThis.__quench_fs_append_bytes(path, Array.from(bytes));
     if (options && options.mode !== undefined)
       globalThis.__nodeModes[path] = Number(options.mode);
     return result;
