@@ -2687,12 +2687,13 @@ globalThis.__nodeFs = {
       position === null || Number(position) < 0
         ? globalThis.__nodeFdPositions[fd] || 0
         : Number(position);
-    const hex = globalThis.__quench_fs_read_range_hex(
-      path,
-      numericPosition,
-      Number(length),
+    const bytes = NodeBuffer.from(
+      globalThis.__quench_fs_read_range_bytes(
+        path,
+        numericPosition,
+        Number(length),
+      ),
     );
-    const bytes = NodeBuffer.from(hex, "hex");
     buffer.set(bytes.subarray(0, Number(length)), Number(offset));
     if (position === null || position === undefined)
       globalThis.__nodeFdPositions[fd] = numericPosition + bytes.length;
@@ -2773,16 +2774,13 @@ globalThis.__nodeFs = {
       position === null || position === undefined
         ? globalThis.__nodeFdPositions[fd] || 0
         : Number(position);
-    const existing = NodeBuffer.from(
-      globalThis.__quench_fs_read_hex(path),
-      "hex",
-    );
+    const existing = NodeBuffer.from(globalThis.__quench_fs_read_bytes(path));
     const output = NodeBuffer.alloc(
       Math.max(existing.length, at + bytes.length),
     );
     output.set(existing);
     output.set(bytes, at);
-    globalThis.__quench_fs_write_hex(path, output.toString("hex"));
+    globalThis.__quench_fs_write_bytes(path, Array.from(output));
     if (position === null || position === undefined)
       globalThis.__nodeFdPositions[fd] = at + bytes.length;
     return bytes.length;
