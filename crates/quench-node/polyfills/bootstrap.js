@@ -2476,6 +2476,8 @@ class NodeReadable extends NodeEventEmitter {
       }
       return false;
     }
+    if (!this.readableObjectMode && typeof chunk === "string")
+      chunk = NodeBuffer.from(chunk);
     if (this._paused || this.listenerCount("data") === 0) {
       this._chunks.push(chunk);
       if (this.listenerCount("readable"))
@@ -2494,6 +2496,8 @@ class NodeReadable extends NodeEventEmitter {
       if (!this._chunks.length) this._emitEnd();
       return this;
     }
+    if (!this.readableObjectMode && typeof chunk === "string")
+      chunk = NodeBuffer.from(chunk);
     if (this._paused || this.listenerCount("data") === 0)
       this._chunks.unshift(chunk);
     else this.emit("data", chunk);
