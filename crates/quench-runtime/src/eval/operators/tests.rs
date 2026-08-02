@@ -19,6 +19,34 @@ fn loose_equality_propagates_object_coercion_errors() {
 }
 
 #[test]
+fn unsigned_shift_propagates_left_call_throw_before_rhs() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval(
+        "(function() { throw new Error('left'); })() >>> (function() { throw new Error('right'); })()",
+    );
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().0, "Error: left");
+}
+
+#[test]
+fn unsigned_shift_rejects_symbol_from_rhs_after_coercion() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval(
+        "(function() { return { valueOf: function() { return 1; } }; })() >>> (function() { return { valueOf: function() { return Symbol('x'); } }; })()",
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().0.contains("TypeError"));
+}
+
+#[test]
+fn relational_operator_rejects_symbol_after_primitive_conversion() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx.eval("1 < Symbol('x')");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().0.contains("TypeError"));
+}
+
+#[test]
 fn bigint_shift_accepts_negative_shift_counts() {
     let mut ctx = crate::Context::new().unwrap();
     assert_eq!(

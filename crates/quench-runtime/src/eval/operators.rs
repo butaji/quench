@@ -337,6 +337,9 @@ where
         let cmp = a.as_ref().cmp(b.as_ref()) as i8;
         return Ok(Value::Boolean(num_cmp(cmp as f64, 0.0)));
     }
+    if matches!(left, Value::Symbol(_)) || matches!(right, Value::Symbol(_)) {
+        return crate::throw!("TypeError", "Cannot convert Symbol to number");
+    }
     if let Some(result) = bigint_string_relational(&left, &right, &num_cmp) {
         return Ok(Value::Boolean(result));
     }
@@ -710,6 +713,9 @@ where
         return crate::throw!("TypeError", "Cannot convert Symbol to number");
     }
     let right_primitive = to_primitive(right, Some("number"))?;
+    if matches!(right_primitive, Value::Symbol(_)) {
+        return crate::throw!("TypeError", "Cannot convert Symbol to number");
+    }
     if matches!(left_primitive, Value::BigInt(_)) || matches!(right_primitive, Value::BigInt(_)) {
         return crate::throw!("TypeError", "Cannot mix BigInt with unsigned right shift");
     }
