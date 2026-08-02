@@ -5342,13 +5342,13 @@ globalThis.__nodeCrypto = {
         else chunks.push(new NodeTextEncoder().encode(String(value)));
         return hash;
       },
-      digest: (encoding = "hex") => {
+      digest: (encoding) => {
         const input = [];
         for (const chunk of chunks) input.push(...chunk);
         const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));
         const result = bytes.toString("hex");
-        if (encoding === "hex") return result;
         if (encoding === undefined || encoding === null) return bytes;
+        if (encoding === "hex") return result;
         throw new Error(`Unsupported digest encoding: ${encoding}`);
       },
     };
@@ -5383,7 +5383,7 @@ globalThis.__nodeCrypto = {
         );
         return hmac;
       },
-      digest: (encoding = "hex") => {
+      digest: (encoding) => {
         const message = [];
         for (const chunk of chunks) message.push(...chunk);
         const innerDigest = globalThis.__quench_sha256_bytes([
@@ -5393,7 +5393,11 @@ globalThis.__nodeCrypto = {
         const result = NodeBuffer.from(
           globalThis.__quench_sha256_bytes([...outer, ...innerDigest]),
         );
-        return encoding === "hex" ? result.toString("hex") : result;
+        return encoding === undefined || encoding === null
+          ? result
+          : encoding === "hex"
+            ? result.toString("hex")
+            : result;
       },
     };
     return hmac;
