@@ -236,7 +236,16 @@ globalThis.process = {
   },
   umask: (mask) =>
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
-  nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
+  nextTick: (callback, ...args) => {
+    if (typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    queueMicrotask(() => callback(...args));
+  },
   hrtime: (previous) => {
     const ns = BigInt(globalThis.__quench_now_ns());
     const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];
