@@ -302,6 +302,23 @@ class NodeBuffer extends Uint8Array {
   static isBuffer(value) {
     return value instanceof NodeBuffer;
   }
+  static isEncoding(encoding) {
+    if (typeof encoding !== "string") return false;
+    return [
+      "hex",
+      "utf8",
+      "utf-8",
+      "ascii",
+      "latin1",
+      "binary",
+      "base64",
+      "base64url",
+      "ucs2",
+      "ucs-2",
+      "utf16le",
+      "utf-16le",
+    ].includes(encoding.toLowerCase());
+  }
   static compare(left, right) {
     if (!(left instanceof Uint8Array)) {
       const error = new TypeError(
