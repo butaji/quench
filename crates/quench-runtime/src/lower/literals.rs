@@ -66,6 +66,10 @@ pub fn lower_tagged_template(
 ) -> Result<Expression, LowerError> {
     let callee = lower_expr(&tagged.tag)?;
     let mut arguments = Vec::with_capacity(tagged.quasi.expressions.len() + 1);
+    arguments.push(Expression::String(format!(
+        "\0quench-template-site:{}",
+        tagged.span.start
+    )));
     let cooked = Expression::Array(
         tagged
             .quasi

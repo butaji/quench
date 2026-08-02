@@ -14,7 +14,12 @@ use crate::interpreter::get_this_binding;
 use crate::value::error::create_js_error_with_type;
 use crate::value::{to_js_string, JsError, Object, ObjectKind, Value};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
+
+thread_local! {
+    static TEMPLATE_OBJECTS: RefCell<HashMap<(usize, String), Value>> = RefCell::new(HashMap::new());
+}
 
 /// Evaluate a call expression
 pub fn eval_call(
@@ -111,6 +116,40 @@ pub fn eval_call_arguments(
     in_arrow_function: bool,
 ) -> Result<Vec<Value>, JsError> {
     let mut result = Vec::new();
+    let (site, template) = match arguments {
+        [Expression::String(marker), template, rest @ ..]
+            if marker.starts_with("\0quench-template-site:") =>
+        {
+            (Some(marker.clone()), Some((template, rest)))
+        }
+        _ => (None, None),
+    };
+    if let (Some(site), Some((template, _))) = (site, template) {
+        let context = crate::context::CURRENT_CONTEXT
+            .with(|cell| cell.borrow().map(|ptr| ptr as usize).unwrap_or_default());
+        let key = (context, site);
+        let value = TEMPLATE_OBJECTS.with(|cache| cache.borrow().get(&key).cloned());
+        let value = match value {
+            Some(value) => value,
+            None => {
+                let value =
+                    crate::eval::expression::eval_expression(template, env, in_arrow_function)?;
+                TEMPLATE_OBJECTS.with(|cache| {
+                    cache.borrow_mut().insert(key, value.clone());
+                });
+                value
+            }
+        };
+        result.push(value);
+        for arg in arguments.iter().skip(2) {
+            result.push(crate::eval::expression::eval_expression(
+                arg,
+                env,
+                in_arrow_function,
+            )?);
+        }
+        return Ok(result);
+    }
     for arg in arguments.iter() {
         match arg {
             Expression::Spread(expr) => {

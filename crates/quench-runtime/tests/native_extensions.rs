@@ -18,6 +18,15 @@ fn native_js_eval() {
 }
 
 #[test]
+fn tagged_template_reuses_template_object_at_one_site() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx
+        .eval("var first;function tag(x){return x;}function f(){return tag`head${1}tail`;}first=f();f()===first")
+        .unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn for_await_awaits_custom_async_iterator_results() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var result;var obj={};obj[Symbol.asyncIterator]=function(){var i=0;return{next:function(){return Promise.resolve(i++<1?{value:7,done:false}:{done:true});}}};async function f(){for await(const x of obj)return x;}f().then(function(v){result=v;});")
