@@ -358,15 +358,14 @@ class NodeBuffer extends Uint8Array {
     throw error;
   }
   static alloc(size, fill = 0, encoding) {
-    return new NodeBuffer(size).fill(fill, 0, size, encoding);
+    const length = NodeBuffer._validateSize(size);
+    return new NodeBuffer(length).fill(fill, 0, length, encoding);
   }
   static allocUnsafe(size) {
-    NodeBuffer._validateSize(size);
-    return new NodeBuffer(size);
+    return new NodeBuffer(NodeBuffer._validateSize(size));
   }
   static allocUnsafeSlow(size) {
-    NodeBuffer._validateSize(size);
-    return new NodeBuffer(size);
+    return new NodeBuffer(NodeBuffer._validateSize(size));
   }
   static _validateSize(size) {
     if (typeof size !== "number") {
@@ -374,11 +373,12 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (!Number.isSafeInteger(size) || size < 0 || size > 0x7fffffff) {
+    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
       const error = new RangeError('The value of "size" is out of range');
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
+    return Math.trunc(size);
   }
   static of(...values) {
     return new NodeBuffer(values);
