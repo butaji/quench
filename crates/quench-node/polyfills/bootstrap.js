@@ -189,6 +189,44 @@ globalThis.__nodeQuerystring = {
     return result;
   }, {}),
 };
+class NodeURLSearchParams {
+  constructor(init = '') {
+    this._pairs = [];
+    if (typeof init === 'string') {
+      init.replace(/^\?/, '').split('&').filter(Boolean).forEach((part) => {
+        const i = part.indexOf('=');
+        this.append(decodeURIComponent(i < 0 ? part : part.slice(0, i)), decodeURIComponent(i < 0 ? '' : part.slice(i + 1)));
+      });
+    } else Object.keys(init).forEach((key) => this.append(key, init[key]));
+  }
+  append(key, value) { this._pairs.push([String(key), String(value)]); }
+  set(key, value) { this.delete(key); this.append(key, value); }
+  get(key) { const pair = this._pairs.find(([name]) => name === String(key)); return pair ? pair[1] : null; }
+  getAll(key) { return this._pairs.filter(([name]) => name === String(key)).map(([, value]) => value); }
+  has(key) { return this._pairs.some(([name]) => name === String(key)); }
+  delete(key) { this._pairs = this._pairs.filter(([name]) => name !== String(key)); }
+  toString() { return this._pairs.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&'); }
+}
+globalThis.__nodeURLSearchParams = NodeURLSearchParams;
+globalThis.__nodeURL = class NodeURL {
+  constructor(input, base) {
+    let value = String(input);
+    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) value = String(base).replace(/\/$/, '') + '/' + value.replace(/^\//, '');
+    const match = value.match(/^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i);
+    if (!match) throw new TypeError('Invalid URL');
+    this.protocol = match[1] || '';
+    this.host = match[2] || '';
+    this.pathname = match[3] || '/';
+    this.search = match[4] ? `?${match[4]}` : '';
+    this.hash = match[5] ? `#${match[5]}` : '';
+    this.origin = this.protocol && this.host ? `${this.protocol}//${this.host}` : 'null';
+    this.searchParams = new NodeURLSearchParams(match[4] || '');
+  }
+  get href() { const query = this.searchParams.toString(); return `${this.origin === 'null' ? '' : this.origin}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`; }
+  toString() { return this.href; }
+};
+globalThis.URL = globalThis.__nodeURL;
+globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;

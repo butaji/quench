@@ -15,3 +15,4 @@ these small fixtures isolate the currently implemented contract.
 | 5 | `events.EventEmitter` | `tools/run-node-tests.sh --stage 5` |
 | 6 | `os` and `util` modules | `tools/run-node-tests.sh --stage 6` |
 | 7 | `querystring` module | `tools/run-node-tests.sh --stage 7` |
+| 8 | basic `URL` and `URLSearchParams` | `tools/run-node-tests.sh --stage 8` |
