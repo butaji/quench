@@ -22,6 +22,8 @@ The explicit `--reuse-dir` mode reuses one rquickjs `Runtime` from the
 `quench-node` crate while creating a
 fresh context per script. Isolation and state-reset behavior are covered by
 `tests/node-compat/stage-383/runtime-reuse.js` and its companion script.
+Core process metadata is covered by
+`tests/node-compat/stage-409/process-metadata.js`.
 The mode is documented in the CLI `--help` output; isolated execution remains
 the default, and reuse is intended for compatible test groups that do not rely
 on process-global native state.
