@@ -222,7 +222,7 @@ fn run_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
-                    eprintln!("not ok {}: {error}", entry.path().display());
+                    eprintln!("not ok {}: {error:?}", entry.path().display());
                 }
             }
         }

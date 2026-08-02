@@ -91,7 +91,7 @@ class NodeBuffer extends Uint8Array {
   }
   static alloc(size, fill = 0) { return new NodeBuffer(size).fill(fill); }
   static isBuffer(value) { return value instanceof NodeBuffer; }
-  static byteLength(value) { return String(value).length; }
+  static byteLength(value) { return new NodeTextEncoder().encode(String(value)).length; }
   static concat(list, totalLength) {
     const length = totalLength === undefined ? list.reduce((sum, item) => sum + item.length, 0) : totalLength;
     const output = new NodeBuffer(length); let offset = 0;
@@ -109,6 +109,21 @@ class NodeBuffer extends Uint8Array {
   }
 }
 globalThis.Buffer = NodeBuffer;
+class NodeTextEncoder {
+  encode(value) {
+    const output = [];
+    for (const character of String(value)) {
+      const code = character.codePointAt(0);
+      if (code < 0x80) output.push(code);
+      else if (code < 0x800) output.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      else if (code < 0x10000) output.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      else output.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    }
+    return new Uint8Array(output);
+  }
+}
+globalThis.TextEncoder = NodeTextEncoder;
+const nodePathValue = (value) => value instanceof NodeBuffer ? value.toString() : value instanceof Uint8Array ? String.fromCharCode(...value) : value instanceof globalThis.__nodeURL ? globalThis.__nodeUrlModule.fileURLToPath(value) : String(value);
 
 globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
@@ -183,6 +198,11 @@ globalThis.__nodeCommon = {
   noop: () => {},
   expectWarning: () => {},
 };
+globalThis.__nodeTmpdir = {
+  refresh: () => {},
+  resolve: (name = '') => globalThis.__nodePath.join('/tmp', `quench-${String(name)}`),
+  fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join('/tmp', `quench-${String(name)}`)}`),
+};
 class NodeEventEmitter {
   constructor() { this._events = {}; }
   on(event, listener) { (this._events[event] ||= []).push(listener); return this; }
@@ -244,11 +264,11 @@ class NodeTransform extends NodeWritable {
 globalThis.__nodeStream = { Readable: NodeReadable, Writable: NodeWritable, Transform: NodeTransform, PassThrough: NodeTransform };
 globalThis.__nodeFs = {
   constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
-  existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
-  mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
-  readFileSync: (value) => globalThis.__quench_fs_read_file(String(value)),
-  writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
-  statSync: (value) => { const kind = globalThis.__quench_fs_kind(String(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
+  existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
+  mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
+  readFileSync: (value) => globalThis.__quench_fs_read_file(nodePathValue(value)),
+  writeFileSync: (value, data) => globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
+  statSync: (value) => { const kind = globalThis.__quench_fs_kind(nodePathValue(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
   mkdirSync: (value) => globalThis.__quench_fs_mkdir(String(value)),
   readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
@@ -269,6 +289,10 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     try { callback(null, globalThis.__nodeFs.readFileSync(value, options)); }
     catch (error) { callback(error); }
   });
+};
+globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.mkdtempSync(prefix)); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
   if (typeof options === 'function') callback = options;
@@ -416,6 +440,7 @@ globalThis.require = (specifier) => {
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
+  if (name.endsWith('/common/tmpdir')) return globalThis.__nodeTmpdir;
   if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
