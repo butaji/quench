@@ -560,7 +560,7 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
     if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
         for (module, source) in &named_reexport_edges {
             let mut seen = HashSet::new();
-            if has_module_path(&named_graph, source, module, &mut seen) {
+            if source != module && has_module_path(&named_graph, source, module, &mut seen) {
                 errors.borrow_mut().set(
                     module,
                     crate::Value::String("Circular indirect export".into()),
