@@ -1,6 +1,7 @@
 use std::{
     env, fs,
     path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -10,6 +11,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 const BOOTSTRAP: &str = include_str!("../polyfills/bootstrap.js");
+static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
@@ -87,9 +89,11 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 let stamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_nanos();
+                    .subsec_nanos() as usize;
+                let sequence = MKDTEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
                 for attempt in 0..100 {
-                    let path = root.join(format!("{prefix}{:06}", (stamp + attempt as u128) % 1_000_000));
+                    let suffix = (stamp.wrapping_add(sequence).wrapping_add(attempt)) % 1_000_000;
+                    let path = root.join(format!("{prefix}{suffix:06}"));
                     if fs::create_dir(&path).is_ok() {
                         return Ok(path.to_string_lossy().into_owned());
                     }
