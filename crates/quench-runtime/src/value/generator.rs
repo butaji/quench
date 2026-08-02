@@ -560,6 +560,10 @@ pub fn generator_throw_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
     Value::NativeFunction(std::rc::Rc::new(crate::value::NativeFunction::new(
         move |args| {
             let arg = args.first().cloned().unwrap_or(Value::Undefined);
+            if gen.borrow().yield_delegate_suspend.is_some() {
+                let result = delegate_abrupt(&gen, "throw", arg)?;
+                return Ok(result.to_object());
+            }
             let mut g = gen
                 .try_borrow_mut()
                 .map_err(|_| JsError("TypeError: generator is already executing".to_string()))?;

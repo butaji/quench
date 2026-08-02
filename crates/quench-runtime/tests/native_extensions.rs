@@ -27,6 +27,13 @@ fn yield_star_preserves_missing_done_property() {
 }
 
 #[test]
+fn yield_star_null_throw_closes_iterator_before_type_error() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var throwGets=0,returnGets=0,iterable={next:function(){return {value:1,done:false};},get throw(){throwGets++;return null;},get return(){returnGets++;}};iterable[Symbol.iterator]=function(){return iterable;};function* generator(){yield* iterable;}var iterator=generator();iterator.next();var threw=false;try{iterator.throw();}catch(e){threw=e instanceof TypeError;}[threw,throwGets,returnGets].join(',')").unwrap();
+    assert_eq!(result, Value::String("true,1,1".into()));
+}
+
+#[test]
 fn tagged_template_reuses_template_object_at_one_site() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
