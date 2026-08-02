@@ -4515,6 +4515,17 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
 };
 globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
   if (typeof options === "function") callback = options;
+  if (
+    typeof prefix !== "string" &&
+    !(prefix instanceof Uint8Array) &&
+    !(prefix instanceof globalThis.__nodeURL)
+  ) {
+    const error = new TypeError(
+      'The "prefix" argument must be of type string or an instance of Buffer or URL',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
   if (typeof callback !== "function") {
     const error = new TypeError(
       'The "callback" argument must be of type function',
