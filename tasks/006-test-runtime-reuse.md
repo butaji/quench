@@ -24,6 +24,8 @@ fresh context per script. Isolation and state-reset behavior are covered by
 `tests/node-compat/stage-383/runtime-reuse.js` and its companion script.
 Core process metadata is covered by
 `tests/node-compat/stage-409/process-metadata.js`.
+Unknown `process.binding()` modules are covered by
+`tests/node-compat/stage-410/process-binding.js`.
 The mode is documented in the CLI `--help` output; isolated execution remains
 the default, and reuse is intended for compatible test groups that do not rely
 on process-global native state.
