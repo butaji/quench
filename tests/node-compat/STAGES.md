@@ -34,3 +34,4 @@ these small fixtures isolate the currently implemented contract.
 | 24 | Rust-backed filesystem stat kinds | `tools/run-node-tests.sh --stage 24` |
 | 25 | synchronous file mutation APIs | `tools/run-node-tests.sh --stage 25` |
 | 26 | append and access filesystem APIs | `tools/run-node-tests.sh --stage 26` |
+| 27 | filesystem realpath and rm aliases | `tools/run-node-tests.sh --stage 27` |
