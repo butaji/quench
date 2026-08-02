@@ -288,6 +288,7 @@ globalThis.__nodeCommon = {
   isAIX: false,
   isFreeBSD: false,
   canCreateSymLink: () => false,
+  getArrayBufferViews: (buffer) => [buffer, new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength), new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)],
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
