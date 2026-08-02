@@ -111,3 +111,4 @@ these small fixtures isolate the currently implemented contract.
 | 101 | internal filesystem open-flag utility | `tools/run-node-tests.sh --stage 101` |
 | 102 | numeric and octal-string `fs.open` modes | `tools/run-node-tests.sh --stage 102` |
 | 103 | `fs.close` fd and callback validation | `tools/run-node-tests.sh --stage 103` |
+| 104 | fd mode-mask regression coverage | `tools/run-node-tests.sh --stage 104` |
