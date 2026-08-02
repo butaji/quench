@@ -385,6 +385,76 @@ class NodeBuffer extends Uint8Array {
     this.set(bytes.subarray(0, count), offset);
     return count;
   }
+  writeDoubleLE(value, offset = 0) {
+    return this._writeDouble(value, offset, true);
+  }
+  writeDoubleBE(value, offset = 0) {
+    return this._writeDouble(value, offset, false);
+  }
+  _writeDouble(value, offset, littleEndian) {
+    if (typeof offset !== "number") {
+      const error = new TypeError(
+        'The "offset" argument must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isFinite(offset)) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(offset)) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset < 0 || offset + 8 > this.length) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds",
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat64(
+      offset,
+      Number(value),
+      littleEndian,
+    );
+    return offset + 8;
+  }
+  readDoubleLE(offset = 0) {
+    return this._readDouble(offset, true);
+  }
+  readDoubleBE(offset = 0) {
+    return this._readDouble(offset, false);
+  }
+  _readDouble(offset, littleEndian) {
+    if (typeof offset !== "number") {
+      const error = new TypeError(
+        'The "offset" argument must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isInteger(offset)) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset < 0 || offset + 8 > this.length) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds",
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    return new DataView(
+      this.buffer,
+      this.byteOffset,
+      this.byteLength,
+    ).getFloat64(offset, littleEndian);
+  }
 }
 globalThis.Buffer = NodeBuffer;
 const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
