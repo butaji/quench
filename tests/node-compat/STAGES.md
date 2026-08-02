@@ -38,3 +38,4 @@ these small fixtures isolate the currently implemented contract.
 | 28 | promise directory filesystem APIs | `tools/run-node-tests.sh --stage 28` |
 | 29 | POSIX `fs.chmodSync` | `tools/run-node-tests.sh --stage 29` |
 | 30 | POSIX symbolic link APIs | `tools/run-node-tests.sh --stage 30` |
+| 31 | filesystem and OS constants | `tools/run-node-tests.sh --stage 31` |
