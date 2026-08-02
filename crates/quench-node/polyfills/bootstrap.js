@@ -1657,7 +1657,9 @@ globalThis.__nodeAssert.equal = (actual, expected, message) => {
 };
 globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
   if (Object.is(actual, expected))
-    __nodeAssertionFailure(message || `${actual} === ${expected}`);
+    __nodeAssertionFailure(
+      message || `Expected "actual" to be strictly unequal to: ${expected}`,
+    );
 };
 globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
   if (actual == expected)
@@ -1709,7 +1711,13 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
   } catch (error) {
     thrown = true;
     captured = error;
-    if (expected && expected.name && error.name !== expected.name) throw error;
+    if (typeof expected === "function" && !(error instanceof expected))
+      throw error;
+    if (expected && typeof expected === "object") {
+      if (expected.name && error.name !== expected.name) throw error;
+      if (expected.message && error.message !== expected.message) throw error;
+      if (expected.code && error.code !== expected.code) throw error;
+    }
   }
   if (!thrown) throw new Error("Missing expected exception");
   return captured;
