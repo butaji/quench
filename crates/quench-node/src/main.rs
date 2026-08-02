@@ -5,6 +5,7 @@ use std::{
 };
 
 use rquickjs::{function::Func, Context, Runtime};
+use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 const BOOTSTRAP: &str = include_str!("../polyfills/bootstrap.js");
@@ -49,6 +50,16 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         ctx.globals().set(
             "__quench_env_get",
             Func::from(|key: String| std::env::var(key).ok()),
+        )?;
+        ctx.globals().set(
+            "__quench_sha256",
+            Func::from(|value: String| {
+                let digest = Sha256::digest(value.as_bytes());
+                digest
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            }),
         )?;
         ctx.globals().set(
             "__quench_fs_mkdtemp",
