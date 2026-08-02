@@ -533,11 +533,10 @@ pub fn assign_to_member(
     if crate::value::is_private_name_key(&prop_name)
         && !matches!(obj_val, Value::Object(_) | Value::Class(_))
     {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
+        return Err(private_write_type_error(
+            env,
             "Cannot write private member to an object whose class did not declare it",
-            "TypeError",
-        );
-        return Err(js_err);
+        ));
     }
 
     match obj_val {
@@ -902,6 +901,21 @@ pub(crate) fn assign_to_object(
     Ok(())
 }
 
+fn private_write_type_error(env: &Rc<RefCell<Environment>>, message: &str) -> JsError {
+    if let Some(ctor) = env.borrow().get("TypeError") {
+        if let Ok(error) = crate::eval::call_value_with_this(
+            ctor,
+            vec![Value::String(message.to_string())],
+            Value::Undefined,
+        ) {
+            crate::value::set_thrown_value(error);
+            return JsError(format!("TypeError: {message}"));
+        }
+    }
+    let (_, error) = crate::value::error::create_js_error_with_type(message, "TypeError");
+    error
+}
+
 fn assign_private_name(
     o: &Rc<RefCell<Object>>,
     prop_name: &str,
@@ -917,25 +931,16 @@ fn assign_private_name(
     let extensible = obj_ref.extensible;
 
     if !has_field && !has_getter && !has_setter {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
+        return Err(private_write_type_error(
+            env,
             "Cannot write private member to an object whose class did not declare it",
-            "TypeError",
-        );
-        return Err(js_err);
+        ));
     }
     if is_method {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Private method is not writable",
-            "TypeError",
-        );
-        return Err(js_err);
+        return Err(private_write_type_error(env, "Private method is not writable"));
     }
     if has_getter && !has_setter {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Private accessor has no setter",
-            "TypeError",
-        );
-        return Err(js_err);
+        return Err(private_write_type_error(env, "Private accessor has no setter"));
     }
     if has_setter {
         let setter = obj_ref.get_setter(prop_name).cloned();
