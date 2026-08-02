@@ -212,9 +212,11 @@ process.emitWarning = (warning, options = {}) => {
 
 class NodeBuffer extends Uint8Array {
   get parent() {
+    if (this === NodeBuffer.prototype) return undefined;
     return this.buffer;
   }
   get offset() {
+    if (this === NodeBuffer.prototype) return undefined;
     return this.byteOffset;
   }
   static from(value, encoding, length) {
@@ -341,12 +343,14 @@ class NodeBuffer extends Uint8Array {
     }
     if (value && value.type === "Buffer" && Array.isArray(value.data))
       return new NodeBuffer(value.data);
-    if (
-      Array.isArray(value) ||
-      ArrayBuffer.isView(value) ||
-      (value && typeof value === "object" && "length" in value)
-    )
+    if (Array.isArray(value) || ArrayBuffer.isView(value))
       return new NodeBuffer(value);
+    if (value && typeof value === "object" && "length" in value) {
+      const length = Math.max(0, Math.trunc(Number(value.length)) || 0);
+      const output = new NodeBuffer(length);
+      for (let i = 0; i < length; i++) output[i] = Number(value[i]) || 0;
+      return output;
+    }
     const error = new TypeError(
       "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object",
     );
