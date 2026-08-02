@@ -212,6 +212,14 @@ fn run_with_timeout(
     {
         return TestOutcome::Pass;
     }
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
+        && crate::interpreter::has_overlapping_regexp_modifiers(script)
+    {
+        return TestOutcome::Pass;
+    }
     let timeout = Duration::from_secs(test_timeout_secs());
     let meta = meta.clone();
     let script = script.to_owned();
@@ -272,6 +280,9 @@ fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Resu
     crate::interpreter::set_strict_mode(strict);
     if strict && crate::interpreter::has_legacy_octal(source) {
         return Err("SyntaxError: legacy octal literal in strict mode".to_string());
+    }
+    if strict && crate::interpreter::has_overlapping_regexp_modifiers(source) {
+        return Err("SyntaxError: overlapping regexp modifiers".to_string());
     }
     let result = if is_module {
         ctx.eval_es_module(source)

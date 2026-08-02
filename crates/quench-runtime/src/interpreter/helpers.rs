@@ -726,6 +726,19 @@ pub fn has_legacy_octal(source: &str) -> bool {
     false
 }
 
+pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
+    source.match_indices("(?").any(|(start, _)| {
+        let Some(end) = source[start..].find(':') else {
+            return false;
+        };
+        let flags = &source[start + 2..start + end];
+        let Some((added, removed)) = flags.split_once('-') else {
+            return false;
+        };
+        added.chars().any(|flag| removed.contains(flag))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
