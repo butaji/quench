@@ -50,6 +50,8 @@ Explicit `resume()` drains paused readable data in
 `tests/node-compat/stage-452/stream-resume-queue.js`.
 Readable encoding selection and validation are covered by
 `tests/node-compat/stage-472/stream-set-encoding.js`.
+Flowing readable encoding delivery is covered by
+`tests/node-compat/stage-473/stream-encoding-flow.js`.
 Writable `drain` transition and callback-free length recovery are covered by
 `tests/node-compat/stage-453/stream-drain-transition.js`.
 Chainable writable `end()` behavior is covered by

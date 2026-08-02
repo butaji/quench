@@ -2387,7 +2387,7 @@ class NodeReadable extends NodeEventEmitter {
       this.readableFlowing = true;
       queueMicrotask(() => {
         while (!this._paused && this._chunks.length)
-          this.emit("data", this._chunks.shift());
+          this.emit("data", this._decode(this._chunks.shift()));
         if (!this._chunks.length && this._ended) this._emitEnd();
       });
     } else if (event === "readable" && this._chunks.length) {
@@ -2475,7 +2475,7 @@ class NodeReadable extends NodeEventEmitter {
       this._chunks.push(chunk);
       if (this.listenerCount("readable"))
         queueMicrotask(() => this.emit("readable"));
-    } else this.emit("data", chunk);
+    } else this.emit("data", this._decode(chunk));
     return true;
   }
   unshift(chunk) {
