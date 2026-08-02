@@ -2429,7 +2429,10 @@ class NodeReadable extends NodeEventEmitter {
     }
     if (chunk === null) {
       this._ended = true;
-      if (!this._chunks.length) this._emitEnd();
+      if (!this._chunks.length) {
+        if (this.listenerCount("data")) queueMicrotask(() => this._emitEnd());
+        else this._emitEnd();
+      }
       return false;
     }
     if (this._paused || this.listenerCount("data") === 0)
