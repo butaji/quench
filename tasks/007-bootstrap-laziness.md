@@ -34,3 +34,6 @@ Querystring module initialization timing is covered by
 Querystring escaping now replaces unpaired UTF-16 surrogates with U+FFFD
 before percent-encoding, matching Node's non-throwing `querystring.escape`
 behavior. This is covered by `tests/node-compat/stage-489`.
+Unicode surrogate pairs in `querystring.unescapeBuffer()` are now encoded as
+one scalar value. The regression is covered by
+`tests/node-compat/stage-490`.
