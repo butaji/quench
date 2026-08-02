@@ -2409,6 +2409,11 @@ globalThis.__nodeFs = {
       return NodeBuffer.from(bytes);
     const encoding =
       typeof options === "string" ? options : options && options.encoding;
+    if (encoding !== undefined && !NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     if (
       options &&
       typeof options === "object" &&

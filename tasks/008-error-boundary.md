@@ -25,3 +25,5 @@ Invalid object paths are covered by
 `tests/node-compat/stage-377/error-invalid-path.js`.
 Write-path validation is covered by
 `tests/node-compat/stage-378/error-invalid-write-path.js`.
+Unknown read encodings are covered by
+`tests/node-compat/stage-379/error-unknown-encoding.js`.
