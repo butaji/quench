@@ -24,3 +24,5 @@ remain in progress. Native random bytes and fill are covered by
 `tests/node-compat/stage-375/crypto-random-bytes.js`.
 HMAC-SHA256 byte input is covered by
 `tests/node-compat/stage-380/crypto-hmac-bytes.js`.
+Default binary digest output is covered by
+`tests/node-compat/stage-381/crypto-digest-buffer.js`.
