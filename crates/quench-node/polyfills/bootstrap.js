@@ -4553,8 +4553,10 @@ globalThis.__nodeFs.promises = {
         ),
   writeFile: (value, data, options) =>
     new Promise((resolve, reject) =>
-      globalThis.__nodeFs.writeFile(value, data, options, (error) =>
-        error ? reject(error) : resolve(),
+      queueMicrotask(() =>
+        globalThis.__nodeFs.writeFile(value, data, options, (error) =>
+          error ? reject(error) : resolve(),
+        ),
       ),
     ),
   appendFile: (value, data, options) =>
