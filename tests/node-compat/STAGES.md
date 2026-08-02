@@ -25,3 +25,4 @@ these small fixtures isolate the currently implemented contract.
 | 15 | path normalization and decomposition | `tools/run-node-tests.sh --stage 15` |
 | 16 | Node `url` module helpers | `tools/run-node-tests.sh --stage 16` |
 | 17 | Rust-backed `crypto.createHash('sha256')` | `tools/run-node-tests.sh --stage 17` |
+| 18 | Rust-backed `crypto.randomUUID()` | `tools/run-node-tests.sh --stage 18` |
