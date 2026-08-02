@@ -14,3 +14,4 @@ these small fixtures isolate the currently implemented contract.
 | 4 | timers and process event listeners | `tools/run-node-tests.sh --stage 4` |
 | 5 | `events.EventEmitter` | `tools/run-node-tests.sh --stage 5` |
 | 6 | `os` and `util` modules | `tools/run-node-tests.sh --stage 6` |
+| 7 | `querystring` module | `tools/run-node-tests.sh --stage 7` |
