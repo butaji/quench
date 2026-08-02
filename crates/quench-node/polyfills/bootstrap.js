@@ -5646,6 +5646,7 @@ const __createNodeCrypto = () => ({
         const result = bytes.toString("hex");
         if (encoding === undefined || encoding === null) return bytes;
         if (encoding === "hex") return result;
+        if (encoding === "base64") return bytes.toString("base64");
         throw new Error(`Unsupported digest encoding: ${encoding}`);
       },
     };
@@ -5694,7 +5695,9 @@ const __createNodeCrypto = () => ({
           ? result
           : encoding === "hex"
             ? result.toString("hex")
-            : result;
+            : encoding === "base64"
+              ? result.toString("base64")
+              : result;
       },
     };
     return hmac;
