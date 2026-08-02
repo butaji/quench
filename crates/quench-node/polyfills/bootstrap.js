@@ -1656,14 +1656,24 @@ globalThis.__nodeAssert.equal = (actual, expected, message) => {
     __nodeAssertionFailure(message || `${actual} != ${expected}`);
 };
 globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
-  if (Object.is(actual, expected))
+  if (Object.is(actual, expected)) {
+    const rendered =
+      typeof actual === "string" && actual.length > 20
+        ? `\n\n'${actual}'`
+        : ` ${actual}`;
     __nodeAssertionFailure(
-      message || `Expected "actual" to be strictly unequal to: ${expected}`,
+      message || `Expected "actual" to be strictly unequal to:${rendered}`,
     );
+  }
 };
 globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
-  if (actual == expected)
-    __nodeAssertionFailure(message || `${actual} == ${expected}`);
+  if (actual == expected) {
+    const error = new globalThis.__nodeAssert.AssertionError(
+      message || `${actual} != ${expected}`,
+    );
+    error.operator = "!=";
+    throw error;
+  }
 };
 globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
 const __nodeAssertNormalize = (value, seen = new WeakSet()) => {
@@ -1717,6 +1727,8 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
       if (expected.name && error.name !== expected.name) throw error;
       if (expected.message && error.message !== expected.message) throw error;
       if (expected.code && error.code !== expected.code) throw error;
+      if (expected.operator && error.operator !== expected.operator)
+        throw error;
     }
   }
   if (!thrown) throw new Error("Missing expected exception");
