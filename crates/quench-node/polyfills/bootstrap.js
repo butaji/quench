@@ -5396,6 +5396,98 @@ const __createNodeCrypto = () => ({
     buffer.set(bytes, offset);
     return buffer;
   },
+  pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
+    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "password" argument must be of type string or an instance of Buffer',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "salt" argument must be of type string or an instance of Buffer',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isInteger(iterations) ||
+      iterations <= 0 ||
+      iterations > 0x7fffffff
+    ) {
+      const error = new RangeError('The value of "iterations" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      const error = new RangeError('The value of "keylen" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof digest !== "string") {
+      const error = new TypeError(
+        'The "digest" argument must be of type string',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (digest.toLowerCase() !== "sha256")
+      throw new Error(`Unsupported digest: ${digest}`);
+    const passwordBytes =
+      typeof password === "string"
+        ? new NodeTextEncoder().encode(password)
+        : password;
+    const saltBytes =
+      typeof salt === "string" ? new NodeTextEncoder().encode(salt) : salt;
+    const output = [];
+    const blocks = Math.ceil(keylen / 32);
+    for (let block = 1; block <= blocks; block++) {
+      const suffix = [
+        (block >>> 24) & 255,
+        (block >>> 16) & 255,
+        (block >>> 8) & 255,
+        block & 255,
+      ];
+      let u = NodeBuffer.from(
+        globalThis.__nodeCrypto
+          .createHmac("sha256", passwordBytes)
+          .update(NodeBuffer.from([...saltBytes, ...suffix]))
+          .digest(),
+      );
+      const result = Array.from(u);
+      for (let count = 1; count < iterations; count++) {
+        u = NodeBuffer.from(
+          globalThis.__nodeCrypto
+            .createHmac("sha256", passwordBytes)
+            .update(u)
+            .digest(),
+        );
+        for (let index = 0; index < result.length; index++)
+          result[index] ^= u[index];
+      }
+      output.push(...result);
+    }
+    return NodeBuffer.from(output.slice(0, keylen));
+  },
+  pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    let result;
+    try {
+      result = globalThis.__nodeCrypto.pbkdf2Sync(
+        password,
+        salt,
+        iterations,
+        keylen,
+        digest,
+      );
+    } catch (error) {
+      queueMicrotask(() => callback(error));
+      return;
+    }
+    queueMicrotask(() => callback(null, result));
+  },
   createHash: (algorithm) => {
     if (algorithm !== "sha256")
       throw new Error(`Unsupported hash: ${algorithm}`);
