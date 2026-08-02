@@ -182,6 +182,9 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
             }),
         )?;
+        ctx.globals().set("__quench_fs_truncate", Func::from(|path: String, length: u64| -> rquickjs::Result<()> {
+            fs::OpenOptions::new().write(true).open(path).and_then(|file| file.set_len(length)).map_err(|_| rquickjs::Error::new_from_js("fs", "truncate failed"))
+        }))?;
         ctx.globals().set("__quench_fs_read_hex", Func::from(|path: String| -> rquickjs::Result<String> {
             fs::read(path).map(|bytes| bytes.iter().map(|byte| format!("{byte:02x}")).collect()).map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
         }))?;
