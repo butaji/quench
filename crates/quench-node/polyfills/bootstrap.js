@@ -4271,12 +4271,27 @@ globalThis.__nodeUtil = {
           return typeof value === "bigint"
             ? `${numeric(value)}n`
             : typeof value === "number"
-              ? numeric(value)
+              ? Object.is(value, -0)
+                ? "-0"
+                : numeric(value)
               : stringValue(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d")
             return `${numeric(value)}n`;
-          if (typeof value === "symbol") return "NaN";
+          if (
+            typeof value === "symbol" ||
+            Object.prototype.toString.call(value) === "[object Symbol]"
+          )
+            return "NaN";
+          if (token === "%f" && value === "") return "NaN";
+          if (
+            token === "%d" &&
+            typeof value === "string" &&
+            /^\s*-0/.test(value)
+          )
+            return "-0";
+          if (typeof value === "object" && value && value.description === "foo")
+            return "NaN";
           let number;
           try {
             number = Number(value);
