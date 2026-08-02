@@ -35,3 +35,6 @@ the default, and reuse is intended for compatible test groups that do not rely
 on process-global native state.
 
 The task is complete.
+The `async_hooks` surface now exposes execution resource/id accessors and
+chainable hook enable/disable methods. This is covered by
+`tests/node-compat/stage-493`.
