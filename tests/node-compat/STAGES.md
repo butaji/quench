@@ -18,3 +18,4 @@ these small fixtures isolate the currently implemented contract.
 | 8 | basic `URL` and `URLSearchParams` | `tools/run-node-tests.sh --stage 8` |
 | 9 | URL authority and serialization | `tools/run-node-tests.sh --stage 9` |
 | 10 | asynchronous `fs` callbacks and promises | `tools/run-node-tests.sh --stage 10` |
+| 11 | minimal `stream` readable/writable flow | `tools/run-node-tests.sh --stage 11` |

@@ -135,6 +135,32 @@ class NodeEventEmitter {
   listenerCount(event) { return (this._events[event] || []).length; }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
+class NodeReadable extends NodeEventEmitter {
+  static from(iterable) {
+    const stream = new NodeReadable();
+    queueMicrotask(() => { for (const chunk of iterable) stream.emit('data', chunk); stream.emit('end'); });
+    return stream;
+  }
+  pipe(destination) { this.on('data', (chunk) => destination.write(chunk)); this.on('end', () => destination.end()); return destination; }
+}
+class NodeWritable extends NodeEventEmitter {
+  write(chunk, encoding, callback) {
+    if (typeof encoding === 'function') callback = encoding;
+    this.emit('data', chunk);
+    if (callback) queueMicrotask(callback);
+    return true;
+  }
+  end(chunk, encoding, callback) { if (chunk !== undefined) this.write(chunk, encoding); if (callback) callback(); this.emit('finish'); }
+}
+class NodeTransform extends NodeWritable {
+  constructor(options = {}) { super(); this._transform = options.transform; }
+  write(chunk, encoding, callback) {
+    if (this._transform) this._transform.call(this, chunk, encoding, () => callback && callback());
+    else super.write(chunk, encoding, callback);
+    return true;
+  }
+}
+globalThis.__nodeStream = { Readable: NodeReadable, Writable: NodeWritable, Transform: NodeTransform, PassThrough: NodeTransform };
 globalThis.__nodeFs = {
   existsSync: (value) => globalThis.__quench_fs_exists(String(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(String(prefix)),
@@ -255,6 +281,7 @@ globalThis.require = (specifier) => {
   if (name === 'os') return globalThis.__nodeOs;
   if (name === 'querystring') return globalThis.__nodeQuerystring;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
+  if (name === 'stream') return globalThis.__nodeStream;
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
