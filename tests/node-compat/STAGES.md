@@ -113,3 +113,4 @@ these small fixtures isolate the currently implemented contract.
 | 103 | `fs.close` fd and callback validation | `tools/run-node-tests.sh --stage 103` |
 | 104 | fd mode-mask regression coverage | `tools/run-node-tests.sh --stage 104` |
 | 105 | promise-based readdir Dirents | `tools/run-node-tests.sh --stage 105` |
+| 106 | sync/async/promise directory handles | `tools/run-node-tests.sh --stage 106` |
