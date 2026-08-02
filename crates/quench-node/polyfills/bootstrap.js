@@ -4574,7 +4574,23 @@ globalThis.__nodeUtil = {
           }
           return Object.is(number, -0) ? "-0" : numeric(number);
         }
-        if (token === "%j") return JSON.stringify(value);
+        if (token === "%j") {
+          const seen = new WeakSet();
+          try {
+            const rendered = JSON.stringify(value, (key, entry) => {
+              if (entry && typeof entry === "object") {
+                if (seen.has(entry)) return "[Circular]";
+                seen.add(entry);
+              }
+              return entry;
+            });
+            return rendered.includes("[Circular]") ? "[Circular]" : rendered;
+          } catch (error) {
+            if (error instanceof TypeError && /circular/i.test(error.message))
+              return "[Circular]";
+            throw error;
+          }
+        }
         if ((token === "%o" || token === "%O") && typeof value === "string")
           return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
         if (
