@@ -4045,6 +4045,36 @@ globalThis.require = (specifier) => {
         },
       }),
     };
+  if (name === "vm")
+    return {
+      runInThisContext: (code) => (0, eval)(String(code)),
+      runInNewContext: (code, sandbox = {}) => {
+        const previous = {};
+        for (const key of Object.keys(sandbox)) {
+          previous[key] = globalThis[key];
+          globalThis[key] = sandbox[key];
+        }
+        try {
+          return (0, eval)(String(code));
+        } finally {
+          for (const key of Object.keys(sandbox))
+            globalThis[key] = previous[key];
+        }
+      },
+      runInContext: (code, sandbox = {}) => {
+        const previous = {};
+        for (const key of Object.keys(sandbox)) {
+          previous[key] = globalThis[key];
+          globalThis[key] = sandbox[key];
+        }
+        try {
+          return (0, eval)(String(code));
+        } finally {
+          for (const key of Object.keys(sandbox))
+            globalThis[key] = previous[key];
+        }
+      },
+    };
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "internal/test/binding")
     return {
