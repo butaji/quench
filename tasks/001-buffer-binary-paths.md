@@ -23,3 +23,6 @@ Implemented and verified by `tests/node-compat/stage-362/buffer-binary-sharing.j
 Buffer now exposes Node's legacy slice/write method names used by generic
 Buffer compatibility tests. This is covered by
 `tests/node-compat/stage-497`.
+Buffer's internal helper names are hidden from reflection on the public
+prototype while preserving generic method behavior and `instanceof Buffer`.
+This is covered by `tests/node-compat/stage-498`.
