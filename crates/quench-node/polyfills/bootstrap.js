@@ -1760,8 +1760,14 @@ globalThis.__nodePath = {
     const result = (absolute ? "/" : "") + output.join("/");
     return result || (absolute ? "/" : ".");
   },
-  basename: (value) =>
-    __nodePathArg(value).replace(/\\/g, "/").split("/").pop(),
+  basename: (value, suffix) => {
+    const base = __nodePathArg(value).replace(/\\/g, "/").split("/").pop();
+    if (suffix !== undefined) {
+      const end = __nodePathArg(suffix);
+      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
+    }
+    return base;
+  },
   dirname: (value) => {
     const parts = __nodePathArg(value).replace(/\\/g, "/").split("/");
     parts.pop();
@@ -1931,11 +1937,18 @@ const __nodeWinPath = {
     if (dir.endsWith("\\")) return `${dir}${base}`;
     return `${dir}\\${base}`;
   },
-  basename: (value) =>
-    __nodePathArg(value)
-      .replace(/[\\/]+$/, "")
-      .split(/[\\/]/)
-      .pop() || "",
+  basename: (value, suffix) => {
+    const base =
+      __nodePathArg(value)
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop() || "";
+    if (suffix !== undefined) {
+      const end = __nodePathArg(suffix);
+      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
+    }
+    return base;
+  },
   dirname: (value) => {
     const input = __nodePathArg(value).replace(/[\\/]+$/, "");
     const index = input.lastIndexOf("\\");
