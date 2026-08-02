@@ -93,3 +93,4 @@ these small fixtures isolate the currently implemented contract.
 | 83 | minimal `internal/test/binding` facade | `tools/run-node-tests.sh --stage 83` |
 | 84 | `Buffer.equals` comparison | `tools/run-node-tests.sh --stage 84` |
 | 85 | realpath and symlink capability helpers | `tools/run-node-tests.sh --stage 85` |
+| 86 | copy-file flags and UV constants | `tools/run-node-tests.sh --stage 86` |
