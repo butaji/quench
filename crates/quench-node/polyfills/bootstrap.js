@@ -1987,6 +1987,11 @@ globalThis.__nodeCommon = {
     globalThis.__nodeCallChecks.push(wrapped);
     return wrapped;
   },
+  mustCallAtLeast: (fn, minimum = 1) => {
+    const wrapped = globalThis.__nodeCommon.mustCall(fn, minimum);
+    wrapped.__quench_at_least = true;
+    return wrapped;
+  },
   mustSucceed: (fn = () => {}) =>
     globalThis.__nodeCommon.mustCall((error, ...args) => {
       if (error) throw error;
@@ -2031,7 +2036,11 @@ globalThis.__nodeCommon = {
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
-    if (callback.calls !== callback.expected)
+    if (
+      callback.__quench_at_least
+        ? callback.calls < callback.expected
+        : callback.calls !== callback.expected
+    )
       throw new Error(
         `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`,
       );
