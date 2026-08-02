@@ -55,6 +55,18 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
+    if crate::interpreter::is_direct_eval()
+        && source.contains("super(")
+        && crate::interpreter::get_current_eval_env()
+            .is_none_or(|env| env.borrow().get_super_class().is_none())
+    {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "super call is not valid in this eval context",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
 
     // Indirect eval does NOT inherit strict mode from the caller (ES §19.2.1).
     // Only direct eval inherits the calling context's strict mode.
@@ -832,6 +844,15 @@ mod tests {
         assert!(ctx.eval("eval('function evalDescriptorOnly() {}'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorOnly').configurable").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
+    }
+
+    #[test]
+    fn direct_eval_super_call_outside_constructor_is_syntax_error() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("try { ({ method() { eval('super();'); } }).method(); false } catch (e) { e instanceof SyntaxError }")
+            .is_ok_and(|value| matches!(value, Value::Boolean(true))));
     }
 
     #[test]
