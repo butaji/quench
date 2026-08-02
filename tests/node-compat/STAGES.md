@@ -109,3 +109,4 @@ these small fixtures isolate the currently implemented contract.
 | 99 | file/directory-aware `fs.rmSync` behavior | `tools/run-node-tests.sh --stage 99` |
 | 100 | `fs.readdir` `withFileTypes` Dirent support | `tools/run-node-tests.sh --stage 100` |
 | 101 | internal filesystem open-flag utility | `tools/run-node-tests.sh --stage 101` |
+| 102 | numeric and octal-string `fs.open` modes | `tools/run-node-tests.sh --stage 102` |

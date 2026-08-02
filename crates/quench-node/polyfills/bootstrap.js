@@ -375,18 +375,14 @@ globalThis.__nodeFs = {
   writeFileSync: (value, data, options = {}) => { const path = nodePathValue(value); const result = data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(path, data.toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
   openSync: (value, flags = 'r', mode) => {
     const path = nodeFsPath(value);
-    if (mode !== undefined && mode !== null && typeof mode !== 'number') {
-      const error = new TypeError('The "mode" argument must be of type number');
-      error.code = 'ERR_INVALID_ARG_TYPE';
-      throw error;
-    }
+    if (mode !== undefined && mode !== null && typeof mode !== 'number' && typeof mode !== 'string') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     const flag = String(flags);
     if (!/^[wax]/.test(flag) && !globalThis.__quench_fs_access(path)) {
       const error = new Error(`ENOENT: no such file or directory, open '${path}'`);
       error.code = 'ENOENT'; error.syscall = 'open'; error.path = path;
       throw error;
     }
-    const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; return fd;
+    const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; if (mode !== undefined && mode !== null) globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); return fd;
   },
   closeSync: (_fd) => {},
   statSync: (value, options = {}) => {
@@ -564,7 +560,7 @@ globalThis.__nodeFs.stat = (value, options, callback) => {
 globalThis.__nodeFs.lstat = globalThis.__nodeFs.stat;
 globalThis.__nodeFs.fstatSync = (fd) => {
   if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
-  return globalThis.__nodeFs.statSync('.');
+  return globalThis.__nodeFs.statSync(globalThis.__nodeFdPaths[fd] || '.');
 };
 globalThis.__nodeFs.fstat = (fd, options, callback) => {
   if (typeof options === 'function') callback = options;
@@ -590,7 +586,7 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
   else if (typeof mode === 'function') { callback = mode; mode = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
-  if (mode !== undefined && mode !== null && typeof mode !== 'number') {
+  if (mode !== undefined && mode !== null && typeof mode !== 'number' && typeof mode !== 'string') {
     const error = new TypeError('The "mode" argument must be of type number');
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
