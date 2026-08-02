@@ -531,6 +531,27 @@ class NodeBuffer extends Uint8Array {
     }
     return NodeBuffer.compare(this, target);
   }
+  _swap(width) {
+    if (this.length % width !== 0)
+      throw new Error(`Buffer size must be a multiple of ${width * 8}-bits`);
+    for (let offset = 0; offset < this.length; offset += width) {
+      for (let i = 0; i < width / 2; i++) {
+        const value = this[offset + i];
+        this[offset + i] = this[offset + width - i - 1];
+        this[offset + width - i - 1] = value;
+      }
+    }
+    return this;
+  }
+  swap16() {
+    return this._swap(2);
+  }
+  swap32() {
+    return this._swap(4);
+  }
+  swap64() {
+    return this._swap(8);
+  }
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
   }
