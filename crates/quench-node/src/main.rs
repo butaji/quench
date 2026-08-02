@@ -206,7 +206,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             Func::from(|path: String, flags: String| -> rquickjs::Result<u32> {
                 use std::fs::OpenOptions;
                 let mut options = OpenOptions::new();
-                if flags.starts_with('r') { options.read(true); } else { options.create(true).write(true); }
+                if flags.starts_with('r') { options.read(true); } else { options.create(true).write(true); if flags.starts_with('w') { options.truncate(true); } }
                 options.open(path)
                     .map(|_| 1)
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "openSync failed"))
