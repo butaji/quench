@@ -10,6 +10,7 @@ polyfills and a staged compatibility harness.
 cargo run -p quench-node -- --stage 284
 tools/run-node-tests.sh tests/node/test/parallel/test-querystring.js
 tools/compat-coverage.sh
+tools/check-focused-stages.sh
 ```
 
 The Node test suite is tracked as the `tests/node` submodule. Compatibility
@@ -25,6 +26,8 @@ them. Polyfills are intentionally kept readable and uncompressed.
 `tools/compat-coverage.sh` reports the current fixture and upstream-test
 inventory. It deliberately reports Node API coverage as `unmeasured`: a count
 of focused fixtures is not a valid percentage of the full Node API surface.
+`tools/check-focused-stages.sh` runs every focused stage and reports concrete
+pass/fail counts; it does not turn those counts into an API percentage.
 
 ## Runtime boundary
 
