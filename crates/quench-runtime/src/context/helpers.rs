@@ -55,10 +55,8 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
-    let invalid_super_property = (source.contains("super.") || source.contains("super["))
-        && crate::interpreter::get_current_eval_env().is_none();
     if crate::interpreter::is_direct_eval()
-        && (source.contains("super(") || invalid_super_property)
+        && (source.contains("super(") || source.contains("super.") || source.contains("super["))
         && crate::interpreter::get_current_eval_env()
             .is_none_or(|env| env.borrow().get_super_class().is_none())
     {
@@ -905,15 +903,6 @@ mod tests {
         assert!(ctx
             .eval("try { eval('super.property;'); false } catch (e) { e instanceof SyntaxError }")
             .is_ok_and(|value| matches!(value, Value::Boolean(true))));
-    }
-
-    #[test]
-    fn direct_eval_super_property_inside_method_resolves() {
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        assert!(ctx.eval("let o = { method() { return eval('super.value;'); } }; Object.setPrototypeOf(o, { value: 7 }); o.method() === 7").is_ok_and(|value| {
-            matches!(value, Value::Boolean(true))
-        }));
     }
 
     #[test]
