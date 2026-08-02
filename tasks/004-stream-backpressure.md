@@ -52,6 +52,8 @@ Writable `drain` transition and callback-free length recovery are covered by
 `tests/node-compat/stage-453/stream-drain-transition.js`.
 Chainable writable `end()` behavior is covered by
 `tests/node-compat/stage-454/stream-end-return.js`.
+Writable write-after-end rejection is covered by
+`tests/node-compat/stage-455/stream-write-after-end.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by

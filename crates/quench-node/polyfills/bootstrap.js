@@ -2497,6 +2497,15 @@ class NodeWritable extends NodeEventEmitter {
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
+    if (this.writableEnded) {
+      const error = new Error("write after end");
+      error.code = "ERR_STREAM_WRITE_AFTER_END";
+      queueMicrotask(() => {
+        if (callback) callback(error);
+        else this.emit("error", error);
+      });
+      return false;
+    }
     const size =
       typeof chunk === "string" ? chunk.length : chunk?.byteLength || 1;
     this.writableLength += size;
