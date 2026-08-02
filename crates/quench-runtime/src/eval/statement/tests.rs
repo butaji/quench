@@ -79,6 +79,21 @@ fn dynamic_import_missing_script_fixture_rejects_with_syntax_error() {
 }
 
 #[test]
+fn dynamic_import_specifier_error_rejects_with_original_value() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval(
+        "var result; import({toString(){throw 'custom error';}}).catch(error => result = error);",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("custom error".into())
+    );
+}
+
+#[test]
 fn dynamic_import_uses_function_to_string_for_specifier() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

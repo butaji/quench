@@ -354,8 +354,16 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
 fn register_dynamic_import(ctx: &mut Context) {
     let function = NativeFunction::new(|args| {
         let source_value = args.first().cloned().unwrap_or(crate::Value::Undefined);
-        let source =
-            crate::value::to_js_string(&crate::value::to_primitive(&source_value, Some("string"))?);
+        let primitive = match crate::value::to_primitive(&source_value, Some("string")) {
+            Ok(value) => value,
+            Err(error) => {
+                let reason = crate::value::take_thrown_value()
+                    .unwrap_or_else(|| crate::Value::String(error.to_string()));
+                return crate::builtins::promise::create_rejected_promise(reason)
+                    .map(crate::Value::Object);
+            }
+        };
+        let source = crate::value::to_js_string(&primitive);
         let source_phase = matches!(args.get(2), Some(crate::Value::Boolean(true)))
             || matches!(args.get(1), Some(crate::Value::Boolean(true)));
         let options = if source_phase && args.get(1) == Some(&crate::Value::Boolean(true)) {
