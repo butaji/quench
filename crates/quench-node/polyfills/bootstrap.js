@@ -42,7 +42,7 @@ for (const name of [
   const set = new WeakSet();
   __nodeTypedArraySets[name] = set;
   const Wrapped = function (...args) {
-    const array = new Native(...args);
+    const array = Reflect.construct(Native, args, new.target || Wrapped);
     set.add(array);
     return array;
   };
