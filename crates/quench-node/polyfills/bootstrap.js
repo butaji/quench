@@ -463,9 +463,14 @@ class NodeBuffer extends Uint8Array {
     return new NodeTextDecoder().decode(this);
   }
   equals(other) {
-    if (typeof other === "string") other = NodeBuffer.from(other);
+    if (!(other instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "otherBuffer" argument must be an instance of Buffer or Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     return (
-      other &&
       this.length === other.length &&
       this.every((value, index) => value === other[index])
     );
