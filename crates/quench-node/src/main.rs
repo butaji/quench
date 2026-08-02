@@ -77,6 +77,8 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             "__quench_env_get",
             Func::from(|key: String| std::env::var(key).ok()),
         )?;
+        ctx.globals().set("__quench_env_set", Func::from(|key: String, value: String| { std::env::set_var(key, value); }))?;
+        ctx.globals().set("__quench_env_delete", Func::from(|key: String| { std::env::remove_var(key); }))?;
         ctx.globals().set(
             "__quench_console_write",
             Func::from(|line: String| {

@@ -65,3 +65,4 @@ these small fixtures isolate the currently implemented contract.
 | 55 | process warning emission | `tools/run-node-tests.sh --stage 55` |
 | 56 | process executable identity | `tools/run-node-tests.sh --stage 56` |
 | 57 | host command-line `process.argv` | `tools/run-node-tests.sh --stage 57` |
+| 58 | mutable host-backed `process.env` | `tools/run-node-tests.sh --stage 58` |
