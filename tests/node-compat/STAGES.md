@@ -35,3 +35,4 @@ these small fixtures isolate the currently implemented contract.
 | 25 | synchronous file mutation APIs | `tools/run-node-tests.sh --stage 25` |
 | 26 | append and access filesystem APIs | `tools/run-node-tests.sh --stage 26` |
 | 27 | filesystem realpath and rm aliases | `tools/run-node-tests.sh --stage 27` |
+| 28 | promise directory filesystem APIs | `tools/run-node-tests.sh --stage 28` |
