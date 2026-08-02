@@ -33,3 +33,5 @@ Asynchronous descriptor closure is covered by
 `tests/node-compat/stage-390/fs-close-callback.js`.
 Missing-file `statSync()` metadata is covered by
 `tests/node-compat/stage-419/fs-stat-enoent.js`.
+Synchronous `fs.readFile()` callback validation is covered by
+`tests/node-compat/stage-479/fs-readfile-callback-validation.js`.
