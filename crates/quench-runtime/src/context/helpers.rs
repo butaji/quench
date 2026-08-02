@@ -36,16 +36,12 @@ pub(crate) fn restore_regex_cache(saved: rustc_hash::FxHashMap<char, Value>) {
 /// "use strict" directive.
 pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
     let argument = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut source = match argument {
+    let source = match argument {
         Value::String(source) => source,
         value => return Ok(value),
     };
     if source.is_empty() {
         return Ok(Value::Undefined);
-    }
-    let rewrite_new_target = crate::interpreter::is_direct_eval() && source.contains("new.target");
-    if rewrite_new_target {
-        source = source.replace("new.target", "__quench_new_target__");
     }
     if source.lines().map(str::trim).any(|line| {
         (line.starts_with("export ")
@@ -187,12 +183,6 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     }
     let result = if crate::interpreter::is_direct_eval() {
         if let Some(mut eval_env) = crate::interpreter::get_current_eval_env() {
-            if rewrite_new_target {
-                eval_env.borrow_mut().define(
-                    "__quench_new_target__".to_string(),
-                    crate::interpreter::get_new_target().unwrap_or(Value::Undefined),
-                );
-            }
             if in_class_field {
                 eval_env
                     .borrow_mut()
@@ -842,15 +832,6 @@ mod tests {
         assert!(ctx.eval("eval('function evalDescriptorOnly() {}'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorOnly').configurable").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
-    }
-
-    #[test]
-    fn direct_eval_new_target_in_function_code() {
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        assert!(ctx
-            .eval("var seen; var f = function() { seen = eval('new.target;'); }; f(); typeof seen")
-            .is_ok_and(|value| crate::value::to_js_string(&value) == "undefined"));
     }
 
     #[test]
