@@ -4080,6 +4080,10 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
         if (!stream._paused && stream._index === stream._chunks.length) {
           stream._ended = true;
           stream.emit("end");
+          if (stream.fd !== null) {
+            globalThis.__nodeFs.closeSync(stream.fd);
+            stream.fd = null;
+          }
           stream.emit("close");
         }
       };
