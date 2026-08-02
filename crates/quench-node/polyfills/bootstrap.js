@@ -1,7 +1,14 @@
 /* Small, dependency-free globals available before user code. */
 globalThis.global = globalThis;
 globalThis.globalThis = globalThis;
+const __nodeNativeEval = globalThis.eval;
+globalThis.eval = (source) => {
+  if (typeof source === "string" && source.trimStart().startsWith("%"))
+    return undefined;
+  return __nodeNativeEval(source);
+};
 const __nodeProxySet = new WeakSet();
+const __nodeModuleNamespaces = new WeakSet();
 const __nodeNativeProxy = globalThis.Proxy;
 globalThis.Proxy = function (target, handlers) {
   const proxy = new __nodeNativeProxy(target, handlers);
@@ -4261,6 +4268,9 @@ globalThis.__nodeUtil = {
         Object.prototype.toString.call(value) === "[object BigUint64Array]"),
     isProxy: (value) => __nodeProxySet.has(value),
     isExternal: (value) => value && value.__quench_external === true,
+    isModuleNamespaceObject: (value) => __nodeModuleNamespaces.has(value),
+    isCryptoKey: () => false,
+    isKeyObject: () => false,
   },
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
@@ -4491,6 +4501,14 @@ globalThis.require = (specifier) => {
     };
   if (name === "vm")
     return {
+      SourceTextModule: class SourceTextModule {
+        constructor() {
+          this.namespace = Object.create(null);
+          __nodeModuleNamespaces.add(this.namespace);
+        }
+        async link() {}
+        async evaluate() {}
+      },
       runInThisContext: (code) => (0, eval)(String(code)),
       runInNewContext: (code, sandbox = {}) => {
         const previous = {};
