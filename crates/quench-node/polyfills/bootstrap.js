@@ -382,9 +382,9 @@ globalThis.__nodeFs = {
       error.code = 'ENOENT'; error.syscall = 'open'; error.path = path;
       throw error;
     }
-    const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; if (mode !== undefined && mode !== null) globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); return fd;
+    const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; globalThis.__nodeFdPositions[fd] = 0; if (mode !== undefined && mode !== null) globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); return fd;
   },
-  closeSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } delete globalThis.__nodeFdPaths[fd]; },
+  closeSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } delete globalThis.__nodeFdPaths[fd]; delete globalThis.__nodeFdPositions[fd]; },
   statSync: (value, options = {}) => {
     const path = nodeFsPath(value); let kind;
     try { kind = globalThis.__quench_fs_kind(path); } catch (error) {
@@ -459,9 +459,9 @@ globalThis.__nodeFs = {
     if (!Number.isInteger(length) || length < 0) { const error = new RangeError('The value of "length" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
     if (position !== null && position !== undefined && typeof position !== 'number' && typeof position !== 'bigint') { const error = new TypeError('The "position" argument must be of type number or bigint'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
-    const numericPosition = position === null || Number(position) < 0 ? 0 : Number(position);
+    const numericPosition = position === null || Number(position) < 0 ? (globalThis.__nodeFdPositions[fd] || 0) : Number(position);
     const hex = globalThis.__quench_fs_read_range_hex(path, numericPosition, Number(length));
-    const bytes = NodeBuffer.from(hex, 'hex'); buffer.set(bytes.subarray(0, Number(length)), Number(offset)); return bytes.length;
+    const bytes = NodeBuffer.from(hex, 'hex'); buffer.set(bytes.subarray(0, Number(length)), Number(offset)); if (position === null || position === undefined) globalThis.__nodeFdPositions[fd] = numericPosition + bytes.length; return bytes.length;
   },
   readvSync: (fd, buffers, position = null) => {
     if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -475,7 +475,7 @@ globalThis.__nodeFs = {
     if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0) { const error = new RangeError('The write range is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
-    const bytes = buffer.subarray(offset, offset + length); globalThis.__quench_fs_write_hex(path, NodeBuffer.from(bytes).toString('hex')); return bytes.length;
+    const bytes = buffer.subarray(offset, offset + length); const at = position === null || position === undefined ? (globalThis.__nodeFdPositions[fd] || 0) : Number(position); const existing = NodeBuffer.from(globalThis.__quench_fs_read_hex(path), 'hex'); const output = NodeBuffer.alloc(Math.max(existing.length, at + bytes.length)); output.set(existing); output.set(bytes, at); globalThis.__quench_fs_write_hex(path, output.toString('hex')); if (position === null || position === undefined) globalThis.__nodeFdPositions[fd] = at + bytes.length; return bytes.length;
   },
   writevSync: (fd, buffers, position = null) => { if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } return globalThis.__nodeFs.writeSync(fd, NodeBuffer.concat(buffers)); },
   copyFileSync: (from, to, mode = 0) => {
@@ -531,6 +531,7 @@ globalThis.__nodeFs.write = (fd, buffer, offset, length, position, callback) => 
 globalThis.__nodeFs.writev = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writevSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
+globalThis.__nodeFdPositions = {};
 const nodeMode = (mode) => {
   const value = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode);
   if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) { const error = new RangeError('The value of "mode" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
