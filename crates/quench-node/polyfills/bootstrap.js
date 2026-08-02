@@ -2310,9 +2310,13 @@ class NodeWritable extends NodeEventEmitter {
     return this.writableLength < this.writableHighWaterMark;
   }
   end(chunk, encoding, callback) {
-    if (chunk !== undefined) this.write(chunk, encoding);
-    if (callback) callback();
-    this.emit("finish");
+    if (typeof encoding === "function") callback = encoding;
+    if (chunk !== undefined)
+      this.write(chunk, typeof encoding === "function" ? undefined : encoding);
+    queueMicrotask(() => {
+      this.emit("finish");
+      if (callback) callback();
+    });
   }
 }
 class NodeTransform extends NodeWritable {

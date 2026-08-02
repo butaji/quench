@@ -28,3 +28,5 @@ Transform output through `push()` is covered by
 `tests/node-compat/stage-372/stream-transform.js`.
 Pipe backpressure propagation is covered by
 `tests/node-compat/stage-373/stream-pipe-backpressure.js`.
+Deferred `finish` and `end` callback ordering is covered by
+`tests/node-compat/stage-382/stream-end-order.js`.
