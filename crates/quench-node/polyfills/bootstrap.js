@@ -276,6 +276,20 @@ class NodeBuffer extends Uint8Array {
     return value instanceof NodeBuffer;
   }
   static compare(left, right) {
+    if (!(left instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "buf1" argument must be an instance of Buffer or Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!(right instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "buf2" argument must be an instance of Buffer or Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const a = NodeBuffer.from(left);
     const b = NodeBuffer.from(right);
     const length = Math.min(a.length, b.length);
@@ -500,6 +514,16 @@ class NodeBuffer extends Uint8Array {
       this.length === other.length &&
       this.every((value, index) => value === other[index])
     );
+  }
+  compare(target) {
+    if (!(target instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "target" argument must be an instance of Buffer or Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return NodeBuffer.compare(this, target);
   }
   toJSON() {
     return { type: "Buffer", data: Array.from(this) };
