@@ -33,6 +33,8 @@ User Timing marks and measures are covered by
 `tests/node-compat/stage-403/perf-hooks-user-timing.js`.
 Performance entry retrieval and clearing are covered by
 `tests/node-compat/stage-404/perf-hooks-entries.js`.
+`performance.timerify()` error propagation and observer lifecycle are covered
+by `tests/node-compat/stage-412/perf-hooks-timerify.js`.
 `timers/promises.setInterval()` async iteration is covered by
 `tests/node-compat/stage-405/timers-promises-interval.js`.
 Pre-aborted `timers/promises.setTimeout()` signals are covered by

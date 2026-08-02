@@ -4751,9 +4751,33 @@ const __nodePerformance = {
     __nodePerformanceEntries.filter(
       (entry) => entry.entryType === String(entryType),
     ),
+  timerify: (functionToWrap) => {
+    if (typeof functionToWrap !== "function")
+      throw new TypeError('The "fn" argument must be a function');
+    const wrapped = (...args) => functionToWrap(...args);
+    Object.defineProperty(wrapped, "name", {
+      configurable: true,
+      value: functionToWrap.name,
+    });
+    return wrapped;
+  },
   toJSON: () => ({ timeOrigin: __nodeStartedAt }),
 };
-globalThis.__nodePerfHooks = { performance: __nodePerformance };
+class NodePerformanceObserver {
+  constructor(callback) {
+    this.callback = callback;
+  }
+  observe() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+globalThis.__nodePerfHooks = {
+  performance: __nodePerformance,
+  timerify: __nodePerformance.timerify,
+  PerformanceObserver: NodePerformanceObserver,
+};
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
