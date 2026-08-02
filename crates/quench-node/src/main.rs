@@ -163,6 +163,14 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.globals().set(
+            "__quench_random_bytes",
+            Func::from(|size: u64| -> Vec<u8> {
+                let mut bytes = vec![0u8; size.min(16 * 1024 * 1024) as usize];
+                rand::thread_rng().fill_bytes(&mut bytes);
+                bytes
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_fs_mkdtemp",
             Func::from(|prefix: String| -> rquickjs::Result<String> {
                 let root = std::env::temp_dir();

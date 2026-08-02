@@ -20,4 +20,5 @@ Keep Node crypto operations on byte-oriented values across the Rust/JavaScript b
 
 SHA-256 byte updates now use the native `Vec<u8>` binding and are covered by
 `tests/node-compat/stage-374/crypto-hash-bytes.js`. HMAC and signing paths
-remain in progress.
+remain in progress. Native random bytes and fill are covered by
+`tests/node-compat/stage-375/crypto-random-bytes.js`.
