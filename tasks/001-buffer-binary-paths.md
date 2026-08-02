@@ -16,3 +16,7 @@ Make Node-compatible `Buffer` operations use typed-array/ArrayBuffer data withou
 - Binary operations pass focused compatibility tests.
 - No public API changes are introduced.
 - The stage is run, formatted, checked, committed, and pushed according to the repository workflow.
+
+## Status
+
+Implemented and verified by `tests/node-compat/stage-362/buffer-binary-sharing.js`.
