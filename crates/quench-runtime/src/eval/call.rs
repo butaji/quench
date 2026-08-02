@@ -517,6 +517,9 @@ pub fn set_super_property(
                 || (!receiver.extensible && !receiver.has_own(&prop_name))
         };
         if blocked {
+            if !crate::interpreter::is_strict_mode() {
+                return Ok(value);
+            }
             let (error, js_error) = crate::value::error::create_js_error_with_type(
                 "Cannot assign to read-only or non-extensible property",
                 "TypeError",

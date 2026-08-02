@@ -31,6 +31,12 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn non_strict_super_set_ignores_failed_receiver_set() {
+    let value = eval("var obj = { method() { super.x = 8; Object.freeze(obj); super.y = 9; } }; obj.method(); Object.prototype.hasOwnProperty.call(obj, 'y')").unwrap();
+    assert_eq!(value, Value::Boolean(false));
+}
+
+#[test]
 fn derived_constructor_arrow_this_before_super_throws() {
     let value = eval("var probe, result; class Base { constructor() { try { probe(); result = false; } catch (e) { result = e instanceof ReferenceError; } } } class C extends Base { field = 1; constructor() { probe = () => this; try { probe(); } catch (e) {} super(); } } new C(); result").unwrap();
     assert_eq!(value, Value::Boolean(true));
