@@ -7,6 +7,15 @@ globalThis.eval = (source) => {
     return undefined;
   return __nodeNativeEval(source);
 };
+const __nodeDetachedBuffers = new WeakSet();
+const __nodeNativeStructuredClone = globalThis.structuredClone;
+globalThis.structuredClone = (value, options) => {
+  for (const item of options && options.transfer ? options.transfer : [])
+    if (item instanceof ArrayBuffer) __nodeDetachedBuffers.add(item);
+  return __nodeNativeStructuredClone
+    ? __nodeNativeStructuredClone(value, options)
+    : value;
+};
 const __nodeProxySet = new WeakSet();
 const __nodeModuleNamespaces = new WeakSet();
 const __nodeNativeProxy = globalThis.Proxy;
@@ -481,6 +490,11 @@ class NodeBuffer extends Uint8Array {
     ].includes(encoding.toLowerCase());
   }
   static isAscii(value) {
+    if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
+      const error = new TypeError("ArrayBuffer is detached");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
     if (!(value instanceof Uint8Array)) {
       const error = new TypeError(
         'The "input" argument must be an instance of Uint8Array',
@@ -491,6 +505,11 @@ class NodeBuffer extends Uint8Array {
     return value.every((byte) => byte < 0x80);
   }
   static isUtf8(value) {
+    if (value instanceof ArrayBuffer && __nodeDetachedBuffers.has(value)) {
+      const error = new TypeError("ArrayBuffer is detached");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
     if (!(value instanceof Uint8Array)) {
       const error = new TypeError(
         'The "input" argument must be an instance of Uint8Array',
