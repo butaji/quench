@@ -372,7 +372,7 @@ globalThis.__nodeFs = {
     }
     return globalThis.__quench_fs_read_file(path);
   },
-  writeFileSync: (value, data, options = {}) => { const path = nodePathValue(value); const result = data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(path, data.toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
+  writeFileSync: (value, data, options = {}) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodePathValue(value); if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; } const result = data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(path, data.toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
   openSync: (value, flags = 'r', mode) => {
     const path = nodeFsPath(value);
     if (mode !== undefined && mode !== null && typeof mode !== 'number' && typeof mode !== 'string') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
