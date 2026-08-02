@@ -327,6 +327,15 @@ fn run_source_with_runtime(
             }),
         )?;
         ctx.globals().set(
+            "__quench_fs_append_bytes",
+            Func::from(|path: String, data: Vec<u8>| -> rquickjs::Result<()> {
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new().create(true).append(true).open(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))?;
+                file.write_all(&data).map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_fs_access",
             Func::from(|path: String| fs::metadata(path).is_ok()),
         )?;
