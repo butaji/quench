@@ -4251,6 +4251,11 @@ globalThis.__nodeUtil = {
     };
     const stringValue = (value) => {
       if (value && typeof value === "object") {
+        if (typeof value[Symbol.toPrimitive] === "function") {
+          try {
+            return String(value);
+          } catch (_) {}
+        }
         if (Object.getPrototypeOf(value) === null) {
           const entries = Object.keys(value).map(
             (key) => `${key}: ${inspect(value[key])}`,
