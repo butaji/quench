@@ -43,3 +43,4 @@ these small fixtures isolate the currently implemented contract.
 | 33 | upstream `common/tmpdir` helper | `tools/run-node-tests.sh --stage 33` |
 | 34 | UTF-8 `TextEncoder` compatibility | `tools/run-node-tests.sh --stage 34` |
 | 35 | upstream fs path coercion and async mkdtemp | `tools/run-node-tests.sh --stage 35` |
+| 36 | Node-compatible six-character mkdtemp suffix | `tools/run-node-tests.sh --stage 36` |

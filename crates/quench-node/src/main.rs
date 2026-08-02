@@ -89,7 +89,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or_default()
                     .as_nanos();
                 for attempt in 0..100 {
-                    let path = root.join(format!("{prefix}{stamp}-{attempt}"));
+                    let path = root.join(format!("{prefix}{:06}", (stamp + attempt as u128) % 1_000_000));
                     if fs::create_dir(&path).is_ok() {
                         return Ok(path.to_string_lossy().into_owned());
                     }
