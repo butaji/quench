@@ -262,6 +262,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
                     ..
                 }
                 | ast::Statement::ClassDeclaration { name, .. } => name,
+                ast::Statement::FunctionDeclaration { name, .. } if eval_strict => name,
                 _ => continue,
             };
             eval_env
@@ -873,6 +874,15 @@ mod tests {
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("let count = 0; const f = (p = eval(\"var arguments = 'param'\")) => { function arguments() {}; count++; }; f(); count").is_ok_and(|value| {
             matches!(value, Value::Number(number) if number == 1.0)
+        }));
+    }
+
+    #[test]
+    fn strict_eval_function_declaration_does_not_leak() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("function check() { 'use strict'; eval('function localOnly() {}'); return typeof localOnly; } check()").is_ok_and(|value| {
+            crate::value::to_js_string(&value) == "undefined"
         }));
     }
 }
