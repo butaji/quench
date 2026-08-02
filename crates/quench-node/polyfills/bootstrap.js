@@ -372,7 +372,7 @@ globalThis.__nodeFs = {
     }
     return globalThis.__quench_fs_read_file(path);
   },
-  writeFileSync: (value, data, options = {}) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodePathValue(value); if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; } const result = data instanceof Uint8Array ? globalThis.__quench_fs_write_hex(path, NodeBuffer.from(data).toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
+  writeFileSync: (value, data, options = {}) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodePathValue(value); if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; } const view = data instanceof Uint8Array ? data : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : undefined; const result = view ? globalThis.__quench_fs_write_hex(path, NodeBuffer.from(view).toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
   openSync: (value, flags = 'r', mode) => {
     const path = nodeFsPath(value);
     if (mode !== undefined && mode !== null && typeof mode !== 'number' && typeof mode !== 'string') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
