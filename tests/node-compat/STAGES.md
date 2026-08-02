@@ -46,3 +46,4 @@ these small fixtures isolate the currently implemented contract.
 | 36 | Node-compatible six-character mkdtemp suffix | `tools/run-node-tests.sh --stage 36` |
 | 37 | unique repeated `mkdtemp` prefixes | `tools/run-node-tests.sh --stage 37` |
 | 38 | UTF-8 Buffer string round trips | `tools/run-node-tests.sh --stage 38` |
+| 39 | host-backed `process.chdir` | `tools/run-node-tests.sh --stage 39` |

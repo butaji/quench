@@ -20,7 +20,9 @@ globalThis.process = {
   arch: 'unknown',
   version: 'v0.1.0',
   versions: { node: '0.1.0' },
-  cwd: () => globalThis.__quench_cwd,
+  cwd: () => globalThis.__quench_cwd_get(),
+  chdir: (value) => globalThis.__quench_chdir(String(value)),
+  exitCode: 0,
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
   hrtime: { bigint: () => BigInt(Date.now()) * 1000000n },
 };
