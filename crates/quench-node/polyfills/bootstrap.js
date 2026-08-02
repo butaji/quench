@@ -896,6 +896,10 @@ class NodeBuffer extends Uint8Array {
     return false;
   }
   indexOf(value, byteOffset = 0, encoding) {
+    if (typeof byteOffset === "string") {
+      encoding = byteOffset;
+      byteOffset = 0;
+    }
     const needle =
       typeof value === "number"
         ? new Uint8Array([value & 0xff])
@@ -906,6 +910,14 @@ class NodeBuffer extends Uint8Array {
     let start =
       Number.isNaN(offset) || offset === -Infinity ? 0 : Math.trunc(offset);
     if (start < 0) start = Math.max(this.length + start, 0);
+    if (
+      (encoding === "ucs2" ||
+        encoding === "ucs-2" ||
+        encoding === "utf16le" ||
+        encoding === "utf-16le") &&
+      start % 2 !== 0
+    )
+      return -1;
     if (start > this.length || start === Infinity)
       return needle.length === 0 ? this.length : -1;
     if (needle.length === 0) return start;
@@ -918,6 +930,10 @@ class NodeBuffer extends Uint8Array {
     return -1;
   }
   lastIndexOf(value, byteOffset = this.length - 1, encoding) {
+    if (typeof byteOffset === "string") {
+      encoding = byteOffset;
+      byteOffset = this.length - 1;
+    }
     const needle =
       typeof value === "number"
         ? new Uint8Array([value & 0xff])
