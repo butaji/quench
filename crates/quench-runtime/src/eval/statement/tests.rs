@@ -31,6 +31,19 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn dynamic_import_missing_module_rejects_with_type_error() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval("var result; import('missing-module').then(() => { result = 'fulfilled'; }, error => { result = error.name; });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("TypeError".into())
+    );
+}
+
+#[test]
 fn dynamic_import_uses_function_to_string_for_specifier() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
