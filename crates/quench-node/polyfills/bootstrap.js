@@ -2327,9 +2327,17 @@ globalThis.__nodeEventEmitter.on = async function* (emitter, event) {
 class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
+    this.destroyed = false;
     this._paused = false;
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+  }
+  destroy(error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    if (error) this.emit("error", error);
+    queueMicrotask(() => this.emit("close"));
+    return this;
   }
   static from(iterable) {
     const stream = new NodeReadable();
@@ -2373,8 +2381,16 @@ class NodeReadable extends NodeEventEmitter {
 class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
+    this.destroyed = false;
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
+  }
+  destroy(error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    if (error) this.emit("error", error);
+    queueMicrotask(() => this.emit("close"));
+    return this;
   }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
