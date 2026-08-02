@@ -119,6 +119,25 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     };
     let ast::Program::Script(body) = &program;
     if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
+        if !global.borrow().extensible {
+            for statement in body {
+                if let ast::Statement::VarDeclaration {
+                    kind: ast::VarKind::Var,
+                    name,
+                    ..
+                } = statement
+                {
+                    if global.borrow().get_own_property(name).is_none() {
+                        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+                            "cannot declare global variable",
+                            "TypeError",
+                        );
+                        crate::value::set_thrown_value(err_val);
+                        return Err(js_err);
+                    }
+                }
+            }
+        }
         for statement in body {
             if let ast::Statement::FunctionDeclaration { name, .. } = statement {
                 if global
@@ -883,6 +902,15 @@ mod tests {
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("function check() { 'use strict'; eval('function localOnly() {}'); return typeof localOnly; } check()").is_ok_and(|value| {
             crate::value::to_js_string(&value) == "undefined"
+        }));
+    }
+
+    #[test]
+    fn eval_var_rejects_new_binding_on_non_extensible_global() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("Object.preventExtensions(this); try { eval('var evalNewOnly'); false } catch (e) { e instanceof TypeError }").is_ok_and(|value| {
+            matches!(value, Value::Boolean(true))
         }));
     }
 }
