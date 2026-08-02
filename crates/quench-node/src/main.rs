@@ -157,6 +157,19 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 fs::copy(from, to).map(|_| ()).map_err(|_| rquickjs::Error::new_from_js("fs", "copyFileSync failed"))
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_append",
+            Func::from(|path: String, data: String| -> rquickjs::Result<()> {
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new().create(true).append(true).open(path)
+                    .map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))?;
+                file.write_all(data.as_bytes()).map_err(|_| rquickjs::Error::new_from_js("fs", "appendFileSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_access",
+            Func::from(|path: String| fs::metadata(path).is_ok()),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;

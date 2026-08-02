@@ -254,6 +254,8 @@ globalThis.__nodeFs = {
   renameSync: (from, to) => globalThis.__quench_fs_rename(String(from), String(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
   copyFileSync: (from, to) => globalThis.__quench_fs_copy(String(from), String(to)),
+  appendFileSync: (value, data) => globalThis.__quench_fs_append(String(value), String(data)),
+  accessSync: (value) => { if (!globalThis.__quench_fs_access(String(value))) throw new Error('ENOENT'); },
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
