@@ -907,7 +907,7 @@ class NodeBuffer extends Uint8Array {
     }
     const length =
       list.length === 0
-        ? 0
+        ? (totalLength ?? 0)
         : totalLength === undefined
           ? list.reduce((sum, item) => sum + item.byteLength, 0)
           : totalLength;
@@ -1388,6 +1388,7 @@ class NodeBuffer extends Uint8Array {
     return NodeBuffer.prototype._writeDouble.call(this, value, offset, false);
   }
   _writeDouble(value, offset, littleEndian) {
+    const size = 8;
     if (typeof offset !== "number") {
       const error = new TypeError(
         'The "offset" argument must be of type number',
@@ -2869,11 +2870,13 @@ class NodeWritable extends NodeEventEmitter {
     this.writableLength += size;
     if (this.writableCorked > 0) this._corkedChunks.push(chunk);
     else this.emit("data", chunk);
-    const wasNeedDrain = this.writableNeedDrain;
     queueMicrotask(() => {
       this.writableLength = Math.max(0, this.writableLength - size);
       if (callback) callback();
-      if (wasNeedDrain && this.writableLength < this.writableHighWaterMark) {
+      if (
+        this.writableNeedDrain &&
+        this.writableLength < this.writableHighWaterMark
+      ) {
         this.writableNeedDrain = false;
         this.emit("drain");
       }
@@ -4585,35 +4588,27 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
   stream.path = path;
   stream.fd = null;
   stream.bytesRead = 0;
+  if (options.encoding !== undefined) stream.setEncoding(options.encoding);
   queueMicrotask(() => {
     try {
       stream.fd = globalThis.__nodeFs.openSync(path, "r");
       stream.emit("open", stream.fd);
       const bytes = globalThis.__nodeFs.readFileSync(path);
       const end = options.end === undefined ? bytes.length : options.end + 1;
-      stream._chunks = [bytes.subarray(start, Math.min(end, bytes.length))];
-      stream._index = 0;
-      stream._pump = () => {
-        while (!stream._paused && stream._index < stream._chunks.length) {
-          const chunk = stream._chunks[stream._index++];
-          stream.bytesRead += chunk.byteLength;
-          stream.emit(
-            "data",
-            options.encoding ? new NodeTextDecoder().decode(chunk) : chunk,
-          );
-        }
-        if (!stream._paused && stream._index === stream._chunks.length) {
-          stream._ended = true;
-          stream.readableEnded = true;
-          stream.emit("end");
-          if (options.autoClose !== false && stream.fd !== null) {
+      const chunk = bytes.subarray(start, Math.min(end, bytes.length));
+      if (chunk.length) {
+        stream.push(chunk);
+        stream.bytesRead += chunk.byteLength;
+      }
+      stream.push(null);
+      if (options.autoClose !== false)
+        stream.once("end", () => {
+          if (stream.fd !== null) {
             globalThis.__nodeFs.closeSync(stream.fd);
             stream.fd = null;
           }
           stream.emit("close");
-        }
-      };
-      stream._pump();
+        });
     } catch (error) {
       stream.emit("error", error);
     }
@@ -5705,6 +5700,7 @@ globalThis.__nodeUtil = {
               }
               return entry;
             });
+            if (rendered === undefined) return "undefined";
             return rendered.includes("[Circular]") ? "[Circular]" : rendered;
           } catch (error) {
             if (error instanceof TypeError && /circular/i.test(error.message))
