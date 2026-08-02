@@ -4523,8 +4523,12 @@ globalThis.__nodeUtil = {
     if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
-      args[0].replace(/%[sdifjoO%]/g, (token) => {
+      args[0].replace(/%[sdifjoOc%]/g, (token) => {
         if (token === "%%") return "%";
+        if (token === "%c") {
+          if (index < args.length) index++;
+          return "";
+        }
         if (index >= args.length) return token;
         const value = args[index++];
         if (token === "%s")
