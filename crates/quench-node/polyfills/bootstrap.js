@@ -2243,11 +2243,20 @@ globalThis.__nodeEventEmitter.on = async function* (emitter, event) {
   }
 };
 class NodeReadable extends NodeEventEmitter {
+  constructor(options = {}) {
+    super();
+    this._paused = false;
+    this._chunks = [];
+    this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+  }
   static from(iterable) {
     const stream = new NodeReadable();
     stream._chunks = Array.from(iterable);
     queueMicrotask(() => {
-      for (const chunk of stream._chunks) stream.emit("data", chunk);
+      for (const chunk of stream._chunks) {
+        if (stream._paused) break;
+        stream.emit("data", chunk);
+      }
       stream.emit("end");
     });
     return stream;
@@ -2257,17 +2266,39 @@ class NodeReadable extends NodeEventEmitter {
     this.on("end", () => destination.end());
     return destination;
   }
+  pause() {
+    this._paused = true;
+    return this;
+  }
+  resume() {
+    this._paused = false;
+    return this;
+  }
 
   async *[Symbol.asyncIterator]() {
     for (const chunk of this._chunks || []) yield chunk;
   }
 }
 class NodeWritable extends NodeEventEmitter {
+  constructor(options = {}) {
+    super();
+    this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+    this.writableLength = 0;
+  }
   write(chunk, encoding, callback) {
     if (typeof encoding === "function") callback = encoding;
+    const size =
+      typeof chunk === "string" ? chunk.length : chunk?.byteLength || 1;
+    this.writableLength += size;
     this.emit("data", chunk);
-    if (callback) queueMicrotask(callback);
-    return true;
+    if (callback)
+      queueMicrotask(() => {
+        this.writableLength = Math.max(0, this.writableLength - size);
+        callback();
+        if (this.writableLength < this.writableHighWaterMark)
+          this.emit("drain");
+      });
+    return this.writableLength < this.writableHighWaterMark;
   }
   end(chunk, encoding, callback) {
     if (chunk !== undefined) this.write(chunk, encoding);
