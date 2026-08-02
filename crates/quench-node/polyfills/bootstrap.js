@@ -269,8 +269,19 @@ globalThis.__nodeTimersPromises = {
         resolve(value);
       }),
     ),
-  setImmediate: (value) =>
-    new Promise((resolve) => queueMicrotask(() => resolve(value))),
+  setImmediate: (value, options = {}) =>
+    new Promise((resolve, reject) =>
+      queueMicrotask(() => {
+        if (options && options.signal && options.signal.aborted) {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          error.code = "ABORT_ERR";
+          reject(error);
+          return;
+        }
+        resolve(value);
+      }),
+    ),
   setInterval: async function* (_delay = 0, value, options = {}) {
     while (true) {
       if (options && options.signal && options.signal.aborted) {

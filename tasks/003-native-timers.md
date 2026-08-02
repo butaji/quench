@@ -39,3 +39,5 @@ Pre-aborted `timers/promises.setTimeout()` signals are covered by
 `tests/node-compat/stage-406/timers-promises-abort.js`.
 Pre-aborted `timers/promises.setInterval()` signals are covered by
 `tests/node-compat/stage-407/timers-promises-interval-abort.js`.
+Pre-aborted `timers/promises.setImmediate()` signals are covered by
+`tests/node-compat/stage-408/timers-promises-immediate-abort.js`.
