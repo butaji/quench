@@ -366,7 +366,7 @@ globalThis.__nodeFs = {
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value, options) => {
-    const path = nodePathValue(value); const hex = globalThis.__quench_fs_read_hex(path);
+    const path = nodePathValue(value); let hex; try { hex = globalThis.__quench_fs_read_hex(path); } catch (error) { const flag = typeof options === 'object' && options ? options.flag : undefined; if (flag === 'a' || flag === 'a+') { globalThis.__quench_fs_write_hex(path, ''); globalThis.__nodeModes[path] = 0o666 & ~process.umask(); hex = ''; } else throw error; }
     if (options === undefined || options === null) return NodeBuffer.from(hex, 'hex');
     const encoding = typeof options === 'string' ? options : options && options.encoding;
     if (options && typeof options === 'object' && options.buffer !== undefined) { const bytes = NodeBuffer.from(hex, 'hex'); const target = typeof options.buffer === 'function' ? options.buffer(bytes.length) : options.buffer; if (!(target instanceof Uint8Array)) { const error = new TypeError('The "buffer" option must return a Buffer'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } target.set(bytes.subarray(0, target.length)); return encoding ? target.toString(encoding) : target.subarray(0, bytes.length); }
