@@ -2487,6 +2487,16 @@ mod optional_chaining {
                 .unwrap();
         assert!(matches!(r, Value::Object(_)));
     }
+
+    #[test]
+    fn optional_chain_private_field_continuation_short_circuits() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "class C { #f = 'ok'; method(o) { return o?.c.#f; } } let c = new C(); c.method(null)",
+        )
+        .map(|value| assert_eq!(value, crate::Value::Undefined))
+        .unwrap();
+    }
 }
 
 // ─── array spread in literals ──────────────────────────────────────────

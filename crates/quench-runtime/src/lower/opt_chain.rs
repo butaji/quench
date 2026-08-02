@@ -226,6 +226,24 @@ fn lower_chain_recursive(
                     consequent: Box::new(undefined),
                     alternate: Box::new(member_access),
                 })
+            } else if is_nullish_guard(&base_expr) {
+                let Expression::Conditional {
+                    condition,
+                    alternate,
+                    ..
+                } = base_expr
+                else {
+                    unreachable!();
+                };
+                Ok(Expression::Conditional {
+                    condition,
+                    consequent: Box::new(Expression::Undefined),
+                    alternate: Box::new(Expression::Member {
+                        object: alternate,
+                        property,
+                        computed: false,
+                    }),
+                })
             } else {
                 Ok(Expression::Member {
                     object: Box::new(base_expr),
