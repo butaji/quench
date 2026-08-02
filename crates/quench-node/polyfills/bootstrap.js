@@ -216,6 +216,8 @@ globalThis.__nodeURL = class NodeURL {
     if (!match) throw new TypeError('Invalid URL');
     this.protocol = match[1] || '';
     this.host = match[2] || '';
+    this.hostname = this.host.replace(/^.*@/, '').split(':')[0];
+    this.port = this.host.includes(':') ? this.host.slice(this.host.lastIndexOf(':') + 1) : '';
     this.pathname = match[3] || '/';
     this.search = match[4] ? `?${match[4]}` : '';
     this.hash = match[5] ? `#${match[5]}` : '';
