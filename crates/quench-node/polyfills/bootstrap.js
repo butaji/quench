@@ -281,7 +281,7 @@ class NodeBuffer extends Uint8Array {
     if (typeof encoding === "string") encoding = encoding.toLowerCase();
     if (
       typeof value === "string" &&
-      encoding !== undefined &&
+      typeof encoding === "string" &&
       !NodeBuffer.isEncoding(encoding)
     ) {
       const error = new TypeError(`Unknown encoding: ${encoding}`);
@@ -441,7 +441,7 @@ class NodeBuffer extends Uint8Array {
   static of(...values) {
     return new NodeBuffer(values);
   }
-  static copyBytesFrom(view, offset = 0, length = view.byteLength) {
+  static copyBytesFrom(view, offset = 0, length) {
     if (!ArrayBuffer.isView(view)) {
       const error = new TypeError(
         'The "view" argument must be an instance of TypedArray',
@@ -449,14 +449,26 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    offset = Math.trunc(Number(offset));
-    length = Math.trunc(Number(length));
+    if (
+      typeof offset !== "number" ||
+      (length !== undefined && typeof length !== "number")
+    ) {
+      const error = new TypeError("offset and length must be numbers");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const elementSize = view.BYTES_PER_ELEMENT || 1;
+    const elementLength =
+      view.length === undefined ? view.byteLength : view.length;
+    if (length === undefined)
+      length = offset >= elementLength ? 0 : elementLength - offset;
     if (
       !Number.isFinite(offset) ||
       !Number.isFinite(length) ||
+      !Number.isInteger(offset) ||
+      !Number.isInteger(length) ||
       offset < 0 ||
-      length < 0 ||
-      offset + length > view.byteLength
+      length < 0
     ) {
       const error = new RangeError(
         "The requested range is outside the bounds of the view",
@@ -464,8 +476,17 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const bytes = new Uint8Array(view.buffer, view.byteOffset + offset, length);
-    const output = new NodeBuffer(length);
+    offset = Math.trunc(offset);
+    length = Math.trunc(length);
+    offset = Math.min(offset, elementLength);
+    length = Math.min(length, elementLength - offset);
+    const byteLength = length * elementSize;
+    const bytes = new Uint8Array(
+      view.buffer,
+      view.byteOffset + offset * elementSize,
+      byteLength,
+    );
+    const output = new NodeBuffer(byteLength);
     output.set(bytes);
     return output;
   }
@@ -1844,10 +1865,16 @@ globalThis.__nodeCommon = {
   expectsError: (_expected) => (error) => {
     if (!error) throw new Error("Expected filesystem error");
   },
-  invalidArgTypeHelper: (input) =>
-    input == null
-      ? ` Received ${input}`
-      : ` Received type ${typeof input} (${String(input)})`,
+  invalidArgTypeHelper: (input) => {
+    if (input == null) return ` Received ${input}`;
+    let rendered;
+    try {
+      rendered = String(input);
+    } catch (_) {
+      rendered = Object.prototype.toString.call(input);
+    }
+    return ` Received type ${typeof input} (${rendered})`;
+  },
   expectWarning: (_type, _message) => {},
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === "linux",
