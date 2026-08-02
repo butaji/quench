@@ -4424,6 +4424,8 @@ globalThis.__nodeUtil = {
       if (value instanceof Date) return value.toISOString();
       if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
+      if (typeof value === "function")
+        return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
       if (Array.isArray(value))
         return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
       if (typeof value === "object") {
@@ -4514,7 +4516,7 @@ globalThis.__nodeUtil = {
     if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
-      args[0].replace(/%[sdifjo%]/g, (token) => {
+      args[0].replace(/%[sdifjoO%]/g, (token) => {
         if (token === "%%") return "%";
         if (index >= args.length) return token;
         const value = args[index++];
@@ -4562,7 +4564,7 @@ globalThis.__nodeUtil = {
           return Object.is(number, -0) ? "-0" : numeric(number);
         }
         if (token === "%j") return JSON.stringify(value);
-        if (token === "%o" && typeof value === "string")
+        if ((token === "%o" || token === "%O") && typeof value === "string")
           return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
         if (
           token === "%o" &&
@@ -4571,7 +4573,9 @@ globalThis.__nodeUtil = {
           containsFunction(value)
         )
           return structured(value);
-        return token === "%o" ? inspect(value) : String(value);
+        return token === "%o" || token === "%O"
+          ? inspect(value)
+          : String(value);
       }) +
       args
         .slice(index)
