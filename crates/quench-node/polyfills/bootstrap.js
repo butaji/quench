@@ -300,6 +300,50 @@ class NodeBuffer extends Uint8Array {
   slice(start = 0, end = this.length) {
     return this.subarray(start, end);
   }
+  copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
+    if (!(this instanceof Uint8Array)) {
+      const error = new TypeError(
+        "Method Buffer.prototype.copy called on incompatible receiver",
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!ArrayBuffer.isView(target)) {
+      const error = new TypeError(
+        'The "target" argument must be an instance of Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const number = (value) => {
+      const result = Math.trunc(Number(value));
+      return Number.isNaN(result) ? 0 : result;
+    };
+    targetStart = number(targetStart);
+    sourceStart = number(sourceStart);
+    sourceEnd = number(sourceEnd);
+    if (targetStart < 0 || sourceStart < 0 || sourceEnd < 0) {
+      const error = new RangeError("The value is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (sourceStart > this.length) {
+      const error = new RangeError("The value of sourceStart is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const targetBytes =
+      target instanceof Uint8Array
+        ? target
+        : new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
+    if (targetStart >= targetBytes.length || sourceStart >= sourceEnd) return 0;
+    const end = Math.min(sourceEnd, this.length);
+    const count = Math.min(end - sourceStart, targetBytes.length - targetStart);
+    const bytes = new Uint8Array(count);
+    bytes.set(this.subarray(sourceStart, sourceStart + count));
+    targetBytes.set(bytes, targetStart);
+    return count;
+  }
   static concat(list, totalLength) {
     const length =
       totalLength === undefined
