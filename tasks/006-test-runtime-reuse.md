@@ -44,3 +44,6 @@ handlers, covered by `tests/node-compat/stage-495` and the upstream
 `AsyncResource` now supports IDs, scoped execution, static and instance
 `bind()`, and argument validation. This is covered by
 `tests/node-compat/stage-496`.
+The minimal `child_process.spawn()` contract emits deterministic exit status
+and signal values for harness fixture scripts, covered by
+`tests/node-compat/stage-501`.
