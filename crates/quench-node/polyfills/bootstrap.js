@@ -6084,9 +6084,19 @@ const __createNodeCrypto = () => ({
   },
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
-    const output = NodeBuffer.from(
-      globalThis.__quench_random_bytes(Number(size)),
-    );
+    if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError('The "size" argument is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (callback !== undefined && typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const output = NodeBuffer.from(globalThis.__quench_random_bytes(size));
     if (typeof callback === "function")
       queueMicrotask(() => callback(null, output));
     return output;
