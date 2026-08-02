@@ -2923,7 +2923,8 @@ globalThis.__nodeUtil = {
       if (value === undefined) return "undefined";
       if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
-      if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;
+      if (Array.isArray(value))
+        return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
       if (typeof value === "object") {
         const entries = Object.keys(value).map(
           (key) => `${key}: ${inspect(value[key])}`,
