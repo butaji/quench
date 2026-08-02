@@ -274,6 +274,25 @@ fn main() -> ExitCode {
                 Err(JsError("SyntaxError: quantified lookbehind".to_string())),
             );
         }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_dangling_named_backreference(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: dangling named backreference".to_string())),
+            );
+        }
         let run_result = if module || is_module_meta {
             ctx.eval_es_module(code)
         } else {

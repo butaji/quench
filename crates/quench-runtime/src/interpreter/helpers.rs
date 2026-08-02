@@ -774,6 +774,22 @@ pub fn has_quantified_lookbehind(source: &str) -> bool {
     })
 }
 
+pub fn has_dangling_named_backreference(source: &str) -> bool {
+    let names: std::collections::HashSet<&str> = source
+        .match_indices("(?<")
+        .filter_map(|(start, _)| {
+            let end = source[start + 3..].find('>')?;
+            Some(&source[start + 3..start + 3 + end])
+        })
+        .collect();
+    source.match_indices("\\k<").any(|(start, _)| {
+        source[start + 3..]
+            .find('>')
+            .map(|end| !names.contains(&source[start + 3..start + 3 + end]))
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
