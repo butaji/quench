@@ -245,11 +245,17 @@ globalThis.__nodeCommon = {
     let calls = 0;
     const wrapped = function (...args) { calls++; wrapped.calls = calls; return fn.apply(this, args); };
     wrapped.calls = 0; wrapped.expected = exact;
+    (globalThis.__nodeCallChecks ||= []).push(wrapped);
     return wrapped;
   },
   mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
   expectWarning: () => {},
+};
+globalThis.__quench_verify_calls = () => {
+  for (const callback of globalThis.__nodeCallChecks || []) {
+    if (callback.calls !== callback.expected) throw new Error(`Expected ${callback.expected} calls, got ${callback.calls}`);
+  }
 };
 globalThis.__nodeTmpdir = {
   refresh: () => {},
