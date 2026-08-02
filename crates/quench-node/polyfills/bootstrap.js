@@ -272,6 +272,12 @@ class NodeBuffer extends Uint8Array {
   static allocUnsafe(size) {
     return new NodeBuffer(size);
   }
+  static allocUnsafeSlow(size) {
+    return new NodeBuffer(size);
+  }
+  static of(...values) {
+    return new NodeBuffer(values);
+  }
   static isBuffer(value) {
     return value instanceof NodeBuffer;
   }
