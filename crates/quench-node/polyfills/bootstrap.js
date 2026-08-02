@@ -372,7 +372,7 @@ globalThis.__nodeFs = {
     }
     return globalThis.__quench_fs_read_file(path);
   },
-  writeFileSync: (value, data) => data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(nodePathValue(value), data.toString('hex')) : globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
+  writeFileSync: (value, data, options = {}) => { const path = nodePathValue(value); const result = data instanceof NodeBuffer ? globalThis.__quench_fs_write_hex(path, data.toString('hex')) : globalThis.__quench_fs_write_file(path, String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
   openSync: (value, flags = 'r', mode) => {
     const path = nodeFsPath(value);
     if (mode !== undefined && mode !== null && typeof mode !== 'number') {
@@ -454,7 +454,12 @@ globalThis.__nodeFs = {
     if ((mode & ~7) !== 0) { const error = new RangeError('The value of "mode" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
     return globalThis.__quench_fs_copy(source, destination);
   },
-  appendFileSync: (value, data) => globalThis.__quench_fs_append(String(value), String(data)),
+  appendFileSync: (value, data, options = {}) => {
+    if (!(typeof data === 'string' || data instanceof NodeBuffer || data instanceof Uint8Array)) { const error = new TypeError('The "data" argument must be of type string or an instance of Buffer'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value);
+    if (!path) { const error = new Error('EBADF: bad file descriptor'); error.code = 'EBADF'; throw error; }
+    const result = globalThis.__quench_fs_append(path, data instanceof Uint8Array ? new NodeTextDecoder().decode(data) : String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result;
+  },
   accessSync: (value) => { const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
   realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
   rmSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
@@ -762,7 +767,7 @@ globalThis.require = (specifier) => {
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name.endsWith('/common/tmpdir')) return globalThis.__nodeTmpdir;
   if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff, atob: nodeAtob, btoa: nodeBtoa };
-  if (name === '../common/fixtures' || name.endsWith('/common/fixtures')) return { path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}` };
+  if (name === '../common/fixtures' || name.endsWith('/common/fixtures')) return { path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}`, utf8TestText: 'The quick brown fox jumps over the lazy dog.\n' };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };

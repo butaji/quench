@@ -101,3 +101,4 @@ these small fixtures isolate the currently implemented contract.
 | 91 | asynchronous chmod and permission metadata | `tools/run-node-tests.sh --stage 91` |
 | 92 | fd-based `fchmod` compatibility | `tools/run-node-tests.sh --stage 92` |
 | 93 | sync, async, and promise `fs.access` | `tools/run-node-tests.sh --stage 93` |
+| 94 | `appendFileSync` data validation | `tools/run-node-tests.sh --stage 94` |
