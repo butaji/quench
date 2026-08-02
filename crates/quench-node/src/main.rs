@@ -276,7 +276,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
-        ctx.eval::<(), _>(source.as_bytes())?;
+        let wrapped = format!("try {{\n{source}\n}} catch (error) {{ globalThis.__quench_last_error = String(error && (error.stack || error)); throw error; }}");
+        ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
+            let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}"));
+            eprintln!("JavaScript exception: {detail}");
+            error
+        })?;
         while ctx.execute_pending_job() {}
         ctx.eval::<(), _>(b"globalThis.__quench_verify_calls()")
     })?;

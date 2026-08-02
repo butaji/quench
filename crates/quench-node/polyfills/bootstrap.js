@@ -184,7 +184,7 @@ class NodeTextDecoder {
   }
 }
 globalThis.TextDecoder = NodeTextDecoder;
-const nodePathValue = (value) => value instanceof NodeBuffer ? value.toString() : value instanceof Uint8Array ? String.fromCharCode(...value) : value instanceof globalThis.__nodeURL ? globalThis.__nodeUrlModule.fileURLToPath(value) : String(value);
+const nodePathValue = (value) => value instanceof NodeBuffer ? value.toString() : value instanceof Uint8Array ? new NodeTextDecoder().decode(value) : value instanceof globalThis.__nodeURL ? globalThis.__nodeUrlModule.fileURLToPath(value) : String(value);
 
 globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
 globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
@@ -257,7 +257,7 @@ globalThis.__nodePath = {
 globalThis.__nodeCommon = {
   mustCall: (fn, exact = 1) => {
     let calls = 0;
-    const wrapped = function (...args) { calls++; wrapped.calls = calls; return fn.apply(this, args); };
+    const wrapped = function (...args) { calls++; wrapped.calls = calls; return fn(...args); };
     wrapped.calls = 0; wrapped.expected = exact;
     (globalThis.__nodeCallChecks ||= []).push(wrapped);
     return wrapped;
@@ -273,8 +273,8 @@ globalThis.__quench_verify_calls = () => {
 };
 globalThis.__nodeTmpdir = {
   refresh: () => {},
-  resolve: (name = '') => globalThis.__nodePath.join('/tmp', `quench-${String(name)}`),
-  fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join('/tmp', `quench-${String(name)}`)}`),
+  resolve: (name = '') => globalThis.__nodePath.join('/tmp', String(name)),
+  fileURL: (name = '') => new globalThis.__nodeURL(`file://${globalThis.__nodePath.join('/tmp', String(name))}`),
 };
 class NodeEventEmitter {
   constructor() { this._events = {}; }
