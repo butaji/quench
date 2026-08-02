@@ -279,6 +279,7 @@ globalThis.__nodeCommon = {
   noop: () => {},
   printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
   expectsError: (_expected) => (error) => { if (!error) throw new Error('Expected filesystem error'); },
+  invalidArgTypeHelper: (input) => input == null ? ` Received ${input}` : ` Received type ${typeof input} (${String(input)})`,
   expectWarning: (_type, _message) => {},
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === 'linux',
