@@ -295,7 +295,10 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             error
         })?;
         while ctx.execute_pending_job() {}
-        ctx.eval::<(), _>(b"globalThis.__quench_verify_calls()")
+        ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }").map_err(|error| {
+            eprintln!("Node harness assertion failure: {error:?}");
+            error
+        })
     })?;
     Ok(())
 }
