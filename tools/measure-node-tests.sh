@@ -13,6 +13,7 @@ total=0
 passed=0
 failed=0
 skipped=0
+started=$(date +%s)
 
 while IFS= read -r file; do
   total=$((total + 1))
@@ -20,6 +21,9 @@ while IFS= read -r file; do
     passed=$((passed + 1))
   else
     failed=$((failed + 1))
+  fi
+  if [ $((total % 100)) -eq 0 ]; then
+    echo "progress tested=$total passed=$passed failed=$failed" >&2
   fi
 done <<EOF
 $(find "$dir" -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) | sort)
@@ -31,3 +35,4 @@ echo "passed_files=$passed"
 echo "failed_files=$failed"
 echo "skipped_files=$skipped"
 echo "file_pass_rate=${percent}%"
+echo "elapsed_seconds=$(( $(date +%s) - started ))"
