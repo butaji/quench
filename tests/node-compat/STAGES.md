@@ -40,3 +40,6 @@ these small fixtures isolate the currently implemented contract.
 | 30 | POSIX symbolic link APIs | `tools/run-node-tests.sh --stage 30` |
 | 31 | filesystem and OS constants | `tools/run-node-tests.sh --stage 31` |
 | 32 | harness no-empty-stage contract | `tools/run-node-tests.sh --stage 32` |
+| 33 | upstream `common/tmpdir` helper | `tools/run-node-tests.sh --stage 33` |
+| 34 | UTF-8 `TextEncoder` compatibility | `tools/run-node-tests.sh --stage 34` |
+| 35 | upstream fs path coercion and async mkdtemp | `tools/run-node-tests.sh --stage 35` |
