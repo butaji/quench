@@ -255,7 +255,13 @@ globalThis.__nodeTimers = {
 };
 globalThis.__nodeTimersPromises = {
   setTimeout: (_delay = 0, value) =>
-    new Promise((resolve) => queueMicrotask(() => resolve(value))),
+    new Promise((resolve) =>
+      queueMicrotask(() => {
+        if (Number(_delay) > 0)
+          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+        resolve(value);
+      }),
+    ),
   setImmediate: (value) =>
     new Promise((resolve) => queueMicrotask(() => resolve(value))),
 };
