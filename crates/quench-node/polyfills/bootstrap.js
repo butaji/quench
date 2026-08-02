@@ -2944,6 +2944,25 @@ globalThis.__nodeUtil = {
       }
       return String(value);
     };
+    const stringValue = (value) => {
+      if (value && typeof value === "object") {
+        if (
+          typeof value.toString === "function" &&
+          value.toString !== Object.prototype.toString
+        ) {
+          try {
+            return value.toString();
+          } catch (_) {}
+        }
+        if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;
+        const entries = Object.keys(value).map(
+          (key) =>
+            `${key}: ${Array.isArray(value[key]) ? "[Array]" : inspect(value[key])}`,
+        );
+        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+      }
+      return String(value);
+    };
     if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
@@ -2956,7 +2975,7 @@ globalThis.__nodeUtil = {
             ? `${numeric(value)}n`
             : typeof value === "number"
               ? numeric(value)
-              : String(value);
+              : stringValue(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d")
             return `${numeric(value)}n`;
