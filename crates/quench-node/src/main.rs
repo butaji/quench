@@ -40,6 +40,17 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             Func::from(|path: String| fs::metadata(path).is_ok()),
         )?;
         ctx.globals().set(
+            "__quench_cwd",
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .to_string_lossy()
+                .into_owned(),
+        )?;
+        ctx.globals().set(
+            "__quench_env_get",
+            Func::from(|key: String| std::env::var(key).ok()),
+        )?;
+        ctx.globals().set(
             "__quench_fs_mkdtemp",
             Func::from(|prefix: String| -> rquickjs::Result<String> {
                 let root = std::env::temp_dir();
