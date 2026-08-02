@@ -443,7 +443,8 @@ globalThis.__nodeFs = {
       error.code = 'ENOTDIR'; error.syscall = 'scandir'; error.path = path;
       throw error;
     }
-    return globalThis.__quench_fs_readdir(path);
+    const entries = globalThis.__quench_fs_readdir(path);
+    return entries;
   },
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
@@ -595,7 +596,7 @@ globalThis.__nodeFs.readdir = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readdirSync(path)); } catch (error) { callback(error); } });
+  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.readdirSync(path, options); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeFs.mkdir = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = {}; }
