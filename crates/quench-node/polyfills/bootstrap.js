@@ -4244,6 +4244,8 @@ globalThis.__nodeFs.promises.open = async (...args) => {
   };
   return handle;
 };
+let __nodePriority = 0;
+const __nodeStartedAt = Date.now();
 globalThis.__nodeOs = {
   EOL: "\n",
   platform: () => process.platform,
@@ -4253,6 +4255,11 @@ globalThis.__nodeOs = {
   type: () => "Quench",
   endianness: () => "LE",
   hostname: () => globalThis.__quench_hostname,
+  uptime: () => (Date.now() - __nodeStartedAt) / 1000,
+  getPriority: () => __nodePriority,
+  setPriority: (pid, priority) => {
+    __nodePriority = Number(priority === undefined ? pid : priority);
+  },
   cpus: () =>
     Array.from({ length: globalThis.__quench_cpu_count }, () => ({
       model: "unknown",
@@ -4263,6 +4270,13 @@ globalThis.__nodeOs = {
   constants: {
     signals: { SIGTERM: 15, SIGINT: 2 },
     errno: { ENOENT: -2, EACCES: -13 },
+    priority: {
+      PRIORITY_LOW: 19,
+      PRIORITY_BELOW_NORMAL: 10,
+      PRIORITY_NORMAL: 0,
+      PRIORITY_ABOVE_NORMAL: -7,
+      PRIORITY_HIGH: -14,
+    },
   },
 };
 const __nodePrototypeNames = new WeakMap();
