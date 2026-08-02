@@ -391,7 +391,17 @@ globalThis.__nodeFs = {
       throw error;
     }
   },
-  readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
+  readdirSync: (value) => {
+    const path = nodeFsPath(value);
+    let kind;
+    try { kind = globalThis.__quench_fs_kind(path); } catch (_) { kind = undefined; }
+    if (kind === 'file') {
+      const error = new Error(`ENOTDIR: not a directory, scandir '${path}'`);
+      error.code = 'ENOTDIR'; error.syscall = 'scandir'; error.path = path;
+      throw error;
+    }
+    return globalThis.__quench_fs_readdir(path);
+  },
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(String(from), String(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
