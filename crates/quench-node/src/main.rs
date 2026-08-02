@@ -178,6 +178,21 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                     .map_err(|_| rquickjs::Error::new_from_js("fs", "realpathSync failed"))
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_chmod",
+            Func::from(|path: String, mode: u32| -> rquickjs::Result<()> {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut permissions = fs::metadata(&path).map_err(|_| rquickjs::Error::new_from_js("fs", "chmodSync failed"))?.permissions();
+                    permissions.set_mode(mode);
+                    fs::set_permissions(path, permissions).map_err(|_| rquickjs::Error::new_from_js("fs", "chmodSync failed"))?;
+                }
+                #[cfg(not(unix))]
+                let _ = (path, mode);
+                Ok(())
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;
