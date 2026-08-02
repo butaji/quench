@@ -296,7 +296,17 @@ class NodeBuffer extends Uint8Array {
     }
     if (value && value.type === "Buffer" && Array.isArray(value.data))
       return new NodeBuffer(value.data);
-    return new NodeBuffer(value);
+    if (
+      Array.isArray(value) ||
+      ArrayBuffer.isView(value) ||
+      (value && typeof value === "object" && "length" in value)
+    )
+      return new NodeBuffer(value);
+    const error = new TypeError(
+      "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object",
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   static alloc(size, fill = 0) {
     return new NodeBuffer(size).fill(fill);
