@@ -496,7 +496,7 @@ globalThis.__nodeFs = {
     if (!path) { const error = new Error('EBADF: bad file descriptor'); error.code = 'EBADF'; throw error; }
     const result = globalThis.__quench_fs_append(path, data instanceof Uint8Array ? new NodeTextDecoder().decode(data) : String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result;
   },
-  accessSync: (value) => { const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
+  accessSync: (value) => { if (typeof value === 'number') { const error = new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
   realpathSync: (value, options) => { const result = globalThis.__quench_fs_realpath(nodePathValue(value)); const encoding = typeof options === 'string' ? options : options && options.encoding; return encoding === 'buffer' ? NodeBuffer.from(result) : encoding ? NodeBuffer.from(result).toString(encoding) : result; },
   rmSync: (value, options = {}) => { const path = nodeFsPath(value); let kind; try { kind = globalThis.__quench_fs_kind(path); } catch (_) { return; } if (kind === 'file') return globalThis.__quench_fs_unlink(path); if (kind === 'directory' && options.recursive === false) { const error = new Error(`ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`); error.code = 'ERR_FS_EISDIR'; error.path = path; throw error; } return globalThis.__quench_fs_remove_dir(path); },
   chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
@@ -515,6 +515,7 @@ globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => { if (typeof lengt
 globalThis.__nodeFs.access = (value, mode, callback) => {
   if (typeof mode === 'function') callback = mode;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (typeof value === 'number') { const error = new TypeError('The "path" argument must be of type string or an instance of Buffer or URL'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
   const path = nodeFsPath(value);
   queueMicrotask(() => { try { globalThis.__nodeFs.accessSync(path, mode); } catch (error) { callback(error); return; } callback(null); });
 };
