@@ -30,3 +30,5 @@ SHA-256 PBKDF2 sync and callback APIs are covered by
 `tests/node-compat/stage-391/crypto-pbkdf2.js`.
 PBKDF2 callback argument validation is covered by
 `tests/node-compat/stage-392/crypto-pbkdf2-validation.js`.
+Supported algorithm discovery is covered by
+`tests/node-compat/stage-395/crypto-capabilities.js`.
