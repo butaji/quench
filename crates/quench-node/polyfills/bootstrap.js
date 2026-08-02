@@ -386,7 +386,7 @@ globalThis.__nodeFs = {
       error.code = 'ENOENT'; error.syscall = 'open'; error.path = path;
       throw error;
     }
-    return globalThis.__quench_fs_open(path, flag);
+    const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; return fd;
   },
   closeSync: (_fd) => {},
   statSync: (value, options = {}) => {
@@ -463,6 +463,14 @@ globalThis.__nodeFs = {
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
 };
 globalThis.__nodeModes = {};
+globalThis.__nodeFdPaths = {};
+const nodeMode = (mode) => {
+  const value = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode);
+  if (!Number.isFinite(value) || value < 0 || value > 0xffffffff) { const error = new RangeError('The value of "mode" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
+  return value;
+};
+globalThis.__nodeFs.fchmodSync = (fd, mode) => { if (!Number.isInteger(fd) || fd < 0 || fd > 0x7fffffff) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } const value = nodeMode(mode); if (globalThis.__nodeFdPaths[fd]) globalThis.__nodeFs.chmodSync(globalThis.__nodeFdPaths[fd], value); };
+globalThis.__nodeFs.fchmod = (fd, mode, callback) => { if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); globalThis.__nodeFs.fchmodSync(fd, mode); queueMicrotask(() => callback(null)); };
 globalThis.__nodeFs.chmod = (value, mode, callback) => {
   if (typeof mode === 'function') { callback = mode; mode = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
