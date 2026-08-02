@@ -44,3 +44,5 @@ String encodings for hash and HMAC updates are covered by
 `tests/node-compat/stage-400/crypto-update-encoding.js`.
 Hash and HMAC state branching is covered by
 `tests/node-compat/stage-420/crypto-copy.js`.
+Hash and HMAC finalized-state errors are covered by
+`tests/node-compat/stage-421/crypto-finalized.js`.

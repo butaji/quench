@@ -5837,8 +5837,14 @@ const __createNodeCrypto = () => ({
     if (algorithm !== "sha256")
       throw new Error(`Unsupported hash: ${algorithm}`);
     const chunks = [];
+    let finalized = false;
     const hash = {
       update: (value, encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
         if (typeof value === "string")
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         else if (value instanceof Uint8Array) chunks.push(value);
@@ -5846,6 +5852,12 @@ const __createNodeCrypto = () => ({
         return hash;
       },
       digest: (encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        finalized = true;
         const input = [];
         for (const chunk of chunks) input.push(...chunk);
         const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));
@@ -5883,8 +5895,14 @@ const __createNodeCrypto = () => ({
       outer[i] = padded[i] ^ 0x5c;
     }
     const chunks = [];
+    let finalized = false;
     const hmac = {
       update: (value, encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
         chunks.push(
           typeof value === "string"
             ? NodeBuffer.from(value, encoding || "utf8")
@@ -5893,6 +5911,12 @@ const __createNodeCrypto = () => ({
         return hmac;
       },
       digest: (encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        finalized = true;
         const message = [];
         for (const chunk of chunks) message.push(...chunk);
         const innerDigest = globalThis.__quench_sha256_bytes([
