@@ -284,8 +284,34 @@ class NodeBuffer extends Uint8Array {
     }
     return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
   }
-  static byteLength(value) {
-    return new NodeTextEncoder().encode(String(value)).length;
+  static byteLength(value, encoding = "utf8") {
+    if (typeof value === "string") {
+      const normalized = String(encoding || "utf8").toLowerCase();
+      if (
+        normalized === "ascii" ||
+        normalized === "latin1" ||
+        normalized === "binary"
+      )
+        return value.length;
+      if (
+        normalized === "ucs2" ||
+        normalized === "ucs-2" ||
+        normalized === "utf16le" ||
+        normalized === "utf-16le"
+      )
+        return value.length * 2;
+      if (normalized === "hex") return Math.floor(value.length / 2);
+      if (normalized === "base64" || normalized === "base64url")
+        return NodeBuffer.from(value, normalized).length;
+      return new NodeTextEncoder().encode(value).length;
+    }
+    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value))
+      return value.byteLength;
+    const error = new TypeError(
+      'The "string" argument must be of type string or an instance of Buffer or ArrayBuffer',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
   }
   subarray(begin = 0, end = this.length) {
     const index = (value, fallback) => {
