@@ -444,7 +444,7 @@ globalThis.__nodeFs = {
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
-  truncateSync: (value, length = 0) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
+  truncateSync: (value, length = 0) => { if (typeof length !== 'number' || !Number.isFinite(length) || length < 0) { const error = new TypeError('The "len" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
   ftruncateSync: (fd, length = 0) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } return globalThis.__nodeFs.truncateSync(fd, length); },
   fsyncSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Number.isInteger(fd) || fd < 0) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } },
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
@@ -500,6 +500,7 @@ globalThis.__nodeFs = {
 globalThis.__nodeFs.truncate = (value, length, callback) => {
   if (typeof length === 'function') { callback = length; length = 0; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (typeof length !== 'number' || !Number.isFinite(length) || length < 0) { const error = new TypeError('The "len" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
   const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value);
   queueMicrotask(() => { try { globalThis.__quench_fs_truncate(path, Number(length)); } catch (error) { callback(error); return; } callback(null); });
 };
