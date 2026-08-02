@@ -301,7 +301,9 @@ pub fn call_super_constructor(
     let call_env = Rc::new(RefCell::new(build_constructor_env(
         &class, &args, &this_val, env,
     )?));
-    crate::interpreter::mark_this_binding_initialized(&call_env);
+    if class.super_class.is_none() {
+        crate::interpreter::mark_this_binding_initialized(&call_env);
+    }
 
     crate::interpreter::push_inside_super_call();
     let result = if body.is_empty() {
