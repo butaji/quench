@@ -2956,7 +2956,8 @@ globalThis.__nodeUtil = {
             ? numeric(value)
             : String(value);
         if (token === "%d" || token === "%f") {
-          if (typeof value === "bigint" && token === "%d") return `${value}n`;
+          if (typeof value === "bigint" && token === "%d")
+            return `${numeric(value)}n`;
           let number;
           try {
             number = Number(value);
@@ -2966,7 +2967,7 @@ globalThis.__nodeUtil = {
           return Object.is(number, -0) ? "-0" : numeric(number);
         }
         if (token === "%i") {
-          if (typeof value === "bigint") return `${value}n`;
+          if (typeof value === "bigint") return `${numeric(value)}n`;
           let number;
           try {
             number = Number.parseInt(value, 10);
