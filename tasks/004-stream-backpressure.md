@@ -88,6 +88,8 @@ Writable destroy callbacks are covered by
 `tests/node-compat/stage-467/stream-from-object-mode.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
+Stages 169–174 exercise filehandle pull APIs and require the experimental
+`stream/iter` flag when invoked directly.
 Shared stream `destroy()` state and error/close events are covered by
 `tests/node-compat/stage-432/stream-destroy.js`.
 Readable pause state introspection is covered by
