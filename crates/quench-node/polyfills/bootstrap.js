@@ -2314,7 +2314,7 @@ globalThis.__nodeFs = {
       const flag =
         typeof options === "object" && options ? options.flag : undefined;
       if (flag === "a" || flag === "a+") {
-        globalThis.__quench_fs_write_hex(path, "");
+        globalThis.__quench_fs_write_bytes(path, []);
         globalThis.__nodeModes[path] = 0o666 & ~process.umask();
         bytes = [];
       } else throw error;
@@ -2387,11 +2387,14 @@ globalThis.__nodeFs = {
       ? NodeBuffer.from(view).toString("hex")
       : NodeBuffer.from(String(data)).toString("hex");
     if (options && options.flag === "a") {
-      let existing = "";
+      let existing = [];
       try {
-        existing = globalThis.__quench_fs_read_hex(path);
+        existing = globalThis.__quench_fs_read_bytes(path);
       } catch (_) {}
-      return globalThis.__quench_fs_write_hex(path, existing + hex);
+      return globalThis.__quench_fs_write_bytes(path, [
+        ...existing,
+        ...(view || NodeBuffer.from(String(data))),
+      ]);
     }
     const result = globalThis.__quench_fs_write_bytes(
       path,
@@ -2457,7 +2460,7 @@ globalThis.__nodeFs = {
     const file = kind === "file";
     const date = new Date();
     const stats = new globalThis.__nodeStats(file, kind === "directory", date);
-    if (file) stats.size = globalThis.__quench_fs_read_hex(path).length / 2;
+    if (file) stats.size = globalThis.__quench_fs_read_bytes(path).length;
     stats.mode =
       globalThis.__nodeModes[path] || (file ? 0o666 & ~process.umask() : 0);
     return stats;
