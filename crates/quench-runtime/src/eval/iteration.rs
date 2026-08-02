@@ -228,6 +228,30 @@ pub fn eval_yield_delegate(
             obtain_async_iterator(&o, env)?
         }
         Value::Object(o) => (obtain_iterator(&o)?, false),
+        Value::String(ref s) => {
+            let Some(Value::Symbol(symbol)) =
+                crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+            else {
+                return Err(iterator_type_error("iterator method is not available"));
+            };
+            let method = crate::eval::member::eval_string_member(&s, &symbol.property_key(), env);
+            let iterator = crate::eval::function::call_value_with_this(
+                method?,
+                vec![],
+                iterable.clone(),
+            )?;
+            let Value::Object(iterator) = iterator else {
+                return Err(iterator_type_error("iterator is not an object"));
+            };
+            (iterator, false)
+        }
+        Value::Number(_) | Value::Boolean(_) | Value::Symbol(_) | Value::BigInt(_) => {
+            let object = crate::value::to_object(&iterable)?;
+            let Value::Object(object) = object else {
+                unreachable!();
+            };
+            (obtain_iterator(&object)?, false)
+        }
         _ => {
             return Err(JsError(
                 "TypeError: delegated iterable is not iterable".to_string(),
@@ -1017,6 +1041,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, Value::Number(3.0));
+    }
+
+    #[test]
+    fn yield_star_accepts_string_iterables() {
+        let mut ctx = new_ctx();
+        let value = ctx
+            .eval("function* g(){ yield* 'abc'; } var i = g(); [i.next().value, i.next().value, i.next().value].join('')")
+            .unwrap();
+        assert_eq!(value, Value::String("abc".into()));
     }
 
     #[test]
