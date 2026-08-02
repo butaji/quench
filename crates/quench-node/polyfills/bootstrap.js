@@ -2353,6 +2353,7 @@ class NodeReadable extends NodeEventEmitter {
     super();
     this.destroyed = false;
     this._paused = false;
+    this.readableEnded = false;
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
   }
@@ -2372,6 +2373,7 @@ class NodeReadable extends NodeEventEmitter {
         stream.emit("data", stream._chunks[stream._index++]);
       if (!stream._paused && stream._index === stream._chunks.length) {
         stream._ended = true;
+        stream.readableEnded = true;
         stream.emit("end");
       }
     };
@@ -2412,6 +2414,8 @@ class NodeWritable extends NodeEventEmitter {
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
+    this.writableEnded = false;
+    this.writableFinished = false;
   }
   destroy(error) {
     if (this.destroyed) return this;
@@ -2443,7 +2447,9 @@ class NodeWritable extends NodeEventEmitter {
     if (typeof encoding === "function") callback = encoding;
     if (chunk !== undefined)
       this.write(chunk, typeof encoding === "function" ? undefined : encoding);
+    this.writableEnded = true;
     queueMicrotask(() => {
+      this.writableFinished = true;
       this.emit("finish");
       if (callback) callback();
     });
@@ -4131,6 +4137,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
         }
         if (!stream._paused && stream._index === stream._chunks.length) {
           stream._ended = true;
+          stream.readableEnded = true;
           stream.emit("end");
           if (options.autoClose !== false && stream.fd !== null) {
             globalThis.__nodeFs.closeSync(stream.fd);
