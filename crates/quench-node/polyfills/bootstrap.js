@@ -710,9 +710,11 @@ class NodeBuffer extends Uint8Array {
       throw error;
     }
     const length =
-      totalLength === undefined
-        ? list.reduce((sum, item) => sum + item.byteLength, 0)
-        : totalLength;
+      list.length === 0
+        ? 0
+        : totalLength === undefined
+          ? list.reduce((sum, item) => sum + item.byteLength, 0)
+          : totalLength;
     const output = new NodeBuffer(length);
     let offset = 0;
     list.forEach((item) => {
@@ -1611,8 +1613,16 @@ globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
   if (
     JSON.stringify(__nodeAssertNormalize(actual)) !==
     JSON.stringify(__nodeAssertNormalize(expected))
-  )
+  ) {
     throw new Error(message || "values differ");
+  }
+};
+globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
+  if (
+    JSON.stringify(__nodeAssertNormalize(actual)) ===
+    JSON.stringify(__nodeAssertNormalize(expected))
+  )
+    throw new Error(message || "values are deeply equal");
 };
 globalThis.__nodeAssert.throws = (fn, expected) => {
   let thrown = false;
