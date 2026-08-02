@@ -304,6 +304,9 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 std::os::unix::fs::symlink(target, link).map_err(|_| rquickjs::Error::new_from_js("fs", "symlinkSync failed"))
             }),
         )?;
+        ctx.globals().set("__quench_fs_link", Func::from(|source: String, destination: String| -> rquickjs::Result<()> {
+            fs::hard_link(source, destination).map_err(|_| rquickjs::Error::new_from_js("fs", "link failed"))
+        }))?;
         ctx.globals().set(
             "__quench_fs_readlink",
             Func::from(|path: String| -> rquickjs::Result<String> {
