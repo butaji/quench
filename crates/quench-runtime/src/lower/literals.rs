@@ -6,6 +6,9 @@ use super::expr::lower_expr;
 use super::helpers::LowerError;
 use crate::ast::{Expression, PropertyKey, PropertyValue};
 use oxc::ast::ast;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static TEMPLATE_SITE_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Lower a template literal expression
 pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, LowerError> {
@@ -68,7 +71,7 @@ pub fn lower_tagged_template(
     let mut arguments = Vec::with_capacity(tagged.quasi.expressions.len() + 1);
     arguments.push(Expression::String(format!(
         "\0quench-template-site:{}",
-        tagged.span.start
+        TEMPLATE_SITE_ID.fetch_add(1, Ordering::Relaxed)
     )));
     let cooked = Expression::Array(
         tagged

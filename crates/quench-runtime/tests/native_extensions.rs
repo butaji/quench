@@ -36,6 +36,13 @@ fn tagged_template_reuses_template_object_at_one_site() {
 }
 
 #[test]
+fn tagged_template_eval_sites_are_distinct_between_evals() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("var objs=[];function tag(x){objs.push(x);}for(var a=0;a<2;a++)eval('tag`'+a+'`');objs[0]!==objs[1]").unwrap();
+    assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
 fn for_await_awaits_custom_async_iterator_results() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var result;var obj={};obj[Symbol.asyncIterator]=function(){var i=0;return{next:function(){return Promise.resolve(i++<1?{value:7,done:false}:{done:true});}}};async function f(){for await(const x of obj)return x;}f().then(function(v){result=v;});")
