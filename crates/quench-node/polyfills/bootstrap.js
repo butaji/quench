@@ -1909,7 +1909,9 @@ const __nodeWinPath = {
     const index = trimmed.lastIndexOf("\\");
     const dir =
       index >= 0
-        ? (hadTrailingSeparator || (root.length === 3 && index === 2)
+        ? (hadTrailingSeparator ||
+          (root.length === 3 && index === 2) ||
+          (root.startsWith("\\\\") && index === root.length - 1)
             ? trimmed.slice(0, index + 1)
             : trimmed.slice(0, index)) || root
         : "";
