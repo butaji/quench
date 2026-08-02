@@ -90,6 +90,8 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.globals().set("__quench_pid", std::process::id())?;
+        ctx.globals().set("__quench_platform", std::env::consts::OS)?;
+        ctx.globals().set("__quench_arch", std::env::consts::ARCH)?;
         ctx.globals().set(
             "__quench_ppid",
             {
