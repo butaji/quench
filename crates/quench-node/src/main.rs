@@ -132,6 +132,13 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 fs::remove_dir_all(path).map_err(|_| rquickjs::Error::new_from_js("fs", "rmdirSync failed"))
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_kind",
+            Func::from(|path: String| -> rquickjs::Result<String> {
+                let metadata = fs::metadata(path).map_err(|_| rquickjs::Error::new_from_js("fs", "statSync failed"))?;
+                Ok(if metadata.is_file() { "file".into() } else if metadata.is_dir() { "directory".into() } else { "other".into() })
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;

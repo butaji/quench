@@ -31,3 +31,4 @@ these small fixtures isolate the currently implemented contract.
 | 21 | asynchronous assertion helpers | `tools/run-node-tests.sh --stage 21` |
 | 22 | promise EventEmitter helpers | `tools/run-node-tests.sh --stage 22` |
 | 23 | synchronous directory filesystem APIs | `tools/run-node-tests.sh --stage 23` |
+| 24 | Rust-backed filesystem stat kinds | `tools/run-node-tests.sh --stage 24` |
