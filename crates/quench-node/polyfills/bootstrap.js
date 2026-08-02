@@ -222,6 +222,11 @@ globalThis.process = {
     voluntaryContextSwitches: 0,
     involuntaryContextSwitches: 0,
   }),
+  binding: (name) => {
+    const error = new Error(`No such module: ${String(name)}`);
+    error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
+    throw error;
+  },
   umask: (mask) =>
     globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
