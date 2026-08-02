@@ -8,6 +8,14 @@ globalThis.Proxy = function (target, handlers) {
   __nodeProxySet.add(proxy);
   return proxy;
 };
+const __nodeDataViewSet = new WeakSet();
+const __nodeNativeDataView = globalThis.DataView;
+globalThis.DataView = function (...args) {
+  const view = new __nodeNativeDataView(...args);
+  __nodeDataViewSet.add(view);
+  return view;
+};
+globalThis.DataView.prototype = __nodeNativeDataView.prototype;
 const __quenchQueueMicrotask = globalThis.queueMicrotask;
 globalThis.__quench_async_error = "";
 globalThis.queueMicrotask = (callback) =>
@@ -4123,18 +4131,7 @@ globalThis.__nodeUtil = {
     isAnyArrayBuffer: (value) =>
       value instanceof ArrayBuffer || value instanceof SharedArrayBuffer,
     isArrayBufferView: (value) => ArrayBuffer.isView(value),
-    isDataView: (value) => {
-      if (!ArrayBuffer.isView(value)) return false;
-      if (Object.prototype.toString.call(value) === "[object DataView]") {
-        return true;
-      }
-      try {
-        DataView.prototype.getInt8.call(value, 0);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    },
+    isDataView: (value) => __nodeDataViewSet.has(value),
     isBoxedPrimitive: (value) =>
       value instanceof Boolean ||
       value instanceof Number ||
