@@ -5727,7 +5727,17 @@ const __nodeQuerystringExports = {
         bytes.push(parseInt(input.slice(i + 1, i + 3), 16));
         i += 2;
       } else {
-        const encoded = new TextEncoder().encode(input[i]);
+        let character = input[i];
+        if (
+          input.charCodeAt(i) >= 0xd800 &&
+          input.charCodeAt(i) <= 0xdbff &&
+          i + 1 < input.length &&
+          input.charCodeAt(i + 1) >= 0xdc00 &&
+          input.charCodeAt(i + 1) <= 0xdfff
+        ) {
+          character += input[++i];
+        }
+        const encoded = new TextEncoder().encode(character);
         bytes.push(...encoded);
       }
     }
