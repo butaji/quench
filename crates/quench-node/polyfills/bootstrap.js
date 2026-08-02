@@ -815,7 +815,7 @@ class NodeBuffer extends Uint8Array {
     else if (typeof value === "string") {
       if (encoding !== undefined && typeof encoding !== "string") {
         const error = new TypeError(
-          'The "encoding" argument must be of type string',
+          `The "encoding" argument must be of type string. Received type ${typeof encoding} (${String(encoding)})`,
         );
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
