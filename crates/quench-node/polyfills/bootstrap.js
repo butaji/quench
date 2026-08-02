@@ -288,7 +288,7 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_UNKNOWN_ENCODING";
       throw error;
     }
-    if (value instanceof ArrayBuffer) {
+    if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
       let offset = Number(encoding);
       if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
       offset = Math.trunc(offset);
@@ -410,7 +410,8 @@ class NodeBuffer extends Uint8Array {
     if (
       value &&
       !ArrayBuffer.isView(value) &&
-      value.buffer instanceof ArrayBuffer
+      (value.buffer instanceof ArrayBuffer ||
+        value.buffer instanceof SharedArrayBuffer)
     )
       return NodeBuffer.from(value.buffer);
     if (ArrayBuffer.isView(value)) {
@@ -631,7 +632,11 @@ class NodeBuffer extends Uint8Array {
         return NodeBuffer.from(value, normalized).length;
       return new NodeTextEncoder().encode(value).length;
     }
-    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value))
+    if (
+      value instanceof ArrayBuffer ||
+      value instanceof SharedArrayBuffer ||
+      ArrayBuffer.isView(value)
+    )
       return value.byteLength;
     const error = new TypeError(
       'The "string" argument must be of type string or an instance of Buffer or ArrayBuffer',
