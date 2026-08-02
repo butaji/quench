@@ -68,3 +68,5 @@ these small fixtures isolate the currently implemented contract.
 | 58 | mutable host-backed `process.env` | `tools/run-node-tests.sh --stage 58` |
 | 59 | process environment enumeration | `tools/run-node-tests.sh --stage 59` |
 | 60 | `buffer` atob/btoa exports | `tools/run-node-tests.sh --stage 60` |
+| 61 | diagnostic mkdtemp input matrix | `tools/run-node-tests.sh --stage 61` |
+| 62 | diagnostic async mkdtemp callbacks | `tools/run-node-tests.sh --stage 62` |
