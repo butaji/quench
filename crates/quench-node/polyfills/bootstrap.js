@@ -4383,7 +4383,10 @@ globalThis.__nodeUtil = {
   },
   stripVTControlCharacters: (value) => {
     if (typeof value !== "string") {
-      const error = new TypeError('The "str" argument must be of type string');
+      const error = new TypeError(
+        'The "str" argument must be of type string.' +
+          ` Received type ${typeof value} (${String(value)})`,
+      );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
@@ -4594,7 +4597,9 @@ globalThis.__nodeUtil = {
       Object.prototype.toString.call(value) === "[object Symbol]",
     isBigIntObject: (value) =>
       Object.prototype.toString.call(value) === "[object BigInt]",
-    isNativeError: (value) => value instanceof Error,
+    isNativeError: (value) =>
+      value instanceof Error &&
+      Object.prototype.toString.call(value) === "[object Error]",
     isRegExp: (value) => value instanceof RegExp,
     isAsyncFunction: (value) =>
       Object.prototype.toString.call(value) === "[object AsyncFunction]",
