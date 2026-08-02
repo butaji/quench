@@ -21,3 +21,6 @@ Make Node-compatible streams preserve buffering, ordering, pause/resume, and bac
 Initial writable backpressure (`highWaterMark`, `writableLength`, `drain`) is
 implemented and covered by `tests/node-compat/stage-370/stream-backpressure.js`.
 Readable pause/resume and full transform/event ordering remain in progress.
+
+Readable pause/resume queue preservation is covered by
+`tests/node-compat/stage-371/stream-pause-resume.js`.

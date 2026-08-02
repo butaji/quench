@@ -2252,13 +2252,16 @@ class NodeReadable extends NodeEventEmitter {
   static from(iterable) {
     const stream = new NodeReadable();
     stream._chunks = Array.from(iterable);
-    queueMicrotask(() => {
-      for (const chunk of stream._chunks) {
-        if (stream._paused) break;
-        stream.emit("data", chunk);
+    stream._index = 0;
+    stream._pump = () => {
+      while (!stream._paused && stream._index < stream._chunks.length)
+        stream.emit("data", stream._chunks[stream._index++]);
+      if (!stream._paused && stream._index === stream._chunks.length) {
+        stream._ended = true;
+        stream.emit("end");
       }
-      stream.emit("end");
-    });
+    };
+    queueMicrotask(stream._pump);
     return stream;
   }
   pipe(destination) {
@@ -2272,6 +2275,7 @@ class NodeReadable extends NodeEventEmitter {
   }
   resume() {
     this._paused = false;
+    if (!this._ended) queueMicrotask(this._pump);
     return this;
   }
 
