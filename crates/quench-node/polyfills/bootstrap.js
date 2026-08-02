@@ -2458,6 +2458,11 @@ class NodeReadable extends NodeEventEmitter {
     );
   }
   push(chunk) {
+    if (this.destroyed && chunk !== null) {
+      const error = new Error("Cannot call push after a stream was destroyed");
+      error.code = "ERR_STREAM_DESTROYED";
+      throw error;
+    }
     if (this._ended && chunk !== null) {
       const error = new Error("stream.push() after EOF");
       error.code = "ERR_STREAM_PUSH_AFTER_EOF";

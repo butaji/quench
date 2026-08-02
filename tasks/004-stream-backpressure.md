@@ -54,6 +54,8 @@ Flowing readable encoding delivery is covered by
 `tests/node-compat/stage-473/stream-encoding-flow.js`.
 Writable write-after-destroy rejection is covered by
 `tests/node-compat/stage-474/stream-write-after-destroy.js`.
+Readable push-after-destroy rejection is covered by
+`tests/node-compat/stage-475/stream-push-after-destroy.js`.
 Writable `drain` transition and callback-free length recovery are covered by
 `tests/node-compat/stage-453/stream-drain-transition.js`.
 Chainable writable `end()` behavior is covered by
