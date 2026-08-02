@@ -6900,7 +6900,7 @@ globalThis.require = (specifier) => {
     cluster.settings = {};
     cluster.setupPrimary = (settings = {}) => {
       cluster.settings = { ...settings };
-      queueMicrotask(() => cluster.emit("setup"));
+      cluster.emit("setup");
       return cluster.settings;
     };
     cluster.setupMaster = cluster.setupPrimary;
