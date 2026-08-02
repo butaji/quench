@@ -151,6 +151,9 @@ class NodeBuffer extends Uint8Array {
       for (let i = 0; i < this.length; i += 3) { const n = (this[i] << 16) | ((this[i + 1] || 0) << 8) | (this[i + 2] || 0); result += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] + (i + 1 < this.length ? alphabet[(n >> 6) & 63] : '=') + (i + 2 < this.length ? alphabet[n & 63] : '='); }
       return result;
     }
+    if (encoding === 'latin1' || encoding === 'binary') return Array.from(this, (byte) => String.fromCharCode(byte)).join('');
+    if (encoding === 'ascii') return Array.from(this, (byte) => String.fromCharCode(byte & 0x7f)).join('');
+    if (encoding === 'utf16le' || encoding === 'ucs2' || encoding === 'ucs-2') { let result = ''; for (let i = 0; i + 1 < this.length; i += 2) result += String.fromCharCode(this[i] | (this[i + 1] << 8)); return result; }
     return new NodeTextDecoder().decode(this);
   }
   equals(other) { if (typeof other === 'string') other = NodeBuffer.from(other); return other && this.length === other.length && this.every((value, index) => value === other[index]); }
@@ -494,7 +497,7 @@ globalThis.__nodeFs = {
     const result = globalThis.__quench_fs_append(path, data instanceof Uint8Array ? new NodeTextDecoder().decode(data) : String(data)); if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result;
   },
   accessSync: (value) => { const path = nodeFsPath(value); if (!globalThis.__quench_fs_access(path)) { const error = new Error(`ENOENT: no such file or directory, access '${path}'`); error.code = 'ENOENT'; error.path = path; throw error; } },
-  realpathSync: (value) => globalThis.__quench_fs_realpath(String(value)),
+  realpathSync: (value, options) => { const result = globalThis.__quench_fs_realpath(nodePathValue(value)); const encoding = typeof options === 'string' ? options : options && options.encoding; return encoding === 'buffer' ? NodeBuffer.from(result) : encoding ? NodeBuffer.from(result).toString(encoding) : result; },
   rmSync: (value, options = {}) => { const path = nodeFsPath(value); let kind; try { kind = globalThis.__quench_fs_kind(path); } catch (_) { return; } if (kind === 'file') return globalThis.__quench_fs_unlink(path); if (kind === 'directory' && options.recursive === false) { const error = new Error(`ERR_FS_EISDIR: illegal operation on a directory, rm '${path}'`); error.code = 'ERR_FS_EISDIR'; error.path = path; throw error; } return globalThis.__quench_fs_remove_dir(path); },
   chmodSync: (value, mode) => { const path = nodeFsPath(value); globalThis.__quench_fs_chmod(path, typeof mode === 'string' ? parseInt(mode, 8) : Number(mode)); globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); },
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
@@ -594,7 +597,7 @@ globalThis.__nodeFs.realpath = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
-  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.realpathSync(path); } catch (error) { callback(error); return; } callback(null, result); });
+  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.realpathSync(path, options); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeFs.realpathSync.native = globalThis.__nodeFs.realpathSync;
 globalThis.__nodeFs.realpath.native = globalThis.__nodeFs.realpath;
@@ -875,7 +878,7 @@ globalThis.require = (specifier) => {
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name.endsWith('/common/tmpdir')) return globalThis.__nodeTmpdir;
   if (name === 'buffer') return { Buffer: NodeBuffer, kMaxLength: 0x7fffffff, atob: nodeAtob, btoa: nodeBtoa };
-  if (name === '../common/fixtures' || name.endsWith('/common/fixtures')) return { path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}`, utf8TestText: 'The quick brown fox jumps over the lazy dog.\n' };
+  if (name === '../common/fixtures' || name.endsWith('/common/fixtures')) return { fixturesDir: `${globalThis.__quench_cwd}/tests/node/test/fixtures`, path: (file) => `${globalThis.__quench_cwd}/tests/node/test/fixtures/${file}`, utf8TestText: 'The quick brown fox jumps over the lazy dog.\n' };
   if (name === 'fs' || name === 'fs/promises') return globalThis.__nodeFs;
   throw new Error(`Cannot find module '${specifier}'`);
 };
