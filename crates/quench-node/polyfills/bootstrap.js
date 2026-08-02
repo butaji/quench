@@ -9,7 +9,9 @@ globalThis.queueMicrotask = (callback) =>
       callback();
     } catch (error) {
       if (!globalThis.__quench_async_error)
-        globalThis.__quench_async_error = String(error && (error.stack || error));
+        globalThis.__quench_async_error = String(
+          error && (error.stack || error),
+        );
     }
   });
 
@@ -212,10 +214,17 @@ class NodeBuffer extends Uint8Array {
   static from(value, encoding) {
     if (typeof value === "string") {
       if (encoding === "hex") {
-        const output = new NodeBuffer(value.length / 2);
-        for (let i = 0; i < output.length; i++)
-          output[i] = parseInt(value.slice(i * 2, i * 2 + 2), 16);
-        return output;
+        const output = new NodeBuffer(Math.floor(value.length / 2));
+        let written = 0;
+        for (
+          let i = 0;
+          i + 1 < value.length && written < output.length;
+          i += 2
+        ) {
+          if (!/^[0-9a-f]{2}$/i.test(value.slice(i, i + 2))) break;
+          output[written++] = parseInt(value.slice(i, i + 2), 16);
+        }
+        return output.subarray(0, written);
       }
       if (encoding === "base64") {
         const alphabet =
@@ -305,6 +314,20 @@ class NodeBuffer extends Uint8Array {
       this.length === other.length &&
       this.every((value, index) => value === other[index])
     );
+  }
+  write(value, offset = 0, length, encoding = "utf8") {
+    if (typeof length === "string") {
+      encoding = length;
+      length = undefined;
+    }
+    const bytes = NodeBuffer.from(String(value), encoding);
+    const limit =
+      length === undefined
+        ? this.length - offset
+        : Math.min(length, this.length - offset);
+    const count = Math.min(limit, bytes.length);
+    this.set(bytes.subarray(0, count), offset);
+    return count;
   }
 }
 globalThis.Buffer = NodeBuffer;
