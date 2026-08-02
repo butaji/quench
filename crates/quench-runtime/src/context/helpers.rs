@@ -56,7 +56,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         return Err(js_err);
     }
     if crate::interpreter::is_direct_eval()
-        && source.contains("super(")
+        && (source.contains("super(") || source.contains("super.") || source.contains("super["))
         && crate::interpreter::get_current_eval_env()
             .is_none_or(|env| env.borrow().get_super_class().is_none())
     {
@@ -867,6 +867,15 @@ mod tests {
         assert!(ctx.eval("eval('function evalDescriptorOnly() {}'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorOnly').configurable").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
+    }
+
+    #[test]
+    fn direct_eval_super_property_outside_method_is_syntax_error() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("try { eval('super.property;'); false } catch (e) { e instanceof SyntaxError }")
+            .is_ok_and(|value| matches!(value, Value::Boolean(true))));
     }
 
     #[test]
