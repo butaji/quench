@@ -286,6 +286,7 @@ globalThis.__nodeCommon = {
   isWindows: process.platform === 'win32',
   isAIX: false,
   isFreeBSD: false,
+  canCreateSymLink: () => false,
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
@@ -451,6 +452,12 @@ globalThis.__nodeFs = {
   chmodSync: (value, mode) => globalThis.__quench_fs_chmod(String(value), Number(mode)),
   symlinkSync: (target, link) => globalThis.__quench_fs_symlink(String(target), String(link)),
   readlinkSync: (value) => globalThis.__quench_fs_readlink(String(value)),
+};
+globalThis.__nodeFs.realpath = (value, options, callback) => {
+  if (typeof options === 'function') callback = options;
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.realpathSync(path); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeStats = function Stats(file = false, directory = false, date = new Date()) {
   if (!(date instanceof Date)) date = new Date(Number(date) || 0);
