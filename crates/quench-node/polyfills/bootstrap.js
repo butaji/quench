@@ -450,10 +450,13 @@ globalThis.__nodeFs = {
   fsyncSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Number.isInteger(fd) || fd < 0) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } },
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
   readSync: (fd, buffer, offset = 0, length = buffer.length, position = null) => {
+    if (offset !== undefined && offset !== null && (Array.isArray(offset) || typeof offset !== 'number' && typeof offset !== 'object')) { const error = new TypeError('The "options" argument must be an object'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (offset === null || (typeof offset === 'object' && !ArrayBuffer.isView(offset))) { const options = offset || {}; if (offset !== null && typeof offset !== 'object') { const error = new TypeError('The "options" argument must be an object'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
     if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
-    const hex = globalThis.__quench_fs_read_range_hex(path, position === null ? 0 : Number(position), Number(length));
+    const numericPosition = position === null || Number(position) < 0 ? 0 : Number(position);
+    const hex = globalThis.__quench_fs_read_range_hex(path, numericPosition, Number(length));
     const bytes = NodeBuffer.from(hex, 'hex'); buffer.set(bytes.subarray(0, Number(length)), Number(offset)); return bytes.length;
   },
   copyFileSync: (from, to, mode = 0) => {
@@ -489,7 +492,16 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
 };
 globalThis.__nodeFs.fsync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fsyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
 globalThis.__nodeFs.fdatasync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fdatasyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
-globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readSync(fd, buffer, offset, length, position)); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
+  if (typeof buffer === 'function' || buffer === undefined) { callback = buffer; buffer = NodeBuffer.alloc(16384); offset = 0; length = buffer.length; position = null; }
+  else if (buffer === null) { callback = offset; buffer = NodeBuffer.alloc(16384); offset = 0; length = buffer.length; position = null; }
+  else if (typeof buffer === 'object' && !ArrayBuffer.isView(buffer)) { const options = buffer; callback = offset; buffer = NodeBuffer.alloc(options.length === undefined ? 16384 : Number(options.length)); offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
+  else if (typeof offset === 'function') { callback = offset; offset = 0; length = buffer.length; position = null; }
+  else if (typeof offset === 'object' || offset === null || offset === undefined) { const options = offset || {}; callback = length; offset = Number(options.offset || 0); length = options.length === undefined ? buffer.length - offset : Number(options.length); position = options.position === undefined ? null : options.position; }
+  else if (typeof position === 'function') { callback = position; position = null; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
+};
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
 const nodeMode = (mode) => {
