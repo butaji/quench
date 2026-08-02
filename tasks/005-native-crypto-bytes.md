@@ -34,3 +34,5 @@ Supported algorithm discovery is covered by
 `tests/node-compat/stage-395/crypto-capabilities.js`.
 Byte comparison and unequal-length validation are covered by
 `tests/node-compat/stage-396/crypto-timing-safe-equal.js`.
+Random integer generation and range validation are covered by
+`tests/node-compat/stage-397/crypto-random-int.js`.

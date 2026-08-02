@@ -5422,6 +5422,48 @@ const __createNodeCrypto = () => ({
       difference |= left[index] ^ right[index];
     return difference === 0;
   },
+  randomInt: (minimum = 0, maximum, callback) => {
+    if (typeof minimum === "function") {
+      callback = minimum;
+      minimum = 0;
+      maximum = 0x1_0000_0000_0000;
+    } else if (typeof maximum === "function") {
+      callback = maximum;
+      maximum = minimum;
+      minimum = 0;
+    } else if (maximum === undefined) {
+      maximum = minimum;
+      minimum = 0;
+    }
+    if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
+      const error = new TypeError("The bounds must be safe integers");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (maximum <= minimum || maximum - minimum > 0x1_0000_0000_0000) {
+      const error = new RangeError(
+        "The difference between max and min must be less than 2^48",
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const range = maximum - minimum;
+    const limit = Math.floor(0x1_0000_0000_0000 / range) * range;
+    const choose = () => {
+      let value;
+      do {
+        const bytes = globalThis.__quench_random_bytes(6);
+        value = 0;
+        for (const byte of bytes) value = value * 256 + byte;
+      } while (value >= limit);
+      return minimum + (value % range);
+    };
+    if (typeof callback === "function") {
+      queueMicrotask(() => callback(null, choose()));
+      return;
+    }
+    return choose();
+  },
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
     const output = NodeBuffer.from(
