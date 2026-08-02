@@ -4422,8 +4422,7 @@ globalThis.__nodeUtil = {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
       if (value instanceof Date) return value.toISOString();
-      if (typeof value === "string")
-        return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+      if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
       if (Array.isArray(value))
         return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
@@ -4541,6 +4540,8 @@ globalThis.__nodeUtil = {
           return Object.is(number, -0) ? "-0" : numeric(number);
         }
         if (token === "%j") return JSON.stringify(value);
+        if (token === "%o" && typeof value === "string")
+          return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
         return token === "%o" ? inspect(value) : String(value);
       }) +
       args
