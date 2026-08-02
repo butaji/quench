@@ -2455,6 +2455,7 @@ class NodeReadable extends NodeEventEmitter {
   }
   read(size) {
     if (!this._chunks || this._chunks.length === 0) return null;
+    if (size !== undefined && size <= 0) return null;
     const chunk = this._chunks.shift();
     if (size !== undefined && chunk && chunk.length > size) {
       this._chunks.unshift(chunk.subarray(size));
