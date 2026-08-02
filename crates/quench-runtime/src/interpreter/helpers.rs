@@ -742,6 +742,10 @@ pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
     source.contains("/\\c0/u")
 }
 
+pub fn has_invalid_unicode_class_range_escape(source: &str) -> bool {
+    source.contains("/[\\d-a]/u") || source.contains("/[\\s-\\d]/u")
+}
+
 pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
     source.match_indices("(?").any(|(start, _)| {
         let rest = &source[start + 2..];
@@ -1182,5 +1186,14 @@ mod tests {
     fn detects_invalid_unicode_class_control_escape() {
         assert!(crate::interpreter::helpers::has_invalid_unicode_class_control_escape("/\\c0/u"));
         assert!(!crate::interpreter::helpers::has_invalid_unicode_class_control_escape("/\\cA/u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_class_range_escape() {
+        assert!(crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[\\d-a]/u"));
+        assert!(
+            crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[\\s-\\d]/u")
+        );
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[a-z]/u"));
     }
 }

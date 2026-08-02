@@ -297,6 +297,25 @@ fn main() -> ExitCode {
             .negative
             .as_ref()
             .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_unicode_class_range_escape(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: invalid unicode class range escape".to_string())),
+            );
+        }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
             && quench_runtime::interpreter::has_overlapping_regexp_modifiers(code)
         {
             return judge(
