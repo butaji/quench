@@ -816,6 +816,7 @@ dependencies = [
 name = "quench-node"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rand",
  "rquickjs",
  "sha2",

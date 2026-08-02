@@ -23,6 +23,7 @@ globalThis.process = {
   cwd: () => globalThis.__quench_cwd_get(),
   chdir: (value) => globalThis.__quench_chdir(String(value)),
   exitCode: 0,
+  umask: (mask) => globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
   nextTick: (callback, ...args) => queueMicrotask(() => callback(...args)),
   hrtime: { bigint: () => BigInt(Date.now()) * 1000000n },
 };
