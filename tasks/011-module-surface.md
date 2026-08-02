@@ -1,0 +1,157 @@
+# Module surface — register every `builtinModules` entry
+
+## Goal
+
+Every name in `require('module').builtinModules` either has a working polyfill
+branch in `crates/quench-node/polyfills/bootstrap.js` or returns the
+Node-correct `Error("No such built-in module: …")` with code
+`ERR_UNKNOWN_BUILTIN_MODULE`. No `require('node:<x>')` or `require('<x>')`
+returns `undefined` or throws a generic JS error.
+
+## Current state
+
+The 32 modules registered in `bootstrap.js` (grouped):
+
+- Core: `assert`, `assert/strict` (via `__nodeAssert`), `buffer`, `cluster`,
+  `child_process`, `crypto`, `events`, `fs`, `fs/promises`, `os`, `path`,
+  `path/posix`, `path/win32`, `querystring`, `stream`, `stream/iter`,
+  `stream/promises` (TODO), `stream/web` (TODO), `stream/consumers` (TODO),
+  `string_decoder` (TODO), `timers`, `timers/promises`, `url`, `util`,
+  `util/types` (TODO), `v8`, `vm`, `zlib`, `zlib/iter` (stub).
+- Async: `async_hooks`, `perf_hooks`.
+- Process: `process` (via `globalThis.process`), `worker_threads` (stub).
+- Networking: `http` (in-process), `https` (TODO), `http2` (TODO), `net`
+  (stub), `dgram` (TODO), `tls` (TODO), `dns`, `dns/promises`.
+- I/O: `readline`, `readline/promises` (TODO), `repl` (TODO), `tty` (TODO),
+  `console` (via `globalThis.console`), `module` (TODO),
+  `diagnostics_channel` (TODO), `inspector` (return ERR), `wasi` (return
+  ERR), `domain` (legacy; stub).
+- Internal: `internal/event_target`, `internal/errors`, `internal/buffer`,
+  `internal/test/binding`, `internal/fs/utils`, `internal/modules/*`.
+
+## Backlog (60 modules, alphabetical)
+
+For each entry: status, the focused stage(s) that gate it, the up-stream
+fixture cluster, and the next concrete slice.
+
+### Already registered (verify, no new slice)
+
+- `assert` — done; verify Node parity in `tests/node-compat/stage-?/`.
+- `assert/strict` — done via `__nodeAssert`.
+- `async_hooks` — done (task 006 follow-up).
+- `buffer` — done (task 001); gaps in `toString` and `copyBytesFrom` are
+  Node-correct.
+- `child_process` — minimal (task 006 follow-up). Need: `exec`/`execFile`,
+  `execSync`/`execFileSync`, `spawn` argv0, `stdio` array, `fork` IPC
+  channels, signal propagation, env merging, stdio pipe, detached,
+  `windowsHide`.
+- `cluster` — minimal primary-only (task 009 next slice). Need: full
+  `Worker` lifecycle, IPC, env propagation, `setupPrimary` arg variants,
+  `disconnect` cleanup.
+- `console` — partial; gaps: `console.table`, `console.group*`,
+  `Console` constructor, `console.assert`, `console.trace`.
+- `constants` — return `{...libuv constants…}` (mostly no-op on
+  rquickjs host).
+- `crypto` — hash/HMAC/random/uuid/cert done. Need: `Cipheriv`/`Decipheriv`,
+  `Sign`/`Verify`, `KeyObject`, `KeyExportCallback`, `createPrivateKey`,
+  `createPublicKey`, `diffieHellman`, `scrypt`, `pbkdf2` (done), `hkdf`,
+  `hashStream`, `secretKeyObject`, `webcrypto` (`crypto.subtle`).
+- `dgram` — TODO. Stage-513: `dgram-createSocket` and `dgram-send`. Host
+  work: `__quench_udp_send`, `__quench_udp_close`.
+- `diagnostics_channel` — TODO. Stage-514: `channel.hasSubscribers`,
+  `Channel.runStores`, `TracingChannel`. No host work.
+- `dns` / `dns/promises` — partial (`__nodeDns.resolve*`). Need: real
+  `dns.lookup`, real `lookupService`, `Resolver`, `setServers`,
+  `getServers`, `setLocalAddress`, `cancel`, `getDefaultResultOrder`.
+  Host: real `__quench_dns_lookup`.
+- `domain` — legacy; register a `Domain` class with the same
+  `enter`/`exit`/`run`/`add`/`remove`/`bind`/`intercept` API and
+  `error`/`dispose` events.
+- `events` — done (EventEmitter).
+- `fs` / `fs/promises` — partial. Need: `fs.opendir`, `fs.cp`,
+  `fs.statfs`, `fs.lutimes`, `fs.lchmod`, `fs.lchown`, `fs.copyFile`
+  flags, `fs.constants`, `FileHandle.readLines` (async iterator),
+  `fs.promises.glob`, real watcher.
+- `http` — in-process only. Need: real `http.request`/`http.get` via
+  host TCP, `http.Agent`, `http.IncomingMessage`, `http.ServerResponse`,
+  chunked transfer, `expect-continue`, `100 Continue`, `flushHeaders`,
+  `setTimeout`, `keepAlive`, `http.ClientRequest` abort.
+- `https` — TODO. Stage-515: `https.request` over real TLS via host.
+- `http2` — TODO. Stage-516: `http2.createServer` minimal
+  (in-process loopback).
+- `inspector` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
+- `module` — TODO. Stage-517: `module.builtinModules` (the array itself),
+  `module.createRequire`, `module._cache`, `module._extensions`.
+- `net` — minimal. Need: real `net.createServer`/`net.connect` via host
+  TCP; `net.Socket`, `net.BlockList`, `net.isIP`, `net.isIPv4`,
+  `net.isIPv6`.
+- `os` — partial. Need: real `os.cpus`, `os.networkInterfaces`,
+  `os.userInfo`, `os.setPriority`, `os.getPriority`, `os.homedir`,
+  `os.tmpdir`.
+- `path` / `path/posix` / `path/win32` — done (task 009).
+- `perf_hooks` — done (task 003 follow-up). Need: `PerformanceObserver`
+  gc/stat callback, `monitorEventLoopDelay`.
+- `process` — partial. Need: `process.report`, `process.dlopen`,
+  `process.setUncaughtExceptionCaptureCallback`, `process.chdir` (real
+  via host), `process.kill`, `process.exit` (real via host), real
+  `process.uptime`, real `process.memoryUsage`, real `process.cpuUsage`.
+- `punycode` — register as re-export of `url.domainToASCII` /
+  `url.domainToUnicode`.
+- `querystring` — done.
+- `readline` / `readline/promises` — partial. Need: `Interface` class,
+  `createInterface`, `emitKeypressEvents`, real keypress decoding via
+  host `__quench_tty_*`.
+- `repl` — TODO. Stage-518: minimal `repl.start()` in-process using
+  `vm` + `readline`.
+- `stream` — done (task 004). Need: `pipeline`, `finished`, `Readable.from`
+  (done), `Writable.duplex`, `Transform._transform`, `PassThrough`.
+- `stream/iter` — gated by `--experimental-stream-iter`. Done.
+- `stream/promises` — register `pipeline`/`finished`.
+- `stream/web` — register WHATWG `ReadableStream`/`WritableStream`/
+  `TransformStream` polyfills; goal is to pass `test-stream-web*` fixtures.
+- `string_decoder` — TODO. Stage-519: `StringDecoder` class.
+- `sys` — alias to `util`.
+- `timers` / `timers/promises` — done (task 003).
+- `tls` — TODO. Stage-520: real `tls.connect`/`tls.createServer` over
+  host OpenSSL.
+- `trace_events` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
+- `tty` — TODO. Stage-521: `tty.WriteStream`, `tty.ReadStream`,
+  `tty.isatty`, real termios via host.
+- `url` / `URL` / `URLSearchParams` — done. Need: `URL.canParse`,
+  `URL.parse`, `url.fileURLToPath` (real), `url.pathToFileURL` (real).
+- `util` — partial. Need: `util.promisify`, `util.types.*`,
+  `util.styleText`, `util.parseArgs`, `util.transferableAbortSignal`.
+- `util/types` — register the type predicates.
+- `v8` — done. Need: `v8.writeHeapSnapshot`, `v8.getHeapStatistics`,
+  `v8.stopCoverage`, `v8.takeCoverage`.
+- `vm` — partial. Need: `vm.SourceTextModule` (ESM), `vm.SyntheticModule`,
+  `vm.Module` linker, `vm.compileFunction`, real `vm.createContext`
+  shared array buffer.
+- `wasi` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
+- `worker_threads` — stub. Need: real `worker_threads` via host
+  `std::thread`. Out of scope for the in-process simulator: track as
+  "unsupported on this target" with `ERR_WORKER_NOT_SUPPORTED`.
+- `zlib` — TODO. Stage-522: `zlib.createGzip`, `zlib.createGunzip`,
+  `zlib.createDeflate`, `zlib.createInflate`, `zlib.constants`.
+- `zlib/iter` — gated by `--experimental-stream-iter`.
+
+## Slicing rules
+
+- One focused stage per `Stage N: <feature>` row in this file.
+- One commit per stage, per the project workflow.
+- The slice order is the one in this file (top to bottom), so reviewers can
+  read `tasks/011` and see the planned order.
+- Slices marked "real host work" include the matching host call
+  contract in `tasks/014`.
+
+## Done when
+
+- `grep 'if (name ===' crates/quench-node/polyfills/bootstrap.js | wc -l`
+  ≥ 60.
+- For each entry above, either the corresponding stage passes
+  (focused) or the entry returns the documented error code under a
+  `node:disable`-style skip.
+
+## Status
+
+Not started (modulo task 009 cluster-work and the existing 32).
