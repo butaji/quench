@@ -818,6 +818,10 @@ pub fn has_incomplete_named_backreference(source: &str) -> bool {
         .any(|(start, _)| !source[start + 3..].contains('>'))
 }
 
+pub fn has_unicode_identity_escape_in_named_group(source: &str) -> bool {
+    source.contains("(?<") && source.contains("\\a") && source.contains(")/u")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
