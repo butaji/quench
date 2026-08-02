@@ -34,6 +34,8 @@ Readable chunk delivery and end signaling through `push()` are covered by
 `tests/node-compat/stage-444/stream-push.js`.
 Readable front-buffer injection through `unshift()` is covered by
 `tests/node-compat/stage-445/stream-unshift.js`.
+Readable queued chunk consumption through `read()` is covered by
+`tests/node-compat/stage-446/stream-read.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
