@@ -4647,27 +4647,40 @@ globalThis.__nodeUrlModule = {
         throw new URIError("URI malformed");
       }
     }
-    const authority = value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
-    if (/\u0000/.test(authority) || /[#%/?@[\\\]^|]/.test(authority)) {
+    const rawAuthority =
+      value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
+    if (/\u0000/.test(rawAuthority) || /[#%/?@[\\\]^|]/.test(rawAuthority)) {
       const error = new TypeError("Invalid URL");
       error.code = "ERR_INVALID_URL";
       error.input = value;
       throw error;
     }
-    const parsed = new globalThis.__nodeURL(value);
+    let input = value.trim();
+    if (/^[a-z][a-z0-9+.-]*:/.test(input)) input = input.replaceAll("\\", "/");
+    const parsed = new globalThis.__nodeURL(input);
+    const protocol = parsed.protocol.toLowerCase();
+    const authority =
+      input.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] || "";
+    const at = authority.lastIndexOf("@");
+    const auth = at >= 0 ? decodeURIComponent(authority.slice(0, at)) : null;
+    const host = (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase();
+    const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
+    const port = host.match(/:(\d+)$/)?.[1] || null;
+    const pathname = parsed.pathname || (host ? "/" : "");
+    const search = parsed.search || null;
     return {
-      protocol: parsed.protocol || null,
-      slashes: parsed.protocol ? true : null,
-      auth: null,
-      host: parsed.host || null,
-      port: parsed.port || null,
-      hostname: parsed.hostname || null,
+      protocol: protocol || null,
+      slashes: protocol ? true : null,
+      auth,
+      host: host || null,
+      port,
+      hostname: hostname || null,
       hash: parsed.hash || null,
-      search: parsed.search || null,
-      query: parsed.search ? parsed.search.slice(1) : null,
-      pathname: parsed.pathname || null,
-      path: parsed.pathname ? `${parsed.pathname}${parsed.search}` : null,
-      href: parsed.href,
+      search,
+      query: search ? search.slice(1) : null,
+      pathname: pathname || null,
+      path: pathname ? `${pathname}${search || ""}` : null,
+      href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`,
     };
   },
   format: (value) => {
