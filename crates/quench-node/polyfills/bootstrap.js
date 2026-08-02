@@ -102,6 +102,10 @@ process.emit = (event, ...args) => {
   listeners.forEach((listener) => listener(...args));
   return listeners.length > 0;
 };
+process.emitWarning = (warning, options = {}) => {
+  const message = warning instanceof Error ? warning.message : String(warning);
+  process.emit('warning', { name: options.name || 'Warning', message, code: options.code });
+};
 
 class NodeBuffer extends Uint8Array {
   static from(value, encoding) {
@@ -250,7 +254,7 @@ globalThis.__nodeCommon = {
   },
   mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
-  expectWarning: () => {},
+  expectWarning: (_type, _message) => {},
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
