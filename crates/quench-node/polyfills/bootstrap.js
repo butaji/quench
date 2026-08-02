@@ -4102,7 +4102,10 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
       try {
         stream.fd = globalThis.__nodeFs.openSync(path, "w");
         stream.emit("open", stream.fd);
-        globalThis.__nodeFs.writeFileSync(path, NodeBuffer.concat(chunks));
+        const data = NodeBuffer.concat(chunks);
+        if (String(options.flags || "w").startsWith("a"))
+          globalThis.__nodeFs.appendFileSync(path, data);
+        else globalThis.__nodeFs.writeFileSync(path, data);
         stream.emit("finish");
         if (callback) callback();
         if (options.autoClose !== false) {
