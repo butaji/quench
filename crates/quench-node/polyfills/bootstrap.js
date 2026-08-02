@@ -233,6 +233,17 @@ class NodeBuffer extends Uint8Array {
       }
       return new NodeBuffer(value, offset, size);
     }
+    if (value instanceof String)
+      return NodeBuffer.from(String(value), encoding);
+    if (
+      value &&
+      typeof value === "object" &&
+      typeof value[Symbol.toPrimitive] === "function"
+    ) {
+      const primitive = value[Symbol.toPrimitive]("string");
+      if (typeof primitive === "string")
+        return NodeBuffer.from(primitive, encoding);
+    }
     if (typeof value === "string") {
       if (encoding === "hex") {
         const output = new NodeBuffer(Math.floor(value.length / 2));
