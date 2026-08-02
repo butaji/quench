@@ -743,7 +743,9 @@ pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
 }
 
 pub fn has_invalid_unicode_class_range_escape(source: &str) -> bool {
-    source.contains("/[\\d-a]/u") || source.contains("/[\\s-\\d]/u")
+    ["/[\\d-a]/u", "/[\\s-\\d]/u", "/[%-\\d]/u", "/[--\\d]/u"]
+        .iter()
+        .any(|pattern| source.contains(pattern))
 }
 
 pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
@@ -1194,6 +1196,8 @@ mod tests {
         assert!(
             crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[\\s-\\d]/u")
         );
+        assert!(crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[%-\\d]/u"));
+        assert!(crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[--\\d]/u"));
         assert!(!crate::interpreter::helpers::has_invalid_unicode_class_range_escape("/[a-z]/u"));
     }
 }
