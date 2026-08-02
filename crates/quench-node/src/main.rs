@@ -145,6 +145,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             }),
         )?;
         ctx.globals().set(
+            "__quench_sha256_bytes",
+            Func::from(|value: Vec<u8>| -> Vec<u8> {
+                Sha256::digest(value).to_vec()
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_random_uuid",
             Func::from(|| {
                 let mut bytes = [0u8; 16];
