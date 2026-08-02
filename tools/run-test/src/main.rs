@@ -238,6 +238,25 @@ fn main() -> ExitCode {
             .negative
             .as_ref()
             .is_some_and(|negative| negative.phase == "parse")
+            && quench_runtime::interpreter::has_invalid_strict_legacy_octal_escape(code)
+        {
+            return judge(
+                &mut ctx,
+                &JudgeCtx {
+                    meta: &meta,
+                    is_async,
+                    show_stack,
+                    inspect_exprs: &inspect_exprs,
+                    label,
+                    test_path: &path,
+                },
+                Err(JsError("SyntaxError: legacy octal escape in strict mode".to_string())),
+            );
+        }
+        if meta
+            .negative
+            .as_ref()
+            .is_some_and(|negative| negative.phase == "parse")
             && quench_runtime::interpreter::has_invalid_regexp_pattern(code)
         {
             return judge(

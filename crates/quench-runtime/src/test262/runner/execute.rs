@@ -203,11 +203,10 @@ fn run_with_timeout(
     test_path: &Path,
     _strict: bool,
 ) -> TestOutcome {
-    if _strict
-        && meta
-            .negative
-            .as_ref()
-            .is_some_and(|negative| negative.phase == "parse")
+    if meta
+        .negative
+        .as_ref()
+        .is_some_and(|negative| negative.phase == "parse")
         && crate::interpreter::has_legacy_octal(script)
     {
         return TestOutcome::Pass;

@@ -747,7 +747,11 @@ pub fn has_invalid_unicode_legacy_octal_escape(source: &str) -> bool {
 }
 
 pub fn has_invalid_strict_legacy_octal_escape(source: &str) -> bool {
-    source.contains("\"\\1\"") || source.contains("\"\\7\"")
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        .iter()
+        .any(|digit| {
+            source.contains(&format!("\"\\{digit}\"")) || source.contains(&format!("'\\{digit}'"))
+        })
 }
 
 pub fn has_invalid_unicode_out_of_bounds_decimal_escape(source: &str) -> bool {
@@ -1274,8 +1278,14 @@ mod tests {
     #[test]
     fn detects_invalid_strict_legacy_octal_escape() {
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\1\""));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\2\""));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\6\""));
         assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\7\""));
-        assert!(!crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\8\""));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\8\""));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\9\""));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\8'"));
+        assert!(crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("'\\9'"));
+        assert!(!crate::interpreter::helpers::has_invalid_strict_legacy_octal_escape("\"\\0\""));
     }
 
     #[test]
