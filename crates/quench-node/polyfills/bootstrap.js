@@ -535,8 +535,9 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     if (options && options.signal && options.signal.aborted) {
       const error = new Error('The operation was aborted'); error.name = 'AbortError'; error.code = 'ABORT_ERR'; callback(error); return;
     }
-    try { callback(null, globalThis.__nodeFs.readFileSync(value, options)); }
-    catch (error) { callback(error); }
+    let data; try { data = globalThis.__nodeFs.readFileSync(value, options); }
+    catch (error) { callback(error); return; }
+    callback(null, data);
   });
 };
 globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
@@ -544,10 +545,13 @@ globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
   queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.mkdtempSync(prefix)); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
-  if (typeof options === 'function') callback = options;
+  if (typeof options === 'function') { callback = options; options = undefined; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (options && options.signal && options.signal.aborted) { queueMicrotask(() => { const error = new Error('The operation was aborted'); error.name = 'AbortError'; callback(error); }); return; }
   queueMicrotask(() => {
-    try { globalThis.__nodeFs.writeFileSync(value, data); callback(null); }
-    catch (error) { callback(error); }
+    try { globalThis.__nodeFs.writeFileSync(value, data); }
+    catch (error) { callback(error); return; }
+    callback(null);
   });
 };
 globalThis.__nodeFs.promises = {

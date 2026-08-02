@@ -88,3 +88,4 @@ these small fixtures isolate the currently implemented contract.
 | 78 | AbortSignal-aware `fs.readFile` behavior | `tools/run-node-tests.sh --stage 78` |
 | 79 | empty-file and encoding-aware `fs.readFile` behavior | `tools/run-node-tests.sh --stage 79` |
 | 80 | common platform skip flags | `tools/run-node-tests.sh --stage 80` |
+| 81 | callback and Buffer-aware `fs.writeFile` | `tools/run-node-tests.sh --stage 81` |
