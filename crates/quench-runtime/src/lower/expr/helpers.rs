@@ -207,25 +207,11 @@ fn lower_object_prop(
             }
             _ => vec![],
         };
-        let body = if let Some(default) = default {
-            let condition = Expression::Binary {
-                op: crate::ast::BinaryOp::StrictEq,
-                left: Box::new(Expression::Identifier(param.clone())),
-                right: Box::new(Expression::Undefined),
-            };
-            let assignment = Expression::Assignment {
-                left: Box::new(Expression::Identifier(param.clone())),
-                right: Box::new(default),
-            };
-            std::iter::once(crate::ast::Statement::If {
-                condition: Box::new(condition),
-                consequent: Box::new(crate::ast::Statement::Expression(Box::new(assignment))),
-                alternate: None,
-            })
-            .chain(body)
-            .collect()
-        } else {
-            body
+        let param = crate::ast::Param {
+            name: param,
+            default: default.map(Box::new),
+            pattern: None,
+            rest: false,
         };
         return Ok((key, PropertyValue::Setter { param, body }));
     }

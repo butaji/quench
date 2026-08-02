@@ -285,7 +285,7 @@ pub fn eval_object_literal(
                         )?;
                         home.borrow_mut().set_setter(
                             &key_str,
-                            crate::ast::Param::new(param),
+                            param.clone(),
                             Rc::new(body.clone()),
                             crate::eval::expression::capture_env_for_closure(&literal_env),
                             false,

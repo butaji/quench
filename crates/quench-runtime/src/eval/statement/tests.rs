@@ -37,6 +37,14 @@ fn derived_constructor_arrow_this_before_super_throws() {
 }
 
 #[test]
+fn setter_function_length_stops_at_default_parameter() {
+    assert_eq!(
+        eval("Object.getOwnPropertyDescriptor({ set m(x = 42) {} }, 'm').set.length").unwrap(),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn dynamic_import_missing_module_rejects_with_type_error() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

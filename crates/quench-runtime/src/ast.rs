@@ -223,7 +223,7 @@ pub enum PropertyValue {
         body: Vec<Statement>,
     },
     /// Setter property: { set x(v) { this._x = v; } }
-    Setter { param: String, body: Vec<Statement> },
+    Setter { param: Param, body: Vec<Statement> },
     /// Spread property: { ...expr }
     Spread(Expression),
 }
