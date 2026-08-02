@@ -189,6 +189,9 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         ctx.globals().set("__quench_fs_read_hex", Func::from(|path: String| -> rquickjs::Result<String> {
             fs::read(path).map(|bytes| bytes.iter().map(|byte| format!("{byte:02x}")).collect()).map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
         }))?;
+        ctx.globals().set("__quench_fs_read_bytes", Func::from(|path: String| -> rquickjs::Result<Vec<u8>> {
+            fs::read(path).map_err(|_| rquickjs::Error::new_from_js("fs", "readFileSync failed"))
+        }))?;
         ctx.globals().set("__quench_fs_read_range_hex", Func::from(|path: String, position: u64, length: u64| -> rquickjs::Result<String> {
             let mut file = fs::File::open(path).map_err(|_| rquickjs::Error::new_from_js("fs", "read failed"))?;
             file.seek(SeekFrom::Start(position)).map_err(|_| rquickjs::Error::new_from_js("fs", "read failed"))?;
@@ -200,6 +203,9 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         ctx.globals().set("__quench_fs_write_hex", Func::from(|path: String, hex: String| -> rquickjs::Result<()> {
             let bytes: Result<Vec<u8>, _> = hex.as_bytes().chunks(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or("00"), 16)).collect();
             fs::write(path, bytes.map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))?).map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
+        }))?;
+        ctx.globals().set("__quench_fs_write_bytes", Func::from(|path: String, bytes: Vec<u8>| -> rquickjs::Result<()> {
+            fs::write(path, bytes).map_err(|_| rquickjs::Error::new_from_js("fs", "writeFileSync failed"))
         }))?;
         ctx.globals().set(
             "__quench_fs_open",
