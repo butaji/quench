@@ -45,6 +45,14 @@ fn setter_function_length_stops_at_default_parameter() {
 }
 
 #[test]
+fn anonymous_class_assignment_infers_property_name() {
+    assert_eq!(
+        eval("var o = { id: class {} }; o.id.name").unwrap(),
+        Value::String("id".into())
+    );
+}
+
+#[test]
 fn dynamic_import_missing_module_rejects_with_type_error() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

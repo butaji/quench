@@ -767,6 +767,7 @@ fn is_anonymous_function_definition(expr: &Expression) -> bool {
         Expression::FunctionExpression { name: None, .. } | Expression::ArrowFunction { .. } => {
             true
         }
+        Expression::Class(class) => class.name.is_none(),
         Expression::Sequence(exprs) if exprs.len() == 1 => {
             is_anonymous_function_definition(&exprs[0])
         }
@@ -813,6 +814,10 @@ pub fn set_function_name_for_field_initializer(
         if f.get_property("name").is_none() {
             f.name = Some(name.clone());
             let _ = f.set_property("name", Value::String(name));
+        }
+    } else if let Value::Class(class) = value {
+        if class.name.is_none() {
+            class.set_name(&name);
         }
     }
 }
