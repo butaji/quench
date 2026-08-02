@@ -149,13 +149,17 @@ fn process_promise_all_value(
             {
                 let mut c = count_f.borrow_mut();
                 *c += 1;
-                if *c == total_f && !*rejected_f.borrow() {
+                let should_fulfill = *c == total_f && !*rejected_f.borrow();
+                if should_fulfill {
                     let mut p = promise_rc_f.borrow_mut();
                     if let Some(ref mut d) = p.promise_data {
                         d.fulfill(Value::Object(Rc::new(RefCell::new(
                             Object::new_array_from(results_f.borrow().clone()),
                         ))));
                     }
+                }
+                if should_fulfill {
+                    crate::builtins::promise::callbacks::enqueue_promise_reactions(&promise_rc_f);
                 }
             }
             Ok(Value::Undefined)
@@ -194,11 +198,14 @@ fn attach_callbacks_to_value(
     let is_promise = matches!(&value, Value::Object(p) if p.borrow().promise_data.is_some());
     if is_promise {
         if let Value::Object(ref p) = value {
-            let obj = p.borrow();
-            if let Some(ref data) = obj.promise_data {
-                match data.state {
+            let state = p
+                .borrow()
+                .promise_data
+                .as_ref()
+                .map(|data| (data.state.clone(), data.result.clone()));
+            if let Some((state, result)) = state {
+                match state {
                     PromiseState::Fulfilled => {
-                        let result = data.result.clone();
                         let already_rejected = *ctx.rejected_flag.borrow();
                         {
                             let mut r = ctx.results.borrow_mut();
@@ -225,7 +232,7 @@ fn attach_callbacks_to_value(
                         {
                             let mut p = ctx.promise_rc.borrow_mut();
                             if let Some(ref mut d) = p.promise_data {
-                                d.reject(data.result.clone());
+                                d.reject(result);
                             }
                         }
                         let promise_rc_clone = Rc::clone(ctx.promise_rc);
@@ -260,7 +267,8 @@ fn attach_callbacks_to_value(
 }
 
 fn attach_then_handlers(p: &Rc<RefCell<Object>>, resolve_fn: Value, reject_fn: Value) {
-    if let Some(ref then_method) = p.borrow().get("then") {
+    let then_method = p.borrow().get("then");
+    if let Some(then_method) = then_method {
         let pf = Rc::new(RefCell::new(resolve_fn.clone()));
         let pr = Rc::new(RefCell::new(reject_fn.clone()));
 
@@ -283,9 +291,9 @@ fn attach_then_handlers(p: &Rc<RefCell<Object>>, resolve_fn: Value, reject_fn: V
                 Ok(Value::Undefined)
             })));
         let _ = call_value_with_this(
-            then_method.clone(),
+            then_method,
             vec![on_fulfilled, on_rejected],
-            Value::Undefined,
+            Value::Object(Rc::clone(p)),
         );
     }
 }

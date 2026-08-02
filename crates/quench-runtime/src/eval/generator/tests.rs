@@ -231,6 +231,19 @@ mod generator_tests {
     }
 
     #[test]
+    fn async_generator_private_static_methods_all_resolve() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval(
+            "var result; class C { static async * #a(value) { yield * await value; } static async * #b(value) { yield * await value; } static get a() { return this.#a; } static get b() { return this.#b; } } Promise.all([C.a([1]).next(), C.b([1]).next()]).then(function(items) { result = items[0].value + items[1].value; });",
+        )
+        .unwrap();
+        for _ in 0..8 {
+            let _ = crate::builtins::promise::execute_pending_microtasks();
+        }
+        assert_eq!(ctx.get_global("result"), Some(Value::Number(2.0)));
+    }
+
+    #[test]
     fn async_generator_named_binding_assignment_in_arrow_keeps_function() {
         let mut ctx = Context::new().unwrap();
         let r = ctx
