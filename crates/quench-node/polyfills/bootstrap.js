@@ -270,8 +270,35 @@ class NodeBuffer extends Uint8Array {
   static isBuffer(value) {
     return value instanceof NodeBuffer;
   }
+  static compare(left, right) {
+    const a = NodeBuffer.from(left);
+    const b = NodeBuffer.from(right);
+    const length = Math.min(a.length, b.length);
+    for (let i = 0; i < length; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+  }
   static byteLength(value) {
     return new NodeTextEncoder().encode(String(value)).length;
+  }
+  subarray(begin = 0, end = this.length) {
+    const index = (value, fallback) => {
+      const number = Math.trunc(Number(value));
+      if (Number.isNaN(number)) return fallback;
+      return Math.max(
+        0,
+        Math.min(this.length, number < 0 ? this.length + number : number),
+      );
+    };
+    const start = index(begin, 0);
+    const finish = Math.max(start, index(end, this.length));
+    const output = new NodeBuffer(finish - start);
+    for (let i = start; i < finish; i++) output[i - start] = this[i];
+    return output;
+  }
+  slice(start = 0, end = this.length) {
+    return this.subarray(start, end);
   }
   static concat(list, totalLength) {
     const length =
@@ -697,7 +724,11 @@ class NodeBuffer extends Uint8Array {
     }
   }
 }
-globalThis.Buffer = NodeBuffer;
+globalThis.Buffer = new Proxy(NodeBuffer, {
+  apply(_target, _thisArg, args) {
+    return NodeBuffer.from(...args);
+  },
+});
 for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
   NodeBuffer.prototype[`readUint${name}`] =
     NodeBuffer.prototype[`readUInt${name}`];
@@ -3690,7 +3721,7 @@ globalThis.require = (specifier) => {
   if (name.endsWith("/common/tmpdir")) return globalThis.__nodeTmpdir;
   if (name === "buffer")
     return {
-      Buffer: NodeBuffer,
+      Buffer: globalThis.Buffer,
       kMaxLength: 0x7fffffff,
       atob: nodeAtob,
       btoa: nodeBtoa,
