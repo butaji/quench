@@ -393,7 +393,7 @@ globalThis.__nodeFs = {
       throw error;
     }
     const file = kind === 'file'; const date = new Date();
-    const stats = new globalThis.__nodeStats(file, kind === 'directory', date); stats.mode = globalThis.__nodeModes[path] || 0; return stats;
+    const stats = new globalThis.__nodeStats(file, kind === 'directory', date); if (file) stats.size = globalThis.__quench_fs_read_hex(path).length / 2; stats.mode = globalThis.__nodeModes[path] || 0; return stats;
   },
   mkdirSync: (value, options = {}) => {
     const path = nodeFsPath(value);
@@ -448,6 +448,7 @@ globalThis.__nodeFs = {
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
   truncateSync: (value, length = 0) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
+  ftruncateSync: (fd, length = 0) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } return globalThis.__nodeFs.truncateSync(fd, length); },
   fsyncSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Number.isInteger(fd) || fd < 0) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } },
   fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
   readSync: (fd, buffer, offset = 0, length = buffer.length, position = null) => {
@@ -505,6 +506,7 @@ globalThis.__nodeFs.truncate = (value, length, callback) => {
   const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value);
   queueMicrotask(() => { try { globalThis.__quench_fs_truncate(path, Number(length)); } catch (error) { callback(error); return; } callback(null); });
 };
+globalThis.__nodeFs.ftruncate = (fd, length = 0, callback) => { if (typeof length === 'function') { callback = length; length = 0; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.ftruncateSync(fd, length); callback(null); } catch (error) { callback(error); } }); };
 globalThis.__nodeFs.access = (value, mode, callback) => {
   if (typeof mode === 'function') callback = mode;
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
@@ -716,6 +718,7 @@ globalThis.__nodeFs.promises = {
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
   access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
+  ftruncate: (fd, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.ftruncateSync(fd, length)),
   fsync: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(fd)),
   fdatasync: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(fd)),
   rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
