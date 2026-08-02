@@ -46,6 +46,13 @@ fn for_await_awaits_custom_async_iterator_results() {
 }
 
 #[test]
+fn shift_operators_coerce_each_operand_once() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var trace='';var left={valueOf:function(){trace+='13';return 1;}};var right={valueOf:function(){trace+='24';return 1;}};left >> right").unwrap();
+    assert_eq!(ctx.get_global("trace"), Some(Value::String("1324".into())));
+}
+
+#[test]
 fn generator_yield_star_return_keeps_incomplete_iterator_suspended() {
     let mut ctx = Context::new().unwrap();
     let result = ctx

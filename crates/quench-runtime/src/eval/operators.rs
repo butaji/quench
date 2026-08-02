@@ -44,10 +44,8 @@ pub fn eval_binary_op(op: BinaryOp, left: &Value, right: &Value) -> Result<Value
             .unwrap_or_else(|| bit_op(left, right, |a, b| a | b)),
         BinaryOp::BitXor => eval_bigint_bitwise(left, right, '^')
             .unwrap_or_else(|| bit_op(left, right, |a, b| a ^ b)),
-        BinaryOp::Shl => eval_bigint_shift(left, right, true)
-            .unwrap_or_else(|| shift_op(left, right, |a, b| a << b)),
-        BinaryOp::Shr => eval_bigint_shift(left, right, false)
-            .unwrap_or_else(|| shift_op(left, right, |a, b| a >> b)),
+        BinaryOp::Shl => eval_shift(left, right, true),
+        BinaryOp::Shr => eval_shift(left, right, false),
         BinaryOp::Ushr => shift_op_u(left, right, |a, b| a >> b),
     }
 }
@@ -60,51 +58,40 @@ fn eval_loose_eq(left: &Value, right: &Value) -> Result<bool, JsError> {
     Ok(result)
 }
 
-fn eval_bigint_shift(
-    left: &Value,
-    right: &Value,
-    left_shift: bool,
-) -> Option<Result<Value, JsError>> {
-    let left = match to_primitive(left, Some("number")) {
-        Ok(value) => value,
-        Err(error) => return Some(Err(error)),
-    };
-    if matches!(left, Value::Symbol(_)) {
-        return Some(crate::throw!(
-            "TypeError",
-            "Cannot convert Symbol to number"
-        ));
+fn eval_shift(left: &Value, right: &Value, left_shift: bool) -> Result<Value, JsError> {
+    let left = to_numeric(left)?;
+    let right = to_numeric(right)?;
+    match (&left, &right) {
+        (Value::BigInt(left), Value::BigInt(right)) => {
+            let text = right.to_string();
+            let negative = text.starts_with('-');
+            let count = text
+                .strip_prefix('-')
+                .unwrap_or(&text)
+                .parse::<usize>()
+                .map_err(|_| JsError::new("RangeError: BigInt shift count is too large"))?;
+            let result = if left_shift != negative {
+                left.as_ref() << count
+            } else {
+                left.as_ref() >> count
+            };
+            Ok(Value::BigInt(Rc::new(result)))
+        }
+        (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+            crate::throw!("TypeError", "Cannot mix BigInt with other types")
+        }
+        (Value::Number(left), Value::Number(right)) => {
+            let count = (*right as i64) & 0x1F;
+            let left = to_uint32(*left) as i32 as i64;
+            let result = if left_shift {
+                left << count
+            } else {
+                left >> count
+            };
+            Ok(Value::Number((result as i32) as f64))
+        }
+        _ => unreachable!(),
     }
-    let right = match to_primitive(right, Some("number")) {
-        Ok(value) => value,
-        Err(error) => return Some(Err(error)),
-    };
-    let left_bigint = matches!(left, Value::BigInt(_));
-    let right_bigint = matches!(right, Value::BigInt(_));
-    if left_bigint != right_bigint {
-        return Some(crate::throw!(
-            "TypeError",
-            "Cannot mix BigInt and other types"
-        ));
-    }
-    let (Value::BigInt(left), Value::BigInt(right)) = (&left, &right) else {
-        return None;
-    };
-    let right_text = right.to_string();
-    let negative = right_text.starts_with('-');
-    let count_text = right_text.strip_prefix('-').unwrap_or(&right_text);
-    let Ok(count) = count_text.parse::<usize>() else {
-        return Some(crate::throw!(
-            "RangeError",
-            "BigInt shift count is too large"
-        ));
-    };
-    let result = if left_shift != negative {
-        left.as_ref() << count
-    } else {
-        left.as_ref() >> count
-    };
-    Some(Ok(Value::BigInt(Rc::new(result))))
 }
 
 fn eval_bigint_bitwise(
@@ -712,25 +699,6 @@ where
         return Err(JsError(to_js_string(&thrown)));
     }
     Ok(Value::Number(f(l as i64, r as i64) as f64))
-}
-
-fn shift_op<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
-where
-    F: FnOnce(i64, i64) -> i64,
-{
-    let l = to_number(left);
-    if let Some(thrown) = get_thrown_value() {
-        return Err(JsError(to_js_string(&thrown)));
-    }
-    let r = to_number(right);
-    if let Some(thrown) = get_thrown_value() {
-        return Err(JsError(to_js_string(&thrown)));
-    }
-    // Per ES §12.9.3.1 / 12.9.4.1: shift count is masked to 5 bits (0-31).
-    // This avoids Rust's panic on shifting by >= bit width.
-    let count = (r as i64) & 0x1F;
-    let left = to_uint32(l) as i32 as i64;
-    Ok(Value::Number((f(left, count) as i32) as f64))
 }
 
 fn shift_op_u<F>(left: &Value, right: &Value, f: F) -> Result<Value, JsError>
