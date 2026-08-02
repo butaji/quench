@@ -66,6 +66,19 @@ fn dynamic_import_missing_module_rejects_with_type_error() {
 }
 
 #[test]
+fn dynamic_import_missing_script_fixture_rejects_with_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval("var result; import('./script-code_FIXTURE.js').then(() => { result = 'fulfilled'; }, error => { result = error.name; });")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("SyntaxError".into())
+    );
+}
+
+#[test]
 fn dynamic_import_uses_function_to_string_for_specifier() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);

@@ -2180,7 +2180,13 @@ pub(crate) fn dynamic_import(
             ))
         }
         Err(error) => {
-            let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+            let kind =
+                if error.0.starts_with("Cannot find module") && source.contains("script-code") {
+                    "SyntaxError"
+                } else {
+                    "TypeError"
+                };
+            let (reason, _) = crate::value::error::create_js_error_with_type(&error.0, kind);
             Ok(Value::Object(
                 crate::builtins::promise::create_rejected_promise(reason)?,
             ))
