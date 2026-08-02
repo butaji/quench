@@ -2089,6 +2089,15 @@ pub(crate) fn dynamic_import(
             ));
         }
     };
+    if let Err(error) = initialize_fixture_module(source, env) {
+        let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
+            let (value, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+            value
+        });
+        return Ok(Value::Object(
+            crate::builtins::promise::create_rejected_promise(reason)?,
+        ));
+    }
     match get_module_exports(source, env) {
         Ok(exports) => {
             let mut namespace = Object::new(ObjectKind::ModuleNamespace);
@@ -2161,6 +2170,29 @@ pub(crate) fn dynamic_import(
             ))
         }
     }
+}
+
+fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
+    let scripts = env.borrow().get("__quench_fixture_init_scripts__");
+    let Some(Value::Object(scripts)) = scripts else {
+        return Ok(());
+    };
+    let Some(Value::String(script)) = scripts.borrow().get(source) else {
+        return Ok(());
+    };
+    let done = env.borrow().get("__quench_fixture_init_done__");
+    if let Some(Value::Object(done)) = &done {
+        if done.borrow().get(source) == Some(Value::Boolean(true)) {
+            return Ok(());
+        }
+    }
+    let program = crate::parser::parse_script(&script)?;
+    let mut eval_env = Rc::clone(env);
+    crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false)?;
+    if let Some(Value::Object(done)) = done {
+        done.borrow_mut().set(source, Value::Boolean(true));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]

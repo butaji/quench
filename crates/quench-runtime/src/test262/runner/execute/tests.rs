@@ -94,6 +94,19 @@ fn module_can_dynamically_import_itself() {
 }
 
 #[test]
+fn dynamic_import_evaluates_fixture_initialization_errors() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-eval-rqstd-abrupt-typeerror.js",
+    );
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn static_block_nested_constructor_resolves_await_as_binding() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
