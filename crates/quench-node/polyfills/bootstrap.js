@@ -472,6 +472,7 @@ globalThis.__nodeFs = {
   },
   writeSync: (fd, buffer, offset = 0, length = buffer.length - offset, position = null) => {
     if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+    if (typeof buffer === 'string') buffer = NodeBuffer.from(buffer);
     if (!(buffer instanceof Uint8Array)) { const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(length) || length < 0) { const error = new RangeError('The write range is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; }
     const path = globalThis.__nodeFdPaths[fd]; if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; }
@@ -527,7 +528,13 @@ globalThis.__nodeFs.read = (fd, buffer, offset, length, position, callback) => {
   queueMicrotask(() => { try { const count = globalThis.__nodeFs.readSync(fd, buffer, offset, length, position); callback(null, count, buffer); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.readv = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.readvSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
-globalThis.__nodeFs.write = (fd, buffer, offset, length, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writeSync(fd, buffer, offset, length, position), buffer); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.write = (fd, buffer, offset, length, position, callback) => {
+  if (typeof buffer === 'object' && buffer !== null && !ArrayBuffer.isView(buffer)) { const options = buffer; callback = offset; buffer = options.buffer; offset = options.offset || 0; length = options.length === undefined ? buffer && buffer.length - offset : options.length; position = options.position; }
+  else if (typeof position === 'function') { callback = position; position = null; }
+  if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
+  if (typeof fd !== 'number' || !(typeof buffer === 'string' || buffer instanceof Uint8Array)) { const error = new TypeError('Invalid write arguments'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writeSync(fd, buffer, offset, length, position), buffer); } catch (error) { callback(error); } });
+};
 globalThis.__nodeFs.writev = (fd, buffers, position, callback) => { if (typeof position === 'function') { callback = position; position = null; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Array.isArray(buffers) || buffers.some((buffer) => !(buffer instanceof Uint8Array))) { const error = new TypeError('The "buffers" argument must be an array of Buffer or Uint8Array'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.writevSync(fd, buffers, position), buffers); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
