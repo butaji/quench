@@ -1746,11 +1746,19 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
 globalThis.__nodeAssert.ifError = (error) => {
   if (error) throw error;
 };
-globalThis.__nodeAssert.doesNotThrow = (fn, message) => {
+globalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {
   try {
     fn();
   } catch (error) {
-    throw new Error(message || `Unexpected exception: ${error}`);
+    if (typeof expected === "function" && !(error instanceof expected))
+      throw error;
+    const text = typeof expected === "string" ? expected : message;
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `Got unwanted exception${text ? `: ${text}` : "."}\nActual message: "${error.message}"`,
+    );
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "doesNotThrow";
+    throw assertion;
   }
 };
 globalThis.__nodeAssert.rejects = (promiseOrFn, expected) =>
