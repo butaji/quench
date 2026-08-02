@@ -265,7 +265,8 @@ globalThis.__nodeCommon = {
     let calls = 0;
     const wrapped = function (...args) { calls++; wrapped.calls = calls; return fn(...args); };
     wrapped.calls = 0; wrapped.expected = exact;
-    (globalThis.__nodeCallChecks ||= []).push(wrapped);
+    wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;
+    globalThis.__nodeCallChecks.push(wrapped);
     return wrapped;
   },
   mustSucceed: (fn = () => {}) => globalThis.__nodeCommon.mustCall((error, ...args) => {
@@ -281,7 +282,7 @@ globalThis.__nodeCommon = {
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
-    if (callback.calls !== callback.expected) throw new Error(`Expected ${callback.expected} calls, got ${callback.calls}`);
+    if (callback.calls !== callback.expected) throw new Error(`Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`);
   }
 };
 globalThis.__nodeTmpdir = {
@@ -371,8 +372,13 @@ globalThis.__nodeFs = {
     return globalThis.__quench_fs_open(path, flag);
   },
   closeSync: (_fd) => {},
-  statSync: (value) => {
-    const path = nodeFsPath(value); const kind = globalThis.__quench_fs_kind(path); const file = kind === 'file'; const date = new Date();
+  statSync: (value, options = {}) => {
+    const path = nodeFsPath(value); let kind;
+    try { kind = globalThis.__quench_fs_kind(path); } catch (error) {
+      if (options && options.throwIfNoEntry === false) return undefined;
+      throw error;
+    }
+    const file = kind === 'file'; const date = new Date();
     return new globalThis.__nodeStats(file, kind === 'directory', date);
   },
   mkdirSync: (value, options = {}) => {
@@ -447,10 +453,10 @@ globalThis.__nodeStats.prototype.isFIFO = function () { return false; };
 globalThis.__nodeStats.prototype.isSymbolicLink = function () { return false; };
 for (const method of ['statSync', 'lstatSync']) globalThis.__nodeFs[method] = globalThis.__nodeFs.statSync;
 globalThis.__nodeFs.stat = (value, options, callback) => {
-  if (typeof options === 'function') callback = options;
+  if (typeof options === 'function') { callback = options; options = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
   const path = nodeFsPath(value);
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.statSync(path)); } catch (error) { callback(error); } });
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.statSync(path, options)); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.lstat = globalThis.__nodeFs.stat;
 globalThis.__nodeFs.fstatSync = (fd) => {
