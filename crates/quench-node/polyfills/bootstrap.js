@@ -2368,12 +2368,12 @@ class NodeReadable extends NodeEventEmitter {
   }
   static from(iterable) {
     const stream = new NodeReadable();
-    stream._chunks = Array.from(iterable);
+    stream._sourceChunks = Array.from(iterable);
     stream._index = 0;
     stream._pump = () => {
-      while (!stream._paused && stream._index < stream._chunks.length)
-        stream.emit("data", stream._chunks[stream._index++]);
-      if (!stream._paused && stream._index === stream._chunks.length) {
+      while (!stream._paused && stream._index < stream._sourceChunks.length)
+        stream.emit("data", stream._sourceChunks[stream._index++]);
+      if (!stream._paused && stream._index === stream._sourceChunks.length) {
         stream._ended = true;
         stream.readableEnded = true;
         stream.emit("end");
@@ -2438,7 +2438,7 @@ class NodeReadable extends NodeEventEmitter {
   }
 
   async *[Symbol.asyncIterator]() {
-    for (const chunk of this._chunks || []) yield chunk;
+    while (this._chunks && this._chunks.length) yield this._chunks.shift();
   }
 }
 class NodeWritable extends NodeEventEmitter {
