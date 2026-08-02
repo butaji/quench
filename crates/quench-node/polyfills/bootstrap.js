@@ -285,13 +285,20 @@ globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   id.unref = () => ((id.refed = false), id);
   id.hasRef = () => id.active && id.refed;
   id.generation = 0;
+  const resource = globalThis.__nodeCurrentAsyncResource;
   const schedule = () => {
     const generation = ++id.generation;
     queueMicrotask(() => {
       if (id.active && generation === id.generation) {
         if (_delay > 0)
           globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
-        callback(...args);
+        const previous = globalThis.__nodeCurrentAsyncResource;
+        globalThis.__nodeCurrentAsyncResource = resource;
+        try {
+          callback(...args);
+        } finally {
+          globalThis.__nodeCurrentAsyncResource = previous;
+        }
       }
     });
   };
@@ -6458,15 +6465,15 @@ globalThis.require = (specifier) => {
       on: globalThis.__nodeEventEmitter.on,
     };
   if (name === "async_hooks") {
-    const resource = {};
+    globalThis.__nodeCurrentAsyncResource ||= {};
     return {
-      executionAsyncResource: () => resource,
+      executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource,
       executionAsyncId: () => 1,
       triggerAsyncId: () => 0,
       createHook: (callbacks = {}) => ({
         enable() {
           if (typeof callbacks.init === "function")
-            callbacks.init(1, "ROOT", 0, resource);
+            callbacks.init(1, "ROOT", 0, globalThis.__nodeCurrentAsyncResource);
           return this;
         },
         disable() {
@@ -6498,9 +6505,16 @@ globalThis.require = (specifier) => {
     const makeRequest = (handler, pathname, callback) => {
       const request = { url: pathname, method: "GET", headers: {} };
       const response = makeResponse();
+      const resource = {};
       queueMicrotask(() => {
-        handler(request, response);
-        callback(response);
+        const previous = globalThis.__nodeCurrentAsyncResource;
+        globalThis.__nodeCurrentAsyncResource = resource;
+        try {
+          handler(request, response);
+          callback(response);
+        } finally {
+          globalThis.__nodeCurrentAsyncResource = previous;
+        }
       });
       return { unref: () => {}, end: () => {} };
     };
@@ -6508,7 +6522,7 @@ globalThis.require = (specifier) => {
       createServer: (handler) => {
         const server = new globalThis.__nodeEventEmitter();
         server.listen = (port, callback) => {
-          server._port = typeof port === "number" ? port : 40123;
+          server._port = typeof port === "number" && port !== 0 ? port : 40123;
           servers.set(String(server._port), server);
           if (typeof callback === "function") queueMicrotask(callback);
           return server;

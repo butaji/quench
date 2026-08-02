@@ -38,3 +38,6 @@ The task is complete.
 The `async_hooks` surface now exposes execution resource/id accessors and
 chainable hook enable/disable methods. This is covered by
 `tests/node-compat/stage-493`.
+Async resources are captured and restored across timers and HTTP request
+handlers, covered by `tests/node-compat/stage-495` and the upstream
+`test-async-hooks-execution-async-resource.js` test.
