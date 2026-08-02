@@ -5632,9 +5632,9 @@ const __createNodeCrypto = () => ({
       throw new Error(`Unsupported hash: ${algorithm}`);
     const chunks = [];
     const hash = {
-      update: (value) => {
+      update: (value, encoding) => {
         if (typeof value === "string")
-          chunks.push(new NodeTextEncoder().encode(value));
+          chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         else if (value instanceof Uint8Array) chunks.push(value);
         else chunks.push(new NodeTextEncoder().encode(String(value)));
         return hash;
@@ -5673,10 +5673,10 @@ const __createNodeCrypto = () => ({
     }
     const chunks = [];
     const hmac = {
-      update: (value) => {
+      update: (value, encoding) => {
         chunks.push(
           typeof value === "string"
-            ? new NodeTextEncoder().encode(value)
+            ? NodeBuffer.from(value, encoding || "utf8")
             : NodeBuffer.from(value),
         );
         return hmac;
