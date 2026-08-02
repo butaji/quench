@@ -2421,6 +2421,16 @@ class NodeReadable extends NodeEventEmitter {
     else this.emit("data", chunk);
     return this;
   }
+  read(size) {
+    if (!this._chunks || this._chunks.length === 0) return null;
+    if (size === undefined) return this._chunks.shift();
+    const chunk = this._chunks.shift();
+    if (chunk && chunk.length > size) {
+      this._chunks.unshift(chunk.subarray(size));
+      return chunk.subarray(0, size);
+    }
+    return chunk;
+  }
 
   async *[Symbol.asyncIterator]() {
     for (const chunk of this._chunks || []) yield chunk;
