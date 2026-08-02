@@ -19,8 +19,9 @@ pub fn parse_script(source: &str) -> Result<Program, JsError> {
     let source_type = SourceType::default()
         .with_script(true)
         .with_jsx(true)
-        .with_commonjs(crate::interpreter::is_direct_eval()
-            && crate::interpreter::is_eval_in_class_field());
+        .with_commonjs(
+            crate::interpreter::is_direct_eval() && crate::interpreter::is_eval_in_class_field(),
+        );
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type).parse();
     if !ret.diagnostics.is_empty() {

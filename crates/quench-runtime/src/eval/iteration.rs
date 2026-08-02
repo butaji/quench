@@ -235,11 +235,8 @@ pub fn eval_yield_delegate(
                 return Err(iterator_type_error("iterator method is not available"));
             };
             let method = crate::eval::member::eval_string_member(&s, &symbol.property_key(), env);
-            let iterator = crate::eval::function::call_value_with_this(
-                method?,
-                vec![],
-                iterable.clone(),
-            )?;
+            let iterator =
+                crate::eval::function::call_value_with_this(method?, vec![], iterable.clone())?;
             let Value::Object(iterator) = iterator else {
                 return Err(iterator_type_error("iterator is not an object"));
             };
@@ -423,6 +420,7 @@ fn eval_for_of_iterator_owned(mut run: ForOfIteratorRunOwned) -> Result<Value, J
                         crate::value::NativeFunction::new(move |args| {
                             let arg = args.first().cloned().unwrap_or(Value::Undefined);
                             let mut state = state_for_fulfill.borrow_mut();
+                            crate::interpreter::take_control_flow();
                             let result = iterator_result_to_for_of_tuple(
                                 arg,
                                 &env_fulfill,

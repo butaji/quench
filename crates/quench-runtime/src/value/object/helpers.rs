@@ -214,6 +214,7 @@ pub struct Object {
     /// True if this object is a callable function (has [[Call]]).
     /// Used for `Value::Object` wrappers around NativeFunction/NativeConstructor.
     pub callable: bool,
+    pub deferred_module_get: Option<Value>,
 }
 
 impl Object {

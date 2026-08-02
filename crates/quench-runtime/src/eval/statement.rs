@@ -15,6 +15,7 @@ use crate::value::{
     JsError, Object, ObjectKind, Value,
 };
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 thread_local! {
@@ -2045,6 +2046,7 @@ fn eval_import(
     source: &str,
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
+    initialize_fixture_module(source, env)?;
     // Get the module's exports from our module cache
     let module_exports = get_module_exports(source, env)?;
 
@@ -2081,6 +2083,7 @@ pub(crate) fn dynamic_import(
     env: &Rc<RefCell<Environment>>,
     options: Option<&Value>,
     source_phase: bool,
+    deferred: bool,
 ) -> Result<Value, JsError> {
     if source_phase {
         let (reason, _) = crate::value::error::create_js_error_with_type(
@@ -2112,19 +2115,69 @@ pub(crate) fn dynamic_import(
             ));
         }
     }
-    if let Err(error) = initialize_fixture_module(source, env) {
-        let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
-            let (value, _) = crate::value::error::create_js_error_with_type(&error.0, "TypeError");
-            value
-        });
-        return Ok(Value::Object(
-            crate::builtins::promise::create_rejected_promise(reason)?,
-        ));
+    if !deferred {
+        if let Err(error) = initialize_fixture_module(source, env) {
+            if let Some(Value::Object(errors)) = env.borrow().get("__quench_module_errors__") {
+                errors
+                    .borrow_mut()
+                    .set(source, Value::String(error.0.clone()));
+            }
+            let reason = crate::value::take_thrown_value().unwrap_or_else(|| {
+                let (value, _) =
+                    crate::value::error::create_js_error_with_type(&error.0, "TypeError");
+                value
+            });
+            return Ok(Value::Object(
+                crate::builtins::promise::create_rejected_promise(reason)?,
+            ));
+        }
+    } else if fixture_script_has_tla(source, env) {
+        initialize_fixture_module(source, env)?;
+    } else {
+        initialize_tla_dependencies(source, env, &mut HashSet::new())?;
     }
     match get_module_exports(source, env) {
         Ok(exports) => {
+            if matches!(import_type, ImportAttributeType::Module) {
+                if let Some(Value::Object(cache)) = env.borrow().get("__quench_module_namespaces__")
+                {
+                    if let Some(Value::Object(namespace)) = cache.borrow().get(source) {
+                        return Ok(Value::Object(
+                            crate::builtins::promise::create_resolved_promise(Value::Object(
+                                namespace,
+                            )),
+                        ));
+                    }
+                }
+            }
             let mut namespace = Object::new(ObjectKind::ModuleNamespace);
             for key in exports.borrow().own_property_names() {
+                if deferred {
+                    let source = source.to_string();
+                    let key_for_getter = key.clone();
+                    let env = Rc::clone(env);
+                    let getter = Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+                        move |_| {
+                            initialize_fixture_module(&source, &env)?;
+                            Ok(get_module_exports(&source, &env)?
+                                .borrow()
+                                .get(&key_for_getter)
+                                .unwrap_or(Value::Undefined))
+                        },
+                    )));
+                    namespace.define_accessor(
+                        &key,
+                        Some(getter),
+                        None,
+                        crate::value::PropertyFlags {
+                            value: None,
+                            writable: true,
+                            enumerable: true,
+                            configurable: false,
+                        },
+                    );
+                    continue;
+                }
                 if let Some(value) = exports.borrow().get_own_value(&key) {
                     namespace.define(
                         &key,
@@ -2186,8 +2239,35 @@ pub(crate) fn dynamic_import(
                     flags.configurable = false;
                 }
             }
+            if deferred {
+                let source = source.to_string();
+                let env = Rc::clone(env);
+                namespace.deferred_module_get = Some(Value::NativeFunction(Rc::new(
+                    crate::value::NativeFunction::new(move |_| {
+                        initialize_fixture_module(&source, &env)?;
+                        Ok(Value::Undefined)
+                    }),
+                )));
+            }
             namespace.extensible = false;
             let namespace = Rc::new(RefCell::new(namespace));
+            if matches!(import_type, ImportAttributeType::Module) {
+                let existing_cache = env.borrow().get("__quench_module_namespaces__");
+                let cache = match existing_cache {
+                    Some(Value::Object(cache)) => cache,
+                    _ => {
+                        let cache = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+                        env.borrow_mut().define(
+                            "__quench_module_namespaces__".to_string(),
+                            Value::Object(Rc::clone(&cache)),
+                        );
+                        cache
+                    }
+                };
+                cache
+                    .borrow_mut()
+                    .set(source, Value::Object(Rc::clone(&namespace)));
+            }
             Ok(Value::Object(
                 crate::builtins::promise::create_resolved_promise(Value::Object(namespace)),
             ))
@@ -2207,6 +2287,51 @@ pub(crate) fn dynamic_import(
     }
 }
 
+fn initialize_tla_dependencies(
+    source: &str,
+    env: &Rc<RefCell<Environment>>,
+    seen: &mut HashSet<String>,
+) -> Result<(), JsError> {
+    if !seen.insert(source.to_string()) {
+        return Ok(());
+    }
+    for dependency in fixture_dependencies(source, env) {
+        if fixture_script_has_tla(&dependency, env) {
+            initialize_fixture_module(&dependency, env)?;
+        } else {
+            initialize_tla_dependencies(&dependency, env, seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn fixture_script_has_tla(source: &str, env: &Rc<RefCell<Environment>>) -> bool {
+    fixture_script(source, env).is_some_and(|script| script.contains("await "))
+}
+
+fn fixture_dependencies(source: &str, env: &Rc<RefCell<Environment>>) -> Vec<String> {
+    fixture_script(source, env)
+        .map(|script| {
+            script
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn fixture_script(source: &str, env: &Rc<RefCell<Environment>>) -> Option<String> {
+    let Value::Object(scripts) = env.borrow().get("__quench_fixture_init_scripts__")? else {
+        return None;
+    };
+    let Value::String(script) = scripts.borrow().get(source)? else {
+        return None;
+    };
+    Some(script)
+}
+
 fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Result<(), JsError> {
     let scripts = env.borrow().get("__quench_fixture_init_scripts__");
     let Some(Value::Object(scripts)) = scripts else {
@@ -2220,14 +2345,16 @@ fn initialize_fixture_module(source: &str, env: &Rc<RefCell<Environment>>) -> Re
         if done.borrow().get(source) == Some(Value::Boolean(true)) {
             return Ok(());
         }
+        done.borrow_mut().set(source, Value::Boolean(true));
     }
-    let program = crate::parser::parse_script(&script)?;
+    let program = if script.contains("await ") {
+        crate::parser::parse_es_module(&script)?
+    } else {
+        crate::parser::parse_script(&script)?
+    };
     let mut eval_env = Rc::clone(env);
     crate::interpreter::eval_program(&program, &mut eval_env, Some(&script), false)?;
     refresh_fixture_module_exports(source, env);
-    if let Some(Value::Object(done)) = done {
-        done.borrow_mut().set(source, Value::Boolean(true));
-    }
     Ok(())
 }
 
@@ -2257,14 +2384,16 @@ fn refresh_fixture_module_exports(source: &str, env: &Rc<RefCell<Environment>>) 
             continue;
         };
         let value = env.borrow().get(&local).unwrap_or(Value::Undefined);
-        let flags = module.borrow().get_descriptor(&exported).unwrap_or(
-            crate::value::PropertyFlags {
-                value: None,
-                writable: true,
-                enumerable: true,
-                configurable: false,
-            },
-        );
+        let flags =
+            module
+                .borrow()
+                .get_descriptor(&exported)
+                .unwrap_or(crate::value::PropertyFlags {
+                    value: None,
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                });
         module.borrow_mut().define(&exported, value, flags);
     }
 }

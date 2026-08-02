@@ -373,9 +373,7 @@ pub(crate) fn eval_super_member(
         None
     } else {
         Some(match &super_val {
-            Value::Class(class) => {
-                crate::eval::class::get_or_create_class_prototype(class, env)?
-            }
+            Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
             Value::Object(o) => {
                 if crate::builtins::get_object_prototype().is_some_and(|op| Rc::ptr_eq(o, &op)) {
                     Rc::clone(o)
@@ -470,9 +468,7 @@ pub fn set_super_property(
         None
     } else {
         Some(match &super_val {
-            Value::Class(class) => {
-                crate::eval::class::get_or_create_class_prototype(class, env)?
-            }
+            Value::Class(class) => crate::eval::class::get_or_create_class_prototype(class, env)?,
             Value::Object(o) => o
                 .borrow()
                 .prototype

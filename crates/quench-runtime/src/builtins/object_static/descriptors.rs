@@ -214,6 +214,20 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
 
+    if let Value::Object(object) = &obj {
+        if object.borrow().kind == ObjectKind::ModuleNamespace {
+            return define_module_namespace_property(
+                obj,
+                &prop,
+                flags,
+                descriptor_has_value,
+                has_writable,
+                has_enumerable,
+                has_configurable,
+            );
+        }
+    }
+
     if let Value::Class(c) = &obj {
         let value = flags.value.clone().unwrap_or(Value::Undefined);
         c.set_static_property(&prop, value, &Rc::new(RefCell::new(Environment::new())))?;
@@ -881,6 +895,50 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
     Ok(obj)
+}
+
+fn define_module_namespace_property(
+    object: Value,
+    prop: &str,
+    flags: PropertyFlags,
+    has_value: bool,
+    has_writable: bool,
+    has_enumerable: bool,
+    has_configurable: bool,
+) -> Result<Value, JsError> {
+    let Value::Object(namespace) = &object else {
+        unreachable!();
+    };
+    let namespace = namespace.borrow();
+    if !namespace.has_own(prop) {
+        return reject_namespace_property();
+    }
+    let symbol = prop.contains('\0');
+    let same_value = !has_value
+        || flags.value.as_ref().is_some_and(|value| {
+            namespace
+                .get_own_value(prop)
+                .is_some_and(|current| crate::value::same_value(&current, value))
+        });
+    let writable = !has_writable || flags.writable != symbol;
+    let enumerable = !has_enumerable || flags.enumerable != symbol;
+    let configurable = !has_configurable || !flags.configurable;
+    let allowed = same_value && writable && enumerable && configurable;
+    drop(namespace);
+    if allowed {
+        Ok(object)
+    } else {
+        reject_namespace_property()
+    }
+}
+
+fn reject_namespace_property() -> Result<Value, JsError> {
+    let (error, js_error) = crate::value::error::create_js_error_with_type(
+        "Cannot redefine module namespace property",
+        "TypeError",
+    );
+    crate::value::error::set_thrown_value(error);
+    Err(js_error)
 }
 
 /// Object.getOwnPropertyDescriptor(obj, prop) - gets property descriptor

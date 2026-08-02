@@ -214,7 +214,14 @@ pub(crate) fn lower_statement_list(body: &[ast::Statement]) -> Statement {
 
 fn lower_import_decl(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
-    let specifiers = import.specifiers.as_ref()?;
+    let Some(specifiers) = import.specifiers.as_ref() else {
+        return Some(Statement::Import {
+            default: None,
+            named: Vec::new(),
+            namespace: None,
+            source,
+        });
+    };
 
     let default = specifiers.iter().find_map(|spec| {
         if let ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(default_spec) = spec {
@@ -323,50 +330,60 @@ fn lower_export_default_decl_local(export: &ast::ExportDefaultDeclaration) -> Op
                 .as_ref()
                 .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Some(Statement::FunctionDeclaration {
+            let declaration = Statement::FunctionDeclaration {
                 name,
                 params,
                 body,
                 is_async: func.r#async,
                 is_generator: func.generator,
-            })
+            };
+            Some(default_export_binding(
+                declaration,
+                func.id.as_ref().map(|id| id.name.as_str()),
+            ))
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+            let original_name = class.id.as_ref().map(|id| id.name.as_str());
             let name = class
                 .id
                 .as_ref()
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_else(|| "default".to_string());
             let class = lower_class(class)?;
-            Some(Statement::ClassDeclaration { name, class })
+            let declaration = Statement::ClassDeclaration { name, class };
+            Some(default_export_binding(declaration, original_name))
         }
         // Expression variants: export default <expression>
-        ast::ExportDefaultDeclarationKind::Identifier(id) => {
-            Some(Statement::Expression(Box::new(Expression::Assignment {
-                left: Box::new(Expression::Member {
-                    object: Box::new(Expression::Identifier("exports".to_string())),
-                    property: PropertyKey::Ident("default".to_string()),
-                    computed: false,
-                }),
-                right: Box::new(Expression::Identifier(id.name.as_str().to_string())),
-            })))
-        }
+        ast::ExportDefaultDeclarationKind::Identifier(id) => Some(default_export_value(
+            Expression::Identifier(id.name.as_str().to_string()),
+        )),
         _ => {
             // Try to lower as expression
             if let Some(expr) = export.declaration.as_expression() {
                 let lowered = lower_expr(expr).ok()?;
-                Some(Statement::Expression(Box::new(Expression::Assignment {
-                    left: Box::new(Expression::Member {
-                        object: Box::new(Expression::Identifier("exports".to_string())),
-                        property: PropertyKey::Ident("default".to_string()),
-                        computed: false,
-                    }),
-                    right: Box::new(lowered),
-                })))
+                Some(default_export_value(lowered))
             } else {
                 None
             }
         }
+    }
+}
+
+fn default_export_binding(declaration: Statement, name: Option<&str>) -> Statement {
+    let Some(name) = name else {
+        return declaration;
+    };
+    Statement::Block(vec![
+        declaration,
+        default_export_value(Expression::Identifier(name.into())),
+    ])
+}
+
+fn default_export_value(value: Expression) -> Statement {
+    Statement::VarDeclaration {
+        kind: VarKind::Var,
+        name: "default".to_string(),
+        init: Some(value),
     }
 }
 

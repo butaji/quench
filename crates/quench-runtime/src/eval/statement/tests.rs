@@ -39,11 +39,14 @@ fn calling_dynamic_import_promise_throws_type_error() {
 fn dynamic_import_refreshes_fixture_exports_after_initialization() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/test262/test/language/expressions/dynamic-import/await-import-evaluation.js");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/await-import-evaluation.js",
+    );
     crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
-    ctx.eval("import('./await-import-evaluation_FIXTURE.js').then(ns => globalThis.__time = ns.time)")
-        .unwrap();
+    ctx.eval(
+        "import('./await-import-evaluation_FIXTURE.js').then(ns => globalThis.__time = ns.time)",
+    )
+    .unwrap();
     crate::builtins::promise::execute_pending_microtasks().unwrap();
     let value = ctx.eval("__time").unwrap();
     assert!(matches!(value, Value::Number(time) if time > 100.0));
@@ -59,7 +62,10 @@ fn async_await_dynamic_import_rejection_reaches_catch() {
     )
     .unwrap();
     crate::builtins::promise::execute_pending_microtasks().unwrap();
-    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("TypeError".into())
+    );
 }
 
 #[test]
@@ -72,7 +78,85 @@ fn async_arrow_await_dynamic_import_rejection_reaches_catch() {
     )
     .unwrap();
     crate::builtins::promise::execute_pending_microtasks().unwrap();
-    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("TypeError".into())
+    );
+}
+
+#[test]
+fn async_dynamic_import_rejection_settles_following_then() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/test262/test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-eval-rqstd-abrupt-typeerror.js");
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval(
+        "var result = 'pending'; var done = 0; const f = async () => { await import('./eval-rqstd-abrupt-err-type_FIXTURE.js'); }; f().catch(error => { result = error.name; }).then(() => done++, () => done++);",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("[result, done].join('|')").unwrap(),
+        Value::String("TypeError|1".into())
+    );
+}
+
+#[test]
+fn dynamic_import_reuses_module_namespace_object() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.register_module(
+        "module-name",
+        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+    );
+    ctx.eval(
+        "var first, second; import('module-name').then(ns => first = ns); import('module-name').then(ns => second = ns);",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("first === second").unwrap(), Value::Boolean(true));
+}
+
+#[test]
+fn dynamic_import_of_current_module_exposes_default_function() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.set_global(
+        "__quench_current_module__".to_string(),
+        Value::String("./self.js".into()),
+    );
+    ctx.eval_es_module(
+        "export default (function() { return 99; }); import('./self.js').then(ns => globalThis.result = ns.default()).catch(error => globalThis.result = error.name);",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Number(99.0));
+}
+
+#[test]
+fn deferred_dynamic_import_is_not_source_phase_import() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.register_module(
+        "module-name",
+        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+    );
+    ctx.eval("var result; import.defer('module-name').then(() => result = 'ok', error => result = error.name);")
+        .unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("ok".into()));
+}
+
+#[test]
+fn static_import_initializes_fixture_side_effects() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../tests/test262/test/language/expressions/dynamic-import/import-defer/sync/main.js",
+    );
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval_es_module("import './setup_FIXTURE.js';").unwrap();
+    assert_eq!(
+        ctx.eval("Array.isArray(globalThis.evaluations)").unwrap(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
@@ -85,7 +169,10 @@ fn async_await_fixture_evaluation_rejection_reaches_catch() {
     ctx.eval("var result = 'pending'; (async function() { await import('./eval-rqstd-abrupt-err-type_FIXTURE.js'); })().catch(error => result = error.name);")
         .unwrap();
     crate::builtins::promise::execute_pending_microtasks().unwrap();
-    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+    assert_eq!(
+        ctx.eval("result").unwrap(),
+        Value::String("TypeError".into())
+    );
 }
 
 #[test]

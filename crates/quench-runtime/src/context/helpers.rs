@@ -376,14 +376,17 @@ fn register_dynamic_import(ctx: &mut Context) {
         let source = crate::value::to_js_string(&primitive);
         let source_phase = matches!(args.get(2), Some(crate::Value::Boolean(true)))
             || matches!(args.get(1), Some(crate::Value::Boolean(true)));
-        let options = if source_phase && args.get(1) == Some(&crate::Value::Boolean(true)) {
-            None
-        } else {
-            args.get(1)
-        };
+        let deferred = matches!(args.get(2), Some(crate::Value::String(marker)) if marker == "__defer__")
+            || matches!(args.get(1), Some(crate::Value::String(marker)) if marker == "__defer__");
+        let options =
+            if deferred || (source_phase && args.get(1) == Some(&crate::Value::Boolean(true))) {
+                None
+            } else {
+                args.get(1)
+            };
         let env = crate::context::get_current_env()
             .ok_or_else(|| JsError::new("TypeError: no current context"))?;
-        crate::eval::statement::dynamic_import(&source, &env, options, source_phase)
+        crate::eval::statement::dynamic_import(&source, &env, options, source_phase, deferred)
     });
     ctx.set_global(
         "__dynamic_import__".to_string(),

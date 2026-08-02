@@ -288,12 +288,8 @@ pub fn eval_update(
     } = argument
     {
         if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
-            let current = crate::eval::call::eval_super_member(
-                property,
-                *computed,
-                env,
-                in_arrow_function,
-            )?;
+            let current =
+                crate::eval::call::eval_super_member(property, *computed, env, in_arrow_function)?;
             let current_num = to_number(&current);
             let new_value = match op {
                 UpdateOp::Increment => Value::Number(current_num + 1.0),

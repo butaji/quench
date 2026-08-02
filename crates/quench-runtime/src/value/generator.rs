@@ -517,7 +517,8 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                 }
             }
             if let Some(suspend) = g.yield_delegate_suspend.as_ref() {
-                match crate::eval::object::call_iterator_return_done(&suspend.iterator, arg.clone()) {
+                match crate::eval::object::call_iterator_return_done(&suspend.iterator, arg.clone())
+                {
                     Err(error) => {
                         let reason = crate::value::take_thrown_value()
                             .unwrap_or_else(|| Value::String(error.to_string()));
@@ -968,14 +969,11 @@ fn delegate_abrupt(
     };
     if matches!(method, Value::Undefined | Value::Null) {
         if method_name == "throw" {
-            let close = match crate::eval::member::eval_object_member(
-                &state.iterator,
-                "return",
-                None,
-            ) {
-                Ok(close) => close,
-                Err(error) => return resume_delegate_error(generator, state, error),
-            };
+            let close =
+                match crate::eval::member::eval_object_member(&state.iterator, "return", None) {
+                    Ok(close) => close,
+                    Err(error) => return resume_delegate_error(generator, state, error),
+                };
             if !matches!(close, Value::Undefined | Value::Null) {
                 if !close.is_callable() {
                     return resume_delegate_error(
@@ -1965,6 +1963,21 @@ mod tests {
         .unwrap();
         let result = ctx.eval("yielded").unwrap();
         assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn async_generator_for_await_rejects_yielded_rejected_promise() {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(
+            "var error = {}; var result; var count = 0; \
+             async function* readFile() { yield Promise.reject(error); yield 'unreachable'; } \
+             async function* gen() { count += 1; for await (let line of readFile()) { yield line; } } \
+             gen().next().then(function() { result = 'resolved'; }, function(reason) { result = reason; });",
+        )
+        .unwrap();
+        crate::builtins::promise::execute_pending_microtasks().unwrap();
+        assert_eq!(ctx.eval("count").unwrap(), Value::Number(1.0));
+        assert_eq!(ctx.eval("result === error").unwrap(), Value::Boolean(true));
     }
 
     #[test]

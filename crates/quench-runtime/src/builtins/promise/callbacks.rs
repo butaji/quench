@@ -199,7 +199,7 @@ pub fn execute_callback(
             match call_value_with_this(callback.clone(), vec![arg.clone()], Value::Undefined) {
                 Ok(val) => (val, false),
                 Err(e) => {
-                    let reason = crate::value::get_thrown_value()
+                    let reason = crate::value::take_thrown_value()
                         .unwrap_or_else(|| Value::String(e.to_string()));
                     (reason, true)
                 }
@@ -223,7 +223,6 @@ pub fn execute_callback(
     } else {
         false
     };
-
     // Borrow target_promise ONCE: set state, drain callbacks.
     // The borrow is dropped at the end of this block.
     let drained_callbacks = {

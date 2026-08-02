@@ -24,6 +24,7 @@ use quench_runtime::test262::harness::try_inject_harness;
 use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
 use quench_runtime::test262::metadata::Test262Metadata;
 use quench_runtime::test262::runner::execute::load_fixture_modules;
+use quench_runtime::test262::runner::execute::register_current_script_module;
 use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
 use quench_runtime::test262::HarnessLoader;
 use quench_runtime::{builtins, Context, JsError, Value};
@@ -181,17 +182,19 @@ fn main() -> ExitCode {
             if let Some(te) = ctx.get_global("Test262Error") {
                 quench_runtime::value::error::set_main_realm_test262_error(te);
             }
-            if is_module_meta {
-                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                    ctx.set_global(
-                        "__quench_current_module__".to_string(),
-                        Value::String(format!("./{name}")),
-                    );
-                }
+            if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                ctx.set_global(
+                    "__quench_current_module__".to_string(),
+                    Value::String(format!("./{name}")),
+                );
             }
-            if is_async {
-                if let Err(e) = load_fixture_modules(&mut ctx, &path) {
-                    eprintln!("{}: fixture load failed: {}", label, e);
+            if let Err(e) = load_fixture_modules(&mut ctx, &path) {
+                eprintln!("{}: fixture load failed: {}", label, e);
+                return 4;
+            }
+            if !is_module_meta {
+                if let Err(e) = register_current_script_module(&mut ctx, &path) {
+                    eprintln!("{}: script module registration failed: {}", label, e);
                     return 4;
                 }
             }

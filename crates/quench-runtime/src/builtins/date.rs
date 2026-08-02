@@ -422,7 +422,10 @@ pub fn register_date(ctx: &mut Context) {
         "toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            Ok(Value::String(format!("Date @ {}", date_timestamp(&this_val))))
+            Ok(Value::String(format!(
+                "Date @ {}",
+                date_timestamp(&this_val)
+            )))
         }))),
     );
     date_proto_rc.borrow_mut().set(

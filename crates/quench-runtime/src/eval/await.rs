@@ -206,3 +206,6 @@ pub fn is_promise(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod for_await_tests;

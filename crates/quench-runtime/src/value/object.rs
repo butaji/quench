@@ -54,6 +54,7 @@ impl Object {
             data,
             call_slot: None,
             callable: false,
+            deferred_module_get: None,
         }
     }
 
@@ -82,6 +83,7 @@ impl Object {
             data,
             call_slot: None,
             callable: false,
+            deferred_module_get: None,
         }
     }
 

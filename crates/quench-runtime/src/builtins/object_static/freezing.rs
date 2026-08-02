@@ -555,10 +555,14 @@ mod tests {
     fn test_set_prototype_of_class_allows_callable_prototype() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
-        let result = ctx.eval("class C {}; Object.setPrototypeOf(C, parseInt); Object.getPrototypeOf(C) === parseInt");
+        let result = ctx.eval(
+            "class C {}; Object.setPrototypeOf(C, parseInt); Object.getPrototypeOf(C) === parseInt",
+        );
         assert_eq!(result, Ok(Value::Boolean(true)));
         let parse_int = ctx.eval("parseInt").unwrap();
-        assert!(!crate::eval::class::helpers::is_constructor_value(&parse_int));
+        assert!(!crate::eval::class::helpers::is_constructor_value(
+            &parse_int
+        ));
         let result = ctx.eval(
             "var caught; class D extends Object { constructor() { try { super(true); } catch (e) { caught = e; } } }; Object.setPrototypeOf(D, parseInt); try { new D(); } catch (e) {} typeof caught",
         );

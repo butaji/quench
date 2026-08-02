@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::test262::harness::HarnessLoader;
-use crate::test262::host::{capture_thrown_diagnostics, Test262Host, TestFailure, TestOutcome};
+use crate::test262::host::{capture_thrown_diagnostics, TestFailure, TestOutcome};
 use crate::test262::metadata::Test262Metadata;
 use crate::Value;
 
@@ -243,12 +243,27 @@ fn execute_script(
     if is_async {
         return run_async_script_with_path(script, is_module, Some(test_path));
     }
-    let mut inner = crate::test262::host::QuenchHost::new();
-    if is_module {
-        inner.run_module_script(script)
-    } else {
-        inner.run_script(script)
+    run_sync_script_with_path(script, is_module, test_path)
+}
+
+fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Result<(), String> {
+    let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
+    crate::builtins::register_builtins(&mut ctx);
+    crate::test262::harness::try_inject_harness(&mut ctx)
+        .map_err(|error| format!("harness load failure: {error}"))?;
+    load_fixture_modules(&mut ctx, path)?;
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        ctx.set_global(
+            "__quench_current_module__".to_string(),
+            crate::Value::String(format!("./{name}")),
+        );
     }
+    let result = if is_module {
+        ctx.eval_es_module(source)
+    } else {
+        ctx.eval(source)
+    };
+    result.map(|_| ()).map_err(|error| format!("{error:?}"))
 }
 
 /// Run an async-flag test: eval (which drains microtasks), then verify $DONE
@@ -274,15 +289,16 @@ fn run_async_script_with_path(
         crate::value::error::set_main_realm_test262_error(te);
     }
     if let Some(test_path) = test_path {
-        if is_module {
-            if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
-                ctx.set_global(
-                    "__quench_current_module__".to_string(),
-                    crate::Value::String(format!("./{name}")),
-                );
-            }
+        if let Some(name) = test_path.file_name().and_then(|name| name.to_str()) {
+            ctx.set_global(
+                "__quench_current_module__".to_string(),
+                crate::Value::String(format!("./{name}")),
+            );
         }
         load_fixture_modules(&mut ctx, test_path)?;
+        if !is_module {
+            register_current_script_module(&mut ctx, test_path)?;
+        }
     }
     crate::interpreter::set_strict_mode(strict);
     let result = if is_module {
@@ -298,6 +314,33 @@ fn run_async_script_with_path(
     // otherwise see the stale thrown_value and fail spuriously.
     crate::value::take_thrown_value();
     async_done_probe(&mut ctx)
+}
+
+
+pub fn register_current_script_module(ctx: &mut crate::Context, path: &Path) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("script name")?;
+    let source = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let key = format!("./{name}");
+    let scripts = ctx
+        .get_global("__quench_fixture_init_scripts__")
+        .ok_or("fixture scripts")?;
+    let done = ctx
+        .get_global("__quench_fixture_init_done__")
+        .ok_or("fixture done")?;
+    if let crate::Value::Object(scripts) = scripts {
+        scripts.borrow_mut().set(&key, crate::Value::String(source));
+    }
+    if let crate::Value::Object(done) = done {
+        done.borrow_mut().set(&key, crate::Value::Boolean(false));
+    }
+    ctx.register_module(
+        &key,
+        crate::value::Object::new(crate::value::ObjectKind::Ordinary),
+    );
+    Ok(())
 }
 
 pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Result<(), String> {
@@ -422,9 +465,22 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         }
         let (eval_source, side_effect_source, exports, default_import, reexports) =
             fixture_exports_from_source(index, &source)?;
+        let eval_source = if source.contains("import.meta") {
+            let meta = format!("__quench_fixture_import_meta_{index}");
+            format!(
+                "const {meta} = __import_meta__;\n{}",
+                eval_source.replace("import.meta", &meta)
+            )
+        } else {
+            eval_source
+        };
         if !eval_source.trim().is_empty() {
-            ctx.eval(&eval_source)
-                .map_err(|e| format!("fixture eval {}: {:?}", path.display(), e))?;
+            let result = if source.contains("import.meta") {
+                ctx.eval_es_module(&eval_source)
+            } else {
+                ctx.eval(&eval_source)
+            };
+            result.map_err(|e| format!("fixture eval {}: {:?}", path.display(), e))?;
         }
         if !side_effect_source.trim().is_empty() {
             if let Some(Value::Object(scripts)) = ctx.get_global(init_scripts_key) {
@@ -624,7 +680,8 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
                         let sources = star_sources.entry(module_name.clone()).or_default();
                         if let Some(previous) = sources.get(&key) {
                             if previous != &source {
-                                if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key)
+                                if let Some(Value::Object(errors)) =
+                                    ctx.get_global(module_errors_key)
                                 {
                                     errors.borrow_mut().set(
                                         &module_name,
@@ -1033,8 +1090,8 @@ fn parse_export_specifier_list(list: &str) -> Vec<(String, String)> {
         .filter(|specifier| !specifier.is_empty())
         .map(|specifier| {
             let mut names = specifier.splitn(2, " as ");
-            let local = names.next().unwrap_or("").trim().to_string();
-            let exported = names.next().unwrap_or(&local).trim().to_string();
+            let local = decode_identifier_escape(names.next().unwrap_or("").trim());
+            let exported = decode_identifier_escape(names.next().unwrap_or(&local).trim());
             (local, exported)
         })
         .filter(|(local, _)| !local.is_empty())
@@ -1049,21 +1106,49 @@ fn extract_binding_name(declaration: &str) -> Option<String> {
         .next()
         .map(str::trim)
         .filter(|name| !name.is_empty())
-        .map(str::to_string)
+        .map(decode_identifier_escape)
 }
 
 fn extract_function_name(declaration: &str) -> Option<String> {
     declaration
         .split(|c: char| c == '(' || c == ' ')
         .next()
-        .map(str::to_string)
+        .map(decode_identifier_escape)
 }
 
 fn extract_class_name(declaration: &str) -> Option<String> {
     declaration
         .split(|c: char| c == '{' || c == ' ')
         .next()
-        .map(str::to_string)
+        .map(decode_identifier_escape)
+}
+
+fn decode_identifier_escape(value: &str) -> String {
+    let mut decoded = String::new();
+    let mut remaining = value;
+    while let Some((head, tail)) = remaining.split_once("\\u") {
+        decoded.push_str(head);
+        let (digits, rest) = if let Some(braced) = tail.strip_prefix('{') {
+            let Some((digits, rest)) = braced.split_once('}') else {
+                return value.to_string();
+            };
+            (digits, rest)
+        } else if tail.len() >= 4 {
+            tail.split_at(4)
+        } else {
+            return value.to_string();
+        };
+        let Ok(code) = u32::from_str_radix(digits, 16) else {
+            return value.to_string();
+        };
+        let Some(character) = char::from_u32(code) else {
+            return value.to_string();
+        };
+        decoded.push(character);
+        remaining = rest;
+    }
+    decoded.push_str(remaining);
+    decoded
 }
 
 /// Verify the async $DONE count recorded by `ASYNC_DONE_PRELUDE` is exactly 1.

@@ -824,7 +824,8 @@ fn invoke_iterator_return_inner(
     let resolved = if let Some(getter) = binding.get_getter("return") {
         if let Some(func) = getter.func.clone() {
             drop(binding);
-            match crate::eval::function::call_value_with_this(func, args.clone(), iter_this.clone()) {
+            match crate::eval::function::call_value_with_this(func, args.clone(), iter_this.clone())
+            {
                 Ok(val) => val,
                 Err(err) => return IteratorReturnResult::Throw(err),
             }
@@ -868,9 +869,7 @@ fn invoke_iterator_return_inner(
         return IteratorReturnResult::Throw(js_err);
     }
     finish_iterator_return_call(crate::eval::function::call_value_with_this(
-        resolved,
-        args,
-        iter_this,
+        resolved, args, iter_this,
     ))
 }
 

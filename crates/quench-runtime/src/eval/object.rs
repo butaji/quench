@@ -937,10 +937,16 @@ fn assign_private_name(
         ));
     }
     if is_method {
-        return Err(private_write_type_error(env, "Private method is not writable"));
+        return Err(private_write_type_error(
+            env,
+            "Private method is not writable",
+        ));
     }
     if has_getter && !has_setter {
-        return Err(private_write_type_error(env, "Private accessor has no setter"));
+        return Err(private_write_type_error(
+            env,
+            "Private accessor has no setter",
+        ));
     }
     if has_setter {
         let setter = obj_ref.get_setter(prop_name).cloned();

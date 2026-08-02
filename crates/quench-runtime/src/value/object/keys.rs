@@ -75,6 +75,9 @@ pub fn own_property_names(obj: &crate::value::Object) -> Vec<String> {
             keys.push(key.clone());
         }
     }
+    if obj.kind == crate::value::kind::ObjectKind::ModuleNamespace {
+        keys.sort();
+    }
     keys
 }
 

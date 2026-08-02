@@ -107,6 +107,13 @@ fn eval_object_member_inner(
     prop_name: &str,
     env: Option<&Rc<RefCell<Environment>>>,
 ) -> Result<Value, JsError> {
+    let deferred = o
+        .try_borrow_mut()
+        .ok()
+        .and_then(|mut object| object.deferred_module_get.take());
+    if let Some(hook) = deferred {
+        crate::eval::function::call_value_with_this(hook, Vec::new(), Value::Undefined)?;
+    }
     {
         let mut current: Option<Rc<RefCell<Object>>> = Some(Rc::clone(o));
         while let Some(obj_rc) = current {

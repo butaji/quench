@@ -807,3 +807,36 @@ fn function_prototype_descriptor_is_not_configurable() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn dynamic_import_script_evaluates_itself_once() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/expressions/dynamic-import/eval-self-once-script.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn dynamic_import_then_chain_calls_done_once() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/expressions/dynamic-import/usage/nested-arrow-import-then-returns-thenable.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn module_fixture_is_available_to_static_import() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/expressions/import.meta/distinct-for-each-module.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}

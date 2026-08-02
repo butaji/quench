@@ -6,6 +6,7 @@
 use crate::ast::{Expression, PropertyKey, Statement};
 use oxc::ast::ast;
 
+use super::super::expr::lower_expr;
 use super::declarations::lower_class;
 use super::lower_stmt;
 
@@ -32,7 +33,14 @@ pub fn lower_module_decl(decl: &ast::Statement) -> Option<Statement> {
 #[allow(clippy::complexity)]
 pub fn lower_import(import: &ast::ImportDeclaration) -> Option<Statement> {
     let source = import.source.value.to_string();
-    let specifiers = import.specifiers.as_ref()?;
+    let Some(specifiers) = import.specifiers.as_ref() else {
+        return Some(Statement::Import {
+            default: None,
+            named: Vec::new(),
+            namespace: None,
+            source,
+        });
+    };
 
     let default = specifiers.iter().find_map(|spec| {
         if let ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(default_spec) = spec {
@@ -138,28 +146,58 @@ pub fn lower_export_default_decl(export: &ast::ExportDefaultDeclaration) -> Opti
                 .as_ref()
                 .map(|b| b.statements.iter().filter_map(lower_stmt).collect())
                 .unwrap_or_default();
-            Some(Statement::FunctionDeclaration {
+            let declaration = Statement::FunctionDeclaration {
                 name,
                 params,
                 body,
                 is_async: func_expr.r#async,
                 is_generator: func_expr.generator,
-            })
+            };
+            Some(default_export_binding(
+                declaration,
+                func_expr.id.as_ref().map(|id| id.name.as_str()),
+            ))
         }
         ast::ExportDefaultDeclarationKind::ClassDeclaration(class_expr) => {
+            let original_name = class_expr.id.as_ref().map(|id| id.name.as_str());
             let name = class_expr
                 .id
                 .as_ref()
                 .map(|i| i.name.as_str().to_string())
                 .unwrap_or_else(|| "default".to_string());
             let class = lower_class(class_expr)?;
-            Some(Statement::ClassDeclaration { name, class })
+            Some(default_export_binding(
+                Statement::ClassDeclaration { name, class },
+                original_name,
+            ))
         }
         // Expression export: export default <expression> -> exports.default = <expression>
-        ast::ExportDefaultDeclarationKind::Identifier(id) => Some(Statement::Expression(Box::new(
+        ast::ExportDefaultDeclarationKind::Identifier(id) => Some(default_export_value(
             Expression::Identifier(id.name.as_str().to_string()),
-        ))),
-        _ => None,
+        )),
+        _ => export
+            .declaration
+            .as_expression()
+            .and_then(|expression| lower_expr(expression).ok())
+            .map(default_export_value),
+    }
+}
+
+fn default_export_binding(declaration: Statement, name: Option<&str>) -> Statement {
+    let Some(name) = name else {
+        return declaration;
+    };
+    Statement::Block(vec![
+        declaration,
+        default_export_value(Expression::Identifier(name.into())),
+    ])
+}
+
+fn default_export_value(value: Expression) -> Statement {
+    Statement::VarDeclaration {
+        kind: crate::ast::VarKind::Var,
+        name: "default".to_string(),
+        init: Some(value),
     }
 }
 
