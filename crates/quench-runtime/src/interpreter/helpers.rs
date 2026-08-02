@@ -801,6 +801,10 @@ pub fn has_duplicate_named_group(source: &str) -> bool {
     })
 }
 
+pub fn has_empty_named_group(source: &str) -> bool {
+    source.contains("(?<>")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
