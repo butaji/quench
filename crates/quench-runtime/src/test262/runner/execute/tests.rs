@@ -2,6 +2,16 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
+fn fixture_declarations_are_evaluated_before_default_expression() {
+    let (eval_source, _, _, _, _) =
+        fixture_exports_from_source(0, "const y = 42;\nexport default y;\n").unwrap();
+    assert_eq!(
+        eval_source,
+        "const y = 42;\nglobalThis.__quench_fixture_default_0 = y;"
+    );
+}
+
+#[test]
 fn in_process_and_isolated_share_one_timeout() {
     // Both paths read TEST_TIMEOUT_SECS; pin the value so a slow test cannot
     // pass in-process (formerly 10s) and fail isolated (formerly 15s).

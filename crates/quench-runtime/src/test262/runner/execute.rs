@@ -825,7 +825,11 @@ fn fixture_exports_from_source(
             side_effect_lines.push(line.to_string());
             continue;
         }
-        side_effect_lines.push(line.to_string());
+        if is_fixture_declaration(line) {
+            eval_lines.push(line.to_string());
+        } else {
+            side_effect_lines.push(line.to_string());
+        }
     }
 
     let export = FixtureExports {
@@ -845,6 +849,19 @@ fn fixture_exports_from_source(
         default_import,
         reexports,
     ))
+}
+
+fn is_fixture_declaration(line: &str) -> bool {
+    [
+        "const ",
+        "let ",
+        "var ",
+        "function ",
+        "function* ",
+        "class ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
 }
 
 fn parse_fixture_json_value(source: &str) -> Result<crate::Value, String> {
