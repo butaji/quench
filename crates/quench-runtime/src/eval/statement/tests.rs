@@ -45,6 +45,32 @@ fn dynamic_import_refreshes_fixture_exports_after_initialization() {
 }
 
 #[test]
+fn async_await_dynamic_import_rejection_reaches_catch() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    ctx.eval(
+        "var result = 'pending'; (async function() { await import('missing-module'); })()\
+         .catch(error => result = error.name);",
+    )
+    .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+}
+
+#[test]
+fn async_await_fixture_evaluation_rejection_reaches_catch() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/test262/test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-eval-rqstd-abrupt-typeerror.js");
+    crate::test262::runner::execute::load_fixture_modules(&mut ctx, &path).unwrap();
+    ctx.eval("var result = 'pending'; (async function() { await import('./eval-rqstd-abrupt-err-type_FIXTURE.js'); })().catch(error => result = error.name);")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::String("TypeError".into()));
+}
+
+#[test]
 fn non_strict_super_set_ignores_failed_receiver_set() {
     let value = eval("var obj = { method() { super.x = 8; Object.freeze(obj); super.y = 9; } }; obj.method(); Object.prototype.hasOwnProperty.call(obj, 'y')").unwrap();
     assert_eq!(value, Value::Boolean(false));
