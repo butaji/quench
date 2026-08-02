@@ -124,7 +124,12 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
             }
         }
     }
-    reject_eval_var_lexical_conflict(&program, ctx)?;
+    let eval_strict = strict_inherited
+        || source.trim_start().starts_with("\"use strict\"")
+        || source.trim_start().starts_with("'use strict'");
+    if !eval_strict {
+        reject_eval_var_lexical_conflict(&program, ctx)?;
+    }
     let in_class_field = crate::interpreter::is_eval_in_class_field()
         || crate::interpreter::get_current_eval_env()
             .is_some_and(|e| e.borrow().is_in_class_field_initializer());
