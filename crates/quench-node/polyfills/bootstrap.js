@@ -6338,13 +6338,12 @@ const __createNodeCrypto = () => ({
         const result = NodeBuffer.from(
           globalThis.__quench_sha256_bytes([...outer, ...innerDigest]),
         );
-        return encoding === undefined || encoding === null
-          ? result
-          : encoding === "hex"
-            ? result.toString("hex")
-            : encoding === "base64"
-              ? result.toString("base64")
-              : result;
+        if (encoding === undefined || encoding === null) return result;
+        if (encoding === "hex" || encoding === "base64")
+          return result.toString(encoding);
+        const error = new TypeError(`Unknown encoding: ${encoding}`);
+        error.code = "ERR_UNKNOWN_ENCODING";
+        throw error;
       },
       copy: () => {
         const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);
