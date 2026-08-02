@@ -8,6 +8,7 @@ globalThis.eval = (source) => {
   return __nodeNativeEval(source);
 };
 const __nodeDetachedBuffers = new WeakSet();
+const __nodeImmutableBuffers = new WeakSet();
 const __nodeNativeStructuredClone = globalThis.structuredClone;
 globalThis.structuredClone = (value, options) => {
   for (const item of options && options.transfer ? options.transfer : [])
@@ -16,6 +17,11 @@ globalThis.structuredClone = (value, options) => {
     ? __nodeNativeStructuredClone(value, options)
     : value;
 };
+if (typeof ArrayBuffer.prototype.transferToImmutable !== "function")
+  ArrayBuffer.prototype.transferToImmutable = function () {
+    __nodeImmutableBuffers.add(this);
+    return this;
+  };
 const __nodeProxySet = new WeakSet();
 const __nodeModuleNamespaces = new WeakSet();
 const __nodeNativeProxy = globalThis.Proxy;
@@ -680,6 +686,7 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (__nodeImmutableBuffers.has(target.buffer)) return 0;
     const number = (value) => {
       const result = Math.trunc(Number(value));
       return Number.isNaN(result) ? 0 : result;
