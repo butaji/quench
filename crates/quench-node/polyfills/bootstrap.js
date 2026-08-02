@@ -2938,11 +2938,17 @@ globalThis.__nodeUtil = {
     return (
       args[0].replace(/%[sdifjo%]/g, (token) => {
         if (token === "%%") return "%";
+        if (index >= args.length) return token;
         const value = args[index++];
         if (token === "%s") return String(value);
-        if (token === "%d") return Number(value).toString();
-        if (token === "%i") return Number.parseInt(value, 10).toString();
-        if (token === "%f") return Number(value).toString();
+        if (token === "%d" || token === "%f") {
+          const number = Number(value);
+          return Object.is(number, -0) ? "-0" : number.toString();
+        }
+        if (token === "%i") {
+          const number = Number.parseInt(value, 10);
+          return Object.is(number, -0) ? "-0" : number.toString();
+        }
         if (token === "%j") return JSON.stringify(value);
         return token === "%o" ? inspect(value) : String(value);
       }) +
