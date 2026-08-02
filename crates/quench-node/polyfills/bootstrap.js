@@ -1762,7 +1762,16 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
         throw error;
     }
   }
-  if (!thrown) throw new Error("Missing expected exception");
+  if (!thrown) {
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `Missing expected exception${typeof expected === "function" ? ` (${expected.name})` : "."}`,
+    );
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "throws";
+    assertion.actual = undefined;
+    assertion.expected = expected;
+    throw assertion;
+  }
   return captured;
 };
 globalThis.__nodeAssert.ifError = (error) => {
