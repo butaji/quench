@@ -2404,6 +2404,17 @@ class NodeReadable extends NodeEventEmitter {
   isPaused() {
     return this._paused;
   }
+  push(chunk) {
+    if (chunk === null) {
+      this._ended = true;
+      this.readableEnded = true;
+      this.emit("end");
+      return false;
+    }
+    if (this._paused) this._chunks.push(chunk);
+    else this.emit("data", chunk);
+    return true;
+  }
 
   async *[Symbol.asyncIterator]() {
     for (const chunk of this._chunks || []) yield chunk;
