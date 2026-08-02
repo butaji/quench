@@ -4565,7 +4565,13 @@ globalThis.__nodeFs.promises.open = async (...args) => {
       error.code = "ABORT_ERR";
       throw error;
     }
-    return previousReadFile(options);
+    const source = globalThis.__nodeFs.readFileSync(handle.fd);
+    const position = globalThis.__nodeFdPositions[handle.fd] || 0;
+    globalThis.__nodeFdPositions[handle.fd] = source.length;
+    const result = NodeBuffer.from(source.subarray(position));
+    const encoding =
+      typeof options === "string" ? options : options && options.encoding;
+    return encoding ? result.toString(encoding) : result;
   };
   return handle;
 };
