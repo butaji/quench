@@ -2307,20 +2307,21 @@ globalThis.__nodeFs = {
     globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value, options) => {
     const path = nodePathValue(value);
-    let hex;
+    let bytes;
     try {
-      hex = globalThis.__quench_fs_read_hex(path);
+      bytes = globalThis.__quench_fs_read_bytes(path);
     } catch (error) {
       const flag =
         typeof options === "object" && options ? options.flag : undefined;
       if (flag === "a" || flag === "a+") {
         globalThis.__quench_fs_write_hex(path, "");
         globalThis.__nodeModes[path] = 0o666 & ~process.umask();
-        hex = "";
+        bytes = [];
       } else throw error;
     }
+    const hex = NodeBuffer.from(bytes).toString("hex");
     if (options === undefined || options === null)
-      return NodeBuffer.from(hex, "hex");
+      return NodeBuffer.from(bytes);
     const encoding =
       typeof options === "string" ? options : options && options.encoding;
     if (
@@ -2328,20 +2329,20 @@ globalThis.__nodeFs = {
       typeof options === "object" &&
       options.buffer !== undefined
     ) {
-      const bytes = NodeBuffer.from(hex, "hex");
+      const bufferBytes = NodeBuffer.from(bytes);
       const target =
         typeof options.buffer === "function"
-          ? options.buffer(bytes.length)
+          ? options.buffer(bufferBytes.length)
           : options.buffer;
       if (!(target instanceof Uint8Array)) {
         const error = new TypeError('The "buffer" option must return a Buffer');
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      target.set(bytes.subarray(0, target.length));
+      target.set(bufferBytes.subarray(0, target.length));
       return encoding
         ? target.toString(encoding)
-        : target.subarray(0, bytes.length);
+        : target.subarray(0, bufferBytes.length);
     }
     if (encoding === "hex" || encoding === "base64")
       return NodeBuffer.from(hex, "hex").toString(encoding);
@@ -2392,7 +2393,10 @@ globalThis.__nodeFs = {
       } catch (_) {}
       return globalThis.__quench_fs_write_hex(path, existing + hex);
     }
-    const result = globalThis.__quench_fs_write_hex(path, hex);
+    const result = globalThis.__quench_fs_write_bytes(
+      path,
+      Array.from(view || NodeBuffer.from(String(data))),
+    );
     if (options && options.flush) {
       const fd = globalThis.__nodeFs.openSync(path, "r");
       globalThis.__nodeFs.fsyncSync(fd);
