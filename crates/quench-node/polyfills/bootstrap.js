@@ -2315,6 +2315,10 @@ class NodeTransform extends NodeWritable {
     super();
     this._transform = options.transform;
   }
+  push(chunk) {
+    if (chunk !== undefined) this.emit("data", chunk);
+    return chunk !== null;
+  }
   write(chunk, encoding, callback) {
     if (this._transform)
       this._transform.call(this, chunk, encoding, () => callback && callback());

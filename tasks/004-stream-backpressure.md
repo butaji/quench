@@ -24,3 +24,5 @@ Readable pause/resume and full transform/event ordering remain in progress.
 
 Readable pause/resume queue preservation is covered by
 `tests/node-compat/stage-371/stream-pause-resume.js`.
+Transform output through `push()` is covered by
+`tests/node-compat/stage-372/stream-transform.js`.
