@@ -4701,6 +4701,11 @@ globalThis.require = (specifier) => {
       },
     };
   if (name === "worker_threads") return { isMainThread: true };
+  if (name === "node:test" || name === "test")
+    return {
+      describe: (_name, callback) => callback(),
+      it: (_name, callback) => callback(),
+    };
   if (name === "internal/test/binding")
     return {
       internalBinding: (binding) =>
