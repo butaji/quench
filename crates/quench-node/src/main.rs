@@ -15,7 +15,9 @@ const BOOTSTRAP: &str = include_str!("../polyfills/bootstrap.js");
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args().skip(1);
+    let mut raw_args: Vec<String> = env::args().skip(1).collect();
+    raw_args.retain(|arg| arg != "--experimental-stream-iter");
+    let mut args = raw_args.into_iter();
     let mode = args.next();
     if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
         println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");

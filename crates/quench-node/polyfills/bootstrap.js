@@ -5659,7 +5659,12 @@ globalThis.require = (specifier) => {
       on: globalThis.__nodeEventEmitter.on,
     };
   if (name === "stream") return globalThis.__nodeStream;
-  if (name === "stream/iter")
+  if (name === "stream/iter") {
+    if (!globalThis.__quench_argv.includes("--experimental-stream-iter")) {
+      const error = new Error("No such built-in module: node:stream/iter");
+      error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
+      throw error;
+    }
     return {
       text: async (readable) => {
         const chunks = [];
@@ -5680,6 +5685,7 @@ globalThis.require = (specifier) => {
         },
       }),
     };
+  }
   if (name === "vm")
     return {
       SourceTextModule: class SourceTextModule {
