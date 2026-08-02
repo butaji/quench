@@ -9,6 +9,10 @@ globalThis.eval = (source) => {
 };
 const __nodeDetachedBuffers = new WeakSet();
 const __nodeImmutableBuffers = new WeakSet();
+const __nodeAllocatorCounts = {
+  uninitialized: 0,
+  zeroFilled: 0,
+};
 const __nodeNativeStructuredClone = globalThis.structuredClone;
 globalThis.structuredClone = (value, options) => {
   for (const item of options && options.transfer ? options.transfer : [])
@@ -442,12 +446,15 @@ class NodeBuffer extends Uint8Array {
   }
   static alloc(size, fill = 0, encoding) {
     const length = NodeBuffer._validateSize(size);
+    __nodeAllocatorCounts.zeroFilled++;
     return new NodeBuffer(length).fill(fill, 0, length, encoding);
   }
   static allocUnsafe(size) {
+    __nodeAllocatorCounts.uninitialized++;
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
   static allocUnsafeSlow(size) {
+    __nodeAllocatorCounts.uninitialized++;
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
   static _validateSize(size) {
@@ -1944,6 +1951,7 @@ globalThis.__nodeCommon = {
   expectWarning: (_type, _message) => {},
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === "linux",
+  isDebug: true,
   isMacOS: process.platform === "darwin",
   isWindows: process.platform === "win32",
   isAIX: false,
@@ -4709,29 +4717,36 @@ globalThis.require = (specifier) => {
   if (name === "internal/test/binding")
     return {
       internalBinding: (binding) =>
-        binding === "uv"
-          ? { UV_ENOENT: -2, UV_EEXIST: -17 }
-          : binding === "js_stream"
-            ? {
-                JSStream: class JSStream {
-                  constructor() {
-                    this._externalStream = { __quench_external: true };
-                  }
-                },
-              }
-            : binding === "util"
+        binding === "debug"
+          ? {
+              getGenericUsageCount: (name) =>
+                name.includes("Uninitialized")
+                  ? __nodeAllocatorCounts.uninitialized
+                  : __nodeAllocatorCounts.zeroFilled,
+            }
+          : binding === "uv"
+            ? { UV_ENOENT: -2, UV_EEXIST: -17 }
+            : binding === "js_stream"
               ? {
-                  arrayBufferViewHasBuffer: (() => {
-                    const observed = new WeakSet();
-                    return (value) => {
-                      if (value.byteLength >= 96 || observed.has(value))
-                        return true;
-                      observed.add(value);
-                      return false;
-                    };
-                  })(),
+                  JSStream: class JSStream {
+                    constructor() {
+                      this._externalStream = { __quench_external: true };
+                    }
+                  },
                 }
-              : { fstat: () => undefined },
+              : binding === "util"
+                ? {
+                    arrayBufferViewHasBuffer: (() => {
+                      const observed = new WeakSet();
+                      return (value) => {
+                        if (value.byteLength >= 96 || observed.has(value))
+                          return true;
+                        observed.add(value);
+                        return false;
+                      };
+                    })(),
+                  }
+                : { fstat: () => undefined },
     };
   if (name === "internal/errors")
     return {
