@@ -58,6 +58,15 @@ fn super_update_resolves_base_before_computed_key() {
 }
 
 #[test]
+fn super_compound_assignment_resolves_base_before_computed_key() {
+    assert_eq!(
+        eval("var proto={p:1}, proto2={p:-1}, obj={__proto__:proto,m(){return super[key]+=1;}}, key={toString(){Object.setPrototypeOf(obj,proto2);return 'p';}}; obj.m()")
+            .unwrap(),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
 fn tagged_template_exposes_cooked_and_raw_values() {
     assert_eq!(
         eval("(function(s) { return s[0] + '|' + s.raw[0]; })`\\u0062`").unwrap(),

@@ -586,6 +586,31 @@ pub fn eval_expression(
             } = left.as_ref()
             {
                 if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
+                    let left_value = crate::eval::call::eval_super_member(
+                        property,
+                        *computed,
+                        env,
+                        in_arrow_function,
+                    )?;
+                    let right_value = eval_expression(right, env, in_arrow_function)?;
+                    let result = eval_binary_op(op.to_binary(), &left_value, &right_value)?;
+                    crate::eval::call::set_super_property(
+                        property,
+                        *computed,
+                        result.clone(),
+                        env,
+                        in_arrow_function,
+                    )?;
+                    return Ok(result);
+                }
+            }
+            if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = left.as_ref()
+            {
+                if matches!(object.as_ref(), Expression::Identifier(name) if name == "super") {
                     crate::eval::class::helpers::check_this_access_allowed(env)?;
                 }
                 let object_value = eval_expression(object, env, in_arrow_function)?;
