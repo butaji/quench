@@ -142,11 +142,43 @@ globalThis.__nodeFs = {
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(String(value), String(data)),
   statSync: () => ({ isFile: () => true, isDirectory: () => false }),
 };
+globalThis.__nodeOs = {
+  EOL: '\n',
+  platform: () => process.platform,
+  arch: () => process.arch,
+  tmpdir: () => '/tmp',
+  homedir: () => '/',
+  type: () => 'Quench',
+  endianness: () => 'LE',
+  hostname: () => 'quench-node',
+  cpus: () => [],
+  userInfo: () => ({ username: '', homedir: '/' }),
+};
+globalThis.__nodeUtil = {
+  format: (...args) => {
+    if (!args.length) return '';
+    let index = 1;
+    return String(args[0]).replace(/%[sdijo%]/g, (token) => {
+      if (token === '%%') return '%';
+      const value = args[index++];
+      if (token === '%s') return String(value);
+      if (token === '%d') return Number(value).toString();
+      if (token === '%j') return JSON.stringify(value);
+      return token === '%o' ? JSON.stringify(value) : String(value);
+    }) + args.slice(index).map((value) => ` ${String(value)}`).join('');
+  },
+  inspect: (value) => JSON.stringify(value),
+  types: {
+    isDate: (value) => value instanceof Date,
+    isPromise: (value) => value instanceof Promise,
+  },
+};
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;
   if (name === 'path' || name === 'path/posix') return globalThis.__nodePath;
-  if (name === 'util') return { format: globalThis.__nodeFormat };
+  if (name === 'util') return globalThis.__nodeUtil;
+  if (name === 'os') return globalThis.__nodeOs;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === '../common' || name.endsWith('/common')) return globalThis.__nodeCommon;
   if (name === 'buffer') return { Buffer, kMaxLength: 0x7fffffff };
