@@ -28,3 +28,5 @@ prototype while preserving generic method behavior and `instanceof Buffer`.
 This is covered by `tests/node-compat/stage-498`.
 Generic Buffer inspection now labels plain `Uint8Array` receivers correctly,
 covered by `tests/node-compat/stage-499`.
+Float read/write offsets now use Node-compatible validation messages and error
+codes, covered by `tests/node-compat/stage-500`.

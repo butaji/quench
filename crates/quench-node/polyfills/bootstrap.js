@@ -650,7 +650,8 @@ class NodeBuffer extends Uint8Array {
     if (length === undefined)
       length = offset >= elementLength ? 0 : elementLength - offset;
     if (
-      !Number.isFinite(offset) ||
+      offset === Infinity ||
+      offset === -Infinity ||
       !Number.isFinite(length) ||
       !Number.isInteger(offset) ||
       !Number.isInteger(length) ||
@@ -1398,6 +1399,28 @@ class NodeBuffer extends Uint8Array {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
+    if (
+      !Number.isFinite(offset) ||
+      offset < 0 ||
+      (this.length >= size && offset + size > this.length)
+    ) {
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (
+      !Number.isFinite(offset) ||
+      offset < 0 ||
+      (this.length >= size && offset + size > this.length)
+    ) {
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     if (!Number.isInteger(offset)) {
       const error = new RangeError('The value of "offset" is out of range');
       error.code = "ERR_OUT_OF_RANGE";
@@ -1463,6 +1486,42 @@ class NodeBuffer extends Uint8Array {
       throw error;
     }
     if (offset + size > this.length) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds",
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    return offset;
+  }
+  _floatOffset(offset, size) {
+    if (typeof offset !== "number") {
+      const error = new TypeError(
+        'The "offset" argument must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      offset === Infinity ||
+      offset === -Infinity ||
+      offset < 0 ||
+      (this.length >= size && offset + size > this.length)
+    ) {
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(offset)) {
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be an integer. Received ${offset}`,
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (this.length < size) {
       const error = new RangeError(
         "Attempt to access memory outside buffer bounds",
       );
@@ -1659,7 +1718,7 @@ class NodeBuffer extends Uint8Array {
     );
   }
   readFloatLE(offset = 0) {
-    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
+    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
     return new DataView(
       this.buffer,
       this.byteOffset,
@@ -1667,7 +1726,7 @@ class NodeBuffer extends Uint8Array {
     ).getFloat32(offset, true);
   }
   readFloatBE(offset = 0) {
-    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
+    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
     return new DataView(
       this.buffer,
       this.byteOffset,
@@ -1675,7 +1734,7 @@ class NodeBuffer extends Uint8Array {
     ).getFloat32(offset, false);
   }
   writeFloatLE(value, offset = 0) {
-    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
+    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
     new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
       offset,
       value,
@@ -1684,7 +1743,7 @@ class NodeBuffer extends Uint8Array {
     return offset + 4;
   }
   writeFloatBE(value, offset = 0) {
-    NodeBuffer.prototype._integerOffset.call(this, offset, 4);
+    NodeBuffer.prototype._floatOffset.call(this, offset, 4);
     new DataView(this.buffer, this.byteOffset, this.byteLength).setFloat32(
       offset,
       value,
