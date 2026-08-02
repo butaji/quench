@@ -214,7 +214,10 @@ globalThis.clearImmediate = () => undefined;
 globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   const id = { active: true };
   queueMicrotask(() => {
-    if (id.active) callback(...args);
+    if (id.active) {
+      if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      callback(...args);
+    }
   });
   return id;
 };

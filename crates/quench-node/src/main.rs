@@ -92,6 +92,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().to_string()
             }),
         )?;
+        ctx.globals().set(
+            "__quench_sleep_ms",
+            Func::from(|milliseconds: u64| {
+                std::thread::sleep(std::time::Duration::from_millis(milliseconds.min(60_000)));
+            }),
+        )?;
         ctx.globals().set("__quench_pid", std::process::id())?;
         ctx.globals().set("__quench_exec_path", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
         ctx.globals().set("__filename", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("quench-node")).to_string_lossy().into_owned())?;
