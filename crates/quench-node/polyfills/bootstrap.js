@@ -2918,19 +2918,36 @@ globalThis.__nodeUtil = {
       ),
   format: (...args) => {
     if (!args.length) return "";
+    const inspect = (value) => {
+      if (value === null) return "null";
+      if (value === undefined) return "undefined";
+      if (typeof value === "string") return value;
+      if (typeof value === "symbol") return String(value);
+      if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;
+      if (typeof value === "object") {
+        const entries = Object.keys(value).map(
+          (key) => `${key}: ${inspect(value[key])}`,
+        );
+        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+      }
+      return String(value);
+    };
+    if (typeof args[0] !== "string") return args.map(inspect).join(" ");
     let index = 1;
     return (
-      String(args[0]).replace(/%[sdijo%]/g, (token) => {
+      args[0].replace(/%[sdifjo%]/g, (token) => {
         if (token === "%%") return "%";
         const value = args[index++];
         if (token === "%s") return String(value);
         if (token === "%d") return Number(value).toString();
+        if (token === "%i") return Number.parseInt(value, 10).toString();
+        if (token === "%f") return Number(value).toString();
         if (token === "%j") return JSON.stringify(value);
-        return token === "%o" ? JSON.stringify(value) : String(value);
+        return token === "%o" ? inspect(value) : String(value);
       }) +
       args
         .slice(index)
-        .map((value) => ` ${String(value)}`)
+        .map((value) => ` ${inspect(value)}`)
         .join("")
     );
   },
