@@ -25,6 +25,34 @@ globalThis.process = {
 
 globalThis.setImmediate = (callback, ...args) => queueMicrotask(() => callback(...args));
 globalThis.clearImmediate = () => undefined;
+globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+  const id = { active: true };
+  queueMicrotask(() => { if (id.active) callback(...args); });
+  return id;
+};
+globalThis.clearTimeout = (id) => { if (id) id.active = false; };
+globalThis.setInterval = (callback, _delay = 0, ...args) => setTimeout(callback, _delay, ...args);
+globalThis.clearInterval = globalThis.clearTimeout;
+
+const processListeners = {};
+process.on = (event, listener) => {
+  (processListeners[event] ||= []).push(listener);
+  return process;
+};
+process.once = (event, listener) => {
+  const once = (...args) => { process.removeListener(event, once); listener(...args); };
+  return process.on(event, once);
+};
+process.removeListener = (event, listener) => {
+  processListeners[event] = (processListeners[event] || []).filter((item) => item !== listener);
+  return process;
+};
+process.removeAllListeners = (event) => { if (event) delete processListeners[event]; else Object.keys(processListeners).forEach((key) => delete processListeners[key]); };
+process.emit = (event, ...args) => {
+  const listeners = processListeners[event] || [];
+  listeners.forEach((listener) => listener(...args));
+  return listeners.length > 0;
+};
 
 class Buffer extends Uint8Array {
   static from(value, encoding) {
