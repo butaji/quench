@@ -36,3 +36,5 @@ Shared stream `destroy()` state and error/close events are covered by
 `tests/node-compat/stage-432/stream-destroy.js`.
 Readable pause state introspection is covered by
 `tests/node-compat/stage-437/stream-is-paused.js`.
+Writable `writableNeedDrain` transitions are covered by
+`tests/node-compat/stage-438/stream-writable-need-drain.js`.
