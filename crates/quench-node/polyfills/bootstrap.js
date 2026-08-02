@@ -336,6 +336,7 @@ globalThis.__nodeUrlModule = {
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
 };
 globalThis.__nodeCrypto = {
+  randomUUID: () => globalThis.__quench_random_uuid(),
   createHash: (algorithm) => {
     if (algorithm !== 'sha256') throw new Error(`Unsupported hash: ${algorithm}`);
     let input = '';

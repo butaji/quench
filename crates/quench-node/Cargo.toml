@@ -9,3 +9,4 @@ license = "MIT"
 rquickjs = { version = "0.9", features = ["array-buffer", "classes", "futures", "loader", "macro", "properties", "parallel"] }
 walkdir = "2"
 sha2 = "0.10"
+rand = "0.8"
