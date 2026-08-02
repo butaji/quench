@@ -317,16 +317,7 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("JavaScript exception: {detail} ({error:?})");
             error
         })?;
-        loop {
-            match runtime.execute_pending_job() {
-                Ok(true) => {}
-                Ok(false) => break,
-                Err(error) => {
-                    eprintln!("Pending JavaScript job failed: {error:?}");
-                    return Err(rquickjs::Error::new_from_js("promise", "pending job failed"));
-                }
-            }
-        }
+        while ctx.execute_pending_job() {}
         ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }").map_err(|error| {
             eprintln!("Node harness assertion failure: {error:?}");
             error
