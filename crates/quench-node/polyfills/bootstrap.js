@@ -4763,6 +4763,29 @@ globalThis.__nodeUtil = {
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
 NodeBuffer.INSPECT_MAX_BYTES = 50;
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    const error = new TypeError(
+      'The "inspectOptions" argument must be an object',
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options.colors && typeof args[0] !== "string") {
+    const color = (value) => {
+      if (value === null) return "\u001b[1mnull\u001b[22m";
+      if (value === undefined) return "\u001b[90mundefined\u001b[39m";
+      if (
+        typeof value === "boolean" ||
+        typeof value === "number" ||
+        typeof value === "bigint"
+      )
+        return `\u001b[33m${String(value)}${typeof value === "bigint" ? "n" : ""}\u001b[39m`;
+      if (typeof value === "symbol")
+        return `\u001b[32m${String(value)}\u001b[39m`;
+      return String(value);
+    };
+    return args.map(color).join(" ");
+  }
   const previous =
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
   if (options && options.numericSeparator !== undefined)
