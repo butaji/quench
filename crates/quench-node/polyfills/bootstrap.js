@@ -417,6 +417,55 @@ class NodeBuffer extends Uint8Array {
       "utf-16le",
     ].includes(encoding.toLowerCase());
   }
+  static isAscii(value) {
+    if (!(value instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "input" argument must be an instance of Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return value.every((byte) => byte < 0x80);
+  }
+  static isUtf8(value) {
+    if (!(value instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "input" argument must be an instance of Uint8Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    for (let i = 0; i < value.length; i++) {
+      const byte = value[i];
+      let needed = 0;
+      let code = 0;
+      if (byte <= 0x7f) continue;
+      if (byte >= 0xc2 && byte <= 0xdf) {
+        needed = 1;
+        code = byte & 0x1f;
+      } else if (byte >= 0xe0 && byte <= 0xef) {
+        needed = 2;
+        code = byte & 0x0f;
+      } else if (byte >= 0xf0 && byte <= 0xf4) {
+        needed = 3;
+        code = byte & 0x07;
+      } else return false;
+      for (let j = 1; j <= needed; j++) {
+        if (i + j >= value.length || value[i + j] < 0x80 || value[i + j] > 0xbf)
+          return false;
+        code = (code << 6) | (value[i + j] & 0x3f);
+      }
+      if (
+        (needed === 2 && code < 0x800) ||
+        (needed === 3 && code < 0x10000) ||
+        code > 0x10ffff ||
+        (code >= 0xd800 && code <= 0xdfff)
+      )
+        return false;
+      i += needed;
+    }
+    return true;
+  }
   static compare(left, right) {
     if (!(left instanceof Uint8Array)) {
       const error = new TypeError(
@@ -4275,6 +4324,8 @@ globalThis.require = (specifier) => {
         MAX_LENGTH: 0x7fffffff,
         MAX_STRING_LENGTH: 0x3fffffff,
       },
+      isAscii: NodeBuffer.isAscii,
+      isUtf8: NodeBuffer.isUtf8,
       atob: nodeAtob,
       btoa: nodeBtoa,
     };
