@@ -63,6 +63,14 @@ fn generator_arguments_assignment_updates_parameter() {
 }
 
 #[test]
+fn generator_return_closes_yield_star_iterator() {
+    assert_eq!(
+        eval("var count = 0; var source = { next: () => ({ value: 1 }) }; Object.defineProperty(source, 'return', { get: () => { count += 1; } }); source[Symbol.iterator] = () => source; function* g() { try { yield* source; } finally {} } var iter = g(); iter.next(); iter.return(); count").unwrap(),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
 fn optional_chaining_short_circuits_continuations() {
     assert_eq!(
         eval("const a = undefined; let x = 1; a?.[++x]; x").unwrap(),

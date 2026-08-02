@@ -500,6 +500,16 @@ pub fn generator_return_fn(gen: Rc<RefCell<GeneratorObject>>) -> Value {
                     return Err(close_err);
                 }
             }
+            if let Some(suspend) = g.yield_delegate_suspend.as_ref() {
+                if let Some(close_err) =
+                    crate::eval::object::call_iterator_return(&suspend.iterator)
+                {
+                    return Err(close_err);
+                }
+            }
+            if let Some(suspend) = g.yield_delegate_suspend.as_mut() {
+                suspend.completion = Some(arg.clone());
+            }
             if let Some(iterator) = pending_destructuring {
                 if let Some(close_err) = crate::eval::object::call_iterator_return(&iterator) {
                     return Err(close_err);

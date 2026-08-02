@@ -772,21 +772,29 @@ fn invoke_iterator_return_inner(
     // Resolve the "return" method per GetMethod (ES §7.3.9):
     // call the accessor if present, then check the value.
     let resolved = if let Some(getter) = binding.get_getter("return") {
-        let params: Vec<crate::ast::Param> = Vec::new();
-        let body: Vec<crate::ast::Statement> = (*getter.body).clone();
-        let closure = getter.closure.clone();
-        drop(binding);
-        match crate::eval::function::call_value_with_this(
-            crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
-                params,
-                Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
-                closure,
-            )),
-            vec![],
-            iter_this.clone(),
-        ) {
-            Ok(val) => val,
-            Err(err) => return IteratorReturnResult::Throw(err),
+        if let Some(func) = getter.func.clone() {
+            drop(binding);
+            match crate::eval::function::call_value_with_this(func, vec![], iter_this.clone()) {
+                Ok(val) => val,
+                Err(err) => return IteratorReturnResult::Throw(err),
+            }
+        } else {
+            let params: Vec<crate::ast::Param> = Vec::new();
+            let body: Vec<crate::ast::Statement> = (*getter.body).clone();
+            let closure = getter.closure.clone();
+            drop(binding);
+            match crate::eval::function::call_value_with_this(
+                crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
+                    params,
+                    Box::new(crate::ast::ArrowBody::Block(std::rc::Rc::new(body))),
+                    closure,
+                )),
+                vec![],
+                iter_this.clone(),
+            ) {
+                Ok(val) => val,
+                Err(err) => return IteratorReturnResult::Throw(err),
+            }
         }
     } else {
         binding.get("return").unwrap_or(Value::Undefined)
