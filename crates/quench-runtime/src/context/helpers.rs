@@ -221,18 +221,20 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         let eval_env =
             crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
         for statement in body {
-            if let ast::Statement::VarDeclaration {
-                kind: ast::VarKind::Let | ast::VarKind::Const,
-                name,
-                ..
-            } = statement
-            {
-                eval_env
-                    .borrow()
-                    .current_scope()
-                    .borrow_mut()
-                    .remove_binding(name);
-            }
+            let name = match statement {
+                ast::Statement::VarDeclaration {
+                    kind: ast::VarKind::Let | ast::VarKind::Const,
+                    name,
+                    ..
+                }
+                | ast::Statement::ClassDeclaration { name, .. } => name,
+                _ => continue,
+            };
+            eval_env
+                .borrow()
+                .current_scope()
+                .borrow_mut()
+                .remove_binding(name);
         }
     }
     CURRENT_CONTEXT.with(|cell| {
@@ -782,6 +784,9 @@ mod tests {
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx
             .eval("eval('let evalOnly = 3'); typeof evalOnly")
+            .is_ok_and(|value| crate::value::to_js_string(&value) == "undefined"));
+        assert!(ctx
+            .eval("eval('class EvalOnly {}'); typeof EvalOnly")
             .is_ok_and(|value| crate::value::to_js_string(&value) == "undefined"));
     }
 
