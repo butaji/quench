@@ -43,3 +43,5 @@ Basic `createReadStream()` byte delivery is covered by
 `tests/node-compat/stage-423/fs-read-stream.js`.
 Read-stream encoding and `bytesRead` accounting are covered by
 `tests/node-compat/stage-424/fs-read-stream-options.js`.
+Read-stream start/end range validation is covered by
+`tests/node-compat/stage-425/fs-read-stream-range.js`.
