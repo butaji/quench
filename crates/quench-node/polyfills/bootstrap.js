@@ -590,16 +590,40 @@ class NodeBuffer extends Uint8Array {
     return -1;
   }
   write(value, offset = 0, length, encoding = "utf8") {
+    if (typeof offset === "string") {
+      encoding = offset;
+      offset = 0;
+      length = undefined;
+    }
     if (typeof length === "string") {
       encoding = length;
       length = undefined;
     }
+    if (
+      typeof offset !== "number" ||
+      !Number.isInteger(offset) ||
+      offset < 0 ||
+      offset > this.length
+    ) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const bytes = NodeBuffer.from(String(value), encoding);
-    const limit =
+    const requested =
       length === undefined
         ? this.length - offset
-        : Math.min(length, this.length - offset);
-    const count = Math.min(limit, bytes.length);
+        : Math.max(0, Math.trunc(Number(length)) || 0);
+    let count = Math.min(requested, this.length - offset, bytes.length);
+    const normalized = String(encoding).toLowerCase();
+    if (
+      (normalized === "ucs2" ||
+        normalized === "ucs-2" ||
+        normalized === "utf16le" ||
+        normalized === "utf-16le") &&
+      count % 2
+    )
+      count--;
     this.set(bytes.subarray(0, count), offset);
     return count;
   }
