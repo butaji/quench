@@ -1,0 +1,13 @@
+const assert = require('assert');
+const fs = require('fs');
+const folder = fs.mkdtempSync('/tmp/quench-node-');
+const first = `${folder}/first`;
+const second = `${folder}/second`;
+const copy = `${folder}/copy`;
+fs.writeFileSync(first, 'payload');
+fs.renameSync(first, second);
+fs.copyFileSync(second, copy);
+assert.strictEqual(fs.readFileSync(copy), 'payload');
+fs.unlinkSync(second);
+fs.unlinkSync(copy);
+fs.rmdirSync(folder);
