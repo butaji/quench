@@ -455,8 +455,156 @@ class NodeBuffer extends Uint8Array {
       this.byteLength,
     ).getFloat64(offset, littleEndian);
   }
+  _integerOffset(offset, size) {
+    if (typeof offset !== "number") {
+      const error = new TypeError(
+        'The "offset" argument must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isInteger(offset) || offset < 0) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset + size > this.length) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds",
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    return offset;
+  }
+  _writeInteger(value, offset, size, littleEndian, signed) {
+    this._integerOffset(offset, size);
+    const max = signed ? 2 ** (size * 8 - 1) - 1 : 2 ** (size * 8) - 1;
+    const min = signed ? -(2 ** (size * 8 - 1)) : 0;
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < min ||
+      value > max
+    ) {
+      const error = new RangeError('The value of "value" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
+    if (size === 1) view.setInt8(offset, value);
+    else if (size === 2)
+      signed
+        ? view.setInt16(offset, value, littleEndian)
+        : view.setUint16(offset, value, littleEndian);
+    else
+      signed
+        ? view.setInt32(offset, value, littleEndian)
+        : view.setUint32(offset, value, littleEndian);
+    return offset + size;
+  }
+  _readInteger(offset, size, littleEndian, signed) {
+    this._integerOffset(offset, size);
+    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
+    if (size === 1)
+      return signed ? view.getInt8(offset) : view.getUint8(offset);
+    if (size === 2)
+      return signed
+        ? view.getInt16(offset, littleEndian)
+        : view.getUint16(offset, littleEndian);
+    return signed
+      ? view.getInt32(offset, littleEndian)
+      : view.getUint32(offset, littleEndian);
+  }
+  readUInt8(offset = 0) {
+    return this._readInteger(offset, 1, false, false);
+  }
+  readUInt16LE(offset = 0) {
+    return this._readInteger(offset, 2, true, false);
+  }
+  readUInt16BE(offset = 0) {
+    return this._readInteger(offset, 2, false, false);
+  }
+  readUInt32LE(offset = 0) {
+    return this._readInteger(offset, 4, true, false);
+  }
+  readUInt32BE(offset = 0) {
+    return this._readInteger(offset, 4, false, false);
+  }
+  writeUInt8(value, offset = 0) {
+    return this._writeInteger(value, offset, 1, false, false);
+  }
+  writeUInt16LE(value, offset = 0) {
+    return this._writeInteger(value, offset, 2, true, false);
+  }
+  writeUInt16BE(value, offset = 0) {
+    return this._writeInteger(value, offset, 2, false, false);
+  }
+  writeUInt32LE(value, offset = 0) {
+    return this._writeInteger(value, offset, 4, true, false);
+  }
+  writeUInt32BE(value, offset = 0) {
+    return this._writeInteger(value, offset, 4, false, false);
+  }
+  readUIntLE(offset, byteLength) {
+    this._validateVariableInteger(0, offset, byteLength);
+    let value = 0;
+    for (let i = 0; i < byteLength; i++)
+      value += this[offset + i] * 2 ** (8 * i);
+    return value;
+  }
+  readUIntBE(offset, byteLength) {
+    this._validateVariableInteger(0, offset, byteLength);
+    let value = 0;
+    for (let i = 0; i < byteLength; i++) value = value * 256 + this[offset + i];
+    return value;
+  }
+  writeUIntLE(value, offset, byteLength) {
+    this._validateVariableInteger(value, offset, byteLength);
+    for (let i = 0; i < byteLength; i++) {
+      this[offset + i] = value & 0xff;
+      value = Math.floor(value / 256);
+    }
+    return offset + byteLength;
+  }
+  writeUIntBE(value, offset, byteLength) {
+    this._validateVariableInteger(value, offset, byteLength);
+    for (let i = byteLength - 1; i >= 0; i--) {
+      this[offset + i] = value & 0xff;
+      value = Math.floor(value / 256);
+    }
+    return offset + byteLength;
+  }
+  _validateVariableInteger(value, offset, byteLength) {
+    if (!Number.isInteger(byteLength) || byteLength < 1 || byteLength > 6) {
+      const error = new RangeError('The value of "byteLength" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    this._integerOffset(offset, byteLength);
+    if (
+      typeof value !== "number" ||
+      !Number.isSafeInteger(value) ||
+      value < 0 ||
+      value > 2 ** (8 * byteLength) - 1
+    ) {
+      const error = new RangeError('The value of "value" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+  }
 }
 globalThis.Buffer = NodeBuffer;
+for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
+  NodeBuffer.prototype[`readUint${name}`] =
+    NodeBuffer.prototype[`readUInt${name}`];
+  NodeBuffer.prototype[`writeUint${name}`] =
+    NodeBuffer.prototype[`writeUInt${name}`];
+}
+NodeBuffer.prototype.readUintLE = NodeBuffer.prototype.readUIntLE;
+NodeBuffer.prototype.readUintBE = NodeBuffer.prototype.readUIntBE;
+NodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;
+NodeBuffer.prototype.writeUintBE = NodeBuffer.prototype.writeUIntBE;
 const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
 const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
 class NodeTextEncoder {
