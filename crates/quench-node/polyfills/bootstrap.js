@@ -5165,6 +5165,12 @@ globalThis.require = (specifier) => {
     return {
       codes: {
         ERR_OUT_OF_RANGE: class ERR_OUT_OF_RANGE extends RangeError {},
+        ERR_IPC_CHANNEL_CLOSED: class ERR_IPC_CHANNEL_CLOSED extends Error {
+          constructor() {
+            super("Channel closed");
+            this.code = "ERR_IPC_CHANNEL_CLOSED";
+          }
+        },
       },
     };
   if (name === "internal/buffer")
