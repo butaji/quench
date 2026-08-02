@@ -2713,8 +2713,20 @@ globalThis.__nodeFs = {
     UV_FS_COPYFILE_FICLONE_FORCE: 4,
   },
   existsSync: (value) => globalThis.__quench_fs_exists(nodePathValue(value)),
-  mkdtempSync: (prefix) =>
-    globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
+  mkdtempSync: (prefix) => {
+    if (
+      typeof prefix !== "string" &&
+      !(prefix instanceof Uint8Array) &&
+      !(prefix instanceof globalThis.__nodeURL)
+    ) {
+      const error = new TypeError(
+        'The "prefix" argument must be of type string or an instance of Buffer or URL',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return globalThis.__quench_fs_mkdtemp(nodePathValue(prefix));
+  },
   readFileSync: (value, options) => {
     if (
       value === null ||
