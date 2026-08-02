@@ -1,6 +1,6 @@
 //! Run a single test262 case (in-process with timeout, or subprocess).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -550,6 +550,24 @@ pub fn load_fixture_modules(ctx: &mut crate::Context, test_path: &Path) -> Resul
         }
         ctx.register_module(&module_name, module_exports);
     }
+    let mut named_graph = HashMap::<String, Vec<String>>::new();
+    for (module, source) in &named_reexport_edges {
+        named_graph
+            .entry(module.clone())
+            .or_default()
+            .push(source.clone());
+    }
+    if let Some(Value::Object(errors)) = ctx.get_global(module_errors_key) {
+        for (module, source) in &named_reexport_edges {
+            let mut seen = HashSet::new();
+            if has_module_path(&named_graph, source, module, &mut seen) {
+                errors.borrow_mut().set(
+                    module,
+                    crate::Value::String("Circular indirect export".into()),
+                );
+            }
+        }
+    }
     for (module_name, reexports) in pending_reexports {
         let Some(Value::Object(module)) = ctx.get_module(&module_name) else {
             continue;
@@ -980,6 +998,25 @@ fn parse_default_import(raw: &str) -> Option<String> {
         .trim_end_matches(')')
         .trim();
     normalize_fixture_module_name(inner)
+}
+
+fn has_module_path(
+    graph: &HashMap<String, Vec<String>>,
+    current: &str,
+    target: &str,
+    seen: &mut HashSet<String>,
+) -> bool {
+    if current == target {
+        return true;
+    }
+    if !seen.insert(current.to_string()) {
+        return false;
+    }
+    graph.get(current).is_some_and(|sources| {
+        sources
+            .iter()
+            .any(|source| has_module_path(graph, source, target, seen))
+    })
 }
 
 fn parse_export_specifier_list(list: &str) -> Vec<(String, String)> {
