@@ -2422,6 +2422,11 @@ class NodeReadable extends NodeEventEmitter {
     return this._paused;
   }
   push(chunk) {
+    if (this._ended && chunk !== null) {
+      const error = new Error("stream.push() after EOF");
+      error.code = "ERR_STREAM_PUSH_AFTER_EOF";
+      throw error;
+    }
     if (chunk === null) {
       this._ended = true;
       if (!this._chunks.length) this._emitEnd();
