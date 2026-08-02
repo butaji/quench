@@ -4045,6 +4045,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
   const path = nodePathValue(value);
   stream.path = path;
   stream.fd = null;
+  stream.bytesRead = 0;
   queueMicrotask(() => {
     try {
       stream.fd = globalThis.__nodeFs.openSync(path, "r");
@@ -4056,8 +4057,14 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
       stream._chunks = [bytes.subarray(start, Math.min(end, bytes.length))];
       stream._index = 0;
       stream._pump = () => {
-        while (!stream._paused && stream._index < stream._chunks.length)
-          stream.emit("data", stream._chunks[stream._index++]);
+        while (!stream._paused && stream._index < stream._chunks.length) {
+          const chunk = stream._chunks[stream._index++];
+          stream.bytesRead += chunk.byteLength;
+          stream.emit(
+            "data",
+            options.encoding ? new NodeTextDecoder().decode(chunk) : chunk,
+          );
+        }
         if (!stream._paused && stream._index === stream._chunks.length) {
           stream._ended = true;
           stream.emit("end");
