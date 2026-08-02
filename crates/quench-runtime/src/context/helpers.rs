@@ -35,10 +35,11 @@ pub(crate) fn restore_regex_cache(saved: rustc_hash::FxHashMap<char, Value>) {
 /// eval in strict mode throws even when the eval string itself has no
 /// "use strict" directive.
 pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> {
-    let source = args
-        .first()
-        .map(crate::value::to_js_string)
-        .unwrap_or_default();
+    let argument = args.first().cloned().unwrap_or(Value::Undefined);
+    let source = match argument {
+        Value::String(source) => source,
+        value => return Ok(value),
+    };
     if source.is_empty() {
         return Ok(Value::Undefined);
     }
@@ -789,5 +790,14 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("{ let x; { (0, eval)('var x;'); } }").is_ok());
+    }
+
+    #[test]
+    fn eval_returns_non_string_argument_unchanged() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx
+            .eval("let x = {}; eval(x) === x")
+            .is_ok_and(|value| { matches!(value, Value::Boolean(true)) }));
     }
 }
