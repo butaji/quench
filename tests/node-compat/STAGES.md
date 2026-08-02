@@ -48,3 +48,4 @@ these small fixtures isolate the currently implemented contract.
 | 38 | UTF-8 Buffer string round trips | `tools/run-node-tests.sh --stage 38` |
 | 39 | host-backed `process.chdir` | `tools/run-node-tests.sh --stage 39` |
 | 40 | POSIX `process.umask` | `tools/run-node-tests.sh --stage 40` |
+| 41 | Rust-backed process high-resolution time | `tools/run-node-tests.sh --stage 41` |
