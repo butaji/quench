@@ -1746,6 +1746,7 @@ const __nodePathArg = (value) => {
 };
 globalThis.__nodePath = {
   sep: "/",
+  delimiter: ":",
   isAbsolute: (value) => __nodePathArg(value).startsWith("/"),
   normalize: (value) => {
     const input = __nodePathArg(value);
@@ -1838,6 +1839,7 @@ globalThis.__nodePath = {
 globalThis.__nodePath.posix = globalThis.__nodePath;
 const __nodeWinPath = {
   sep: "\\",
+  delimiter: ";",
   isAbsolute(value) {
     const input = __nodePathArg(value);
     return /^[A-Za-z]:[\\/]/.test(input) || input.startsWith("\\\\");
