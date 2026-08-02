@@ -328,6 +328,14 @@ impl ValueFunction {
 
     /// Get a property from this function (e.g., sameValue, notSameValue)
     pub fn get_property(&self, key: &str) -> Option<Value> {
+        if key == "prototype" {
+            if let Some(value) = self.properties.borrow().get(key) {
+                return Some(value.clone());
+            }
+        }
+        if key == "prototype" && !self.is_arrow && (!self.is_method || self.is_generator) {
+            return Some(Value::Object(self.get_prototype()));
+        }
         self.properties.borrow().get(key).cloned()
     }
 
@@ -344,7 +352,7 @@ impl ValueFunction {
             names.push("name".to_string());
         }
         // Non-arrow functions always have a .prototype property.
-        if !self.is_arrow && !self.is_method {
+        if !self.is_arrow && (!self.is_method || self.is_generator) {
             names.push("prototype".to_string());
         }
         for key in self.properties.borrow().keys() {

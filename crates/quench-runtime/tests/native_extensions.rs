@@ -18,6 +18,15 @@ fn native_js_eval() {
 }
 
 #[test]
+fn generator_method_prototype_is_writable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var g=function*(){}; var method={*method(){}}.method; var value={}; g.prototype=value; method.prototype=value; g.prototype===value && method.prototype===value && Object.getOwnPropertyDescriptor(g,'prototype').writable && Object.getOwnPropertyDescriptor(method,'prototype').writable",
+    );
+    assert_eq!(result.unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn yield_star_preserves_missing_done_property() {
     let mut ctx = Context::new().unwrap();
     let result = ctx
