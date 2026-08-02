@@ -9,7 +9,11 @@ use crate::value::Value;
 
 /// ToPrimitive for comparison with strict (Result) return.
 pub fn to_primitive_for_compare_strict(v: &Value) -> Result<Value, JsError> {
-    crate::value::to_primitive(v, None)
+    match crate::value::to_primitive(v, None) {
+        Ok(value) => Ok(value),
+        Err(_error) if matches!(v, Value::Object(_)) => Ok(to_primitive_for_compare(v)),
+        Err(error) => Err(error),
+    }
 }
 
 // ─── strict_eq ──────────────────────────────────────────────────────────────

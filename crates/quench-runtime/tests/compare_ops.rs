@@ -600,10 +600,9 @@ fn loose_eq_same_object() {
 #[test]
 fn loose_eq_bigint_cross_type() {
     let b = big(42);
-    // BigInt has no special loose_eq handling — falls through to false
-    assert!(!loose_eq(&b, &Value::String("42".into())));
-    assert!(!loose_eq(&Value::String("42".into()), &b));
-    assert!(!loose_eq(&b, &Value::Number(42.0)));
+    assert!(loose_eq(&b, &Value::String("42".into())));
+    assert!(loose_eq(&Value::String("42".into()), &b));
+    assert!(loose_eq(&b, &Value::Number(42.0)));
 }
 
 // ── parse_number_string ─────────────────────────────────────────────────
@@ -689,8 +688,7 @@ fn to_primitive_for_compare_primitives() {
         Rc::ptr_eq(result_rc, s_rc),
         "to_primitive_for_compare should return same Symbol"
     );
-    // BigInt: ToPrimitive(BigInt) → undefined (no hint, PreferredType is none)
-    assert_eq!(to_primitive_for_compare(&big(99)), Value::Undefined);
+    assert_eq!(to_primitive_for_compare(&big(99)), big(99));
 }
 
 #[test]
@@ -777,8 +775,7 @@ fn primitive_for_compare_all_primitives() {
         panic!("expected Symbol")
     };
     assert!(Rc::ptr_eq(result_rc, s_rc));
-    // BigInt: not a primitive type in primitive_for_compare → None
-    assert_eq!(primitive_for_compare(&big(5)), None);
+    assert_eq!(primitive_for_compare(&big(5)), Some(big(5)));
 }
 
 #[test]
