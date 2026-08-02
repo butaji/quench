@@ -5408,10 +5408,12 @@ const __createNodeCrypto = () => ({
   },
 });
 let __nodeCryptoInstance;
+globalThis.__nodeCryptoInitialized = false;
 globalThis.__nodeCrypto = new Proxy(
   {},
   {
     get: (_, key) => {
+      globalThis.__nodeCryptoInitialized = true;
       __nodeCryptoInstance ||= __createNodeCrypto();
       return __nodeCryptoInstance[key];
     },
