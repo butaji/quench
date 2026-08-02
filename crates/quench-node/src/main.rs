@@ -53,6 +53,12 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             Func::from(|key: String| std::env::var(key).ok()),
         )?;
         ctx.globals().set(
+            "__quench_console_write",
+            Func::from(|line: String| {
+                println!("{line}");
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_sha256",
             Func::from(|value: String| {
                 let digest = Sha256::digest(value.as_bytes());
