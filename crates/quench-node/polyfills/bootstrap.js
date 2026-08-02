@@ -736,6 +736,7 @@ globalThis.__nodeFs.promises = {
   realpath: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.realpathSync(value, options)),
   fstat: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd)),
   fchmod: (fd, mode) => Promise.resolve().then(() => globalThis.__nodeFs.fchmodSync(fd, mode)),
+  chmod: (value, mode) => Promise.resolve().then(() => globalThis.__nodeFs.chmodSync(value, mode)),
   readv: (fd, buffers, position) => Promise.resolve().then(() => { const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position); return { bytesRead, buffers }; }),
   writev: (fd, buffers, position) => Promise.resolve().then(() => { const bytesWritten = globalThis.__nodeFs.writevSync(fd, buffers, position); return { bytesWritten, buffers }; }),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
