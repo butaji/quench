@@ -55,6 +55,14 @@ fn tagged_template_objects_are_frozen() {
 }
 
 #[test]
+fn generator_arguments_assignment_updates_parameter() {
+    assert_eq!(
+        eval("function* g(a) { arguments[0] = 32; yield a; } g(23).next().value").unwrap(),
+        Value::Number(32.0)
+    );
+}
+
+#[test]
 fn optional_chaining_short_circuits_continuations() {
     assert_eq!(
         eval("const a = undefined; let x = 1; a?.[++x]; x").unwrap(),

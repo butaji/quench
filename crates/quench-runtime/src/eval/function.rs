@@ -243,7 +243,7 @@ pub(crate) fn call_value_impl(
                 let call_env_rc = Rc::new(RefCell::new(call_env));
                 if !f.is_arrow {
                     let args_obj =
-                        crate::eval::class::helpers::create_arguments_object_simple(args.clone());
+                        create_arguments_object(&f, args.clone(), f.strict, &call_env_rc);
                     call_env_rc
                         .borrow_mut()
                         .define("arguments".to_string(), args_obj);
@@ -691,7 +691,7 @@ fn box_sloppy_this(this_val: Value) -> Value {
 }
 
 /// Create the JavaScript arguments object for a function call
-fn create_arguments_object(
+pub(crate) fn create_arguments_object(
     f: &ValueFunction,
     args: Vec<Value>,
     strict_mode: bool,
