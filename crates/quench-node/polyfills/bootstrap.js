@@ -4035,6 +4035,7 @@ globalThis.__nodeUtil = {
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d")
             return `${numeric(value)}n`;
+          if (typeof value === "symbol") return "NaN";
           let number;
           try {
             number = Number(value);
