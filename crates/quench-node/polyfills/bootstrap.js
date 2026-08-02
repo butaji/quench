@@ -511,6 +511,48 @@ class NodeBuffer extends Uint8Array {
     }
     return false;
   }
+  indexOf(value, byteOffset = 0, encoding) {
+    const needle =
+      typeof value === "number"
+        ? new Uint8Array([value & 0xff])
+        : typeof value === "string"
+          ? NodeBuffer.from(value, encoding)
+          : value;
+    const offset = Number(byteOffset);
+    let start =
+      Number.isNaN(offset) || offset === -Infinity ? 0 : Math.trunc(offset);
+    if (start < 0) start = Math.max(this.length + start, 0);
+    if (start > this.length || start === Infinity)
+      return needle.length === 0 ? this.length : -1;
+    if (needle.length === 0) return start;
+    for (let i = start; i + needle.length <= this.length; i++) {
+      let match = true;
+      for (let j = 0; j < needle.length; j++)
+        if (this[i + j] !== needle[j]) match = false;
+      if (match) return i;
+    }
+    return -1;
+  }
+  lastIndexOf(value, byteOffset = this.length - 1, encoding) {
+    const needle =
+      typeof value === "number"
+        ? new Uint8Array([value & 0xff])
+        : typeof value === "string"
+          ? NodeBuffer.from(value, encoding)
+          : value;
+    let end = Number(byteOffset);
+    end =
+      Number.isNaN(end) || end === Infinity ? this.length - 1 : Math.trunc(end);
+    if (end < 0) end = this.length + end;
+    if (needle.length === 0) return Math.max(0, Math.min(end, this.length));
+    for (let i = Math.min(end, this.length - needle.length); i >= 0; i--) {
+      let match = true;
+      for (let j = 0; j < needle.length; j++)
+        if (this[i + j] !== needle[j]) match = false;
+      if (match) return i;
+    }
+    return -1;
+  }
   write(value, offset = 0, length, encoding = "utf8") {
     if (typeof length === "string") {
       encoding = length;
