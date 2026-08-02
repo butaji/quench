@@ -355,7 +355,21 @@ globalThis.__nodeFs = {
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value) => globalThis.__quench_fs_read_file(nodePathValue(value)),
   writeFileSync: (value, data) => globalThis.__quench_fs_write_file(nodePathValue(value), String(data)),
-  openSync: (value, flags) => globalThis.__quench_fs_open(nodeFsPath(value), String(flags)),
+  openSync: (value, flags = 'r', mode) => {
+    const path = nodeFsPath(value);
+    if (mode !== undefined && mode !== null && typeof mode !== 'number') {
+      const error = new TypeError('The "mode" argument must be of type number');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const flag = String(flags);
+    if (!/^[wax]/.test(flag) && !globalThis.__quench_fs_access(path)) {
+      const error = new Error(`ENOENT: no such file or directory, open '${path}'`);
+      error.code = 'ENOENT'; error.syscall = 'open'; error.path = path;
+      throw error;
+    }
+    return globalThis.__quench_fs_open(path, flag);
+  },
   closeSync: (_fd) => {},
   statSync: (value) => { const kind = globalThis.__quench_fs_kind(nodePathValue(value)); return { isFile: () => kind === 'file', isDirectory: () => kind === 'directory' }; },
   mkdirSync: (value, options = {}) => {
@@ -418,7 +432,13 @@ globalThis.__nodeFs.open = (value, flags, mode, callback) => {
   if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
   else if (typeof mode === 'function') { callback = mode; mode = undefined; }
   if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function');
-  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.openSync(value, flags)); } catch (error) { callback(error); } });
+  if (mode !== undefined && mode !== null && typeof mode !== 'number') {
+    const error = new TypeError('The "mode" argument must be of type number');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => { try { callback(null, globalThis.__nodeFs.openSync(path, flags, mode)); } catch (error) { callback(error); } });
 };
 globalThis.__nodeFs.readdir = (value, options, callback) => {
   if (typeof options === 'function') callback = options;
