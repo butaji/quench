@@ -39,3 +39,4 @@ these small fixtures isolate the currently implemented contract.
 | 29 | POSIX `fs.chmodSync` | `tools/run-node-tests.sh --stage 29` |
 | 30 | POSIX symbolic link APIs | `tools/run-node-tests.sh --stage 30` |
 | 31 | filesystem and OS constants | `tools/run-node-tests.sh --stage 31` |
+| 32 | harness no-empty-stage contract | `tools/run-node-tests.sh --stage 32` |
