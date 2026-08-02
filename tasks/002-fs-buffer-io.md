@@ -49,3 +49,5 @@ Write-stream encoding and `bytesWritten` accounting are covered by
 `tests/node-compat/stage-426/fs-write-stream-options.js`.
 Read-stream descriptor cleanup before `close` is covered by
 `tests/node-compat/stage-427/fs-read-stream-close.js`.
+Write-stream descriptor cleanup before `close` is covered by
+`tests/node-compat/stage-428/fs-write-stream-close.js`.
