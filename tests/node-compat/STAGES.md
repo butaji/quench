@@ -105,3 +105,4 @@ these small fixtures isolate the currently implemented contract.
 | 95 | foundational promise-based `appendFile` | `tools/run-node-tests.sh --stage 95` |
 | 96 | sync/async `fs.statfs` metadata | `tools/run-node-tests.sh --stage 96` |
 | 97 | sync/async/promise filesystem truncate | `tools/run-node-tests.sh --stage 97` |
+| 98 | callback and promise `fs.rm` | `tools/run-node-tests.sh --stage 98` |
