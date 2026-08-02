@@ -1168,7 +1168,9 @@ class NodeBuffer extends Uint8Array {
       offset < 0 ||
       offset > this.length
     ) {
-      const error = new RangeError('The value of "offset" is out of range');
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be >= 0 && <= ${this.length}. Received ${offset}`,
+      );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
