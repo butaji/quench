@@ -345,15 +345,45 @@ class NodeBuffer extends Uint8Array {
     return count;
   }
   static concat(list, totalLength) {
+    if (!Array.isArray(list)) {
+      const error = new TypeError(
+        'The "list" argument must be an instance of Array',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (list.some((item) => !ArrayBuffer.isView(item))) {
+      const error = new TypeError(
+        'The "list" argument must contain only typed arrays',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      totalLength !== undefined &&
+      (typeof totalLength !== "number" ||
+        !Number.isInteger(totalLength) ||
+        totalLength < 0)
+    ) {
+      const error = new RangeError('The value of "length" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const length =
       totalLength === undefined
-        ? list.reduce((sum, item) => sum + item.length, 0)
+        ? list.reduce((sum, item) => sum + item.byteLength, 0)
         : totalLength;
     const output = new NodeBuffer(length);
     let offset = 0;
     list.forEach((item) => {
-      output.set(item.subarray(0, length - offset), offset);
-      offset += item.length;
+      const bytes = new Uint8Array(
+        item.buffer,
+        item.byteOffset,
+        item.byteLength,
+      );
+      const count = Math.min(bytes.length, length - offset);
+      if (count > 0) output.set(bytes.subarray(0, count), offset);
+      offset += count;
     });
     return output;
   }
