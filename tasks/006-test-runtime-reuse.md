@@ -28,6 +28,8 @@ Unknown `process.binding()` modules are covered by
 `tests/node-compat/stage-410/process-binding.js`.
 Built-in module lookup is covered by
 `tests/node-compat/stage-411/process-builtin-module.js`.
+The harness emits the final `process` exit event, covered by
+`tests/node-compat/stage-429/process-exit-event.js`.
 The mode is documented in the CLI `--help` output; isolated execution remains
 the default, and reuse is intended for compatible test groups that do not rely
 on process-global native state.
