@@ -4618,6 +4618,58 @@ globalThis.__nodeUrlModule = {
     new globalThis.__nodeURL(
       `file://${globalThis.__nodePath.resolve(String(value))}`,
     ),
+  parse: (value) => {
+    if (typeof value !== "string") {
+      let received;
+      if (value == null) received = String(value);
+      else {
+        try {
+          received = `type ${typeof value} (${String(value)})`;
+        } catch (_) {
+          received = `type ${typeof value} (${Object.prototype.toString.call(value)})`;
+        }
+      }
+      const error = new TypeError(
+        'The "url" argument must be of type string.' + ` Received ${received}`,
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value)) {
+      const error = new TypeError("Invalid URL");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {
+      try {
+        decodeURIComponent(value);
+      } catch (_) {
+        throw new URIError("URI malformed");
+      }
+    }
+    const authority = value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
+    if (/\u0000/.test(authority) || /[#%/?@[\\\]^|]/.test(authority)) {
+      const error = new TypeError("Invalid URL");
+      error.code = "ERR_INVALID_URL";
+      error.input = value;
+      throw error;
+    }
+    const parsed = new globalThis.__nodeURL(value);
+    return {
+      protocol: parsed.protocol || null,
+      slashes: parsed.protocol ? true : null,
+      auth: null,
+      host: parsed.host || null,
+      port: parsed.port || null,
+      hostname: parsed.hostname || null,
+      hash: parsed.hash || null,
+      search: parsed.search || null,
+      query: parsed.search ? parsed.search.slice(1) : null,
+      pathname: parsed.pathname || null,
+      path: parsed.pathname ? `${parsed.pathname}${parsed.search}` : null,
+      href: parsed.href,
+    };
+  },
   format: (value) => {
     if (value instanceof globalThis.__nodeURL) return value.href;
     if (typeof value === "string") {
