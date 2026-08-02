@@ -32,9 +32,11 @@ crate: `crates/quench-runtime`. Never modify `tests/test262`.
 - `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
 - `docs/review-2026-08.md` — 2026-08 architecture/code review, ranked findings.
 - `tasks/refactor-plan.md` — active queue (R18+ from the 2026-08 review).
-- `tasks/meta-analysis-stream.md` — conformance workflow; `tasks/index.json`
-  is the sole progress record.
-- `tasks/index.json` — 122 test262 stages with per-stage test counts; each runs to 100% before advancing.
+- `tasks/meta-analysis-stream.md` — conformance workflow. The test262 digest
+  output is the sole conformance/progress SSOT; `tasks/index.json` is only a
+  descriptive stage catalog and optional runner default.
+- `tasks/index.json` — 122 descriptive test262 stage entries; it is never
+  evidence of coverage.
 
 ## Commands
 
@@ -49,7 +51,7 @@ cargo run --bin run-test -- <test.js>        # single-test runner with metadata
 TEST262_DIGEST=1 TEST262_STAGE=N cargo test   # collect ALL failures, grouped by error
 bash tools/run-each.sh                        # process-isolated (survives crashes)
 
-# Run current stage (see tasks/index.json `current_stage`)
+# Run the configured stage (the digest output is the coverage SSOT)
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 # Specific stage
 TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture

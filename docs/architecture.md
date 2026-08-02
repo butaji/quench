@@ -1,7 +1,9 @@
 # Architecture
 
 **Goal:** 100% of the in-scope test262 suite with the smallest practical Rust
-core. Progress lives only in `tasks/index.json` and the test262 runner.
+core. Conformance progress is established only by an authoritative test262
+digest run. `tasks/index.json` is descriptive configuration, never coverage
+evidence.
 
 **Shape:** OXC parser + tree-walking interpreter + self-hosted JS
 builtins. Three layers, each minimal:

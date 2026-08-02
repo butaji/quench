@@ -54,11 +54,9 @@ relevant test262 stage.
   scoped source. Pin each with a refactor-pin test (nested eval, nested
   generators, panic mid-eval hygiene).
 
-- **R24 — Stage ledger reconciliation.** `tasks/index.json` marks stages 27
-  (generators), 32 (switch), 34 (try) `done` with recorded pass rates below
-  100%, contradicting the "100% before advancing" gate. Re-run those stages
-  via the runner workflow and update statuses through it — never hand-edit
-  progress data.
+- **R24 — Stage catalog reconciliation.** The test262 digest is the sole
+  coverage authority. `tasks/index.json` is descriptive configuration only;
+  never treat its statuses or counts as evidence of coverage.
 
 - **R25 — Dead code and dependencies.** Remove `anyhow`, `tracing`, `phf`
   from `Cargo.toml` (zero uses in `src/`); delete `interner.rs`

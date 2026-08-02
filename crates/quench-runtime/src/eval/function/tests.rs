@@ -2394,6 +2394,14 @@ fn default_destructured_arrow_gets_binding_name() {
 }
 
 #[test]
+fn eval_arguments_declaration_conflicts_with_function_body_arguments() {
+    let mut ctx = Context::new().unwrap();
+    let result =
+        ctx.eval("async function * f(p = eval('var arguments')) { function arguments() {} } f()");
+    assert!(result.is_err());
+}
+
+#[test]
 fn await_using_async_dispose_method_keeps_binding_through_async_test_wrapper() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(

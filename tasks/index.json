@@ -1,6 +1,7 @@
 {
   "$schema": "quench stages v1",
   "current_stage": 44,
+  "coverage_ssot": "test262 digest output; this file is descriptive configuration only",
   "goal": "100% of the in-scope test262 suite with the smallest practical Rust core and self-hosted JS builtins.",
   "scope": {
     "includes": [

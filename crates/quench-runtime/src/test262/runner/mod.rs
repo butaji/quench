@@ -30,7 +30,8 @@ pub fn default_test262_dir() -> String {
         .into_owned()
 }
 
-/// Ordered stages (relative to test262/test/). Mirrors `tasks/index.json`.
+/// Ordered stages (relative to test262/test/). The digest is authoritative;
+/// `tasks/index.json` is descriptive configuration only.
 pub const STAGES: &[&str] = &[
     "test/harness",
     "test/language/literals",

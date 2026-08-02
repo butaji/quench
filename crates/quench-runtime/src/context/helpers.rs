@@ -42,6 +42,18 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     if source.is_empty() {
         return Ok(Value::Undefined);
     }
+    if source.lines().map(str::trim).any(|line| {
+        (line.starts_with("export ")
+            || line.starts_with("import ") && !line.starts_with("import ("))
+            && !line.starts_with("import(")
+    }) {
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
+            "module declaration in eval code",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
+    }
 
     // Indirect eval does NOT inherit strict mode from the caller (ES §19.2.1).
     // Only direct eval inherits the calling context's strict mode.
@@ -204,6 +216,19 @@ pub fn reject_eval_var_lexical_conflict(
     crate::interpreter::collect_var_names_recursive(body, &mut names);
     let eval_env =
         crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
+    if names.iter().any(|name| name == "arguments")
+        && matches!(
+            eval_env.borrow().get("arguments"),
+            Some(Value::Function(_) | Value::Object(_))
+        )
+    {
+        let (error, js_error) = crate::value::error::create_js_error_with_type(
+            "Identifier 'arguments' has already been declared",
+            "SyntaxError",
+        );
+        crate::value::set_thrown_value(error);
+        return Err(js_error);
+    }
     for name in &names {
         if matches!(
             eval_env.borrow().get_kind(name),
@@ -690,5 +715,13 @@ mod tests {
         let env = make_env();
         let result = eval_arrow_body(&None, &env).unwrap();
         assert_eq!(result, Value::Undefined);
+    }
+
+    #[test]
+    fn eval_rejects_module_declarations() {
+        let mut ctx = Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert!(ctx.eval("eval('export default null;')").is_err());
+        assert!(ctx.eval("eval('import x from \\\"x\\\";')").is_err());
     }
 }

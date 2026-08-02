@@ -1,6 +1,6 @@
 # Conformance Workflow
 
-`tasks/index.json` is the sole progress record. Do not copy stage counts,
+The test262 digest output is the sole conformance/progress SSOT. Do not copy stage counts,
 failure counts, completion claims, or active-work notes into documentation.
 
 For a failing stage:
@@ -13,4 +13,5 @@ For a failing stage:
 4. Run the unit test, its suite, the stage, formatting, and clippy.
 5. Update progress only through the test262 runner workflow. If the
    runner reports a stage below 100%, it is not done — reconcile
-   `tasks/index.json` statuses through the runner (R24), never by hand.
+   `tasks/index.json` metadata through the runner (R24), never treat it as
+   coverage evidence or update it by hand to claim progress.

@@ -1,7 +1,8 @@
 # Development Tools
 
-`tasks/index.json` and the test262 runner are the only source of progress
-status. This document contains commands, not copied status or milestones.
+The test262 digest output is the sole source of conformance/progress status.
+`tasks/index.json` is descriptive configuration only. This document contains
+commands, not copied status or milestones.
 
 ## Normal workflow
 
@@ -25,7 +26,7 @@ TEST262_STAGE=N bash tools/run-each.sh
 ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
 ```
 
-Use `tasks/index.json` to determine the configured stage. Do not infer
+The runner may use `tasks/index.json` to determine the configured stage. Do not infer
 completion from an old command log or from this document.
 
 ## Verification

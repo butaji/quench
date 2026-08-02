@@ -31,7 +31,8 @@ impl RunnerFlags {
     }
 }
 
-/// Default stage: `current_stage` from `tasks/index.json`, 0 if unreadable.
+/// Configured default stage from `tasks/index.json`, 0 if unreadable.
+/// This is runner configuration only; coverage is established by the digest.
 pub fn default_stage() -> usize {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let Some(root) = manifest.parent().and_then(|p| p.parent()) else {
