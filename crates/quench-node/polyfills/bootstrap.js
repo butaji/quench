@@ -742,6 +742,7 @@ globalThis.__nodeOs = {
   constants: { signals: { SIGTERM: 15, SIGINT: 2 }, errno: { ENOENT: -2, EACCES: -13 } },
 };
 globalThis.__nodeUtil = {
+  promisify: (fn) => (...args) => new Promise((resolve, reject) => fn(...args, (error, ...values) => error ? reject(error) : resolve(values.length > 1 ? values : values[0])),
   format: (...args) => {
     if (!args.length) return '';
     let index = 1;
