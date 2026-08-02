@@ -8,6 +8,10 @@ const BOOTSTRAP: &str = include_str!("../polyfills/bootstrap.js");
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let mode = args.next();
+    if mode.as_deref() == Some("--stage") {
+        let stage = args.next().unwrap_or_else(|| "0".into());
+        return run_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")));
+    }
     if mode.as_deref() == Some("--test-dir") {
         let dir = PathBuf::from(args.next().unwrap_or_else(|| "tests/node/test/parallel".into()));
         return run_directory(&dir);
