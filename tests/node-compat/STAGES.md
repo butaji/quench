@@ -54,3 +54,4 @@ these small fixtures isolate the currently implemented contract.
 | 44 | Node process version metadata | `tools/run-node-tests.sh --stage 44` |
 | 45 | process feature/config metadata | `tools/run-node-tests.sh --stage 45` |
 | 46 | POSIX process user/group identity | `tools/run-node-tests.sh --stage 46` |
+| 47 | Rust-derived OS host values | `tools/run-node-tests.sh --stage 47` |
