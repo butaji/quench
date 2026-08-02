@@ -51,3 +51,4 @@ these small fixtures isolate the currently implemented contract.
 | 41 | Rust-backed process high-resolution time | `tools/run-node-tests.sh --stage 41` |
 | 42 | Rust-backed process identity | `tools/run-node-tests.sh --stage 42` |
 | 43 | Rust-derived process platform and arch | `tools/run-node-tests.sh --stage 43` |
+| 44 | Node process version metadata | `tools/run-node-tests.sh --stage 44` |
