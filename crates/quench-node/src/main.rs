@@ -139,6 +139,24 @@ fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(if metadata.is_file() { "file".into() } else if metadata.is_dir() { "directory".into() } else { "other".into() })
             }),
         )?;
+        ctx.globals().set(
+            "__quench_fs_rename",
+            Func::from(|from: String, to: String| -> rquickjs::Result<()> {
+                fs::rename(from, to).map_err(|_| rquickjs::Error::new_from_js("fs", "renameSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_unlink",
+            Func::from(|path: String| -> rquickjs::Result<()> {
+                fs::remove_file(path).map_err(|_| rquickjs::Error::new_from_js("fs", "unlinkSync failed"))
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_fs_copy",
+            Func::from(|from: String, to: String| -> rquickjs::Result<()> {
+                fs::copy(from, to).map(|_| ()).map_err(|_| rquickjs::Error::new_from_js("fs", "copyFileSync failed"))
+            }),
+        )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
         ctx.eval::<(), _>(source.as_bytes())
     })?;

@@ -251,6 +251,9 @@ globalThis.__nodeFs = {
   mkdirSync: (value) => globalThis.__quench_fs_mkdir(String(value)),
   readdirSync: (value) => globalThis.__quench_fs_readdir(String(value)),
   rmdirSync: (value) => globalThis.__quench_fs_remove_dir(String(value)),
+  renameSync: (from, to) => globalThis.__quench_fs_rename(String(from), String(to)),
+  unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
+  copyFileSync: (from, to) => globalThis.__quench_fs_copy(String(from), String(to)),
 };
 globalThis.__nodeFs.readFile = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
