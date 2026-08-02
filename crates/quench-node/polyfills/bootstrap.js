@@ -715,6 +715,7 @@ globalThis.__nodeFs.promises = {
   opendir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),
   symlink: (target, link, type) => new Promise((resolve, reject) => globalThis.__nodeFs.symlink(target, link, type, (error) => error ? reject(error) : resolve())),
   readlink: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.readlink(value, options, (error, result) => error ? reject(error) : resolve(result))),
+  readv: (fd, buffers, position) => Promise.resolve().then(() => { const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position); return { bytesRead, buffers }; }),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value, options)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
