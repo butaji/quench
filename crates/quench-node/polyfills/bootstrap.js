@@ -1723,8 +1723,10 @@ globalThis.__nodeAssert.throws = (fn, expected) => {
     captured = error;
     if (typeof expected === "function" && !(error instanceof expected)) {
       const assertion = new globalThis.__nodeAssert.AssertionError(
-        `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"`,
+        `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`,
       );
+      assertion.generatedMessage = true;
+      assertion.code = "ERR_ASSERTION";
       assertion.operator = "throws";
       assertion.actual = error;
       assertion.expected = expected;
