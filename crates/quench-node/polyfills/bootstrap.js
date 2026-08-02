@@ -4411,8 +4411,8 @@ globalThis.require = (specifier) => {
   if (name === "../common" || name.endsWith("/common"))
     return globalThis.__nodeCommon;
   if (name.endsWith("/common/tmpdir")) return globalThis.__nodeTmpdir;
-  if (name === "buffer")
-    return {
+  if (name === "buffer") {
+    const module = {
       Buffer: globalThis.Buffer,
       kMaxLength: 0x7fffffff,
       poolSize: NodeBuffer.poolSize,
@@ -4426,6 +4426,14 @@ globalThis.require = (specifier) => {
       atob: nodeAtob,
       btoa: nodeBtoa,
     };
+    Object.defineProperty(module, "INSPECT_MAX_BYTES", {
+      get: () => NodeBuffer.INSPECT_MAX_BYTES,
+      set: (value) => {
+        NodeBuffer.INSPECT_MAX_BYTES = value;
+      },
+    });
+    return module;
+  }
   if (name === "../common/fixtures" || name.endsWith("/common/fixtures"))
     return {
       fixturesDir: `${globalThis.__quench_cwd}/tests/node/test/fixtures`,
