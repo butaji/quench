@@ -1,6 +1,13 @@
 /* Small, dependency-free globals available before user code. */
 globalThis.global = globalThis;
 globalThis.globalThis = globalThis;
+const __nodeProxySet = new WeakSet();
+const __nodeNativeProxy = globalThis.Proxy;
+globalThis.Proxy = function (target, handlers) {
+  const proxy = new __nodeNativeProxy(target, handlers);
+  __nodeProxySet.add(proxy);
+  return proxy;
+};
 const __quenchQueueMicrotask = globalThis.queueMicrotask;
 globalThis.__quench_async_error = "";
 globalThis.queueMicrotask = (callback) =>
@@ -4088,6 +4095,60 @@ globalThis.__nodeUtil = {
   types: {
     isDate: (value) => value instanceof Date,
     isPromise: (value) => value instanceof Promise,
+    isBooleanObject: (value) => value instanceof Boolean,
+    isNumberObject: (value) => value instanceof Number,
+    isStringObject: (value) => value instanceof String,
+    isSymbolObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Symbol]",
+    isBigIntObject: (value) =>
+      Object.prototype.toString.call(value) === "[object BigInt]",
+    isNativeError: (value) => value instanceof Error,
+    isRegExp: (value) => value instanceof RegExp,
+    isAsyncFunction: (value) =>
+      Object.prototype.toString.call(value) === "[object AsyncFunction]",
+    isGeneratorFunction: (value) =>
+      Object.prototype.toString.call(value) === "[object GeneratorFunction]",
+    isGeneratorObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Generator]",
+    isMap: (value) => value instanceof Map,
+    isSet: (value) => value instanceof Set,
+    isWeakMap: (value) => value instanceof WeakMap,
+    isWeakSet: (value) => value instanceof WeakSet,
+    isArrayBuffer: (value) => value instanceof ArrayBuffer,
+    isSharedArrayBuffer: (value) => value instanceof SharedArrayBuffer,
+    isAnyArrayBuffer: (value) =>
+      value instanceof ArrayBuffer || value instanceof SharedArrayBuffer,
+    isArrayBufferView: (value) => ArrayBuffer.isView(value),
+    isDataView: (value) => value instanceof DataView,
+    isBoxedPrimitive: (value) =>
+      value instanceof Boolean ||
+      value instanceof Number ||
+      value instanceof String ||
+      Object.prototype.toString.call(value) === "[object Symbol]" ||
+      Object.prototype.toString.call(value) === "[object BigInt]",
+    isArgumentsObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Arguments]",
+    isMapIterator: (value) =>
+      Object.prototype.toString.call(value) === "[object Map Iterator]",
+    isSetIterator: (value) =>
+      Object.prototype.toString.call(value) === "[object Set Iterator]",
+    isTypedArray: (value) =>
+      ArrayBuffer.isView(value) && !(value instanceof DataView),
+    isUint8Array: (value) => value instanceof Uint8Array,
+    isUint8ClampedArray: (value) => value instanceof Uint8ClampedArray,
+    isInt8Array: (value) => value instanceof Int8Array,
+    isUint16Array: (value) => value instanceof Uint16Array,
+    isInt16Array: (value) => value instanceof Int16Array,
+    isUint32Array: (value) => value instanceof Uint32Array,
+    isInt32Array: (value) => value instanceof Int32Array,
+    isFloat32Array: (value) => value instanceof Float32Array,
+    isFloat64Array: (value) => value instanceof Float64Array,
+    isFloat16Array: (value) =>
+      typeof Float16Array !== "undefined" && value instanceof Float16Array,
+    isBigInt64Array: (value) => value instanceof BigInt64Array,
+    isBigUint64Array: (value) => value instanceof BigUint64Array,
+    isProxy: (value) => __nodeProxySet.has(value),
+    isExternal: (value) => value && value._externalStream !== undefined,
   },
 };
 globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
@@ -4352,19 +4413,27 @@ globalThis.require = (specifier) => {
       internalBinding: (binding) =>
         binding === "uv"
           ? { UV_ENOENT: -2, UV_EEXIST: -17 }
-          : binding === "util"
+          : binding === "js_stream"
             ? {
-                arrayBufferViewHasBuffer: (() => {
-                  const observed = new WeakSet();
-                  return (value) => {
-                    if (value.byteLength >= 96 || observed.has(value))
-                      return true;
-                    observed.add(value);
-                    return false;
-                  };
-                })(),
+                JSStream: class JSStream {
+                  constructor() {
+                    this._externalStream = {};
+                  }
+                },
               }
-            : { fstat: () => undefined },
+            : binding === "util"
+              ? {
+                  arrayBufferViewHasBuffer: (() => {
+                    const observed = new WeakSet();
+                    return (value) => {
+                      if (value.byteLength >= 96 || observed.has(value))
+                        return true;
+                      observed.add(value);
+                      return false;
+                    };
+                  })(),
+                }
+              : { fstat: () => undefined },
     };
   if (name === "internal/errors")
     return {
