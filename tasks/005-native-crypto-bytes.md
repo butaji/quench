@@ -48,3 +48,5 @@ Hash and HMAC finalized-state errors are covered by
 `tests/node-compat/stage-421/crypto-finalized.js`.
 HMAC digest encoding validation is covered by
 `tests/node-compat/stage-484/crypto-hmac-encoding-validation.js`.
+Hash digest encoding validation is covered by
+`tests/node-compat/stage-485/crypto-hash-encoding-validation.js`.
