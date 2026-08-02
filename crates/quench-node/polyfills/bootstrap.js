@@ -210,6 +210,12 @@ class NodeEventEmitter {
   listenerCount(event) { return (this._events[event] || []).length; }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
+globalThis.__nodeEventEmitter.once = (emitter, event) => new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));
+globalThis.__nodeEventEmitter.on = async function* (emitter, event) {
+  const queue = []; let wake;
+  emitter.on(event, (...args) => { queue.push(args); if (wake) { wake(); wake = undefined; } });
+  while (true) { if (!queue.length) await new Promise((resolve) => { wake = resolve; }); yield queue.shift(); }
+};
 class NodeReadable extends NodeEventEmitter {
   static from(iterable) {
     const stream = new NodeReadable();
@@ -387,7 +393,7 @@ globalThis.require = (specifier) => {
   if (name === 'querystring') return globalThis.__nodeQuerystring;
   if (name === 'url') return globalThis.__nodeUrlModule;
   if (name === 'crypto') return globalThis.__nodeCrypto;
-  if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
+  if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter, once: globalThis.__nodeEventEmitter.once, on: globalThis.__nodeEventEmitter.on };
   if (name === 'stream') return globalThis.__nodeStream;
   if (name === 'timers') return globalThis.__nodeTimers;
   if (name === 'timers/promises') return globalThis.__nodeTimersPromises;
