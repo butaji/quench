@@ -51,3 +51,5 @@ The minimal `net.createServer()` and child IPC send/backpressure contracts are
 covered by `tests/node-compat/stage-502`.
 Child processes launched with `-e` now report successful exit status and no
 signal, covered by `tests/node-compat/stage-503`.
+The minimal primary-process cluster fork and disconnect lifecycle is covered
+by `tests/node-compat/stage-504`.

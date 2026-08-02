@@ -6890,6 +6890,30 @@ globalThis.require = (specifier) => {
       },
     };
   }
+  if (name === "cluster") {
+    let forks = 0;
+    const cluster = new globalThis.__nodeEventEmitter();
+    cluster.isPrimary = true;
+    cluster.isMaster = true;
+    cluster.isWorker = false;
+    cluster.fork = () => {
+      const worker = new globalThis.__nodeEventEmitter();
+      worker.id = ++forks;
+      worker.process = { pid: 0 };
+      worker.disconnect = () => {
+        queueMicrotask(() => worker.emit("disconnect"));
+        return worker;
+      };
+      queueMicrotask(() =>
+        worker.emit(worker.id === 1 ? "online" : "listening"),
+      );
+      return worker;
+    };
+    cluster.disconnect = (callback) => {
+      if (typeof callback === "function") queueMicrotask(callback);
+    };
+    return cluster;
+  }
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
