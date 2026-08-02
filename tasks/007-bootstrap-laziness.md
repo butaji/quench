@@ -31,9 +31,11 @@ OS module initialization timing is covered by
 `tests/node-compat/stage-389/bootstrap-lazy-os.js`.
 Querystring module initialization timing is covered by
 `tests/node-compat/stage-393/bootstrap-lazy-querystring.js`.
-Querystring escaping now replaces unpaired UTF-16 surrogates with U+FFFD
-before percent-encoding, matching Node's non-throwing `querystring.escape`
-behavior. This is covered by `tests/node-compat/stage-489`.
+Querystring stringification preserves Node's `URIError` and `ERR_INVALID_URI`
+contract for unpaired UTF-16 surrogates. This is covered by
+`tests/node-compat/stage-489`.
+The querystring `unescape` export is writable, matching Node's mutable module
+surface. This is covered by `tests/node-compat/stage-491`.
 Unicode surrogate pairs in `querystring.unescapeBuffer()` are now encoded as
 one scalar value. The regression is covered by
 `tests/node-compat/stage-490`.
