@@ -23,4 +23,5 @@ Initial delayed timeout and cancellation behavior is implemented and covered by
 `tests/node-compat/stage-367/timer-interval.js`. Full nextTick/promise/timer
 `tests/node-compat/stage-367/timer-interval.js`, and cancellable immediate
 handles are covered by `tests/node-compat/stage-368/timer-handles.js`. Full
-nextTick/promise/timer ordering remains in progress.
+nextTick/promise/timer ordering remains in progress; callback argument
+forwarding is covered by `tests/node-compat/stage-369/next-tick.js`.
