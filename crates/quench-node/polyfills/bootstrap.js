@@ -349,7 +349,7 @@ globalThis.__nodeOs = {
   type: () => 'Quench',
   endianness: () => 'LE',
   hostname: () => globalThis.__quench_hostname,
-  cpus: () => [],
+  cpus: () => Array.from({ length: globalThis.__quench_cpu_count }, () => ({ model: 'unknown', speed: 0, times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 } })),
   userInfo: () => ({ username: '', homedir: '/' }),
   constants: { signals: { SIGTERM: 15, SIGINT: 2 }, errno: { ENOENT: -2, EACCES: -13 } },
 };
