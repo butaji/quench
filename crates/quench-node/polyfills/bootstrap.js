@@ -4608,6 +4608,13 @@ globalThis.__nodeOs = new Proxy(
     }),
   },
 );
+globalThis.__nodePerfHooks = {
+  performance: {
+    now: () => Date.now() - __nodeStartedAt,
+    timeOrigin: __nodeStartedAt,
+    toJSON: () => ({ timeOrigin: __nodeStartedAt }),
+  },
+};
 const __nodePrototypeNames = new WeakMap();
 const __nodeSetPrototypeOf = Object.setPrototypeOf;
 Object.setPrototypeOf = (object, prototype) => {
@@ -5741,6 +5748,7 @@ globalThis.require = (specifier) => {
     globalThis.__nodeQuerystringInitialized = true;
     return globalThis.__nodeQuerystring;
   }
+  if (name === "perf_hooks") return globalThis.__nodePerfHooks;
   if (name === "url") {
     globalThis.__nodeUrlInitialized = true;
     return globalThis.__nodeUrlModule;
