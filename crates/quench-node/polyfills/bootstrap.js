@@ -844,11 +844,10 @@ class NodeBuffer extends Uint8Array {
       const normalize = (value, fallback) => {
         const number = Math.trunc(Number(value));
         return Number.isNaN(number)
-          ? fallback
-          : Math.max(
-              0,
-              Math.min(this.length, number < 0 ? this.length + number : number),
-            );
+          ? value === undefined
+            ? fallback
+            : 0
+          : Math.max(0, Math.min(this.length, number));
       };
       const first = normalize(start, 0);
       const last = normalize(end, this.length);
@@ -1949,6 +1948,7 @@ globalThis.__nodeCommon = {
   isWindows: process.platform === "win32",
   isAIX: false,
   isFreeBSD: false,
+  enoughTestMem: true,
   canCreateSymLink: () => process.platform !== "win32",
   getArrayBufferViews: (buffer) => [
     buffer,
