@@ -384,7 +384,7 @@ globalThis.__nodeFs = {
     }
     const fd = globalThis.__quench_fs_open(path, flag); globalThis.__nodeFdPaths[fd] = path; if (mode !== undefined && mode !== null) globalThis.__nodeModes[path] = typeof mode === 'string' ? parseInt(mode, 8) : Number(mode); return fd;
   },
-  closeSync: (_fd) => {},
+  closeSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } delete globalThis.__nodeFdPaths[fd]; },
   statSync: (value, options = {}) => {
     const path = nodeFsPath(value); let kind;
     try { kind = globalThis.__quench_fs_kind(path); } catch (error) {
@@ -569,7 +569,7 @@ globalThis.__nodeFs.fstat = (fd, options, callback) => {
   queueMicrotask(() => { let result; try { result = globalThis.__nodeFs.fstatSync(fd); } catch (error) { callback(error); return; } callback(null, result); });
 };
 globalThis.__nodeFs.Stats = globalThis.__nodeStats;
-globalThis.__nodeFs.close = (_fd, callback) => { if (typeof callback === 'function') queueMicrotask(() => callback(null)); };
+globalThis.__nodeFs.close = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') { const error = new TypeError('The "callback" argument must be of type function'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } queueMicrotask(() => callback(null)); };
 class NodeAbortSignal {
   constructor() { this.aborted = false; this._listeners = []; }
   addEventListener(event, listener) { if (event === 'abort') this._listeners.push(listener); }

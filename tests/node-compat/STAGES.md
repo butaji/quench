@@ -110,3 +110,4 @@ these small fixtures isolate the currently implemented contract.
 | 100 | `fs.readdir` `withFileTypes` Dirent support | `tools/run-node-tests.sh --stage 100` |
 | 101 | internal filesystem open-flag utility | `tools/run-node-tests.sh --stage 101` |
 | 102 | numeric and octal-string `fs.open` modes | `tools/run-node-tests.sh --stage 102` |
+| 103 | `fs.close` fd and callback validation | `tools/run-node-tests.sh --stage 103` |
