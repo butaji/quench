@@ -303,7 +303,10 @@ globalThis.__nodeURLSearchParams = NodeURLSearchParams;
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
     let value = String(input);
-    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) value = String(base).replace(/\/$/, '') + '/' + value.replace(/^\//, '');
+    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
+      const baseUrl = new NodeURL(base);
+      value = value.startsWith('/') ? baseUrl.origin + value : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, '/') + value;
+    }
     const match = value.match(/^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i);
     if (!match) throw new TypeError('Invalid URL');
     this.protocol = match[1] || '';
@@ -316,11 +319,22 @@ globalThis.__nodeURL = class NodeURL {
     this.origin = this.protocol && this.host ? `${this.protocol}//${this.host}` : 'null';
     this.searchParams = new NodeURLSearchParams(match[4] || '');
   }
-  get href() { const query = this.searchParams.toString(); return `${this.origin === 'null' ? '' : this.origin}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`; }
+  get href() { const query = this.searchParams.toString(); const prefix = this.protocol === 'file:' ? 'file://' : (this.origin === 'null' ? '' : this.origin); return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`; }
   toString() { return this.href; }
 };
 globalThis.URL = globalThis.__nodeURL;
 globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
+globalThis.__nodeUrlModule = {
+  URL: globalThis.__nodeURL,
+  URLSearchParams: globalThis.__nodeURLSearchParams,
+  fileURLToPath: (value) => {
+    const href = String(value); if (!href.startsWith('file://')) throw new TypeError('URL must be a file URL');
+    return decodeURIComponent(href.slice('file://'.length)) || '/';
+  },
+  pathToFileURL: (value) => new globalThis.__nodeURL(`file://${globalThis.__nodePath.resolve(String(value))}`),
+  format: (value) => value instanceof globalThis.__nodeURL ? value.href : String(value),
+  resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
+};
 globalThis.require = (specifier) => {
   const name = String(specifier).replace(/^node:/, '');
   if (name === 'assert') return globalThis.__nodeAssert;
@@ -328,6 +342,7 @@ globalThis.require = (specifier) => {
   if (name === 'util') return globalThis.__nodeUtil;
   if (name === 'os') return globalThis.__nodeOs;
   if (name === 'querystring') return globalThis.__nodeQuerystring;
+  if (name === 'url') return globalThis.__nodeUrlModule;
   if (name === 'events') return { EventEmitter: globalThis.__nodeEventEmitter };
   if (name === 'stream') return globalThis.__nodeStream;
   if (name === 'timers') return globalThis.__nodeTimers;
