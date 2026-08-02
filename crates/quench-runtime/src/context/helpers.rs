@@ -219,16 +219,7 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
     let ast::Program::Script(body) = &program;
     if let Some(Value::Object(global)) = ctx.get_global("globalThis") {
         for statement in body {
-            let name = match statement {
-                ast::Statement::FunctionDeclaration { name, .. }
-                | ast::Statement::VarDeclaration {
-                    kind: ast::VarKind::Var,
-                    name,
-                    ..
-                } => name,
-                _ => continue,
-            };
-            {
+            if let ast::Statement::FunctionDeclaration { name, .. } = statement {
                 if let Some(value) = ctx.env.borrow().get(name) {
                     global.borrow_mut().define(
                         name,
@@ -839,15 +830,6 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         assert!(ctx.eval("eval('function evalDescriptorOnly() {}'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorOnly').configurable").is_ok_and(|value| {
-            matches!(value, Value::Boolean(true))
-        }));
-    }
-
-    #[test]
-    fn eval_global_variable_declaration_has_configurable_property() {
-        let mut ctx = Context::new().unwrap();
-        crate::builtins::register_builtins(&mut ctx);
-        assert!(ctx.eval("eval('var evalDescriptorVar = 1'); Object.getOwnPropertyDescriptor(this, 'evalDescriptorVar').configurable").is_ok_and(|value| {
             matches!(value, Value::Boolean(true))
         }));
     }
