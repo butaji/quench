@@ -5228,7 +5228,7 @@ globalThis.__nodeURL = class NodeURL {
 };
 globalThis.URL = globalThis.__nodeURL;
 globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
-globalThis.__nodeUrlModule = {
+const __nodeUrlModuleExports = {
   URL: globalThis.__nodeURL,
   URLSearchParams: globalThis.__nodeURLSearchParams,
   fileURLToPath: (value) => {
@@ -5332,6 +5332,24 @@ globalThis.__nodeUrlModule = {
   },
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href,
 };
+let __nodeUrlModuleInstance;
+globalThis.__nodeUrlInitialized = false;
+globalThis.__nodeUrlModule = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeUrlInitialized = true;
+      __nodeUrlModuleInstance ||= __nodeUrlModuleExports;
+      return __nodeUrlModuleInstance[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeUrlModuleExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeUrlModuleExports[key],
+    }),
+  },
+);
 const __createNodeCrypto = () => ({
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
@@ -5446,7 +5464,10 @@ globalThis.require = (specifier) => {
   if (name === "util") return globalThis.__nodeUtil;
   if (name === "os") return globalThis.__nodeOs;
   if (name === "querystring") return globalThis.__nodeQuerystring;
-  if (name === "url") return globalThis.__nodeUrlModule;
+  if (name === "url") {
+    globalThis.__nodeUrlInitialized = true;
+    return globalThis.__nodeUrlModule;
+  }
   if (name === "crypto") return globalThis.__nodeCrypto;
   if (name === "v8") return {};
   if (name === "events")
