@@ -763,6 +763,17 @@ pub fn has_invalid_braced_regexp_quantifier(source: &str) -> bool {
     source.contains("/{")
 }
 
+pub fn has_quantified_lookbehind(source: &str) -> bool {
+    ["(?<=", "(?<!"].iter().any(|prefix| {
+        source.match_indices(prefix).any(|(start, _)| {
+            source[start..]
+                .find(')')
+                .and_then(|end| source.as_bytes().get(start + end + 1))
+                .is_some_and(|next| b"?*+{".contains(next))
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::ast::{Expression, ForInit, Statement, VarKind};
