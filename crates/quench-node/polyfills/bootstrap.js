@@ -4237,6 +4237,7 @@ globalThis.__nodeUtil = {
     const inspect = (value) => {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
+      if (value instanceof Date) return value.toISOString();
       if (typeof value === "string") return value;
       if (typeof value === "symbol") return String(value);
       if (Array.isArray(value))
