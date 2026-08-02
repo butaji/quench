@@ -208,9 +208,16 @@ globalThis.process = {
 };
 process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
 
-globalThis.setImmediate = (callback, ...args) =>
-  queueMicrotask(() => callback(...args));
-globalThis.clearImmediate = () => undefined;
+globalThis.setImmediate = (callback, ...args) => {
+  const id = { active: true };
+  queueMicrotask(() => {
+    if (id.active) callback(...args);
+  });
+  return id;
+};
+globalThis.clearImmediate = (id) => {
+  if (id) id.active = false;
+};
 globalThis.setTimeout = (callback, _delay = 0, ...args) => {
   const id = { active: true };
   queueMicrotask(() => {

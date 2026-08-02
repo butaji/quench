@@ -21,4 +21,6 @@ Replace the current microtask-based timer substitutions with correct timer sched
 Initial delayed timeout and cancellation behavior is implemented and covered by
 `tests/node-compat/stage-366/timer-timeout.js`. Native interval scheduling and
 `tests/node-compat/stage-367/timer-interval.js`. Full nextTick/promise/timer
-ordering remains in progress.
+`tests/node-compat/stage-367/timer-interval.js`, and cancellable immediate
+handles are covered by `tests/node-compat/stage-368/timer-handles.js`. Full
+nextTick/promise/timer ordering remains in progress.
