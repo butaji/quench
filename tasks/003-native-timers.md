@@ -33,6 +33,8 @@ Synchronous callback validation for callback timers is covered by
 `tests/node-compat/stage-435/timer-callback-validation.js`.
 Timer handle ref/unref/hasRef methods are covered by
 `tests/node-compat/stage-436/timer-handle-ref.js`.
+Correct timer handle ref/unref state transitions are covered by
+`tests/node-compat/stage-468/timer-handle-state.js`.
 Minimal `perf_hooks.performance` timing APIs are covered by
 `tests/node-compat/stage-402/perf-hooks-performance.js`.
 User Timing marks and measures are covered by
