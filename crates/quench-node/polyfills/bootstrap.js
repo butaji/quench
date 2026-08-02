@@ -706,14 +706,26 @@ class NodeBuffer extends Uint8Array {
     });
     return output;
   }
-  fill(value = 0, start = 0, end = this.length, encoding = "utf8") {
+  fill(value = 0, start = 0, end, encoding = "utf8") {
+    const length = this.byteLength;
+    if (
+      Object.prototype.hasOwnProperty.call(this, "length") &&
+      this.length !== length
+    ) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds",
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    if (end === undefined) end = length;
     if (typeof start === "string") {
       encoding = start;
       start = 0;
-      end = this.length;
+      end = length;
     } else if (typeof end === "string") {
       encoding = end;
-      end = this.length;
+      end = length;
     }
     if (typeof start !== "number" || typeof end !== "number") {
       const error = new TypeError(
@@ -727,8 +739,8 @@ class NodeBuffer extends Uint8Array {
       return Number.isNaN(number) ? fallback : number;
     };
     start = toIndex(start, 0);
-    end = toIndex(end, this.length);
-    if (start < 0 || end < 0 || start > this.length || end > this.length) {
+    end = toIndex(end, length);
+    if (start < 0 || end < 0 || start > length || end > length) {
       const error = new RangeError("The value is out of range");
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
