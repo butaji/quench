@@ -388,9 +388,10 @@ fn run_source_with_runtime(
                 return Err(rquickjs::Error::new_from_js("async", "exception"));
             }
         }
-        ctx.eval::<(), _>(b"if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0);")
+        ctx.eval::<(), _>(b"try { if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
             .map_err(|error| {
-                eprintln!("Process exit handler failure: {error:?}");
+                let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
+                eprintln!("Process exit handler failure: {detail}");
                 error
             })?;
         ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }").map_err(|error| {
