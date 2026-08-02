@@ -633,6 +633,13 @@ class NodeBuffer extends Uint8Array {
       encoding = end;
       end = this.length;
     }
+    if (typeof start !== "number" || typeof end !== "number") {
+      const error = new TypeError(
+        'The "start" and "end" arguments must be of type number',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const toIndex = (input, fallback) => {
       const number = Math.trunc(Number(input));
       return Number.isNaN(number) ? fallback : number;
@@ -645,10 +652,19 @@ class NodeBuffer extends Uint8Array {
       throw error;
     }
     let pattern;
-    if (typeof value === "number") pattern = new NodeBuffer([value & 0xff]);
-    else if (typeof value === "string")
+    if (value === null || value === undefined || typeof value === "number")
+      pattern = new NodeBuffer([Number(value) || 0]);
+    else if (typeof value === "string") {
+      if (
+        String(encoding).toLowerCase() === "hex" &&
+        (value.length % 2 || !/^[0-9a-f]*$/i.test(value))
+      ) {
+        const error = new TypeError('The "value" argument is invalid');
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
       pattern = NodeBuffer.from(value, encoding);
-    else if (ArrayBuffer.isView(value))
+    } else if (ArrayBuffer.isView(value))
       pattern = new Uint8Array(
         value.buffer,
         value.byteOffset,
@@ -4270,6 +4286,12 @@ globalThis.require = (specifier) => {
         binding === "uv"
           ? { UV_ENOENT: -2, UV_EEXIST: -17 }
           : { fstat: () => undefined },
+    };
+  if (name === "internal/errors")
+    return {
+      codes: {
+        ERR_OUT_OF_RANGE: class ERR_OUT_OF_RANGE extends RangeError {},
+      },
     };
   if (name === "internal/fs/utils")
     return {
