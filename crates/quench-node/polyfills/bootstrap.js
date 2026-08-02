@@ -550,6 +550,15 @@ globalThis.__nodeFs.Dirent = class Dirent {
   isFile() { return this._type === 1; } isDirectory() { return this._type === 2; } isSymbolicLink() { return this._type === 3; }
   isFIFO() { return this._type === 4; } isSocket() { return this._type === 5; } isCharacterDevice() { return this._type === 6; } isBlockDevice() { return this._type === 7; }
 };
+globalThis.__nodeFs.Dir = class Dir {
+  constructor(path) { this.path = path; this._entries = globalThis.__nodeFs.readdirSync(path, { withFileTypes: true }); this._index = 0; this._closed = false; }
+  readSync() { if (this._closed) { const error = new Error('Directory handle was closed'); error.code = 'ERR_DIR_CLOSED'; throw error; } return this._entries[this._index++] || null; }
+  closeSync() { if (this._closed) { const error = new Error('Directory handle was closed'); error.code = 'ERR_DIR_CLOSED'; throw error; } this._closed = true; }
+  read(callback) { if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { callback(null, this.readSync()); } catch (error) { callback(error); } }); }
+  close(callback) { if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { this.closeSync(); callback(null); } catch (error) { callback(error); } }); }
+};
+globalThis.__nodeFs.opendirSync = (value) => new globalThis.__nodeFs.Dir(nodeFsPath(value));
+globalThis.__nodeFs.opendir = (value, options, callback) => { if (typeof options === 'function') callback = options; if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); const path = nodeFsPath(value); queueMicrotask(() => { try { callback(null, new globalThis.__nodeFs.Dir(path)); } catch (error) { callback(error); } }); };
 for (const method of ['statSync', 'lstatSync']) globalThis.__nodeFs[method] = globalThis.__nodeFs.statSync;
 globalThis.__nodeFs.stat = (value, options, callback) => {
   if (typeof options === 'function') { callback = options; options = undefined; }
@@ -647,6 +656,7 @@ globalThis.__nodeFs.promises = {
   access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
   rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
+  opendir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),
   mkdir: (value) => Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
   readdir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.readdirSync(value, options)),
   stat: (value) => Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
