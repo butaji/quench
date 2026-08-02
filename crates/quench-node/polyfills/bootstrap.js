@@ -4033,6 +4033,8 @@ globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
         globalThis.__nodeFs.writeFileSync(path, NodeBuffer.concat(chunks));
         stream.emit("finish");
         if (callback) callback();
+        globalThis.__nodeFs.closeSync(stream.fd);
+        stream.fd = null;
         stream.emit("close");
       } catch (error) {
         stream.emit("error", error);
