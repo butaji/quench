@@ -237,6 +237,15 @@ fn async_script_with_done_once_passes() {
 }
 
 #[test]
+fn dynamic_import_rejection_reaches_catch_handler() {
+    let script = format!(
+        "{}import('./missing-module.js').catch(function(error) {{ if (error === undefined) throw new Error('missing error'); $DONE(); }}, $DONE);",
+        ASYNC_DONE_PRELUDE
+    );
+    assert_eq!(run_async_script(&script, false), Ok(()));
+}
+
+#[test]
 fn for_await_async_iterator_completion_reaches_done() {
     let script = format!(
         "{}{}",

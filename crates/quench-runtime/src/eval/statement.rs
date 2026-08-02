@@ -2325,19 +2325,7 @@ fn get_module_exports(
         }
     }
 
-    // Create a new empty exports object for this module
-    let exports = Object::new(ObjectKind::Ordinary);
-    let exports_rc = Rc::new(RefCell::new(exports));
-
-    // Cache it for future imports
-    let key = normalize_module_path(source);
-    if let Some(Value::Object(cache_obj)) = cache {
-        cache_obj
-            .borrow_mut()
-            .set(&key, Value::Object(exports_rc.clone()));
-    }
-
-    Ok(exports_rc)
+    Err(JsError::new(format!("Cannot find module '{}'.", source)))
 }
 
 /// Normalize a module path to a cache key
