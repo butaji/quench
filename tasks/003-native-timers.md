@@ -27,6 +27,8 @@ nextTick/promise/timer ordering remains in progress; callback argument
 forwarding is covered by `tests/node-compat/stage-369/next-tick.js`.
 Delayed `timers/promises.setTimeout()` value resolution is covered by
 `tests/node-compat/stage-401/timers-promises-delay.js`.
+Synchronous `process.nextTick()` callback validation is covered by
+`tests/node-compat/stage-434/next-tick-validation.js`.
 Minimal `perf_hooks.performance` timing APIs are covered by
 `tests/node-compat/stage-402/perf-hooks-performance.js`.
 User Timing marks and measures are covered by
