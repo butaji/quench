@@ -343,6 +343,23 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
+        "apply",
+        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
+            |args: Vec<Value>| {
+                let target = args
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| JsError::new("Reflect.apply requires target"))?;
+                let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let call_args = crate::builtins::function::extract_args_from_array_like(args.get(2))?;
+                crate::interpreter::set_this_value(this_arg.clone());
+                let result = crate::eval::call_value_with_this(target, call_args, this_arg);
+                crate::interpreter::take_this_value();
+                result
+            },
+        ))),
+    );
+    reflect.set(
         "defineProperty",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| match object_define_property(args) {
@@ -646,6 +663,14 @@ JSON.stringify([target.p, log]);
     fn reflect_own_keys_exists() {
         let result = eval_ok("typeof Reflect.ownKeys");
         assert_eq!(result.to_string(), "function");
+    }
+
+    #[test]
+    fn reflect_apply_invokes_target_with_undefined_new_target() {
+        let result = eval_ok(
+            "var newTarget = null; function f() { newTarget = new.target; } Reflect.apply(f, {}, []); typeof newTarget",
+        );
+        assert_eq!(result.to_string(), "undefined");
     }
 
     #[test]

@@ -137,7 +137,9 @@ fn proto_apply(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 /// Extract arguments from an array-like object
-fn extract_args_from_array_like(array_like: Option<&Value>) -> Result<Vec<Value>, JsError> {
+pub(crate) fn extract_args_from_array_like(
+    array_like: Option<&Value>,
+) -> Result<Vec<Value>, JsError> {
     match array_like {
         None | Some(Value::Undefined) | Some(Value::Null) => Ok(vec![]),
         Some(Value::Object(o)) => {
