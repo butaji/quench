@@ -92,3 +92,4 @@ these small fixtures isolate the currently implemented contract.
 | 82 | foundational promise-based filesystem write/read | `tools/run-node-tests.sh --stage 82` |
 | 83 | minimal `internal/test/binding` facade | `tools/run-node-tests.sh --stage 83` |
 | 84 | `Buffer.equals` comparison | `tools/run-node-tests.sh --stage 84` |
+| 85 | realpath and symlink capability helpers | `tools/run-node-tests.sh --stage 85` |
