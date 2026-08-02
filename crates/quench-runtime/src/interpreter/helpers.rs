@@ -735,7 +735,14 @@ pub fn has_overlapping_regexp_modifiers(source: &str) -> bool {
         let Some((added, removed)) = flags.split_once('-') else {
             return false;
         };
-        added.chars().any(|flag| removed.contains(flag))
+        let valid = |flags: &str| {
+            flags.chars().all(|flag| matches!(flag, 'i' | 'm' | 's'))
+                && flags
+                    .chars()
+                    .enumerate()
+                    .all(|(index, flag)| !flags[..index].contains(flag))
+        };
+        !valid(added) || !valid(removed) || added.chars().any(|flag| removed.contains(flag))
     })
 }
 
