@@ -353,10 +353,9 @@ pub fn sync_globals_to_global_this(ctx: &mut Context) {
 /// Register the eval function as a global
 fn register_dynamic_import(ctx: &mut Context) {
     let function = NativeFunction::new(|args| {
-        let source = args
-            .first()
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let source_value = args.first().cloned().unwrap_or(crate::Value::Undefined);
+        let source =
+            crate::value::to_js_string(&crate::value::to_primitive(&source_value, Some("string"))?);
         let options = args.get(1);
         let env = crate::context::get_current_env()
             .ok_or_else(|| JsError::new("TypeError: no current context"))?;

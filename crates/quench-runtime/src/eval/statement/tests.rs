@@ -31,6 +31,19 @@ fn dynamic_import_returns_promise_for_missing_module() {
 }
 
 #[test]
+fn dynamic_import_uses_function_to_string_for_specifier() {
+    let mut ctx = Context::new().unwrap();
+    crate::builtins::register_builtins(&mut ctx);
+    let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+    exports.set("x", Value::Number(1.0));
+    ctx.register_module("./module.js", exports);
+    ctx.eval("var result; Function.prototype.toString = () => './module.js'; import(() => {}).then(ns => result = ns.x)")
+        .unwrap();
+    crate::builtins::promise::execute_pending_microtasks().unwrap();
+    assert_eq!(ctx.eval("result").unwrap(), Value::Number(1.0));
+}
+
+#[test]
 fn dynamic_import_json_fixture_with_type_text_returns_raw_default() {
     let dir = std::env::temp_dir().join(format!("quench-json-import-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
