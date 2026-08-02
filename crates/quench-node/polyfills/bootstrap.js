@@ -2958,6 +2958,9 @@ globalThis.__nodeUtil = {
     isPromise: (value) => value instanceof Promise,
   },
 };
+globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
+globalThis.__nodeUtil.formatWithOptions = (_options, ...args) =>
+  globalThis.__nodeUtil.format(...args);
 globalThis.__nodeQuerystring = {
   escape: (value) => encodeURIComponent(String(value)),
   unescape: (value) => decodeURIComponent(String(value)),
