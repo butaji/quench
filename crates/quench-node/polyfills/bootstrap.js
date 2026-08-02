@@ -5295,15 +5295,22 @@ globalThis.__nodeCrypto = {
   createHash: (algorithm) => {
     if (algorithm !== "sha256")
       throw new Error(`Unsupported hash: ${algorithm}`);
-    let input = "";
+    const chunks = [];
     const hash = {
       update: (value) => {
-        input += String(value);
+        if (typeof value === "string")
+          chunks.push(new NodeTextEncoder().encode(value));
+        else if (value instanceof Uint8Array) chunks.push(value);
+        else chunks.push(new NodeTextEncoder().encode(String(value)));
         return hash;
       },
       digest: (encoding = "hex") => {
-        const result = globalThis.__quench_sha256(input);
+        const input = [];
+        for (const chunk of chunks) input.push(...chunk);
+        const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));
+        const result = bytes.toString("hex");
         if (encoding === "hex") return result;
+        if (encoding === undefined || encoding === null) return bytes;
         throw new Error(`Unsupported digest encoding: ${encoding}`);
       },
     };
