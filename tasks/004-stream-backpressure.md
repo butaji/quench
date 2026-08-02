@@ -56,6 +56,8 @@ Writable write-after-end rejection is covered by
 `tests/node-compat/stage-455/stream-write-after-end.js`.
 Readable push-after-EOF rejection is covered by
 `tests/node-compat/stage-456/stream-push-after-eof.js`.
+Readable unshift-after-end rejection is covered by
+`tests/node-compat/stage-457/stream-unshift-after-end.js`.
 Experimental `node:stream/iter` gating is covered by
 `tests/node-compat/stage-394/stream-iter-flag.js`.
 Shared stream `destroy()` state and error/close events are covered by
