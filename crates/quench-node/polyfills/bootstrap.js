@@ -282,6 +282,9 @@ globalThis.__nodeCommon = {
   mustNotMutateObjectDeep: (value) => value,
   isLinux: process.platform === 'linux',
   isMacOS: process.platform === 'darwin',
+  isWindows: process.platform === 'win32',
+  isAIX: false,
+  isFreeBSD: false,
 };
 globalThis.__quench_verify_calls = () => {
   for (const callback of globalThis.__nodeCallChecks || []) {
