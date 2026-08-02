@@ -83,9 +83,7 @@ class NodeBuffer extends Uint8Array {
         for (const char of clean) { buffer = (buffer << 6) | alphabet.indexOf(char); bits += 6; if (bits >= 8) { bits -= 8; output[index++] = (buffer >> bits) & 255; } }
         return output;
       }
-      const output = new NodeBuffer(value.length);
-      for (let i = 0; i < value.length; i++) output[i] = value.charCodeAt(i) & 255;
-      return output;
+      return new NodeBuffer(new NodeTextEncoder().encode(value));
     }
     return new NodeBuffer(value);
   }
@@ -105,7 +103,7 @@ class NodeBuffer extends Uint8Array {
       for (let i = 0; i < this.length; i += 3) { const n = (this[i] << 16) | ((this[i + 1] || 0) << 8) | (this[i + 2] || 0); result += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] + (i + 1 < this.length ? alphabet[(n >> 6) & 63] : '=') + (i + 2 < this.length ? alphabet[n & 63] : '='); }
       return result;
     }
-    return String.fromCharCode(...this);
+    return new NodeTextDecoder().decode(this);
   }
 }
 globalThis.Buffer = NodeBuffer;
@@ -123,6 +121,20 @@ class NodeTextEncoder {
   }
 }
 globalThis.TextEncoder = NodeTextEncoder;
+class NodeTextDecoder {
+  decode(bytes) {
+    let result = '';
+    for (let i = 0; i < bytes.length;) {
+      const first = bytes[i++];
+      if (first < 0x80) result += String.fromCodePoint(first);
+      else if (first < 0xe0) result += String.fromCodePoint(((first & 0x1f) << 6) | (bytes[i++] & 0x3f));
+      else if (first < 0xf0) result += String.fromCodePoint(((first & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f));
+      else result += String.fromCodePoint(((first & 7) << 18) | ((bytes[i++] & 0x3f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f));
+    }
+    return result;
+  }
+}
+globalThis.TextDecoder = NodeTextDecoder;
 const nodePathValue = (value) => value instanceof NodeBuffer ? value.toString() : value instanceof Uint8Array ? String.fromCharCode(...value) : value instanceof globalThis.__nodeURL ? globalThis.__nodeUrlModule.fileURLToPath(value) : String(value);
 
 globalThis.__nodeAssert = (value, message) => { if (!value) throw new Error(message || 'Assertion failed'); };
