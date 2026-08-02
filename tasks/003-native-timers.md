@@ -35,3 +35,5 @@ Performance entry retrieval and clearing are covered by
 `tests/node-compat/stage-404/perf-hooks-entries.js`.
 `timers/promises.setInterval()` async iteration is covered by
 `tests/node-compat/stage-405/timers-promises-interval.js`.
+Pre-aborted `timers/promises.setTimeout()` signals are covered by
+`tests/node-compat/stage-406/timers-promises-abort.js`.
