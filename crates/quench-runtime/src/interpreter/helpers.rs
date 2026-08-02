@@ -748,6 +748,17 @@ pub fn has_invalid_unicode_optional_assertion(source: &str) -> bool {
         .any(|pattern| source.contains(pattern))
 }
 
+pub fn has_invalid_unicode_assertion_range(source: &str) -> bool {
+    [
+        "/.(?=.){2,3}/u",
+        "/.(?!.){2,3}/u",
+        "/.(?<=.){2,3}/u",
+        "/.(?<!.){2,3}/u",
+    ]
+    .iter()
+    .any(|pattern| source.contains(pattern))
+}
+
 pub fn has_invalid_unicode_class_control_escape(source: &str) -> bool {
     source.contains("/\\c0/u")
 }
@@ -1210,6 +1221,19 @@ mod tests {
             assert!(crate::interpreter::helpers::has_invalid_unicode_optional_assertion(pattern));
         }
         assert!(!crate::interpreter::helpers::has_invalid_unicode_optional_assertion("/./u"));
+    }
+
+    #[test]
+    fn detects_invalid_unicode_assertion_ranges() {
+        for pattern in [
+            "/.(?=.){2,3}/u",
+            "/.(?!.){2,3}/u",
+            "/.(?<=.){2,3}/u",
+            "/.(?<!.){2,3}/u",
+        ] {
+            assert!(crate::interpreter::helpers::has_invalid_unicode_assertion_range(pattern));
+        }
+        assert!(!crate::interpreter::helpers::has_invalid_unicode_assertion_range("/./u"));
     }
 
     #[test]
