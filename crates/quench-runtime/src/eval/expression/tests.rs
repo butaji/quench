@@ -79,6 +79,22 @@ fn super_property_getter_does_not_inherit_new_target() {
 }
 
 #[test]
+fn strict_super_assignment_to_frozen_receiver_throws() {
+    assert_eq!(
+        eval("var caught; class C { method() { Object.freeze(C.prototype); try { super.x = 1; } catch (e) { caught = typeof e; } } } C.prototype.method(); caught").unwrap(),
+        Value::String("object".into())
+    );
+}
+
+#[test]
+fn super_property_with_null_home_prototype_throws() {
+    assert_eq!(
+        eval("var caught; var obj = { method() { try { super.x; } catch (e) { caught = typeof e; } } }; Object.setPrototypeOf(obj, null); obj.method(); caught").unwrap(),
+        Value::String("object".into())
+    );
+}
+
+#[test]
 fn optional_chaining_short_circuits_continuations() {
     assert_eq!(
         eval("const a = undefined; let x = 1; a?.[++x]; x").unwrap(),

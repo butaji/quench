@@ -337,15 +337,12 @@ pub(crate) fn eval_super_member(
             } else if let Some(proto_obj) = o.borrow().prototype.clone() {
                 proto_obj
             } else {
-                let proto_val = o.borrow().get("prototype");
-                match proto_val {
-                    Some(Value::Object(proto_obj)) => proto_obj.clone(),
-                    _ => {
-                        let mut p = Object::new(ObjectKind::Ordinary);
-                        p.set("constructor", Value::Object(Rc::clone(o)));
-                        Rc::new(RefCell::new(p))
-                    }
-                }
+                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                    "Cannot read properties of null or undefined",
+                    "TypeError",
+                );
+                crate::value::set_thrown_value(error);
+                return Err(js_error);
             }
         }
         Value::Null | Value::Undefined => {
@@ -473,6 +470,21 @@ pub fn set_super_property(
 
     // No setter found: set the property on `this` (the receiver).
     if let Value::Object(ref o) = this_val {
+        let blocked = {
+            let receiver = o.borrow();
+            receiver
+                .get_descriptor(&prop_name)
+                .is_some_and(|flags| !flags.writable)
+                || (!receiver.extensible && !receiver.has_own(&prop_name))
+        };
+        if blocked {
+            let (error, js_error) = crate::value::error::create_js_error_with_type(
+                "Cannot assign to read-only or non-extensible property",
+                "TypeError",
+            );
+            crate::value::set_thrown_value(error);
+            return Err(js_error);
+        }
         o.borrow_mut().set(&prop_name, value.clone());
     }
     Ok(value)
