@@ -15,3 +15,9 @@ Make Node-compatible streams preserve buffering, ordering, pause/resume, and bac
 
 - Focused stream stages pass.
 - Backpressure does not change public Node semantics.
+
+## Status
+
+Initial writable backpressure (`highWaterMark`, `writableLength`, `drain`) is
+implemented and covered by `tests/node-compat/stage-370/stream-backpressure.js`.
+Readable pause/resume and full transform/event ordering remain in progress.
