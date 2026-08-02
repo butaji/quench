@@ -47,3 +47,5 @@ handlers, covered by `tests/node-compat/stage-495` and the upstream
 The minimal `child_process.spawn()` contract emits deterministic exit status
 and signal values for harness fixture scripts, covered by
 `tests/node-compat/stage-501`.
+The minimal `net.createServer()` and child IPC send/backpressure contracts are
+covered by `tests/node-compat/stage-502`.
