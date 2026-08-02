@@ -2410,7 +2410,12 @@ class NodeReadable extends NodeEventEmitter {
   }
   resume() {
     this._paused = false;
-    if (!this._ended) queueMicrotask(this._pump);
+    queueMicrotask(() => {
+      while (!this._paused && this.listenerCount("data") && this._chunks.length)
+        this.emit("data", this._chunks.shift());
+      if (!this._ended) this._pump?.();
+      else if (!this._chunks.length) this._emitEnd();
+    });
     return this;
   }
   isPaused() {
