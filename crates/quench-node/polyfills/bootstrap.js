@@ -5280,16 +5280,16 @@ globalThis.__nodeUrlModule = {
 globalThis.__nodeCrypto = {
   randomUUID: () => globalThis.__quench_random_uuid(),
   randomBytes: (size, callback) => {
-    const output = NodeBuffer.allocUnsafe(Number(size));
-    for (let i = 0; i < output.length; i++)
-      output[i] = Math.floor(Math.random() * 256);
+    const output = NodeBuffer.from(
+      globalThis.__quench_random_bytes(Number(size)),
+    );
     if (typeof callback === "function")
       queueMicrotask(() => callback(null, output));
     return output;
   },
   randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
-    for (let i = offset; i < offset + size; i++)
-      buffer[i] = Math.floor(Math.random() * 256);
+    const bytes = globalThis.__quench_random_bytes(Number(size));
+    buffer.set(bytes, offset);
     return buffer;
   },
   createHash: (algorithm) => {
