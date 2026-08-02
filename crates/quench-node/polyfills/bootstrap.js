@@ -655,9 +655,11 @@ class NodeBuffer extends Uint8Array {
     };
     const start = index(begin, 0);
     const finish = Math.max(start, index(end, this.length));
-    const output = new NodeBuffer(finish - start);
-    for (let i = start; i < finish; i++) output[i - start] = this[i];
-    Object.defineProperty(output, "parent", { value: this.parent });
+    const output = new NodeBuffer(
+      this.buffer,
+      this.byteOffset + start,
+      finish - start,
+    );
     return output;
   }
   slice(start = 0, end = this.length) {
