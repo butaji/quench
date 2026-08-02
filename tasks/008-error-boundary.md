@@ -43,3 +43,5 @@ Asynchronous `fs.mkdtemp()` prefix validation is covered by
 `tests/node-compat/stage-482/fs-mkdtemp-async-prefix.js`.
 Synchronous and asynchronous `fs.mkdtemp()` options validation is covered by
 `tests/node-compat/stage-483/fs-mkdtemp-options-validation.js`.
+The internal event-target weak-handler symbol is exposed for Node's internal
+compatibility tests and covered by `tests/node-compat/stage-492`.
