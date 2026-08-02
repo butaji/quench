@@ -4,7 +4,7 @@ const folder = fs.mkdtempSync('/tmp/quench-node-');
 const file = `${folder}/file`;
 fs.writeFileSync(file, 'one');
 fs.appendFileSync(file, '-two');
-assert.strictEqual(fs.readFileSync(file), 'one-two');
+assert.strictEqual(fs.readFileSync(file, 'utf8'), 'one-two');
 fs.accessSync(file);
 assert.throws(() => fs.accessSync(`${folder}/missing`));
 fs.unlinkSync(file);

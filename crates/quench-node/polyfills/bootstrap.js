@@ -367,10 +367,7 @@ globalThis.__nodeFs = {
   mkdtempSync: (prefix) => globalThis.__quench_fs_mkdtemp(nodePathValue(prefix)),
   readFileSync: (value, options) => {
     const path = nodePathValue(value); const hex = globalThis.__quench_fs_read_hex(path);
-    if (options === undefined || options === null) {
-      const bytes = NodeBuffer.from(hex, 'hex'); if (hex === '') return bytes; const text = bytes.toString();
-      return NodeBuffer.from(text).toString('hex') === hex ? text : bytes;
-    }
+    if (options === undefined || options === null) return NodeBuffer.from(hex, 'hex');
     return globalThis.__quench_fs_read_file(path);
   },
   writeFileSync: (value, data, options = {}) => { if (options && options.flush !== undefined && typeof options.flush !== 'boolean') { const error = new TypeError('The "options.flush" property must be of type boolean'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodePathValue(value); if (!path) { const error = new Error('EBADF'); error.code = 'EBADF'; throw error; } let view = data instanceof Uint8Array ? data : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : undefined; if (!view && options && options.encoding && options.encoding !== 'utf8' && options.encoding !== 'utf-8') view = NodeBuffer.from(String(data), options.encoding); const hex = view ? NodeBuffer.from(view).toString('hex') : NodeBuffer.from(String(data)).toString('hex'); if (options && options.flag === 'a') { let existing = ''; try { existing = globalThis.__quench_fs_read_hex(path); } catch (_) {} return globalThis.__quench_fs_write_hex(path, existing + hex); } const result = globalThis.__quench_fs_write_hex(path, hex); if (options && options.flush) { const fd = globalThis.__nodeFs.openSync(path, 'r'); globalThis.__nodeFs.fsyncSync(fd); globalThis.__nodeFs.closeSync(fd); } if (options && options.mode !== undefined) globalThis.__nodeModes[path] = Number(options.mode); return result; },
