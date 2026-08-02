@@ -23,3 +23,5 @@ Missing-file `ENOENT` metadata is covered by
 validation, and encoding error contracts remain in progress.
 Invalid object paths are covered by
 `tests/node-compat/stage-377/error-invalid-path.js`.
+Write-path validation is covered by
+`tests/node-compat/stage-378/error-invalid-write-path.js`.

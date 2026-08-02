@@ -2435,6 +2435,19 @@ globalThis.__nodeFs = {
   },
   writeFileSync: (value, data, options = {}) => {
     if (
+      value === null ||
+      (typeof value === "object" &&
+        !(value instanceof NodeBuffer) &&
+        !(value instanceof Uint8Array) &&
+        !(value instanceof globalThis.__nodeURL))
+    ) {
+      const error = new TypeError(
+        'The "path" argument must be of type string or an instance of Buffer or URL',
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
       options &&
       options.flush !== undefined &&
       typeof options.flush !== "boolean"
