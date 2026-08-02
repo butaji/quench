@@ -447,6 +447,8 @@ globalThis.__nodeFs = {
   renameSync: (from, to) => globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),
   unlinkSync: (value) => globalThis.__quench_fs_unlink(String(value)),
   truncateSync: (value, length = 0) => { const path = typeof value === 'number' ? globalThis.__nodeFdPaths[value] : nodeFsPath(value); if (!path) throw new Error('EBADF'); return globalThis.__quench_fs_truncate(path, Number(length)); },
+  fsyncSync: (fd) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (!Number.isInteger(fd) || fd < 0) { const error = new RangeError('The value of "fd" is out of range'); error.code = 'ERR_OUT_OF_RANGE'; throw error; } },
+  fdatasyncSync: (fd) => globalThis.__nodeFs.fsyncSync(fd),
   copyFileSync: (from, to, mode = 0) => {
     const source = nodeFsPath(from); const destination = nodeFsPath(to);
     if (typeof mode !== 'number') { const error = new TypeError('The "mode" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; }
@@ -478,6 +480,8 @@ globalThis.__nodeFs.access = (value, mode, callback) => {
   const path = nodeFsPath(value);
   queueMicrotask(() => { try { globalThis.__nodeFs.accessSync(path, mode); } catch (error) { callback(error); return; } callback(null); });
 };
+globalThis.__nodeFs.fsync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fsyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
+globalThis.__nodeFs.fdatasync = (fd, callback) => { if (typeof fd !== 'number') { const error = new TypeError('The "fd" argument must be of type number'); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (typeof callback !== 'function') throw new TypeError('The "callback" argument must be of type function'); queueMicrotask(() => { try { globalThis.__nodeFs.fdatasyncSync(fd); callback(null); } catch (error) { callback(error); } }); };
 globalThis.__nodeModes = {};
 globalThis.__nodeFdPaths = {};
 const nodeMode = (mode) => {
@@ -657,6 +661,8 @@ globalThis.__nodeFs.promises = {
   appendFile: (value, data, options) => new Promise((resolve, reject) => globalThis.__nodeFs.appendFile(value, data, options, (error) => error ? reject(error) : resolve())),
   access: (value, mode) => new Promise((resolve, reject) => globalThis.__nodeFs.access(value, mode, (error) => error ? reject(error) : resolve())),
   truncate: (value, length = 0) => Promise.resolve().then(() => globalThis.__nodeFs.truncateSync(value, length)),
+  fsync: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(fd)),
+  fdatasync: (fd) => Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(fd)),
   rm: (value, options) => new Promise((resolve, reject) => globalThis.__nodeFs.rm(value, options, (error) => error ? reject(error) : resolve())),
   opendir: (value, options) => Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),
   symlink: (target, link, type) => new Promise((resolve, reject) => globalThis.__nodeFs.symlink(target, link, type, (error) => error ? reject(error) : resolve())),
