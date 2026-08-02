@@ -42,3 +42,5 @@ Readable and writable completion flags are covered by
 `tests/node-compat/stage-439/stream-completion-state.js`.
 Readable/writable lifecycle state flags are covered by
 `tests/node-compat/stage-440/stream-readable-writable-state.js`.
+Writable cork state is covered by
+`tests/node-compat/stage-441/stream-cork.js`.
