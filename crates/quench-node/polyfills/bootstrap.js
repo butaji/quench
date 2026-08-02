@@ -241,8 +241,13 @@ globalThis.__nodePath = {
 };
 
 globalThis.__nodeCommon = {
-  mustCall: (fn) => fn,
-  mustNotCall: () => () => { throw new Error('Unexpected call'); },
+  mustCall: (fn, exact = 1) => {
+    let calls = 0;
+    const wrapped = function (...args) { calls++; wrapped.calls = calls; return fn.apply(this, args); };
+    wrapped.calls = 0; wrapped.expected = exact;
+    return wrapped;
+  },
+  mustNotCall: (message = 'Unexpected call') => () => { throw new Error(message); },
   noop: () => {},
   expectWarning: () => {},
 };
