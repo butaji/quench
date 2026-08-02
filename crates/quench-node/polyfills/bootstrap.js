@@ -123,11 +123,31 @@ globalThis.__nodeAssert.match = (value, expression) => {
 
 globalThis.__nodePath = {
   sep: '/',
+  isAbsolute: (value) => String(value).startsWith('/'),
+  normalize: (value) => {
+    const absolute = String(value).startsWith('/');
+    const parts = String(value).split('/').filter((part) => part && part !== '.');
+    const output = [];
+    parts.forEach((part) => { if (part === '..' && output.length && output[output.length - 1] !== '..') output.pop(); else if (part !== '..') output.push(part); });
+    const result = (absolute ? '/' : '') + output.join('/');
+    return result || (absolute ? '/' : '.');
+  },
   basename: (value) => String(value).replace(/\\/g, '/').split('/').pop(),
   dirname: (value) => { const parts = String(value).replace(/\\/g, '/').split('/'); parts.pop(); return parts.join('/') || '.'; },
   extname: (value) => { const name = globalThis.__nodePath.basename(value); const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i) : ''; },
-  join: (...parts) => parts.join('/').replace(/\/+/g, '/'),
-  resolve: (...parts) => globalThis.__nodePath.join(...parts),
+  join: (...parts) => globalThis.__nodePath.normalize(parts.join('/')),
+  resolve: (...parts) => globalThis.__nodePath.normalize(parts.filter(Boolean).join('/')),
+  relative: (from, to) => {
+    const a = globalThis.__nodePath.normalize(from).split('/').filter(Boolean);
+    const b = globalThis.__nodePath.normalize(to).split('/').filter(Boolean);
+    while (a.length && a[0] === b[0]) { a.shift(); b.shift(); }
+    return [...a.map(() => '..'), ...b].join('/') || '';
+  },
+  parse: (value) => {
+    const input = String(value); const base = globalThis.__nodePath.basename(input); const dir = globalThis.__nodePath.dirname(input); const ext = globalThis.__nodePath.extname(base);
+    return { root: input.startsWith('/') ? '/' : '', dir, base, ext, name: ext ? base.slice(0, -ext.length) : base };
+  },
+  format: (parts) => globalThis.__nodePath.join(parts.dir || parts.root || '', parts.base || `${parts.name || ''}${parts.ext || ''}`),
 };
 
 globalThis.__nodeCommon = {
