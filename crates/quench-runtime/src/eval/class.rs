@@ -367,9 +367,7 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
         Value::Function(f) => match f.get_property("prototype") {
             Some(Value::Object(proto)) => Ok(Some(proto)),
             Some(Value::Function(proto)) => Ok(Some(proto.get_prototype())),
-            Some(Value::Null) => Ok(None),
-            None => Ok(Some(f.get_prototype())),
-            _ => Ok(None),
+            _ => Ok(function_realm_object_prototype(f)),
         },
         Value::NativeConstructor(nc) => Ok(Some(Rc::clone(&nc.prototype))),
         Value::NativeFunction(nf) => {
@@ -382,5 +380,30 @@ pub fn get_constructor_prototype(val: &Value) -> Result<Option<Rc<RefCell<Object
             }
         }
         _ => Ok(None),
+    }
+}
+
+fn function_realm_object_prototype(
+    function: &crate::value::ValueFunction,
+) -> Option<Rc<RefCell<Object>>> {
+    match function.closure.borrow().get("Object") {
+        Some(Value::NativeConstructor(object)) => Some(Rc::clone(&object.prototype)),
+        Some(Value::NativeFunction(object)) => {
+            object
+                .get_property("prototype")
+                .and_then(|value| match value {
+                    Value::Object(object) => Some(object),
+                    _ => None,
+                })
+        }
+        Some(Value::Function(object)) => {
+            object
+                .get_property("prototype")
+                .and_then(|value| match value {
+                    Value::Object(object) => Some(object),
+                    _ => None,
+                })
+        }
+        _ => crate::builtins::get_object_prototype(),
     }
 }
