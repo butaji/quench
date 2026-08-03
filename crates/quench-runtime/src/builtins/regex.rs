@@ -350,7 +350,9 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         &Value::String("lastIndex".to_string()),
         None,
     )?;
-    obj.borrow_mut().set("lastIndex", Value::Number(0.0));
+    if !matches!(last_index, Value::Number(value) if value == 0.0) {
+        set_search_last_index(obj, &this_val, Value::Number(0.0))?;
+    }
     let result = crate::eval::function::call_value_with_this(
         exec,
         vec![Value::String(
@@ -358,7 +360,14 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         )],
         this_val.clone(),
     )?;
-    obj.borrow_mut().set("lastIndex", last_index);
+    let current_last_index = crate::eval::member::eval_object_member_value(
+        obj,
+        &Value::String("lastIndex".to_string()),
+        None,
+    )?;
+    if current_last_index != last_index {
+        set_search_last_index(obj, &this_val, last_index)?;
+    }
     match result {
         Value::Null => Ok(Value::Number(-1.0)),
         Value::Object(result) => crate::eval::member::eval_object_member_value(
@@ -368,6 +377,20 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         ),
         _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
     }
+}
+
+fn set_search_last_index(
+    obj: &Rc<RefCell<Object>>,
+    this_val: &Value,
+    value: Value,
+) -> Result<(), JsError> {
+    let setter = { obj.borrow().get_setter_func("lastIndex") };
+    if let Some(setter) = setter {
+        crate::eval::function::call_value_with_this(setter, vec![value], this_val.clone())?;
+    } else {
+        obj.borrow_mut().set("lastIndex", value);
+    }
+    Ok(())
 }
 
 // ============================================================================
