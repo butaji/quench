@@ -319,6 +319,16 @@ mod tests {
             Ok(Value::String("arg toString|flags|flags toString|match".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_match_all_propagates_generic_receiver_pattern_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var o = {toString: function() { throw new Error('pattern'); }}; try { RegExp.prototype[Symbol.matchAll].call(o, ''); false; } catch (e) { e.message; }")
+                .unwrap(),
+            Value::String("pattern".to_string())
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -484,7 +494,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
 fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let this_val = crate::builtins::get_native_this()
         .ok_or_else(|| JsError::new("TypeError: incompatible receiver".to_string()))?;
-    let Value::Object(regex_obj) = this_val else {
+    let Value::Object(ref regex_obj) = this_val else {
         return Err(JsError::new("TypeError: incompatible receiver".to_string()));
     };
     let input = regexp_search_string(args.first())?;
@@ -496,6 +506,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let flags = regexp_search_string(Some(&flags_value))?;
     let mut matcher_obj = Rc::clone(&regex_obj);
     if regex_obj.borrow().kind != ObjectKind::RegExp {
+        let source = regexp_search_string(Some(&this_val))?;
         if let Some(Value::Symbol(match_symbol)) =
             crate::builtins::symbol::get_well_known_symbol_no_ctx("match")
         {
@@ -506,7 +517,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
             )?;
             let _ = is_match;
         }
-        matcher_obj = Rc::new(RefCell::new(regexp_match_all_matcher(&flags)));
+        matcher_obj = Rc::new(RefCell::new(regexp_match_all_matcher(&source, &flags)));
     }
     let constructor = crate::eval::member::eval_object_member_value(
         &regex_obj,
@@ -606,11 +617,11 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(iterator))
 }
 
-fn regexp_match_all_matcher(flags: &str) -> Object {
+fn regexp_match_all_matcher(source: &str, flags: &str) -> Object {
     let mut matcher = Object::new(ObjectKind::RegExp);
-    matcher.internal_regex_source = Some(String::new());
+    matcher.internal_regex_source = Some(source.to_string());
     matcher.internal_regex_flags = Some(flags.to_string());
-    matcher.internal_regex = Regex::with_flags("", "").ok();
+    matcher.internal_regex = Regex::with_flags(source, "").ok();
     matcher.set("flags", Value::String(flags.to_string()));
     matcher.set("global", Value::Boolean(flags.contains('g')));
     matcher.define(
