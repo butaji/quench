@@ -210,7 +210,11 @@ fn register_suppressed_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object
     );
     constructor.set_name("SuppressedError");
     let constructor = Value::NativeConstructor(Rc::new(constructor));
-    proto.borrow_mut().set("constructor", constructor.clone());
+    let mut prototype = proto.borrow_mut();
+    prototype.set("constructor", constructor.clone());
+    if let Some(flags) = prototype.descriptors.get_mut("constructor") {
+        flags.enumerable = false;
+    }
     ctx.set_global("SuppressedError".to_string(), constructor);
 }
 

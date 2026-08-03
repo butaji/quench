@@ -273,6 +273,18 @@ fn aggregate_error_cause_is_an_own_property() {
 }
 
 #[test]
+fn suppressed_error_constructor_metadata_is_standard() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var l = Object.getOwnPropertyDescriptor(SuppressedError, 'length'); var c = Object.getOwnPropertyDescriptor(SuppressedError.prototype, 'constructor'); [l.value, l.writable, l.enumerable, l.configurable, c.enumerable].join('|')")
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::String("3|false|false|true|false".into())
+    );
+}
+
+#[test]
 fn core_error_message_own_property_spec() {
     let mut ctx = crate::Context::new().unwrap();
     // When called with msg, message IS own property

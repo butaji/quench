@@ -1249,7 +1249,9 @@ pub fn get_native_constructor_property_descriptor(
         return make_property_descriptor_string(&name, false, false, true);
     }
     if prop == "length" {
-        let len = if is_function_constructor
+        let len = if nc.name() == "SuppressedError" {
+            3.0
+        } else if is_function_constructor
             || matches!(
                 nc.name().as_str(),
                 "Object"
@@ -1264,7 +1266,8 @@ pub fn get_native_constructor_property_descriptor(
                     | "SyntaxError"
                     | "TypeError"
                     | "URIError"
-            ) {
+            )
+        {
             1.0
         } else {
             0.0
