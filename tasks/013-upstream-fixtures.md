@@ -762,3 +762,14 @@ non-string input.
 Stage 281 formalized `url.parse` error codes, asserting `ERR_INVALID_URL`,
 `ERR_INVALID_ARG_VALUE`, and raw `URIError` propagation (verified against
 Node).
+
+Stage 282 formalized `url.parse` normalization, asserting host/auth
+lowercasing, whitespace trimming, and backslash path handling.
+
+Stage 283 formalized `querystring.parse`/`stringify` core behavior,
+asserting repeated keys, null-prototype results, plus encoding, and
+percent-encoding preservation (verified against Node).
+
+Stage 284 formalized `querystring.stringify` object value coercion,
+asserting Date/RegExp/function values stringify empty and booleans/BigInt
+stringify (verified against Node).
