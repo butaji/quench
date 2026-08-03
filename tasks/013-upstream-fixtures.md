@@ -270,3 +270,6 @@ Node-compatible invalid path argument validation.
 
 Stage 111 added hard-link coverage for sync, callback, and promise `fs.link`,
 including invalid source and destination path validation.
+
+Stage 112 formalized the existing `fs.read` options-object fixture, asserting
+sync and callback byte results and cleaning up its descriptor and file.
