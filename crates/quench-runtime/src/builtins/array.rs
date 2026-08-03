@@ -128,10 +128,16 @@ pub fn register_array(ctx: &mut Context) {
 fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let items = args.first().cloned().unwrap_or(Value::Undefined);
     let original_items = items.clone();
-    let map_fn = args.get(1).cloned();
+    let mut map_fn = args.get(1).cloned();
     let iterable = if matches!(items, Value::Object(ref object) if object.borrow().kind != ObjectKind::Array)
     {
-        crate::eval::iteration::get_iterator(&items).ok()
+        if let Some(function) = map_fn.clone() {
+            let values = array_from_iterable_with_map(&items, function)?;
+            map_fn = None;
+            Some(values)
+        } else {
+            crate::eval::iteration::get_iterator(&items).ok()
+        }
     } else {
         None
     };
@@ -190,6 +196,40 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::new(RefCell::new(
         Object::new_array_from(elements),
     ))))
+}
+
+fn array_from_iterable_with_map(items: &Value, map_fn: Value) -> Result<Vec<Value>, JsError> {
+    let Value::Object(object) = items else {
+        return Ok(Vec::new());
+    };
+    let environment = Rc::new(RefCell::new(crate::env::Environment::new()));
+    let iterator = crate::eval::object::obtain_iterator(object)?;
+    let mut index = 0usize;
+    let mut values = Vec::new();
+    loop {
+        let (value, done) =
+            crate::eval::object::take_iterator_step(&iterator, &mut index, &environment)?;
+        if done {
+            return Ok(values);
+        }
+        let call_args = vec![value, Value::Number(values.len() as f64), items.clone()];
+        let mapped = match &map_fn {
+            Value::Function(_) => {
+                crate::eval::call_value_with_this(map_fn.clone(), call_args, Value::Undefined)
+            }
+            Value::NativeFunction(function) => function.call(Value::Undefined, call_args),
+            _ => Err(JsError(
+                "Array.from map function is not callable".to_string(),
+            )),
+        };
+        match mapped {
+            Ok(value) => values.push(value),
+            Err(error) => {
+                let _ = crate::eval::object::call_iterator_return(&iterator);
+                return Err(error);
+            }
+        }
+    }
 }
 
 fn define_static_method_length(function: &mut NativeFunction) {

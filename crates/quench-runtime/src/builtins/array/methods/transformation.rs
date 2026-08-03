@@ -769,6 +769,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_from_closes_iterator_when_map_throws() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var closed=0; var items={}; items[Symbol.iterator]=function(){return {next:function(){return {done:false,value:1};},return:function(){closed++;}};}; try {Array.from(items,function(){throw new Error();});} catch(e) {} closed"),
+            Ok(Value::Number(1.0))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
