@@ -245,3 +245,5 @@ Stage 550 adds `stream.PassThrough` with evented data forwarding, end
 handling, and piping while reusing the existing in-process stream model.
 Stage 551 adds `process.report` metadata, `getReport`, and report flags with
 an explicit JavaScript-runtime report shape and no native dump dependency.
+Stage 552 adds the common single-directory wildcard form of
+`fs.promises.glob` as an async generator over the existing directory primitive.
