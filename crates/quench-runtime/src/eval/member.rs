@@ -505,7 +505,7 @@ fn box_primitive(
             boxed.set("_value", Value::Boolean(*b));
         }
         Value::Symbol(_) => {
-            // No exotic kind for Symbol
+            boxed.set("_value", obj_val.clone());
         }
         Value::BigInt(bi) => {
             boxed.exotic_kind = Some(crate::value::kind::ExoticKind::BigInt);

@@ -29,6 +29,15 @@ fn array_from_async_consumes_async_iterables() {
 }
 
 #[test]
+fn symbol_description_accepts_a_well_known_symbol_receiver() {
+    let mut ctx = new_context();
+    assert_eq!(
+        ctx.eval("Symbol.asyncIterator.description"),
+        Ok(Value::String("Symbol.asyncIterator".to_string()))
+    );
+}
+
+#[test]
 fn array_from_async_awaits_each_mapping_result_before_next_call() {
     let mut ctx = new_context();
     ctx.eval(
