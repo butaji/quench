@@ -297,3 +297,6 @@ Stage 119 formalized invalid-buffer validation for sync and callback
 
 Stage 120 formalized promise-based vectored `fs.readv`, asserting byte count,
 returned-buffer identity, contents, and cleanup.
+
+Stage 121 formalized promise-based vectored `fs.writev`, asserting bytes
+written, exact file contents, and cleanup.

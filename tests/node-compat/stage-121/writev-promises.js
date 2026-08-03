@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-121-${process.pid}`;
@@ -6,6 +7,7 @@ const fs = require("fs");
   const buffers = [Buffer.from("ab"), Buffer.from("cd")];
   const result = await fs.promises.writev(fd, buffers, 0);
   fs.closeSync(fd);
-  if (result.bytesWritten !== 4 || fs.readFileSync(path, "utf8") !== "abcd")
-    throw new Error("promise writev mismatch");
+  assert.strictEqual(result.bytesWritten, 4);
+  assert.strictEqual(fs.readFileSync(path, "utf8"), "abcd");
+  fs.rmSync(path);
 })().then(() => undefined);
