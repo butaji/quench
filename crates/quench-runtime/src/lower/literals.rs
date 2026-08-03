@@ -17,7 +17,13 @@ pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, 
     if tpl.expressions.is_empty() {
         let mut result = String::new();
         for elem in &tpl.quasis {
-            result.push_str(elem.value.raw.as_ref());
+            result.push_str(
+                elem.value
+                    .cooked
+                    .as_ref()
+                    .map(|value| value.as_str())
+                    .unwrap_or(elem.value.raw.as_ref()),
+            );
         }
         return Ok(Expression::String(result));
     }
@@ -28,7 +34,12 @@ pub fn lower_template_literal(tpl: &ast::TemplateLiteral) -> Result<Expression, 
 
     for i in 0..quasi_count {
         let quasi = &tpl.quasis[i];
-        let s = quasi.value.raw.to_string();
+        let s = quasi
+            .value
+            .cooked
+            .as_ref()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| quasi.value.raw.to_string());
         if !s.is_empty() {
             exprs.push(Expression::String(s));
         }

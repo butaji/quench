@@ -75,6 +75,14 @@ fn tagged_template_exposes_cooked_and_raw_values() {
 }
 
 #[test]
+fn untagged_template_uses_cooked_escape_value() {
+    assert_eq!(
+        eval("`\\\\x2c`").unwrap(),
+        Value::String("\\x2c".to_string())
+    );
+}
+
+#[test]
 fn tagged_template_invalid_escape_has_undefined_cooked_value() {
     assert_eq!(
         eval("(function(s) { return [s[0], s.raw[0]].join('|'); })`\\01`").unwrap(),
