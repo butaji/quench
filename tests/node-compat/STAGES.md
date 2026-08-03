@@ -197,3 +197,4 @@ these small fixtures isolate the currently implemented contract.
 |   187 | Buffer hex writes and invalid input truncation              | `tools/run-node-tests.sh --stage 187` |
 |   188 | Buffer `includes` values, offsets, and encodings            | `tools/run-node-tests.sh --stage 188` |
 |   189 | Buffer `includes` argument validation                       | `tools/run-node-tests.sh --stage 189` |
+|   190 | Buffer double-precision read/write and byte order           | `tools/run-node-tests.sh --stage 190` |

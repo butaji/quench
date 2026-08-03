@@ -506,3 +506,6 @@ offset behavior, empty-value handling, and encoding-aware matching.
 
 Stage 189 formalized Buffer `includes` validation, asserting
 `ERR_INVALID_ARG_TYPE` for unsupported search values.
+
+Stage 190 formalized Buffer double-precision read/write operations, asserting
+big- and little-endian round trips, byte order, and Infinity handling.
