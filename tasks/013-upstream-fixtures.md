@@ -542,3 +542,6 @@ range bounds, and numeric byte filling.
 
 Stage 201 formalized Buffer forward and reverse index searches, asserting
 string offsets, byte searches, and missing-value results.
+
+Stage 202 formalized Buffer JSON serialization, asserting the Node Buffer JSON
+shape and restoration through `Buffer.from`.
