@@ -108,6 +108,8 @@ self-hosted JavaScript layer.
   `for` and `keyFor` remain direct Rust bindings because JS would only add
   pass-through LOC. Rust retains symbol identity, boxing, registry storage,
   and well-known symbols.
+- [~] Corrected Symbol self-hosted wrappers so native `toString`/`valueOf`
+  aliases are not shadowed by the JS method names.
 - [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
   hidden Rust keyed-storage primitives; Rust retains keyed storage and
   iterator state.
