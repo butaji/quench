@@ -56,6 +56,19 @@ Object.entries = function ObjectEntries(O) {
   return entries;
 };
 
+Object.assign = function ObjectAssign(target) {
+  if (target === null || target === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  var to = ToObject(target);
+  for (var i = 1; i < arguments.length; i++) {
+    var source = arguments[i];
+    if (source === null || source === undefined) continue;
+    var from = ToObject(source);
+    var keys = EnumerableOwnKeys(from);
+    for (var j = 0; j < keys.length; j++) to[keys[j]] = from[keys[j]];
+  }
+  return to;
+};
+
 // Object.hasOwn (ES2025 §20.1.2.14)
 Object.hasOwn = function ObjectHasOwn(O, P) {
   return HasOwnProperty(ToObject(O), P);
