@@ -6,16 +6,6 @@ use std::rc::Rc;
 use crate::value::{to_number, NativeFunction, Object, PropertyFlags, Value};
 use crate::Context;
 
-/// Create non-writable, non-enumerable, non-configurable property flags for constants
-fn constant_flags(value: f64) -> PropertyFlags {
-    PropertyFlags {
-        value: Some(Value::Number(value)),
-        writable: false,
-        enumerable: false,
-        configurable: false,
-    }
-}
-
 /// Implements Math.round per ECMAScript spec.
 /// Returns the "round half up" of x. That is, the value of x rounded
 /// to the nearest integer, ties to +Infinity.
@@ -83,7 +73,6 @@ pub fn register_math(ctx: &mut Context) {
     register_unary_math_fns(&math);
     register_binary_math_fns(&math);
     register_reduce_math_fns(&math);
-    register_math_constants(&math);
     for flags in math.borrow_mut().descriptors.values_mut() {
         flags.enumerable = false;
     }
@@ -229,25 +218,6 @@ fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
             Ok(Value::Number(rand_simple()))
         }))),
     );
-}
-
-fn register_math_constants(math: &Rc<RefCell<Object>>) {
-    // Math constants are non-writable, non-enumerable, non-configurable per spec
-    use std::f64::consts;
-    let constants = [
-        ("PI", consts::PI),
-        ("E", consts::E),
-        ("LN2", consts::LN_2),
-        ("LN10", consts::LN_10),
-        ("LOG2E", consts::LOG2_E),
-        ("LOG10E", consts::LOG10_E),
-        ("SQRT1_2", consts::FRAC_1_SQRT_2),
-        ("SQRT2", consts::SQRT_2),
-    ];
-    for (name, value) in constants {
-        math.borrow_mut()
-            .define(name, Value::Number(value), constant_flags(value));
-    }
 }
 
 #[cfg(test)]

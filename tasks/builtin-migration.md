@@ -259,6 +259,9 @@ self-hosted JavaScript layer.
 - [x] Route self-hosted Array splice start and deleteCount through
   `ToIntegerOrInfinity`, correctly clamping negative, fractional, and infinite
   arguments.
+- [x] Move the Math constant descriptors (`PI`, `E`, `LN2`, `LN10`, `LOG2E`,
+  `LOG10E`, `SQRT1_2`, and `SQRT2`) into `builtins/Math.js`; Rust retains only
+  native numeric kernels and host-state operations such as `Math.random`.
 
 ## First increment
 

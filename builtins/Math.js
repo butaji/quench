@@ -8,6 +8,15 @@ var _nativeSign = Math.__sign;
 var _nativePow = Math.__pow;
 var _nativeSqrt = Math.__sqrt;
 
+Object.defineProperty(Math, 'PI', { value: 3.141592653589793, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'E', { value: 2.718281828459045, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'LN2', { value: 0.6931471805599453, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'LN10', { value: 2.302585092994046, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'LOG2E', { value: 1.4426950408889634, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'LOG10E', { value: 0.4342944819032518, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'SQRT1_2', { value: 0.7071067811865476, writable: false, enumerable: false, configurable: false });
+Object.defineProperty(Math, 'SQRT2', { value: 1.4142135623730951, writable: false, enumerable: false, configurable: false });
+
 // Math.max (ES2025 §21.3.2.24)
 Math.max = function MathMax() {
   var max = -Infinity;
