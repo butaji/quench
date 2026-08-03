@@ -94,7 +94,9 @@ pub fn proto_last_index_of(args: Vec<Value>) -> Result<Value, JsError> {
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
     let (elements, object) = match receiver {
         Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
-            (object.borrow().elements.clone(), None)
+            let elements = object.borrow().elements.clone();
+            let length = elements.len();
+            (elements, Some((object, length)))
         }
         Value::Object(object) => {
             let length_value = crate::eval::member::eval_object_member_value(
@@ -134,17 +136,15 @@ pub fn proto_last_index_of(args: Vec<Value>) -> Result<Value, JsError> {
         (from as usize).min(length - 1)
     };
     for i in (0..=start).rev() {
-        let value = object.as_ref().map_or_else(
-            || elements[i].clone(),
-            |(object, _)| {
-                crate::eval::member::eval_object_member_value(
-                    object,
-                    &Value::String(i.to_string()),
-                    None,
-                )
-                .unwrap_or(Value::Undefined)
-            },
-        );
+        let value = if let Some((object, _)) = &object {
+            crate::eval::member::eval_object_member_value(
+                object,
+                &Value::String(i.to_string()),
+                None,
+            )?
+        } else {
+            elements[i].clone()
+        };
         if crate::value::strict_eq(&value, &search) {
             return Ok(Value::Number(i as f64));
         }
@@ -284,6 +284,15 @@ mod tests {
     fn last_index_of_propagates_from_index_conversion_error() {
         let mut ctx = create_test_context();
         assert!(ctx.eval("[0,null].lastIndexOf(null,{toString:function(){return {}},valueOf:function(){return {}}})").is_err());
+    }
+
+    #[test]
+    fn last_index_of_propagates_accessor_error_in_reverse_order() {
+        let mut ctx = create_test_context();
+        assert!(ctx
+            .eval("var accessed=false; var a=[]; Object.defineProperty(a,'2',{get:function(){throw new TypeError},configurable:true}); Object.defineProperty(a,'1',{get:function(){accessed=true;return true},configurable:true}); try { a.lastIndexOf(true); false } catch(e) { !accessed }")
+            .unwrap()
+            == crate::value::Value::Boolean(true));
     }
 
     #[test]
