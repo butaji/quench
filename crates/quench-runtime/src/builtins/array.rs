@@ -79,15 +79,6 @@ pub fn register_array(ctx: &mut Context) {
     array_constructor.set_name("Array");
 
     // Set static methods on the constructor
-    array_constructor.set_static_method(
-        "isArray",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let arg = args.first().cloned().unwrap_or(Value::Undefined);
-            Ok(Value::Boolean(
-                matches!(arg, Value::Object(ref o) if o.borrow().kind == ObjectKind::Array),
-            ))
-        }))),
-    );
     let mut array_from = NativeFunction::new(|args| array_from_impl(args));
     define_static_method_length(&mut array_from);
     array_constructor.set_static_method("from", Value::NativeFunction(Rc::new(array_from)));

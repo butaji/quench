@@ -39,6 +39,8 @@ self-hosted JavaScript layer.
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
   native `toSorted` path pending polish.
+- [~] `Array.isArray` is JS-owned through the canonical type predicate; Rust
+  retains Array construction and indexed storage.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`, and
   trim variants are now authored in `builtins/String.js`; Rust retains string
   storage, iteration, and RegExp execution. Remaining String methods are
