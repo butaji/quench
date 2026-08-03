@@ -357,3 +357,6 @@ created mode with the process umask and cleaning up the temporary file.
 
 Stage 140 formalized promise file-handle writes with a source offset and
 explicit file position, asserting byte count, resulting contents, and cleanup.
+
+Stage 141 formalized promise file-handle vectored writes and reads, asserting
+both byte counts, reconstructed contents, and cleanup.
