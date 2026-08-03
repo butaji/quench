@@ -183,6 +183,14 @@ mod tests {
             Value::Null
         );
     }
+
+    #[test]
+    fn regexp_symbol_search_returns_custom_exec_index() {
+        assert_eq!(
+            eval("RegExp.prototype[Symbol.search].call({exec: function() { return {index: 86}; }}, 'abc')"),
+            Value::Number(86.0)
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -263,6 +271,14 @@ fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
             Value::NativeFunction(Rc::new(NativeFunction::new(regexp_symbol_match_impl))),
         );
     }
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("search")
+    {
+        proto.borrow_mut().set(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(NativeFunction::new(regexp_symbol_search_impl))),
+        );
+    }
 
     // Add source property (defaults to "(?:)")
     proto
@@ -294,6 +310,29 @@ fn regexp_symbol_match_impl(args: Vec<Value>) -> Result<Value, JsError> {
         )],
         this_val,
     )
+}
+
+fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError::new("RegExp.prototype[@@search] requires 'this'".to_string()))?;
+    let Value::Object(obj) = &this_val else {
+        return Err(JsError::new("TypeError: incompatible receiver".to_string()));
+    };
+    let exec = obj.borrow().get("exec").ok_or_else(|| {
+        JsError::new("TypeError: RegExp.prototype[@@search] requires callable exec".to_string())
+    })?;
+    let result = crate::eval::function::call_value_with_this(
+        exec,
+        vec![Value::String(
+            args.first().map(to_js_string).unwrap_or_default(),
+        )],
+        this_val,
+    )?;
+    match result {
+        Value::Null => Ok(Value::Number(-1.0)),
+        Value::Object(result) => Ok(result.borrow().get("index").unwrap_or(Value::Undefined)),
+        _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
+    }
 }
 
 // ============================================================================
@@ -361,6 +400,41 @@ pub fn register_regexp(ctx: &mut Context) {
         regexp_proto.borrow_mut().set(
             &symbol.property_key(),
             Value::NativeFunction(Rc::new(NativeFunction::new(regexp_symbol_match_impl))),
+        );
+    }
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("search")
+    {
+        let search = NativeFunction::new(regexp_symbol_search_impl);
+        search.define_property(
+            "name",
+            Value::String("[Symbol.search]".to_string()),
+            PropertyFlags {
+                value: Some(Value::String("[Symbol.search]".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        search.define_property(
+            "length",
+            Value::Number(1.0),
+            PropertyFlags {
+                value: Some(Value::Number(1.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        regexp_proto.borrow_mut().define(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(search)),
+            PropertyFlags {
+                value: None,
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
         );
     }
     regexp_obj_rc
