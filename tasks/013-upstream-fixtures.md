@@ -849,3 +849,6 @@ separators, and relative paths.
 
 Stage 308 formalized POSIX `dirname` handling of trailing separators and
 all-slash paths.
+
+Stage 309 formalized Win32 UNC path parsing, asserting the server/share root,
+directory, basename, extension, and name fields.

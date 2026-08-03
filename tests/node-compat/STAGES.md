@@ -305,3 +305,4 @@ these small fixtures isolate the currently implemented contract.
 |   306 | POSIX path trailing-separator parsing                          | `tools/run-node-tests.sh --stage 306` |
 |   307 | POSIX path dirname root and relative behavior                  | `tools/run-node-tests.sh --stage 307` |
 |   308 | POSIX path trailing-separator dirname                          | `tools/run-node-tests.sh --stage 308` |
+|   309 | Win32 UNC path parsing                                          | `tools/run-node-tests.sh --stage 309` |
