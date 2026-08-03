@@ -986,3 +986,12 @@ values and its `AssertionError` metadata.
 
 Stage 354 formalized the `assert.throws` missing-exception failure, including
 its standard message and operation metadata.
+
+Stage 355 formalized strict comparison of distinct Error objects and the
+resulting assertion failure.
+
+The stage harness now has a fast path for parallel execution: `tools/check-all-
+tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
+Node-stage runner for the CLI-driven API fixtures. This preserves the existing
+serial checker as the deterministic fallback while allowing larger fixture
+sets to use available CPU cores.
