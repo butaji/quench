@@ -159,6 +159,22 @@ mod tests {
     fn regexp_escape_decodes_wtf8_surrogates() {
         assert_eq!(regexp_escape("\u{fffd}d800"), "\\ud800");
     }
+
+    #[test]
+    fn regexp_has_species_getter() {
+        assert_eq!(
+            eval("typeof Object.getOwnPropertyDescriptor(RegExp, Symbol.species).get"),
+            Value::String("function".to_string())
+        );
+        assert_eq!(
+            eval("[Object.getOwnPropertyDescriptor(RegExp, Symbol.species).get.length, Object.getOwnPropertyDescriptor(Object.getOwnPropertyDescriptor(RegExp, Symbol.species).get, 'length').writable].join('|')"),
+            Value::String("0|false".to_string())
+        );
+        assert_eq!(
+            eval("Object.getOwnPropertyDescriptor(Object.getOwnPropertyDescriptor(RegExp, Symbol.species).get, 'name').value"),
+            Value::String("get [Symbol.species]".to_string())
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -259,11 +275,51 @@ pub fn register_regexp(ctx: &mut Context) {
         move |args| regexp_constructor_impl(args, &proto_for_closure),
         Rc::clone(&regexp_proto),
     )));
+    let species_default = regexp_fn.clone();
 
     // Create RegExp object to hold the constructor
     let mut regexp_obj = Object::new(ObjectKind::Ordinary);
     regexp_obj.callable = true;
     let regexp_obj_rc = Rc::new(RefCell::new(regexp_obj));
+    if let Some(Value::Symbol(species)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+    {
+        let getter = NativeFunction::new(move |_args| {
+            Ok(crate::builtins::get_native_this().unwrap_or(species_default.clone()))
+        });
+        getter.define_property(
+            "name",
+            Value::String("get [Symbol.species]".to_string()),
+            PropertyFlags {
+                value: Some(Value::String("get [Symbol.species]".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        getter.define_property(
+            "length",
+            Value::Number(0.0),
+            PropertyFlags {
+                value: Some(Value::Number(0.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        let getter = Value::NativeFunction(Rc::new(getter));
+        regexp_obj_rc.borrow_mut().define_accessor(
+            &species.property_key(),
+            Some(getter),
+            None,
+            PropertyFlags {
+                value: None,
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     regexp_obj_rc
         .borrow_mut()
         .set("prototype", Value::Object(Rc::clone(&regexp_proto)));
