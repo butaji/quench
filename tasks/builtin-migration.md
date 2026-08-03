@@ -119,6 +119,9 @@ self-hosted JavaScript layer.
   primitive; FinalizationRegistry remains GC/finalizer-backed.
 - [~] Iterator public static and prototype methods are JS-owned over hidden
   Rust streaming/state-machine primitives.
+- [~] Iterator `reduce`, `toArray`, `forEach`, `some`, `every`, and `find` now
+  contain their iteration algorithms in JS; Rust retains iterator state and
+  streaming primitives.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
