@@ -261,3 +261,6 @@ type selection, round-trip target verification, and cleanup.
 
 Stage 108 expanded symlink metadata coverage to sync and callback `stat`/
 `lstat` calls, verifying link identity versus followed-target identity.
+
+Stage 109 expanded promise symlink/readlink coverage with explicit file type,
+target round-trip, promise `lstat`, and cleanup.
