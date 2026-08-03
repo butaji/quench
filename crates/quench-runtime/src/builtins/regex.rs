@@ -293,6 +293,23 @@ mod tests {
             Ok(Value::String("a".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_match_all_calls_species_constructor_with_regex_and_flags() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var n = 0; var a; var r = /\\d/u; r.constructor = {[Symbol.species]: function() { n++; a = arguments; return /\\w/g; }}; var i = r[Symbol.matchAll]('a*b'); [n, a.length, a[0] === r, a[1]].join('|')"),
+            Ok(Value::String("1|2|true|u".to_string()))
+        );
+    }
+
+    #[test]
+    fn regexp_match_all_propagates_constructor_getter_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var r = /a/g; Object.defineProperty(r, 'constructor', {get: function() { throw new Test262Error(); }}); r[Symbol.matchAll]('a')")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -469,11 +486,21 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     )?;
     let flags = regexp_search_string(Some(&flags_value))?;
     let mut matcher_obj = Rc::clone(&regex_obj);
-    if let Some(Value::Object(constructor)) = regex_obj.borrow().get("constructor") {
+    let constructor = crate::eval::member::eval_object_member_value(
+        &regex_obj,
+        &Value::String("constructor".to_string()),
+        current_regex_env().as_ref(),
+    )?;
+    if let Value::Object(constructor) = constructor {
         if let Some(Value::Symbol(species)) =
             crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
         {
-            if let Some(species_fn) = constructor.borrow().get(&species.property_key()) {
+            let species_fn = crate::eval::member::eval_object_member_value(
+                &constructor,
+                &Value::Symbol(Rc::clone(&species)),
+                current_regex_env().as_ref(),
+            )?;
+            if !matches!(species_fn, Value::Undefined | Value::Null) {
                 if matches!(
                     species_fn,
                     Value::Function(_)
