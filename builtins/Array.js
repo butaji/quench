@@ -48,6 +48,15 @@ Array.from = function ArrayFrom(items) {
   var mapfn = arguments.length > 1 ? arguments[1] : undefined;
   var thisArg = arguments.length > 2 ? arguments[2] : undefined;
   if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
+  if (IsArray(items) && mapfn !== undefined) {
+    var arrayResult = new Array(0);
+    var arrayLength = ToLength(items.length);
+    for (var arrayIndex = 0; arrayIndex < arrayLength; arrayIndex++) {
+      CreateDataProperty(arrayResult, arrayIndex, mapfn.call(thisArg, items[arrayIndex], arrayIndex));
+    }
+    arrayResult.length = arrayLength;
+    return arrayResult;
+  }
   var values = [];
   var iteratorMethod = items[Symbol.iterator];
   if (typeof iteratorMethod === 'function') {

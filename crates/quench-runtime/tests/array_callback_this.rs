@@ -26,3 +26,12 @@ fn array_of_uses_called_constructor_and_sets_length() {
         Ok(Value::String("1|true".to_string()))
     );
 }
+
+#[test]
+fn array_from_reads_array_elements_after_each_mapping_callback() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var a=[127,4,8]; Array.from(a,function(v,i){if(i+1<a.length)a[i+1]=127; return v;}).join(',')"),
+        Ok(Value::String("127,127,127".to_string()))
+    );
+}
