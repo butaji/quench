@@ -6983,7 +6983,10 @@ globalThis.require = (specifier) => {
   }
   if (name === "net") {
     const isIPv4 = (input) => {
-      if (typeof input !== "string") return false;
+      if (input == null) return false;
+      if (typeof input !== "string") {
+        try { return isIPv4(String(input)); } catch { return false; }
+      }
       const parts = input.split(".");
       if (parts.length !== 4) return false;
       for (const part of parts) {
@@ -6991,11 +6994,16 @@ globalThis.require = (specifier) => {
         const n = Number(part);
         if (n < 0 || n > 255) return false;
         if (part.length > 1 && part.startsWith("0")) return false;
+        if (part.length > 3) return false;
       }
       return true;
     };
     const isIPv6 = (input) => {
-      if (typeof input !== "string" || input.length === 0) return false;
+      if (input == null) return false;
+      if (typeof input !== "string") {
+        try { return isIPv6(String(input)); } catch { return false; }
+      }
+      if (input.length === 0) return false;
       let address = input;
       if (address.includes("%")) {
         const percentIndex = address.indexOf("%");
@@ -7031,11 +7039,8 @@ globalThis.require = (specifier) => {
             if (!/^\d+$/.test(part)) return false;
             const n = Number(part);
             if (n < 0 || n > 255) return false;
+            if (part.length > 1 && part.startsWith("0")) return false;
           }
-          const a = Number(parts[0]);
-          const b = Number(parts[1]);
-          const c = Number(parts[2]);
-          const d = Number(parts[3]);
           expanded += 2;
         } else {
           if (group.length === 0 || group.length > 4) return false;
@@ -7044,10 +7049,16 @@ globalThis.require = (specifier) => {
         }
         return true;
       };
-      for (const group of headGroups) {
+      for (let i = 0; i < headGroups.length; i++) {
+        const group = headGroups[i];
+        if (hasDoubleColon && group.includes(".")) return false;
+        if (!hasDoubleColon && group.includes(".") && i < headGroups.length - 1)
+          return false;
         if (!validateGroup(group)) return false;
       }
-      for (const group of tailGroups) {
+      for (let i = 0; i < tailGroups.length; i++) {
+        const group = tailGroups[i];
+        if (i < tailGroups.length - 1 && group.includes(".")) return false;
         if (!validateGroup(group)) return false;
       }
       if (hasDoubleColon) {
@@ -7058,10 +7069,12 @@ globalThis.require = (specifier) => {
       return true;
     };
     const isIP = (input) => {
-      if (typeof input !== "string") return 0;
-      const address = input.includes("%") ? input.slice(0, input.indexOf("%")) : input;
-      if (isIPv4(address)) return 4;
-      if (isIPv6(address)) return 6;
+      if (input == null) return 0;
+      if (typeof input !== "string") {
+        try { return isIP(String(input)); } catch { return 0; }
+      }
+      if (isIPv4(input)) return 4;
+      if (isIPv6(input)) return 6;
       return 0;
     };
     return {
