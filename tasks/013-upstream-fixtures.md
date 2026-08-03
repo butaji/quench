@@ -545,3 +545,6 @@ string offsets, byte searches, and missing-value results.
 
 Stage 202 formalized Buffer JSON serialization, asserting the Node Buffer JSON
 shape and restoration through `Buffer.from`.
+
+Stage 203 formalized Buffer equality, asserting typed-array compatibility,
+mismatch detection, and `ERR_INVALID_ARG_TYPE` validation.
