@@ -193,6 +193,29 @@ pub fn proto_to_string(_args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.at(index) - returns element at index, negative = from end
 pub fn proto_at(args: Vec<Value>) -> Result<Value, JsError> {
+    if let Some(Value::Object(object)) = crate::builtins::get_native_this() {
+        if matches!(object.borrow().data, ObjData::Idx { .. }) {
+            let length = object
+                .borrow()
+                .get("length")
+                .and_then(|value| crate::value::try_to_number(&value).ok())
+                .unwrap_or(0.0)
+                .max(0.0) as isize;
+            let index = args.first().map(to_number).unwrap_or(0.0);
+            let relative = if index < 0.0 {
+                length + index as isize
+            } else {
+                index as isize
+            };
+            if relative < 0 {
+                return Ok(Value::Undefined);
+            }
+            return Ok(object
+                .borrow()
+                .get(&relative.to_string())
+                .unwrap_or(Value::Undefined));
+        }
+    }
     let elements = get_this_array()?;
     let len = elements.len() as f64;
     let idx = args.first().map(to_number).unwrap_or(0.0);

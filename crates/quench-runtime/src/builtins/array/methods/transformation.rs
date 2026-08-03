@@ -806,6 +806,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_at_reads_typed_array_after_index_coercion() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var b=new ArrayBuffer(4,{maxByteLength:8}); var a=new Uint8Array(b,0,4); a[0]=3; var evil={valueOf:function(){b.resize(2); return 0;}}; Array.prototype.at.call(a,evil)"),
+            Ok(Value::Undefined)
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
