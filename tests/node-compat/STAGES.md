@@ -130,3 +130,4 @@ these small fixtures isolate the currently implemented contract.
 |   120 | promise-based vectored `fs.readv`                         | `tools/run-node-tests.sh --stage 120` |
 |   121 | promise-based vectored `fs.writev`                        | `tools/run-node-tests.sh --stage 121` |
 |   122 | options-object callback `fs.write`                        | `tools/run-node-tests.sh --stage 122` |
+|   123 | `util.promisify` callback conversion                      | `tools/run-node-tests.sh --stage 123` |

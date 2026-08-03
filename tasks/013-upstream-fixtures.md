@@ -303,3 +303,6 @@ written, exact file contents, and cleanup.
 
 Stage 122 formalized the options-object callback form of `fs.write`,
 asserting selected-byte count, output contents, and cleanup.
+
+Stage 123 formalized `util.promisify` callback conversion and resolved-value
+behavior.
