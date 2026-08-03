@@ -329,6 +329,33 @@ mod tests {
             Value::String("pattern".to_string())
         );
     }
+
+    #[test]
+    fn regexp_match_all_accepts_species_matcher_without_global_flag() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var r = /./; r.constructor = {[Symbol.species]: function() { return /./; }}; r[Symbol.matchAll]('a').next().value[0]"),
+            Ok(Value::String("a".to_string()))
+        );
+    }
+
+    #[test]
+    fn regexp_match_all_rejects_null_constructor() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var r = /a/g; r.constructor = null; r[Symbol.matchAll]('a')")
+            .is_err());
+    }
+
+    #[test]
+    fn regexp_match_all_rejects_noncallable_species() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval(
+                "var r = /a/g; r.constructor = {[Symbol.species]: false}; r[Symbol.matchAll]('a')"
+            )
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -517,7 +544,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
             )?;
             let _ = is_match;
         }
-        matcher_obj = Rc::new(RefCell::new(regexp_match_all_matcher(&source, &flags)));
+        matcher_obj = Rc::new(RefCell::new(regexp_match_all_matcher(&source, "g")));
     }
     let constructor = crate::eval::member::eval_object_member_value(
         &regex_obj,
@@ -534,47 +561,51 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 current_regex_env().as_ref(),
             )?;
             if !matches!(species_fn, Value::Undefined | Value::Null) {
-                if matches!(
+                if !matches!(
                     species_fn,
                     Value::Function(_)
                         | Value::NativeFunction(_)
                         | Value::NativeConstructor(_)
                         | Value::Class(_)
                 ) {
-                    let matcher = crate::eval::function::call_value_with_this(
-                        species_fn,
-                        vec![
-                            Value::Object(Rc::clone(&regex_obj)),
-                            Value::String(flags.clone()),
-                        ],
-                        Value::Undefined,
-                    )?;
-                    if let Value::Object(matcher) = matcher {
-                        matcher_obj = matcher;
-                    }
+                    return Err(JsError::new("TypeError: species is not a constructor"));
+                }
+                let matcher = crate::eval::function::call_value_with_this(
+                    species_fn,
+                    vec![
+                        Value::Object(Rc::clone(&regex_obj)),
+                        Value::String(flags.clone()),
+                    ],
+                    Value::Undefined,
+                )?;
+                if let Value::Object(matcher) = matcher {
+                    matcher_obj = matcher;
                 }
             }
         }
-    }
-    let matcher_flags = if Rc::ptr_eq(&matcher_obj, &regex_obj) {
-        flags.clone()
-    } else {
-        matcher_obj
-            .borrow()
-            .internal_regex_flags
-            .clone()
-            .unwrap_or(flags)
-    };
-    if !matcher_flags.contains('g') {
-        return Err(JsError::new(
-            "TypeError: matchAll requires global RegExp".to_string(),
-        ));
+    } else if matches!(
+        constructor,
+        Value::Function(_)
+            | Value::NativeFunction(_)
+            | Value::NativeConstructor(_)
+            | Value::Class(_)
+    ) {
+    } else if matches!(constructor, Value::Null)
+        && regex_obj.borrow().get_own_value("constructor").is_none()
+    {
+    } else if !matches!(constructor, Value::Undefined) {
+        return Err(JsError::new("TypeError: constructor is not an object"));
     }
     let source = matcher_obj
         .borrow()
         .internal_regex_source
         .clone()
         .unwrap_or_default();
+    if Rc::ptr_eq(&matcher_obj, &regex_obj) && !flags.contains('g') {
+        return Err(JsError::new(
+            "TypeError: matchAll requires global RegExp".to_string(),
+        ));
+    }
     let regex =
         Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
     let last_index = crate::eval::member::eval_object_member_value(
