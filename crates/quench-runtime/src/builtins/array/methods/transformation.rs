@@ -254,35 +254,43 @@ pub fn proto_some(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 fn array_like_length(receiver: &Value) -> Result<usize, JsError> {
-    let Value::Object(object) = receiver else {
-        return Err(JsError(
-            "Array.prototype method called on non-object".to_string(),
-        ));
+    let length = match receiver {
+        Value::Object(object) => {
+            if object.borrow().kind == ObjectKind::Array {
+                return Ok(object.borrow().elements.len());
+            }
+            crate::eval::member::eval_object_member_value(
+                object,
+                &Value::String("length".to_string()),
+                None,
+            )?
+        }
+        Value::Function(function) => crate::eval::member::eval_function_member(function, "length")?,
+        _ => {
+            return Err(JsError(
+                "Array.prototype method called on non-object".to_string(),
+            ))
+        }
     };
-    if object.borrow().kind == ObjectKind::Array {
-        return Ok(object.borrow().elements.len());
-    }
-    let length = crate::eval::member::eval_object_member_value(
-        object,
-        &Value::String("length".to_string()),
-        None,
-    )?;
     Ok(crate::value::try_to_number(&length)?.max(0.0) as usize)
 }
 
 fn array_like_value(receiver: &Value, index: usize) -> Result<Option<Value>, JsError> {
-    let Value::Object(object) = receiver else {
-        return Ok(None);
-    };
     let key = index.to_string();
-    if !object.borrow().has(&key) {
-        return Ok(None);
+    match receiver {
+        Value::Object(object) => {
+            if !object.borrow().has(&key) {
+                return Ok(None);
+            }
+            Ok(Some(crate::eval::member::eval_object_member_value(
+                object,
+                &Value::String(key),
+                None,
+            )?))
+        }
+        Value::Function(function) => Ok(function.get_property(&key)),
+        _ => Ok(None),
     }
-    Ok(Some(crate::eval::member::eval_object_member_value(
-        object,
-        &Value::String(key),
-        None,
-    )?))
 }
 
 /// Array.prototype.every(callback, thisArg?)
