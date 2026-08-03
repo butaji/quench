@@ -1040,6 +1040,9 @@ delivery of remaining values.
 Stage 372 formalized Transform stream chunk processing, output emission, and
 write-callback ordering.
 
+Stage 373 formalized piped readable/writable backpressure and drain-driven
+delivery of subsequent chunks.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
