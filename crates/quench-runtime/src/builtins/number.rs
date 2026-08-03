@@ -95,6 +95,12 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
             Ok(Value::Number(to_number(&this_val)))
         }))),
     );
+    for name in ["toFixed", "toExponential", "toString", "valueOf"] {
+        if let Some(flags) = proto.borrow_mut().descriptors.get_mut(name) {
+            flags.writable = false;
+            flags.enumerable = false;
+        }
+    }
 }
 
 fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
@@ -637,5 +643,16 @@ mod tests {
         assert!(eval_num("parseFloat(new Number(Infinity))").is_infinite());
         assert!(eval_num("parseFloat(new Number(-Infinity))").is_infinite());
         assert!(eval_num("parseFloat(new Number(-Infinity))").is_sign_negative());
+    }
+
+    #[test]
+    fn number_prototype_methods_have_standard_descriptors() {
+        let value = eval("['toFixed', 'toExponential', 'toString', 'valueOf'].map(function (name) { var d = Object.getOwnPropertyDescriptor(Number.prototype, name); return [d.writable, d.enumerable, d.configurable].join('|'); }).join(';')");
+        assert_eq!(
+            value,
+            Value::String(
+                "false|false|true;false|false|true;false|false|true;false|false|true".into()
+            )
+        );
     }
 }
