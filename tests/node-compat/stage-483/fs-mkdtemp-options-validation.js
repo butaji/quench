@@ -2,7 +2,7 @@ const fs = require("fs");
 
 for (const call of [
   () => fs.mkdtempSync("/tmp/quench-node-", 123),
-  () => fs.mkdtemp("/tmp/quench-node-", 123, () => {}),
+  () => fs.mkdtemp("/tmp/quench-node-", 123, () => {})
 ]) {
   let error;
   try {

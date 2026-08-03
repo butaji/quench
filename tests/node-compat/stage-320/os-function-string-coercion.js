@@ -11,7 +11,7 @@ for (const name of [
   "arch",
   "platform",
   "version",
-  "machine",
+  "machine"
 ]) {
   assert.strictEqual(`${os[name]}`, os[name]());
 }
