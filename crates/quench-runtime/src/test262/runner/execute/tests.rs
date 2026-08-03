@@ -1121,6 +1121,17 @@ fn class_static_block_rejects_arguments_identifier() {
 }
 
 #[test]
+fn class_static_block_rejects_await_expression() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/static-init-invalid-await.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn generator_class_method_rejects_yield_parameter_binding() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

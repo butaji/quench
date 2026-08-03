@@ -333,12 +333,40 @@ fn contains_direct_super_call(function: &ast::Function<'_>) -> bool {
 impl<'a> Visit<'a> for ClassNameChecker {
     fn visit_static_block(&mut self, block: &ast::StaticBlock<'a>) {
         let mut arguments = ArgumentsFinder(false);
+        let mut await_finder = AwaitFinder(false);
+        let mut yield_finder = YieldFinder(false);
+        let mut super_call = SuperCallFinder(false);
         for statement in &block.body {
+            if let Err(error) = check_stmt(statement, true) {
+                self.error = Some(error);
+                return;
+            }
             arguments.visit_statement(statement);
+            await_finder.visit_statement(statement);
+            yield_finder.visit_statement(statement);
+            super_call.visit_statement(statement);
         }
         if arguments.0 {
             self.error = Some(JsError(
                 "SyntaxError: arguments is not allowed in a class static block".into(),
+            ));
+            return;
+        }
+        if await_finder.0 {
+            self.error = Some(JsError(
+                "SyntaxError: await is not allowed in a class static block".into(),
+            ));
+            return;
+        }
+        if yield_finder.0 {
+            self.error = Some(JsError(
+                "SyntaxError: yield is not allowed in a class static block".into(),
+            ));
+            return;
+        }
+        if super_call.0 {
+            self.error = Some(JsError(
+                "SyntaxError: super() is not allowed in a class static block".into(),
             ));
             return;
         }
