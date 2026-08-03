@@ -79,7 +79,10 @@ pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
                 &Value::String(i.to_string()),
                 None,
             )?,
-            None => get_this_array()?.get(i).cloned().unwrap_or(Value::Undefined),
+            None => get_this_array()?
+                .get(i)
+                .cloned()
+                .unwrap_or(Value::Undefined),
         };
         if crate::value::strict_eq(&value, &search) {
             return Ok(Value::Number(i as f64));

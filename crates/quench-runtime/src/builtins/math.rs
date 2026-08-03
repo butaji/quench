@@ -125,7 +125,6 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
         };
     }
 
-    math_fn!("abs", f64::abs);
     math_fn!("floor", f64::floor);
     math_fn!("ceil", f64::ceil);
     // Use custom js_round instead of f64::round for spec compliance
@@ -214,35 +213,6 @@ fn register_binary_math_fns(math: &Rc<RefCell<Object>>) {
 }
 
 fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
-    // Per spec, any NaN argument makes max/min return NaN
-    math.borrow_mut().set(
-        "max",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let mut max = f64::NEG_INFINITY;
-            for v in &args {
-                let n = to_number(v);
-                if n.is_nan() {
-                    return Ok(Value::Number(f64::NAN));
-                }
-                max = max.max(n);
-            }
-            Ok(Value::Number(max))
-        }))),
-    );
-    math.borrow_mut().set(
-        "min",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let mut min = f64::INFINITY;
-            for v in &args {
-                let n = to_number(v);
-                if n.is_nan() {
-                    return Ok(Value::Number(f64::NAN));
-                }
-                min = min.min(n);
-            }
-            Ok(Value::Number(min))
-        }))),
-    );
     math.borrow_mut().set(
         "hypot",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
@@ -390,6 +360,15 @@ mod tests {
         );
         assert_eq!(ctx.eval("Math.max(1, 2, 3)").unwrap(), Value::Number(3.0));
         assert_eq!(ctx.eval("Math.min(1, 2, 3)").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn math_max_is_self_hosted() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Math.max.name").unwrap(),
+            Value::String("MathMax".to_string())
+        );
     }
 
     #[test]

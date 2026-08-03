@@ -16,8 +16,8 @@ Math.max = function MathMax() {
   var max = -Infinity;
   for (var i = 0; i < arguments.length; i++) {
     var n = Number(arguments[i]);
+    if (n !== n) return n;
     if (n > max) max = n;
-    else if (max !== max) max = n;
   }
   return max;
 };
@@ -27,8 +27,8 @@ Math.min = function MathMin() {
   var min = Infinity;
   for (var i = 0; i < arguments.length; i++) {
     var n = Number(arguments[i]);
+    if (n !== n) return n;
     if (n < min) min = n;
-    else if (min !== min) min = n;
   }
   return min;
 };

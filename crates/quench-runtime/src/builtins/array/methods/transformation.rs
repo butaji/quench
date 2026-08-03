@@ -105,9 +105,10 @@ fn make_filter_result(receiver: &Value, elements: Vec<Value>) -> Result<Value, J
     let Some(Value::Function(function)) = constructor.borrow().get(&species.property_key()) else {
         return Ok(make_array(elements));
     };
-    let prototype = crate::eval::class::get_constructor_prototype(&Value::Function(function.clone()))?
-        .or_else(crate::builtins::get_object_prototype)
-        .ok_or_else(|| JsError::new("Array species has no prototype"))?;
+    let prototype =
+        crate::eval::class::get_constructor_prototype(&Value::Function(function.clone()))?
+            .or_else(crate::builtins::get_object_prototype)
+            .ok_or_else(|| JsError::new("Array species has no prototype"))?;
     let target = Value::Object(Rc::new(RefCell::new(Object::with_prototype(
         ObjectKind::Ordinary,
         prototype,

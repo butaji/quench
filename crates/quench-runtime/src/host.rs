@@ -40,8 +40,9 @@ where
 }
 
 /// Internal - used by Context::init_builtins
-pub(crate) fn register_builtin_functions(ctx: &mut Context) {
+pub(crate) fn register_builtin_functions(ctx: &mut Context) -> Result<(), crate::value::JsError> {
     crate::builtins::register_builtins(ctx);
+    crate::builtins::bootstrap::bootstrap_math(ctx)
 }
 
 #[cfg(test)]

@@ -393,7 +393,8 @@ pub fn reject_eval_var_lexical_conflict(
 
 /// Initialize built-in globals and functions
 pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
-    host::register_builtin_functions(ctx);
+    ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
+    host::register_builtin_functions(ctx)?;
     init_commonjs(ctx)?;
     init_es_module_cache(ctx)?;
     init_js_globals(ctx)?;
@@ -402,7 +403,6 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     register_dynamic_import(ctx);
     // Register __ops__ — the Rust↔JS bridge for spec abstract operations.
     // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__.
-    ctx.set_global("__ops__".to_string(), crate::eval::ops::make_ops_object());
     // NOTE: bootstrap_js_builtins is NOT called here. The test262 runner
     // and run-test both call register_builtins() AFTER Context::new(),
     // which provides the native implementations. The JS wrapper files in
