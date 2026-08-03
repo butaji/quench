@@ -63,11 +63,9 @@ self-hosted JavaScript layer.
 - [~] Legacy `Object.prototype.__lookupGetter__` and `__lookupSetter__` are
   now fully self-hosted over descriptor and prototype operations; their Rust
   accessor-chain implementations were removed.
-- [~] `Object.prototype.hasOwnProperty`, `isPrototypeOf`, and
-  `hasOwnProperty` and `isPrototypeOf` remain Rust-owned core bindings because their current
-  function/class own-property and prototype representation is not exposed by
-  `__ops__`; moving them would duplicate engine storage logic rather than
-  reduce the Rust core.
+- [~] Object prototype ownership and prototype-chain methods are JS-owned over
+  canonical descriptor and prototype operations; Rust retains hidden
+  compatibility helpers for core paths.
 - [~] `Object.prototype.propertyIsEnumerable` is now JS-owned over the
   canonical own-descriptor operation.
 - [~] Removed dormant duplicate Object migration bindings after self-hosting;
@@ -98,6 +96,8 @@ self-hosted JavaScript layer.
   String methods are pending migration.
 - [~] `String.raw` now uses a JS-owned `ToLength` coercion instead of a
   bitwise length conversion; its UTF-16/string primitives remain Rust-backed.
+- [~] `String.prototype.concat` now performs its coercion and argument
+  concatenation algorithm in JS; Rust retains only the hidden string primitive.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned

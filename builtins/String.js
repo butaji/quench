@@ -101,7 +101,9 @@ String.prototype.toLocaleUpperCase = String.prototype.toUpperCase;
 String.prototype.toLocaleLowerCase = String.prototype.toLowerCase;
 
 String.prototype.concat = function StringConcat() {
-  return _concat.apply(this, arguments);
+  var result = this + '';
+  for (var i = 0; i < arguments.length; i++) result += arguments[i];
+  return result;
 };
 
 String.prototype.substring = function StringSubstring(start, end) {
