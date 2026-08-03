@@ -324,3 +324,4 @@ these small fixtures isolate the currently implemented contract.
 |   325 | internal IPC error code compatibility                             | `tools/run-node-tests.sh --stage 325` |
 |   326 | util upstream-complete contract                                   | `tools/run-node-tests.sh --stage 326` |
 |   327 | util format trailing arguments and object inspection              | `tools/run-node-tests.sh --stage 327` |
+|   328 | util format detailed object inspection                            | `tools/run-node-tests.sh --stage 328` |
