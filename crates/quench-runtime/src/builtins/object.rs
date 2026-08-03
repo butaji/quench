@@ -105,7 +105,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.toString
     object_proto_rc.borrow_mut().set_builtin_method(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let tag = helpers::get_builtin_tag(&this_val);
@@ -115,7 +115,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.toLocaleString — delegates to toString per spec
     object_proto_rc.borrow_mut().set_builtin_method(
-        "toLocaleString",
+        "__toLocaleString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per ES §19.1.3.5: Return ? Invoke(this, "toString").
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
@@ -129,7 +129,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.valueOf
     object_proto_rc.borrow_mut().set_builtin_method(
-        "valueOf",
+        "__valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             // Return this for any object-like value (Object, Function, Class, etc.)
@@ -156,7 +156,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.hasOwnProperty
     object_proto_rc.borrow_mut().set_builtin_method(
-        "hasOwnProperty",
+        "__hasOwnProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_has_own_property,
         ))),
@@ -164,7 +164,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.isPrototypeOf
     object_proto_rc.borrow_mut().set_builtin_method(
-        "isPrototypeOf",
+        "__isPrototypeOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_is_prototype_of,
         ))),
@@ -172,7 +172,7 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
 
     // Object.prototype.propertyIsEnumerable
     object_proto_rc.borrow_mut().set_builtin_method(
-        "propertyIsEnumerable",
+        "__propertyIsEnumerable",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_property_is_enumerable,
         ))),
