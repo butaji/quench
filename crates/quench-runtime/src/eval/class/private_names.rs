@@ -517,8 +517,10 @@ fn scope_property_value(val: &mut PropertyValue, class_id: usize) {
 }
 
 fn scope_property_key(key: &mut PropertyKey, class_id: usize) {
-    if let PropertyKey::Ident(s) = key {
-        scope_private_name(s, class_id);
+    match key {
+        PropertyKey::Ident(s) => scope_private_name(s, class_id),
+        PropertyKey::Computed(expr) => scope_expression(expr, class_id),
+        PropertyKey::String(_) | PropertyKey::Number(_) => {}
     }
 }
 

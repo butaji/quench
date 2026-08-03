@@ -110,6 +110,19 @@ fn isolated_large_output_test_does_not_block_on_pipes() {
 }
 
 #[test]
+fn private_name_in_computed_field_throws_type_error() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join(
+        "test/language/statements/class/elements/private-field-is-visible-in-computed-properties.js",
+    );
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn isolated_dynamic_import_registers_current_module_bindings() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
         "../../tests/test262/test/language/expressions/dynamic-import/imported-self-update.js",
