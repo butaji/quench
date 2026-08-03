@@ -266,3 +266,6 @@ these small fixtures isolate the currently implemented contract.
 |   256 | `util.types` vm module namespace and key checks                 | `tools/run-node-tests.sh --stage 256` |
 |   257 | Buffer ascii byte conversion                                    | `tools/run-node-tests.sh --stage 257` |
 |   258 | Buffer detached-arraybuffer state validation                   | `tools/run-node-tests.sh --stage 258` |
+|   259 | Buffer surrogate-pair UTF-8 encoding                           | `tools/run-node-tests.sh --stage 259` |
+|   260 | Buffer `compare` offset-selection and validation               | `tools/run-node-tests.sh --stage 260` |
+|   261 | Buffer `fill` forged-length bounds check                       | `tools/run-node-tests.sh --stage 261` |
