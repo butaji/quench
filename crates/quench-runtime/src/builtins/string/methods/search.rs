@@ -1,4 +1,4 @@
-//! String search methods (indexOf, lastIndexOf, includes, startsWith, endsWith)
+//! String search methods (indexOf, lastIndexOf, match, search)
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -38,31 +38,6 @@ fn last_index_of_impl(args: &[Value], s: &str) -> Value {
     Value::Number(result)
 }
 
-fn includes_impl(args: &[Value], s: &str) -> Value {
-    let needle = args.first().map(to_js_string).unwrap_or_default();
-    let start = args.get(1).map(|v| to_number(v) as usize).unwrap_or(0);
-    let start = floor_boundary(s, start);
-    Value::Boolean(s[start..].contains(&needle))
-}
-
-fn starts_with_impl(args: &[Value], s: &str) -> Value {
-    let needle = args.first().map(to_js_string).unwrap_or_default();
-    let start = args.get(1).map(|v| to_number(v) as usize).unwrap_or(0);
-    let start = floor_boundary(s, start);
-    Value::Boolean(s[start..].starts_with(&needle))
-}
-
-fn ends_with_impl(args: &[Value], s: &str) -> Value {
-    let needle = args.first().map(to_js_string).unwrap_or_default();
-    let end_pos = args.get(1).map(|v| to_number(v) as usize);
-    let matches = if let Some(pos) = end_pos {
-        s[..floor_boundary(s, pos)].ends_with(&needle)
-    } else {
-        s.ends_with(&needle)
-    };
-    Value::Boolean(matches)
-}
-
 /// Install indexOf and lastIndexOf methods
 fn install_index_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
@@ -80,39 +55,6 @@ fn install_index_methods(proto: &Rc<RefCell<Object>>) {
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(last_index_of_impl(&args, &s)),
-                _ => Ok(Value::Undefined),
-            },
-        ))),
-    );
-}
-
-/// Install includes, startsWith, endsWith methods
-#[allow(clippy::complexity)]
-fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
-    let proto_clone = Rc::clone(proto);
-    proto_clone.borrow_mut().set(
-        "__includes",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |args| match super::this_js_string() {
-                Some(s) => Ok(includes_impl(&args, &s)),
-                _ => Ok(Value::Undefined),
-            },
-        ))),
-    );
-    proto_clone.borrow_mut().set(
-        "__startsWith",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |args| match super::this_js_string() {
-                Some(s) => Ok(starts_with_impl(&args, &s)),
-                _ => Ok(Value::Undefined),
-            },
-        ))),
-    );
-    proto_clone.borrow_mut().set(
-        "__endsWith",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            move |args| match super::this_js_string() {
-                Some(s) => Ok(ends_with_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
             },
         ))),
@@ -159,7 +101,6 @@ fn string_search(args: Vec<Value>) -> Result<Value, JsError> {
 /// Install all search methods
 pub fn install_search_methods(proto: &Rc<RefCell<Object>>) {
     install_index_methods(proto);
-    install_prefix_suffix_methods(proto);
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
         "match",
@@ -189,8 +130,6 @@ mod tests {
         let s = "abc";
         let args = vec![Value::String("b".to_string()), Value::Number(100.0)];
         assert_eq!(index_of_impl(&args, s), Value::Number(-1.0));
-        assert_eq!(includes_impl(&args, s), Value::Boolean(false));
-        assert_eq!(starts_with_impl(&args, s), Value::Boolean(false));
     }
 
     #[test]

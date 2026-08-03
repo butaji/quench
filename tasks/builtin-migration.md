@@ -105,6 +105,9 @@ self-hosted JavaScript layer.
 - [~] `String.prototype.split` now owns string-separator, empty-separator,
   limit, and result construction algorithms in JS; RegExp splitting remains
   Rust-backed.
+- [~] `String.prototype.includes`, `startsWith`, and `endsWith` now own their
+  coercion, RegExp rejection, and position algorithms in JS; Rust retains the
+  indexed search primitive.
 - [~] Removed the dormant Rust implementations for self-hosted `concat`,
   `split`, `substring`, and `slice`; Rust retains only the performance-sensitive
   `repeat` primitive in this method group.

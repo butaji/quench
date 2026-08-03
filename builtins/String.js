@@ -3,9 +3,6 @@ var _charAt = String.prototype.__charAt;
 var _charCodeAt = String.prototype.__charCodeAt;
 var _codePointAt = String.prototype.__codePointAt;
 var _at = String.prototype.__at;
-var _includes = String.prototype.__includes;
-var _startsWith = String.prototype.__startsWith;
-var _endsWith = String.prototype.__endsWith;
 var _indexOf = String.prototype.__indexOf;
 var _lastIndexOf = String.prototype.__lastIndexOf;
 var _toUpperCase = String.prototype.__toUpperCase;
@@ -50,15 +47,31 @@ String.raw = function StringRaw(template) {
 };
 
 String.prototype.includes = function StringIncludes(searchString, position) {
-  return _includes.call(this, searchString, position);
+  if (searchString instanceof RegExp) throw new TypeError('First argument must not be a RegExp');
+  var string = this + '';
+  var search = searchString + '';
+  var start = Number(position);
+  start = start !== start || start < 0 ? 0 : Math.min(Math.floor(start), string.length);
+  return _indexOf.call(string, search, start) !== -1;
 };
 
 String.prototype.startsWith = function StringStartsWith(searchString, position) {
-  return _startsWith.call(this, searchString, position);
+  if (searchString instanceof RegExp) throw new TypeError('First argument must not be a RegExp');
+  var string = this + '';
+  var search = searchString + '';
+  var start = Number(position);
+  start = start !== start || start < 0 ? 0 : Math.min(Math.floor(start), string.length);
+  return string.slice(start, start + search.length) === search;
 };
 
 String.prototype.endsWith = function StringEndsWith(searchString, endPosition) {
-  return _endsWith.call(this, searchString, endPosition);
+  if (searchString instanceof RegExp) throw new TypeError('First argument must not be a RegExp');
+  var string = this + '';
+  var search = searchString + '';
+  var end = endPosition === undefined ? string.length : Number(endPosition);
+  end = end !== end || end < 0 ? 0 : Math.min(Math.floor(end), string.length);
+  var start = Math.max(end - search.length, 0);
+  return string.slice(start, end) === search;
 };
 
 String.prototype.indexOf = function StringIndexOf(searchString, position) {
