@@ -63,3 +63,6 @@ String.prototype.trimStart = function StringTrimStart() {
 String.prototype.trimEnd = function StringTrimEnd() {
   return _String(this).replace(/\s+$/, "");
 };
+
+String.prototype.trimLeft = String.prototype.trimStart;
+String.prototype.trimRight = String.prototype.trimEnd;

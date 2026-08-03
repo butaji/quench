@@ -8,7 +8,6 @@ pub mod replace;
 pub mod search;
 pub mod slice;
 pub mod to_string;
-pub mod trim;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,7 +31,6 @@ pub fn install_string_methods(proto: &Rc<RefCell<Object>>) {
     basic::install_basic_methods(proto);
     search::install_search_methods(proto);
     case::install_case_methods(proto);
-    trim::install_trim_methods(proto);
     slice::install_slice_methods(proto);
     concat::install_split_concat_methods(proto);
     to_string::install_to_string_methods(proto);
