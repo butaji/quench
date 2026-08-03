@@ -59,13 +59,29 @@ fn same_value_zero(a: &Value, b: &Value) -> bool {
 
 /// Array.prototype.indexOf(searchElement, fromIndex?)
 pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let from_idx = resolve_from_index(args.get(1), elements.len())?;
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError::new("Array.prototype method called on non-object"))?;
+    let (length, array) = match receiver {
+        Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
+            let length = object.borrow().elements.len();
+            (length, Some(object))
+        }
+        _ => (get_this_array()?.len(), None),
+    };
+    let from_idx = resolve_from_index(args.get(1), length)?;
 
     #[allow(clippy::needless_range_loop)]
-    for i in from_idx..elements.len() {
-        if crate::value::strict_eq(&elements[i], &search) {
+    for i in from_idx..length {
+        let value = match &array {
+            Some(object) => crate::eval::member::eval_object_member_value(
+                object,
+                &Value::String(i.to_string()),
+                None,
+            )?,
+            None => get_this_array()?.get(i).cloned().unwrap_or(Value::Undefined),
+        };
+        if crate::value::strict_eq(&value, &search) {
             return Ok(Value::Number(i as f64));
         }
     }
@@ -250,6 +266,15 @@ mod tests {
     fn includes_rejects_symbol_from_index() {
         let mut ctx = create_test_context();
         assert!(ctx.eval("[7].includes(7, Symbol('1'))").is_err());
+    }
+
+    #[test]
+    fn index_of_propagates_first_accessor_error() {
+        let mut ctx = create_test_context();
+        assert!(ctx
+            .eval("var accessed=false; var a=[]; Object.defineProperty(a,'0',{get:function(){throw new TypeError},configurable:true}); Object.defineProperty(a,'1',{get:function(){accessed=true;return true},configurable:true}); try { a.indexOf(true); false } catch(e) { !accessed }")
+            .unwrap()
+            == crate::value::Value::Boolean(true));
     }
 
     #[test]
