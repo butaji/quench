@@ -423,3 +423,6 @@ the harness environment supports symbolic-link fixtures.
 
 Stage 162 formalized invalid target argument validation for `fs.symlinkSync`,
 asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
+
+Stage 163 formalized invalid symlink-type validation, asserting Node's
+`ERR_INVALID_ARG_VALUE` diagnostic.
