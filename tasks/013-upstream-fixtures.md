@@ -971,3 +971,6 @@ constructor and wrapping that mismatch in an `AssertionError`.
 
 Stage 349 formalized generated assertion metadata, including `ERR_ASSERTION`
 and the `generatedMessage` marker.
+
+Stage 350 formalized `assert.doesNotThrow` failure handling, including the
+assertion error code and operation metadata.
