@@ -188,3 +188,4 @@ these small fixtures isolate the currently implemented contract.
 |   178 | callback `realpath` contract and errors                    | `tools/run-node-tests.sh --stage 178` |
 |   179 | path parse/format namespaces and validation                | `tools/run-node-tests.sh --stage 179` |
 |   180 | Win32 path parse/format and basename behavior              | `tools/run-node-tests.sh --stage 180` |
+|   181 | `util.format` primitive and placeholder behavior           | `tools/run-node-tests.sh --stage 181` |
