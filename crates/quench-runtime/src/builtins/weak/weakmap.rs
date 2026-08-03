@@ -12,7 +12,7 @@ pub fn weakmap_entries_key(this: &Rc<RefCell<Object>>) -> String {
 
 /// WeakMap.set implementation.
 pub fn weakmap_set_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let value = args.get(1).cloned().unwrap_or(Value::Undefined);
 
@@ -70,7 +70,7 @@ pub fn weakmap_set_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// WeakMap.get implementation.
 pub fn weakmap_get_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let key = args.first().cloned().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &this {
@@ -92,7 +92,7 @@ pub fn weakmap_get_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// WeakMap.has implementation.
 pub fn weakmap_has_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let key = args.first().cloned().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &this {
@@ -115,7 +115,7 @@ pub fn weakmap_has_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// WeakMap.delete implementation.
 pub fn weakmap_delete_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let key = args.first().cloned().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &this {
@@ -142,4 +142,20 @@ pub fn weakmap_delete_impl(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
     Ok(Value::Boolean(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+
+    #[test]
+    fn weakmap_subclass_uses_constructed_receiver_state() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class WM extends WeakMap {} let map = new WM(); let key = {}; [map.has(key), map.set(key, 42) === map, map.size, map.has(key), map.get(key)];",
+            )
+            .unwrap();
+        assert_eq!(result.to_string(), "[false,true,1,true,42]");
+    }
 }

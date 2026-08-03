@@ -16,7 +16,7 @@ pub fn weakset_entries_key(this: &Rc<RefCell<Object>>) -> String {
 
 /// WeakSet.add implementation.
 pub fn weakset_add_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let value = args.first().cloned().unwrap_or(Value::Undefined);
 
     if !matches!(value, Value::Object(_)) {
@@ -50,7 +50,7 @@ pub fn weakset_add_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// WeakSet.has implementation.
 pub fn weakset_has_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let value = args.first().cloned().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &this {
@@ -70,7 +70,7 @@ pub fn weakset_has_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// WeakSet.delete implementation.
 pub fn weakset_delete_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let this = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
+    let this = crate::builtins::get_this_value().unwrap_or(Value::Undefined);
     let value = args.first().cloned().unwrap_or(Value::Undefined);
 
     if let Value::Object(o) = &this {
@@ -145,5 +145,21 @@ pub fn extract_iterable(src: &Value) -> Result<Vec<Value>, JsError> {
             }
         }
         _ => Ok(Vec::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Context;
+
+    #[test]
+    fn weakset_subclass_uses_constructed_receiver_state() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class WS extends WeakSet {} let set = new WS(); let value = {}; [set.has(value), set.add(value) === set, set.has(value)];",
+            )
+            .unwrap();
+        assert_eq!(result.to_string(), "[false,true,true]");
     }
 }
