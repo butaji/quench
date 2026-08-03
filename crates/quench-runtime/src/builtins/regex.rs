@@ -141,6 +141,10 @@ mod tests {
             eval("[RegExp.escape.name, RegExp.escape.length].join('|')"),
             Value::String("escape|1".to_string())
         );
+        assert_eq!(
+            eval("(function() { const d = Object.getOwnPropertyDescriptor(RegExp, 'escape'); return [d.writable, d.enumerable, d.configurable].join('|'); })()"),
+            Value::String("true|false|true".to_string())
+        );
     }
 
     #[test]
@@ -285,9 +289,16 @@ pub fn register_regexp(ctx: &mut Context) {
             configurable: true,
         },
     );
-    regexp_obj_rc
-        .borrow_mut()
-        .set("escape", Value::NativeFunction(Rc::new(escape_fn)));
+    regexp_obj_rc.borrow_mut().define(
+        "escape",
+        Value::NativeFunction(Rc::new(escape_fn)),
+        PropertyFlags {
+            value: None,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        },
+    );
 
     // Set up prototype chain
     regexp_proto.borrow_mut().set("constructor", regexp_fn);
