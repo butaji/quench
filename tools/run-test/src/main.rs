@@ -24,6 +24,7 @@ use quench_runtime::test262::harness::try_inject_harness;
 use quench_runtime::test262::host::{capture_thrown_diagnostics, TestFailure};
 use quench_runtime::test262::metadata::Test262Metadata;
 use quench_runtime::test262::runner::execute::load_fixture_modules;
+use quench_runtime::test262::runner::execute::register_current_module_bindings;
 use quench_runtime::test262::runner::execute::register_current_script_module;
 use quench_runtime::test262::runner::execute::ASYNC_DONE_PRELUDE;
 use quench_runtime::test262::HarnessLoader;
@@ -197,6 +198,9 @@ fn main() -> ExitCode {
                     eprintln!("{}: script module registration failed: {}", label, e);
                     return 4;
                 }
+            } else if let Err(e) = register_current_module_bindings(&mut ctx, code) {
+                eprintln!("{}: module binding registration failed: {}", label, e);
+                return 4;
             }
         }
 

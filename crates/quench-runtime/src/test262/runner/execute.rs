@@ -517,7 +517,10 @@ fn run_async_script_with_path(
     async_done_probe(&mut ctx)
 }
 
-fn register_current_module_bindings(ctx: &mut crate::Context, source: &str) -> Result<(), String> {
+pub fn register_current_module_bindings(
+    ctx: &mut crate::Context,
+    source: &str,
+) -> Result<(), String> {
     let (_, _, exports, _, _) = fixture_exports_from_source(usize::MAX, source)?;
     let mut bindings = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
     for name in exports.named {
