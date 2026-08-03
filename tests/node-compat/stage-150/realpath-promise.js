@@ -1,11 +1,12 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-150-${process.pid}`;
   fs.writeFileSync(path, "x");
-  if ((await fs.promises.realpath(path)) !== fs.realpathSync(path))
-    throw new Error("promise realpath mismatch");
+  assert.strictEqual(await fs.promises.realpath(path), fs.realpathSync(path));
   const result = await fs.promises.realpath(path, { encoding: "buffer" });
-  if (!Buffer.isBuffer(result) || result.toString() !== fs.realpathSync(path))
-    throw new Error("promise realpath buffer mismatch");
+  assert.strictEqual(Buffer.isBuffer(result), true);
+  assert.strictEqual(result.toString(), fs.realpathSync(path));
+  fs.rmSync(path);
 })().then(() => undefined);
