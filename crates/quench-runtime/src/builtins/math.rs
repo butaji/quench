@@ -136,26 +136,26 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math_fn!("__sqrt", f64::sqrt);
-    math_fn!("sin", f64::sin);
-    math_fn!("cos", f64::cos);
-    math_fn!("tan", f64::tan);
-    math_fn!("asin", f64::asin);
-    math_fn!("acos", f64::acos);
-    math_fn!("atan", f64::atan);
-    math_fn!("log", f64::ln);
-    math_fn!("log10", f64::log10);
-    math_fn!("log2", f64::log2);
-    math_fn!("exp", f64::exp);
-    math_fn!("log1p", f64::ln_1p);
+    math_fn!("__sin", f64::sin);
+    math_fn!("__cos", f64::cos);
+    math_fn!("__tan", f64::tan);
+    math_fn!("__asin", f64::asin);
+    math_fn!("__acos", f64::acos);
+    math_fn!("__atan", f64::atan);
+    math_fn!("__log", f64::ln);
+    math_fn!("__log10", f64::log10);
+    math_fn!("__log2", f64::log2);
+    math_fn!("__exp", f64::exp);
+    math_fn!("__log1p", f64::ln_1p);
     math_fn!("__trunc", f64::trunc);
-    math_fn!("cbrt", f64::cbrt);
-    math_fn!("expm1", f64::exp_m1);
-    math_fn!("cosh", f64::cosh);
-    math_fn!("sinh", f64::sinh);
-    math_fn!("tanh", f64::tanh);
-    math_fn!("acosh", f64::acosh);
-    math_fn!("asinh", f64::asinh);
-    math_fn!("atanh", f64::atanh);
+    math_fn!("__cbrt", f64::cbrt);
+    math_fn!("__expm1", f64::exp_m1);
+    math_fn!("__cosh", f64::cosh);
+    math_fn!("__sinh", f64::sinh);
+    math_fn!("__tanh", f64::tanh);
+    math_fn!("__acosh", f64::acosh);
+    math_fn!("__asinh", f64::asinh);
+    math_fn!("__atanh", f64::atanh);
     // Math.sign preserves 0/-0 and NaN, so f64::signum alone won't do
     math.borrow_mut().set(
         "__sign",
@@ -170,14 +170,14 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math.borrow_mut().set(
-        "fround",
+        "__fround",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let x = args.first().map(to_number).unwrap_or(0.0);
             Ok(Value::Number((x as f32) as f64))
         }))),
     );
     math.borrow_mut().set(
-        "clz32",
+        "__clz32",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let x = args.first().map(to_number).unwrap_or(0.0);
             Ok(Value::Number((x as i64 as u32).leading_zeros() as f64))
@@ -187,7 +187,7 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
 
 fn register_binary_math_fns(math: &Rc<RefCell<Object>>) {
     math.borrow_mut().set(
-        "atan2",
+        "__atan2",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let y = args.first().map(to_number).unwrap_or(0.0);
             let x = args.get(1).map(to_number).unwrap_or(0.0);
@@ -203,7 +203,7 @@ fn register_binary_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math.borrow_mut().set(
-        "imul",
+        "__imul",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let a = args.first().map(to_number).unwrap_or(0.0) as i64 as u32 as i32;
             let b = args.get(1).map(to_number).unwrap_or(0.0) as i64 as u32 as i32;
@@ -214,7 +214,7 @@ fn register_binary_math_fns(math: &Rc<RefCell<Object>>) {
 
 fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
     math.borrow_mut().set(
-        "hypot",
+        "__hypot",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let result = args
                 .iter()
@@ -224,7 +224,7 @@ fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math.borrow_mut().set(
-        "random",
+        "__random",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             Ok(Value::Number(rand_simple()))
         }))),

@@ -73,3 +73,29 @@ Math.pow = function MathPow(x, y) {
 Math.sqrt = function MathSqrt(x) {
   return _nativeSqrt(Number(x));
 };
+
+Math.sin = function(x) { return Math.__sin(Number(x)); };
+Math.cos = function(x) { return Math.__cos(Number(x)); };
+Math.tan = function(x) { return Math.__tan(Number(x)); };
+Math.asin = function(x) { return Math.__asin(Number(x)); };
+Math.acos = function(x) { return Math.__acos(Number(x)); };
+Math.atan = function(x) { return Math.__atan(Number(x)); };
+Math.log = function(x) { return Math.__log(Number(x)); };
+Math.log10 = function(x) { return Math.__log10(Number(x)); };
+Math.log2 = function(x) { return Math.__log2(Number(x)); };
+Math.exp = function(x) { return Math.__exp(Number(x)); };
+Math.log1p = function(x) { return Math.__log1p(Number(x)); };
+Math.cbrt = function(x) { return Math.__cbrt(Number(x)); };
+Math.expm1 = function(x) { return Math.__expm1(Number(x)); };
+Math.cosh = function(x) { return Math.__cosh(Number(x)); };
+Math.sinh = function(x) { return Math.__sinh(Number(x)); };
+Math.tanh = function(x) { return Math.__tanh(Number(x)); };
+Math.acosh = function(x) { return Math.__acosh(Number(x)); };
+Math.asinh = function(x) { return Math.__asinh(Number(x)); };
+Math.atanh = function(x) { return Math.__atanh(Number(x)); };
+Math.atan2 = function(y, x) { return Math.__atan2(Number(y), Number(x)); };
+Math.imul = function(x, y) { return Math.__imul(Number(x), Number(y)); };
+Math.fround = function(x) { return Math.__fround(Number(x)); };
+Math.clz32 = function(x) { return Math.__clz32(Number(x)); };
+Math.hypot = function() { return Math.__hypot.apply(Math, arguments); };
+Math.random = function() { return Math.__random(); };
