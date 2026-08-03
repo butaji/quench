@@ -465,3 +465,6 @@ batch count, and cleanup.
 
 Stage 176 formalized promise file-handle `readFile`, asserting decoded file
 contents and the `AbortError` from an already-aborted signal.
+
+Stage 177 formalized promise file-handle `write`, asserting string writes and
+`ERR_INVALID_ARG_TYPE` for invalid data values.
