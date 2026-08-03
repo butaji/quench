@@ -39,10 +39,10 @@ fn ensure_callable(callback: &Value) -> Result<(), JsError> {
 // ============================================================================
 
 /// Resolve a fromIndex argument: negative values count back from the end.
-fn resolve_from_index(arg: Option<&Value>, len: usize) -> usize {
-    match arg {
+fn resolve_from_index(arg: Option<&Value>, len: usize) -> Result<usize, JsError> {
+    Ok(match arg {
         Some(v) => {
-            let n = to_number(v);
+            let n = crate::value::try_to_number(v)?;
             if n < 0.0 {
                 ((len as f64 + n).max(0.0)) as usize
             } else {
@@ -50,7 +50,7 @@ fn resolve_from_index(arg: Option<&Value>, len: usize) -> usize {
             }
         }
         None => 0,
-    }
+    })
 }
 
 fn same_value_zero(a: &Value, b: &Value) -> bool {
@@ -61,7 +61,7 @@ fn same_value_zero(a: &Value, b: &Value) -> bool {
 pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let from_idx = resolve_from_index(args.get(1), elements.len());
+    let from_idx = resolve_from_index(args.get(1), elements.len())?;
 
     #[allow(clippy::needless_range_loop)]
     for i in from_idx..elements.len() {
@@ -137,7 +137,7 @@ pub fn proto_last_index_of(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_includes(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let from_idx = resolve_from_index(args.get(1), elements.len());
+    let from_idx = resolve_from_index(args.get(1), elements.len())?;
 
     #[allow(clippy::needless_range_loop)]
     for i in from_idx..elements.len() {
@@ -244,6 +244,12 @@ mod tests {
         let mut ctx = create_test_context();
         let result = ctx.eval("[NaN].includes(NaN)");
         assert_eq!(result.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn includes_rejects_symbol_from_index() {
+        let mut ctx = create_test_context();
+        assert!(ctx.eval("[7].includes(7, Symbol('1'))").is_err());
     }
 
     #[test]
