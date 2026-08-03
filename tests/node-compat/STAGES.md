@@ -210,3 +210,4 @@ these small fixtures isolate the currently implemented contract.
 |   200 | Buffer fill strings, encodings, and numeric values             | `tools/run-node-tests.sh --stage 200` |
 |   201 | Buffer index search, offsets, and missing values              | `tools/run-node-tests.sh --stage 201` |
 |   202 | Buffer JSON shape and round-trip restoration                  | `tools/run-node-tests.sh --stage 202` |
+|   203 | Buffer equality, typed arrays, and validation                 | `tools/run-node-tests.sh --stage 203` |
