@@ -1,4 +1,24 @@
 var _String = String;
+var _charAt = String.prototype.__charAt;
+var _charCodeAt = String.prototype.__charCodeAt;
+var _codePointAt = String.prototype.__codePointAt;
+var _at = String.prototype.__at;
+
+String.prototype.charAt = function StringCharAt(position) {
+  return _charAt.call(this, position);
+};
+
+String.prototype.charCodeAt = function StringCharCodeAt(position) {
+  return _charCodeAt.call(this, position);
+};
+
+String.prototype.codePointAt = function StringCodePointAt(position) {
+  return _codePointAt.call(this, position);
+};
+
+String.prototype.at = function StringAt(index) {
+  return _at.call(this, index);
+};
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   var string = _String(this);

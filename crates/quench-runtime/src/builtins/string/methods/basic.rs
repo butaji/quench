@@ -53,11 +53,10 @@ fn code_point_at_impl(args: &[Value], s: &str) -> Value {
     Value::Number(code_point as f64)
 }
 
-/// Install basic string methods (charAt, charCodeAt)
 pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "charAt",
+        "__charAt",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(char_at_impl(&args, &s)),
@@ -66,7 +65,7 @@ pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
         ))),
     );
     proto_clone.borrow_mut().set(
-        "charCodeAt",
+        "__charCodeAt",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(char_code_at_impl(&args, &s)),
@@ -75,7 +74,7 @@ pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
         ))),
     );
     proto_clone.borrow_mut().set(
-        "codePointAt",
+        "__codePointAt",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(code_point_at_impl(&args, &s)),

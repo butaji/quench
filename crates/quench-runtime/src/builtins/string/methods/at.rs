@@ -5,10 +5,9 @@ use std::rc::Rc;
 
 use crate::value::{to_number, JsError, NativeFunction, Object, Value};
 
-/// Install String.prototype.at method
 pub fn install_at_method(proto: &Rc<RefCell<Object>>) {
     proto.borrow_mut().set(
-        "at",
+        "__at",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_at))),
     );
 }
