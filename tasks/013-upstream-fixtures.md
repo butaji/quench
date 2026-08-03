@@ -372,3 +372,6 @@ permission bits, `EBADF`, and cleanup.
 
 Stage 145 formalized promise file-handle `writeFile` and `readFile`, asserting
 round-trip contents and cleanup after closing the handle.
+
+Stage 146 formalized promise file-handle `appendFile`, asserting appended
+contents after closing the handle and cleaning up the temporary file.
