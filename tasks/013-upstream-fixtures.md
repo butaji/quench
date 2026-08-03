@@ -642,3 +642,12 @@ encode/decode round trips.
 
 Stage 234 formalized `internal/errors` code classes, asserting instantiable
 `ERR_OUT_OF_RANGE` as a RangeError.
+
+Stage 235 formalized Buffer `fill` invalid hex validation, asserting
+`ERR_INVALID_ARG_VALUE` for malformed hex fill strings.
+
+Stage 236 formalized Buffer `fill` null coercion, asserting `null` fills
+with zero bytes.
+
+Stage 237 formalized Buffer `fill` range argument validation, asserting
+`ERR_INVALID_ARG_TYPE` for non-numeric offset/length.
