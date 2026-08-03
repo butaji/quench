@@ -322,3 +322,74 @@ Retrospective (additions):
   disconnect path: `cluster.emit("disconnect", worker)` first, then
   `worker.emit("disconnect")`, then the eventual `cluster.emit("exit")`
   before `worker.emit("exit")`.
+
+## Status — cluster exit-on-process-exit / isAlive / pid tracking slice (done)
+
+Follow-on slice landed. Changes:
+
+- `cluster.fork` worker re-eval: after the entry source re-evaluation
+  completes, schedule a microtask that decides the worker's exit code
+  at execution time (not at sync post-eval time), so a worker branch
+  that calls `process.exit(code)` from a queued microtask (e.g. an
+  `http.Server.once('listening', () => process.exit(N))` handler) is
+  reflected in `process.exitCode` by the time the exit decision is
+  made. The decision microtask also fires `cluster.emit('disconnect',
+  worker)` and `worker.emit('disconnect')` before the `exit` events,
+  matching the Node contract that natural worker exits (not just
+  `worker.disconnect()`) emit `disconnect` before `exit`.
+- `NodeClusterWorker` tracks `process.pid` as `1000 + id` and
+  registers it in `globalThis.__quench_node_pids` (a `Set`). The host
+  process pid is seeded into the set at bootstrap. `worker._markDead()`
+  removes the pid when the worker transitions to `dead`.
+- `common.isAlive(pid)` returns `__quench_node_pids.has(pid)`,
+  matching the Node `common.isAlive` contract for the in-process
+  simulator (real `kill(pid, 0)` semantics are not needed since the
+  pid is either tracked or not).
+- `http.Server.listen` now emits `'listening'` on the server via a
+  queued microtask (matching Node's async `'listening'` event timing),
+  so listeners registered after `listen()` is called still catch the
+  event. The cluster listening hook (`__nodeClusterListening`) is still
+  called synchronously so the cluster `listening` event fires before
+  any state mutation triggered by the worker listener (e.g.
+  `worker.kill()` from a `worker.on('listening', …)` handler).
+
+Upstream fixtures newly passing:
+- `test-cluster-worker-exit.js` (the worker's `process.exit(42)`
+  propagates `exitCode = 42, signalCode = null` to the primary, and
+  `disconnect` fires before `exit`).
+
+Full focused-stage suite: **509/509 pass**.
+
+Upstream fixtures still failing (tracked as next sub-slices):
+- `test-cluster-worker-kill.js` — needs `worker.kill('SIGKILL')` to
+  NOT emit `disconnect` (already correct) and to set
+  `process.exitCode = null, signalCode = 'SIGKILL'`. Likely a
+  `common.isAlive` timing or `exitedAfterDisconnect = false` assertion
+  difference.
+- `test-cluster-basic.js`, `test-cluster-disconnect.js` — need real
+  TCP (`net.connect` + read/write).
+- `test-cluster-setup-primary.js`, `test-cluster-setup-primary-emit.js`,
+  `test-cluster-fork.js`, `test-cluster-isprimary.js` — need
+  `cluster.setupPrimary` arg variants and `cluster.fork` env/stdio
+  options.
+
+Retrospective (additions):
+- The in-process simulator's worker re-eval completes synchronously
+  with respect to the eval call, but the worker branch may queue
+  microtasks (e.g. `http.Server.listen`'s queued `'listening'`) that
+  themselves call `process.exit(N)`. The exit code decision must
+  therefore be deferred to a microtask scheduled AFTER the eval
+  returns but BEFORE the exit events fire, so the queued microtasks
+  can mutate `process.exitCode` first.
+- `common.mustCall` registrations in the worker branch are appended
+  to the shared `__nodeCallChecks` array, so the mustCall index used
+  in error messages ("Callback 0: expected 1 calls, got 0") refers to
+  the registration order, not the branch. The first `mustCall` in
+  `test-cluster-worker-exit.js` is the primary's `cluster.on('disconnect',
+  common.mustCall(…))`, not the worker's `server.once('listening',
+  common.mustCall(…))`.
+- `http.Server.listen` must emit `'listening'` on the server
+  asynchronously (microtask), but the cluster listening hook must run
+  synchronously so the cluster `state` transitions to `'listening'`
+  before the worker's `worker.on('listening')` handler runs. This
+  split (sync hook, async server event) preserves both contracts.
