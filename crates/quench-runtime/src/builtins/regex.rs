@@ -670,10 +670,11 @@ fn regexp_match_all_matcher(source: &str, flags: &str) -> Object {
 
 fn regexp_match_all_last_index(value: &Value) -> Result<f64, JsError> {
     if let Value::Object(object) = value {
-        let method = object
-            .borrow()
-            .get("valueOf")
-            .ok_or_else(|| JsError::new("TypeError: missing valueOf".to_string()))?;
+        let method = crate::eval::member::eval_object_member_value(
+            object,
+            &Value::String("valueOf".to_string()),
+            current_regex_env().as_ref(),
+        )?;
         let primitive = crate::eval::function::call_value_with_this(
             method,
             Vec::new(),
