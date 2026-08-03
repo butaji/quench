@@ -384,3 +384,6 @@ Stage 148 formalized UTF-8 and Buffer encoding options for synchronous
 
 Stage 149 formalized the upstream common fixtures helper, asserting that its
 `fixturesDir` points to the Node test fixture tree.
+
+Stage 150 formalized promise `fs.realpath` with string and Buffer encodings,
+asserting equivalent results and cleaning up the temporary file.

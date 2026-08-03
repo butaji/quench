@@ -157,3 +157,4 @@ these small fixtures isolate the currently implemented contract.
 |   147 | native synchronous `fs.realpath`                          | `tools/run-node-tests.sh --stage 147` |
 |   148 | encoded synchronous `fs.realpath` results                 | `tools/run-node-tests.sh --stage 148` |
 |   149 | upstream common fixtures directory                        | `tools/run-node-tests.sh --stage 149` |
+|   150 | promise `fs.realpath` and Buffer encoding                 | `tools/run-node-tests.sh --stage 150` |
