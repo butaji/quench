@@ -882,3 +882,6 @@ separator normalization and TMPDIR/TMP/TEMP fallback ordering.
 
 Stage 319 formalized POSIX `os.tmpdir` slash preservation, asserting backslash
 and root slash values are retained as POSIX environment paths.
+
+Stage 320 formalized string-returning OS functions, asserting template-string
+coercion matches each function's direct result.
