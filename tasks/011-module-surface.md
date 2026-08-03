@@ -263,3 +263,8 @@ documenting the unsupported reporter integration instead of exposing a
 generic loader failure.
 Stage 558 gives `node:sqlite` an explicit unknown-built-in error until a
 SQLite host/runtime dependency is intentionally added.
+The full focused-suite audit after stage 558 found six failures caused by
+override ordering: OS helpers replaced existing environment-aware methods,
+`fs.constants` omitted access flags, and `sys` returned a fresh util clone.
+The follow-up preserves existing OS behavior, adds `F_OK`/access flags, and
+caches a shared util object; all six stages now pass before the next slice.
