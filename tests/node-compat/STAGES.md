@@ -119,3 +119,4 @@ these small fixtures isolate the currently implemented contract.
 |   109 | promise-based symlink and readlink                        | `tools/run-node-tests.sh --stage 109` |
 |   110 | sync, callback, and promise `fs.unlink`                   | `tools/run-node-tests.sh --stage 110` |
 |   111 | sync, callback, and promise `fs.link`                     | `tools/run-node-tests.sh --stage 111` |
+|   112 | options-object `fs.read` sync/callback forms              | `tools/run-node-tests.sh --stage 112` |
