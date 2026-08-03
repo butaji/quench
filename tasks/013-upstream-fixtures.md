@@ -497,3 +497,6 @@ including large values.
 
 Stage 186 formalized `%s` formatting for objects, asserting abbreviated nested
 arrays and custom `toString` conversion.
+
+Stage 187 formalized Buffer hexadecimal writes and decoding, asserting write
+length, zero-filled remainder, and truncation at invalid hex characters.
