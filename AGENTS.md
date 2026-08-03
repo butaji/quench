@@ -44,7 +44,7 @@ crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 ```bash
 cargo build -p quench-runtime
-cargo test -p quench-runtime
+cargo nextest run -p quench-runtime
 cargo nextest run -p quench-runtime                 # fast unit-test suite
 cargo fmt -p quench-runtime
 cargo clippy -p quench-runtime --all-targets
@@ -56,11 +56,11 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test
 bash tools/run-each.sh                        # process-isolated (survives crashes)
 
 # Run the configured stage (the digest output is the coverage SSOT)
-cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 # Specific stage
-TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 # All stages in order, stop on first failure
-ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+ALL_STAGES=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
 122 stages. No checkpoints. No skips. `src/test262/runner.rs::STAGES` mirrors

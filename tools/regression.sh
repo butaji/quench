@@ -12,11 +12,11 @@ cargo clippy -p quench-runtime --all-targets 2>&1
 
 echo ""
 echo "=== 3. Lib tests ==="
-cargo test -p quench-runtime --lib 2>&1
+cargo nextest run -p quench-runtime --lib 2>&1
 
 echo ""
 echo "=== 4. Bootstrap regression tests ==="
-cargo test -p quench-runtime --lib -- "bootstrap::tests" 2>&1
+cargo nextest run -p quench-runtime --lib -E 'test(bootstrap::tests::*)' 2>&1
 
 echo ""
 echo "=== 5. Stage 29 (labeled — should be 23/24) ==="

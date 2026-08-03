@@ -70,7 +70,7 @@ if [[ "$PUSH" -eq 1 ]]; then
 fi
 
 if [[ -n "$UNIT_FILTER" ]]; then
-    cargo test -p quench-runtime "$UNIT_FILTER" -- --exact
+    cargo nextest run -p quench-runtime -E "test(\"${UNIT_FILTER}\")"
     echo "[ship-milestone] unit preflight passed: $UNIT_FILTER"
     echo
 fi

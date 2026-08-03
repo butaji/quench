@@ -12,7 +12,7 @@ and `tasks/refactor-plan.md` for the active queue.
 
 ```bash
 cargo build -p quench-runtime
-cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 # Optional faster unit and harness execution (install cargo-nextest first)
 cargo nextest run -p quench-runtime
 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
@@ -31,9 +31,9 @@ the next is touched. Only `test/intl402` (ECMA-402, separate suite) and
 `test/staging` (pre-draft) are out of scope.
 
 ```bash
-cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture     # current stage
-TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture   # specific
-ALL_STAGES=1      cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture   # stop on first fail
+cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture     # current stage
+TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture   # specific
+ALL_STAGES=1      cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture   # stop on first fail
 ```
 
 On 100% the runner prints `ALL STAGES COMPLETE — Stage N: X/X`. Strict

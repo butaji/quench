@@ -41,7 +41,7 @@ completion from an old command log or from this document.
 ## Verification
 
 ```bash
-cargo test -p quench-runtime
+cargo nextest run -p quench-runtime
 cargo fmt -p quench-runtime -- --check
 cargo clippy -p quench-runtime --all-targets
 ```
