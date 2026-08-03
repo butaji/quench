@@ -191,7 +191,9 @@ self-hosted JavaScript layer.
   `Symbol.dispose`/`Symbol.asyncDispose`; async completion uses Promise
   composition and needs later conformance polish.
 - [~] Date `toISOString` and `toJSON` now contain their calendar formatting and
-  finite-time algorithms in JS over Rust UTC accessors and timestamp storage.
+  finite-time algorithms in JS over Rust UTC accessors and timestamp storage;
+  `toJSON` calls the intrinsic JS ISO algorithm rather than an overridden
+  receiver property.
 - [~] `FinalizationRegistry` remains pending on native GC observation,
   finalizer callbacks, and cleanup-job scheduling; these are Rust engine
   integration rather than JS-definable storage.

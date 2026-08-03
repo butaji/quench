@@ -38,7 +38,7 @@ Date.prototype.toJSON = function DateToJSON(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Date.prototype.toJSON called on null or undefined");
   var primitive = Number(this);
   if (primitive !== primitive || primitive === Infinity || primitive === -Infinity) return null;
-  return this.toISOString();
+  return Date.prototype.toISOString.call(this);
 };
 
 Date.prototype.valueOf = function DateValueOf() {
