@@ -129,3 +129,4 @@ these small fixtures isolate the currently implemented contract.
 |   119 | `fs.writev` invalid-buffer validation                     | `tools/run-node-tests.sh --stage 119` |
 |   120 | promise-based vectored `fs.readv`                         | `tools/run-node-tests.sh --stage 120` |
 |   121 | promise-based vectored `fs.writev`                        | `tools/run-node-tests.sh --stage 121` |
+|   122 | options-object callback `fs.write`                        | `tools/run-node-tests.sh --stage 122` |
