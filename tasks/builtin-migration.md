@@ -93,6 +93,8 @@ self-hosted JavaScript layer.
   non-iterable array-like inputs now use indexed mapping with already-fulfilled
   input Promises unwrapped. Mapping callbacks preserve the supplied `thisArg`.
   Pending thenables and async-iterator resumption remain outstanding.
+- [~] Array input mapping now advances sequentially through the Promise
+  scheduler, awaiting each mapping result before invoking the next callback.
 - [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
   locale argument forwarding, and element-call validation; locale formatting
   primitives remain owned by the relevant value types.

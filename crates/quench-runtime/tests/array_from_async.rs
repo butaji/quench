@@ -13,6 +13,20 @@ fn array_from_async_awaits_mapping_promises() {
 }
 
 #[test]
+fn array_from_async_awaits_each_mapping_result_before_next_call() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result; var calls=[]; function map(v){calls.push('map'+v); return {then:function(resolve){calls.push('then'+v); resolve(v*2);}};} \
+         Array.fromAsync([1,2,3], map).then(v=>{result=v.join(',')+'|'+calls.join(',');});",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result"),
+        Ok(Value::String("2,4,6|map1,then1,map2,then2,map3,then3".to_string()))
+    );
+}
+
+#[test]
 fn array_from_async_observes_array_mutation_during_iteration() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var items=[1,2,3]; var result; var p=Array.fromAsync(items); items[0]=7; items[1]=8; p.then(v=>{result=v.join(',');});").unwrap();

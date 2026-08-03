@@ -75,6 +75,11 @@ pub fn register_array(ctx: &mut Context) {
 
     // Set static methods on the constructor
     let mut array_from_async = NativeFunction::new(|args| {
+        if args.get(1).is_some()
+            && matches!(args.first(), Some(Value::Object(items)) if items.borrow().kind == ObjectKind::Array)
+        {
+            return array_from_async_mapped(&args);
+        }
         if args.get(1).is_none() {
             if let Some(Value::Object(items)) = args.first() {
                 if items.borrow().kind == ObjectKind::Array {
@@ -189,6 +194,121 @@ fn array_contains_promise(array: &Value) -> bool {
     array.borrow().elements.iter().any(
         |value| matches!(value, Value::Object(object) if object.borrow().promise_data.is_some()),
     )
+}
+
+struct AsyncMapState {
+    items: Value,
+    map_fn: Value,
+    this_arg: Value,
+    values: Vec<Value>,
+    index: usize,
+    result: Rc<RefCell<Object>>,
+}
+
+fn array_from_async_mapped(args: &[Value]) -> Result<Value, JsError> {
+    let Value::Object(items) = args.first().cloned().unwrap_or(Value::Undefined) else {
+        return Err(JsError::from("Array.fromAsync requires an object"));
+    };
+    if items.borrow().kind != ObjectKind::Array {
+        return Err(JsError::from("not an array"));
+    }
+    let map_fn = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !map_fn.is_callable() {
+        return Err(JsError::from("Array.fromAsync map function is not callable"));
+    }
+    let result = crate::builtins::promise::create_pending_promise();
+    let state = Rc::new(RefCell::new(AsyncMapState {
+        items: Value::Object(Rc::clone(&items)),
+        map_fn,
+        this_arg: args.get(2).cloned().unwrap_or(Value::Undefined),
+        values: Vec::new(),
+        index: 0,
+        result: Rc::clone(&result),
+    }));
+    array_from_async_map_step(state);
+    Ok(Value::Object(result))
+}
+
+fn array_from_async_map_step(state: Rc<RefCell<AsyncMapState>>) {
+    let (items, map_fn, this_arg, index, done) = {
+        let state_ref = state.borrow();
+        let Value::Object(items) = &state_ref.items else {
+            return;
+        };
+        let done = state_ref.index >= items.borrow().elements.len();
+        (
+            state_ref.items.clone(),
+            state_ref.map_fn.clone(),
+            state_ref.this_arg.clone(),
+            state_ref.index,
+            done,
+        )
+    };
+    if done {
+        let values = state.borrow().values.clone();
+        crate::builtins::promise::settle_resolve(
+            &state.borrow().result,
+            Value::Object(Rc::new(RefCell::new(Object::new_array_from(values)))),
+        );
+        return;
+    }
+    let value = match &items {
+        Value::Object(items) => items.borrow().elements[index].clone(),
+        _ => return,
+    };
+    let mapped = match crate::eval::call_value_with_this(
+        map_fn,
+        vec![value, Value::Number(index as f64), items.clone()],
+        this_arg,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let reason = crate::value::get_thrown_value()
+                .unwrap_or_else(|| Value::String(error.0));
+            crate::builtins::promise::settle_reject(&state.borrow().result, reason);
+            return;
+        }
+    };
+    let promise = match crate::builtins::promise::promise_resolve_impl_static(
+        vec![mapped],
+        crate::builtins::promise::get_promise_proto(),
+    ) {
+        Ok(Value::Object(promise)) => promise,
+        Ok(_) | Err(_) => return,
+    };
+    let then = match crate::eval::member::eval_object_member(&promise, "then", None) {
+        Ok(then) => then,
+        Err(error) => {
+            crate::builtins::promise::settle_reject(
+                &state.borrow().result,
+                Value::String(error.0),
+            );
+            return;
+        }
+    };
+    let fulfilled_state = Rc::clone(&state);
+    let rejected_state = Rc::clone(&state);
+    let fulfilled = Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        fulfilled_state
+            .borrow_mut()
+            .values
+            .push(args.first().cloned().unwrap_or(Value::Undefined));
+        fulfilled_state.borrow_mut().index += 1;
+        array_from_async_map_step(Rc::clone(&fulfilled_state));
+        Ok(Value::Undefined)
+    })));
+    let rejected = Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
+        crate::builtins::promise::settle_reject(
+            &rejected_state.borrow().result,
+            args.first().cloned().unwrap_or(Value::Undefined),
+        );
+        Ok(Value::Undefined)
+    })));
+    let _ = crate::eval::call_value_with_this(
+        then,
+        vec![fulfilled, rejected],
+        Value::Object(promise),
+    );
 }
 
 fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
