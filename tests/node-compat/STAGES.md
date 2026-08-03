@@ -302,3 +302,4 @@ these small fixtures isolate the currently implemented contract.
 |   303 | POSIX/Win32 path upstream-complete normalization                | `tools/run-node-tests.sh --stage 303` |
 |   304 | Win32 path literal normalization and basename                  | `tools/run-node-tests.sh --stage 304` |
 |   305 | Win32 path slash-root parsing                                   | `tools/run-node-tests.sh --stage 305` |
+|   306 | POSIX path trailing-separator parsing                          | `tools/run-node-tests.sh --stage 306` |
