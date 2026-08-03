@@ -1011,6 +1011,9 @@ error metadata.
 Stage 362 formalized Buffer binary sharing, subarray/slice mutation behavior,
 copy isolation, and concatenation.
 
+Stage 363 formalized binary Buffer round-trips through synchronous filesystem
+write and read APIs.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
