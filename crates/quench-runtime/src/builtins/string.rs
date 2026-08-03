@@ -274,6 +274,15 @@ mod tests {
     }
 
     #[test]
+    fn string_prototype_methods_are_non_enumerable() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval("[Object.getOwnPropertyDescriptor(String.prototype, 'startsWith').enumerable, Object.getOwnPropertyDescriptor(String.prototype, 'trimStart').enumerable].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("false|false".into()));
+    }
+
+    #[test]
     fn test_string_subclass_no_args() {
         let mut ctx = Context::new().unwrap();
         let r = ctx

@@ -88,6 +88,9 @@ fn create_string_prototype() -> Rc<RefCell<Object>> {
         string_proto_rc.borrow_mut().prototype = Some(object_proto);
     }
     crate::builtins::string::methods::install_string_methods(&string_proto_rc);
+    for flags in string_proto_rc.borrow_mut().descriptors.values_mut() {
+        flags.enumerable = false;
+    }
     string_proto_rc
         .borrow_mut()
         .set("length", Value::Number(0.0));
