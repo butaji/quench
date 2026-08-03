@@ -3,6 +3,21 @@ var _charAt = String.prototype.__charAt;
 var _charCodeAt = String.prototype.__charCodeAt;
 var _codePointAt = String.prototype.__codePointAt;
 var _at = String.prototype.__at;
+var _includes = String.prototype.__includes;
+var _startsWith = String.prototype.__startsWith;
+var _endsWith = String.prototype.__endsWith;
+
+String.prototype.includes = function StringIncludes(searchString, position) {
+  return _includes.call(this, searchString, position);
+};
+
+String.prototype.startsWith = function StringStartsWith(searchString, position) {
+  return _startsWith.call(this, searchString, position);
+};
+
+String.prototype.endsWith = function StringEndsWith(searchString, endPosition) {
+  return _endsWith.call(this, searchString, endPosition);
+};
 
 String.prototype.charAt = function StringCharAt(position) {
   return _charAt.call(this, position);
@@ -18,27 +33,6 @@ String.prototype.codePointAt = function StringCodePointAt(position) {
 
 String.prototype.at = function StringAt(index) {
   return _at.call(this, index);
-};
-
-String.prototype.includes = function StringIncludes(searchString, position) {
-  var string = _String(this);
-  var search = _String(searchString);
-  var start = position === undefined ? 0 : Math.max(position, 0);
-  return string.indexOf(search, start) !== -1;
-};
-
-String.prototype.startsWith = function StringStartsWith(searchString, position) {
-  var string = _String(this);
-  var search = _String(searchString);
-  var start = position === undefined ? 0 : Math.max(position, 0);
-  return string.slice(start, start + search.length) === search;
-};
-
-String.prototype.endsWith = function StringEndsWith(searchString, endPosition) {
-  var string = _String(this);
-  var search = _String(searchString);
-  var end = endPosition === undefined ? string.length : Math.min(endPosition, string.length);
-  return string.slice(end - search.length, end) === search;
 };
 
 String.prototype.repeat = function StringRepeat(count) {

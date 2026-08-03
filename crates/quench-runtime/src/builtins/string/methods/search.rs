@@ -91,7 +91,7 @@ fn install_index_methods(proto: &Rc<RefCell<Object>>) {
 fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "includes",
+        "__includes",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(includes_impl(&args, &s)),
@@ -100,7 +100,7 @@ fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
         ))),
     );
     proto_clone.borrow_mut().set(
-        "startsWith",
+        "__startsWith",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(starts_with_impl(&args, &s)),
@@ -109,7 +109,7 @@ fn install_prefix_suffix_methods(proto: &Rc<RefCell<Object>>) {
         ))),
     );
     proto_clone.borrow_mut().set(
-        "endsWith",
+        "__endsWith",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(ends_with_impl(&args, &s)),
