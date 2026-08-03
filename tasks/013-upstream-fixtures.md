@@ -456,3 +456,6 @@ transformed text, `AbortError`, and cleanup.
 
 Stage 173 formalized invalid file-handle pull options, asserting Node's
 argument-type/range diagnostics and cleanup.
+
+Stage 174 formalized `stream/iter` and `zlib/iter` pull transforms, asserting
+compressed/decompressed round-trip text and cleanup.
