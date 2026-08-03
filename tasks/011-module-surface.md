@@ -95,8 +95,8 @@ fixture cluster, and the next concrete slice.
   `process.setUncaughtExceptionCaptureCallback`, `process.chdir` (real
   via host), `process.kill`, `process.exit` (real via host), real
   `process.uptime`, real `process.memoryUsage`, real `process.cpuUsage`.
-- `punycode` — register as re-export of `url.domainToASCII` /
-  `url.domainToUnicode`.
+- `punycode` — stage 528 complete: Unicode domain conversion and UCS-2
+  helpers use a compact JavaScript Bootstring implementation.
 - `querystring` — done.
 - `readline` / `readline/promises` — partial. Need: `Interface` class,
   `createInterface`, `emitKeypressEvents`, real keypress decoding via
@@ -188,3 +188,6 @@ focused module uses a small queue/controller implementation in JavaScript;
 no Rust host state is required for the initial contract.
 Stage 527 reuses the same reader contract and centralizes collection in one
 helper, keeping byte conversion behavior consistent across all consumers.
+Stage 528 confirmed rquickjs URL hostname normalization does not provide
+Punycode conversion, so the module uses the RFC 3492 algorithm directly and
+keeps the implementation independent of a Rust or external runtime hook.
