@@ -221,3 +221,5 @@ variants, preventing debugger APIs from falling through to a generic loader
 error on this target.
 Stage 540 adds `util.parseArgs` for boolean/string options, negated flags,
 positionals, repeated values, and token reporting without expanding Rust.
+Stage 541 adds `util.styleText` with common ANSI styles, nested style arrays,
+and color-disable options while keeping formatting entirely in JavaScript.
