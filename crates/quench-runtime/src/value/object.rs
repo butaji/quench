@@ -149,9 +149,13 @@ impl Object {
         {
             return true;
         }
-        as_array_index(key)
-            .map(|i| i < self.elements.len() && !self.holes.contains(&i))
-            .unwrap_or(false)
+        let Some(index) = as_array_index(key) else {
+            return false;
+        };
+        if matches!(self.data, ObjData::Idx { .. }) {
+            return self.get_own(key).is_some();
+        }
+        index < self.elements.len() && !self.holes.contains(&index)
     }
 
     /// Delete own property.

@@ -417,15 +417,14 @@ pub fn make_live_index_iterator(arr_rc: Rc<RefCell<Object>>, mode: LiveIndexIter
         }
         let current_idx = { *index.borrow() };
         let borrowed = arr.borrow();
-        if borrowed.typed_array_is_out_of_bounds() {
-            let (_, js_err) =
-                crate::value::create_js_error_with_type("TypedArray is out of bounds", "TypeError");
-            return Err(js_err);
-        }
-        let len = borrowed
-            .get("length")
-            .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
-            .unwrap_or(borrowed.elements.len());
+        let len = if borrowed.typed_array_is_out_of_bounds() {
+            0
+        } else {
+            borrowed
+                .get("length")
+                .map(|v| crate::value::to_uint32(crate::value::to_number(&v)) as usize)
+                .unwrap_or(borrowed.elements.len())
+        };
         if current_idx < len {
             let key = current_idx.to_string();
             let value = match mode {

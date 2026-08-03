@@ -147,14 +147,6 @@ fn eval_object_member_inner(
                         || prop_name == "byteLength"
                         || as_array_index(prop_name).is_some())
                 {
-                    // For element access on an out-of-bounds TA (buffer was shrunk),
-                    // the spec requires a TypeError even for indices that would be
-                    // within the current buffer if the TA's fixed bounds are exceeded.
-                    if as_array_index(prop_name).is_some() && obj.typed_array_is_out_of_bounds() {
-                        let (_, js_err) =
-                            create_js_error_with_type("TypedArray is out of bounds", "TypeError");
-                        return Err(js_err);
-                    }
                     if let Some(val) = obj.get_own(prop_name) {
                         return Ok(val);
                     }
