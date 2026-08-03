@@ -91,6 +91,9 @@ self-hosted JavaScript layer.
 - [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
   hidden Rust keyed-storage primitives; Rust retains keyed storage and
   iterator state.
+- [~] Map and Set `keys`, `values`, `entries`, and `@@iterator` remain Rust
+  public bindings because they are direct lazy-iterator entry points; a JS
+  proxy would add LOC without moving an ECMAScript algorithm.
 - [~] `Map.groupBy` is implemented in the self-hosted JS layer over Map
   storage primitives.
 - [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage
