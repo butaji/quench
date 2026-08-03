@@ -1,10 +1,9 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
-  const handle = await fs.promises.open(
-    `/tmp/quench-node-stage-173-${process.pid}`,
-    "w+"
-  );
+  const path = `/tmp/quench-node-stage-173-${process.pid}`;
+  const handle = await fs.promises.open(path, "w+");
   for (const options of [
     { autoClose: "no" },
     { signal: {} },
@@ -14,11 +13,14 @@ const fs = require("fs");
   ]) {
     try {
       handle.pull(options);
-      throw new Error("accepted invalid pull option");
+      assert.fail("accepted invalid pull option");
     } catch (error) {
-      if (!["ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE"].includes(error.code))
-        throw error;
+      assert.strictEqual(
+        ["ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE"].includes(error.code),
+        true
+      );
     }
   }
   await handle.close();
+  fs.rmSync(path);
 })();
