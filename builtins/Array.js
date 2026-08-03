@@ -14,6 +14,13 @@ function ToLength(value) {
   return Math.min(Math.floor(n), 9007199254740991);
 }
 
+function ToIntegerOrInfinity(value) {
+  var n = Number(value);
+  if (n !== n || n === 0) return 0;
+  if (n === Infinity || n === -Infinity) return n;
+  return n < 0 ? Math.ceil(n) : Math.floor(n);
+}
+
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
@@ -255,9 +262,9 @@ Array.prototype.slice = function ArraySlice(start, end) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.slice called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var relativeStart = start === undefined ? 0 : start;
+  var relativeStart = start === undefined ? 0 : ToIntegerOrInfinity(start);
   var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
-  var relativeEnd = end === undefined ? len : end;
+  var relativeEnd = end === undefined ? len : ToIntegerOrInfinity(end);
   var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
   var count = Math.max(final - k, 0);
   var A = new Array(count);

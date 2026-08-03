@@ -468,6 +468,19 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_slice_coerces_indices_once() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var calls = 0; var index = { valueOf: function() { calls++; return 1; } }; \
+                 var result = [0, 1, 2].slice(index, 3); \
+                 result[0] === 1 && result[1] === 2 && calls === 1",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

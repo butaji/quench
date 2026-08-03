@@ -96,6 +96,8 @@ self-hosted JavaScript layer.
   helper throughout `builtins/Array.js`. This is an ECMAScript algorithm, not
   a Rust storage primitive; depth/index/delete-count coercions remain their
   separate abstract operations.
+- [~] Added the shared JS `ToIntegerOrInfinity` operation and routed
+  `Array.prototype.slice` index coercion through it.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`, `padEnd`, all trim variants, the public UTF-16 accessors
   (`charAt`, `charCodeAt`, `codePointAt`, `at`), `raw`, `isWellFormed`, and
