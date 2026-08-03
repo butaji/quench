@@ -100,6 +100,8 @@ self-hosted JavaScript layer.
   helper throughout `builtins/Array.js`. This is an ECMAScript algorithm, not
   a Rust storage primitive; depth/index/delete-count coercions remain their
   separate abstract operations.
+- [~] `Array.prototype.copyWithin` now clamps target, start, and end positions
+  to the receiver length in the self-hosted JS algorithm.
 - [~] Added the shared JS `ToIntegerOrInfinity` operation and routed
   `Array.prototype.slice` index coercion through it.
 - [~] Routed Array `at`, `includes`, `indexOf`, and `lastIndexOf` positions

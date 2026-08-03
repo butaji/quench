@@ -442,10 +442,10 @@ Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
   var len = ToLength(O.length);
   var relativeTarget = ToIntegerOrInfinity(target);
   var relativeStart = ToIntegerOrInfinity(start);
-  var to = relativeTarget >= 0 ? relativeTarget : Math.max(len + relativeTarget, 0);
-  var from = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
+  var to = relativeTarget >= 0 ? Math.min(relativeTarget, len) : Math.max(len + relativeTarget, 0);
+  var from = relativeStart >= 0 ? Math.min(relativeStart, len) : Math.max(len + relativeStart, 0);
   var relativeEnd = end === undefined ? len : ToIntegerOrInfinity(end);
-  var final = relativeEnd >= 0 ? relativeEnd : Math.max(len + relativeEnd, 0);
+  var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
   var count = Math.min(final - from, len - to);
   var direction = 1;
   if (from < to && to < from + count) { from += count - 1; to += count - 1; direction = -1; }
