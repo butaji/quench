@@ -188,6 +188,8 @@ self-hosted JavaScript layer.
 - [x] Remove duplicate Rust registrations and dormant JS wrappers.
 - [~] `Object.prototype.hasOwnProperty` is JS-owned over canonical own
   descriptors; Rust keeps only a hidden compatibility helper for core paths.
+- [~] `Object.prototype.isPrototypeOf` is JS-owned over the canonical
+  `GetPrototypeOf` operation; Rust keeps only a hidden compatibility helper.
 - [~] Migration-pass audit: remaining public Rust bindings are limited to
   host timers, URI/numeric conversion primitives, crate-backed JSON, raw
   DataView/TypedArray memory, lazy keyed iterators, regex execution, date
