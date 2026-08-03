@@ -136,3 +136,4 @@ these small fixtures isolate the currently implemented contract.
 |   126 | typed-array `fs.writeFileSync` input                      | `tools/run-node-tests.sh --stage 126` |
 |   127 | DataView `fs.writeFileSync` input                         | `tools/run-node-tests.sh --stage 127` |
 |   128 | upstream common ArrayBuffer view helper                   | `tools/run-node-tests.sh --stage 128` |
+|   129 | `fs.writeFileSync` encoding and append options            | `tools/run-node-tests.sh --stage 129` |
