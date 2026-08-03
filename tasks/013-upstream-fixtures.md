@@ -843,3 +843,6 @@ directory, basename, extension, and name fields.
 
 Stage 306 formalized POSIX parsing of trailing separators and `./`, asserting
 the normalized root, directory, basename, extension, and name fields.
+
+Stage 307 formalized POSIX `dirname` behavior for root paths, trailing
+separators, and relative paths.
