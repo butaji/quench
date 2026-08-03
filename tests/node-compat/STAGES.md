@@ -202,3 +202,4 @@ these small fixtures isolate the currently implemented contract.
 |   192 | Buffer variable-width unsigned integer operations           | `tools/run-node-tests.sh --stage 192` |
 |   193 | Buffer Uint/UInt method aliases                              | `tools/run-node-tests.sh --stage 193` |
 |   194 | Buffer variable-width read validation                        | `tools/run-node-tests.sh --stage 194` |
+|   195 | Buffer signed integer read/write operations                  | `tools/run-node-tests.sh --stage 195` |
