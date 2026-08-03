@@ -27,11 +27,11 @@ self-hosted JavaScript layer.
   wrappers; retain their crate-backed and raw-buffer primitives in Rust.
 - [ ] Error, Function, Proxy, and remaining constructors/prototypes.
 - [ ] Remove duplicate Rust registrations and dormant JS wrappers.
-- [ ] Enable migrated bootstrap for normal contexts and verify all stages with
-  zero skips.
+- [x] Route normal context initialization through the self-hosted bootstrap
+  path. Conformance polish follows the migration pass.
 
 ## First increment
 
-Existing JS files are evaluated only by bootstrap unit tests. Migrate one
-family at a time behind that boundary, measure its Test262 stage, and delete
-duplicate Rust methods only after the JS path is green.
+Existing JS files are now routed through normal context initialization. The
+migration pass moves family implementations and deletes duplicate Rust
+registrations; conformance polish and stage verification follow that pass.

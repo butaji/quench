@@ -42,7 +42,7 @@ where
 /// Internal - used by Context::init_builtins
 pub(crate) fn register_builtin_functions(ctx: &mut Context) -> Result<(), crate::value::JsError> {
     crate::builtins::register_builtins(ctx);
-    crate::builtins::bootstrap::bootstrap_math(ctx)
+    crate::builtins::bootstrap::bootstrap_js_builtins(ctx)
 }
 
 #[cfg(test)]

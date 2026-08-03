@@ -27,8 +27,8 @@ minimum-LOC goal.
 Quench — JavaScript runtime targeting **100% test262 conformance**,
 staged to 100% per stage, with the **minimum possible LOC** as a
 **small Rust core** plus a **self-hosted JS builtins layer** *(currently
-dormant: `bootstrap_js_builtins` runs only under unit tests — decision
-R22)*. Single
+active migration: `bootstrap_js_builtins` runs during normal context
+initialization — decision R22)*. Single
 crate: `crates/quench-runtime`. Never modify `tests/test262`.
 
 - `docs/architecture.md` — the Rust↔JS split, `__ops__` contract, bootstrap order.
@@ -143,7 +143,7 @@ not per-PR diffs. Two compounding levers:
    algorithm on top of `__ops__` is authored in JS (`builtins/*.js`). JS
    is ~1/3 the LOC of equivalent Rust; that is the entire reason the
    split exists. *(Current state: builtins are Rust-first; the JS layer
-   is dormant — decision R22.)*
+   is active during the R22 migration.)*
 2. **One canonical spec-op path.** `ToPrimitive`, `ToPropertyKey`,
    `ToObject`, `IteratorNext`, `IteratorClose`,
    `CreateDataPropertyOrThrow`, `OrdinaryHasProperty`, `IsCallable`,

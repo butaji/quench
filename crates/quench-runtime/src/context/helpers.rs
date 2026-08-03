@@ -403,12 +403,6 @@ pub fn init_builtins(ctx: &mut Context) -> Result<(), JsError> {
     register_dynamic_import(ctx);
     // Register __ops__ — the Rust↔JS bridge for spec abstract operations.
     // JS builtins destructure this at parse time: const { IsCallable, ToObject } = __ops__.
-    // NOTE: bootstrap_js_builtins is NOT called here. The test262 runner
-    // and run-test both call register_builtins() AFTER Context::new(),
-    // which provides the native implementations. The JS wrapper files in
-    // builtins/*.js use _native*.call()/_native*.apply() patterns that
-    // cause infinite recursion (see ArrayBuffer.js/WeakRef.js). They are
-    // only loaded by tests that explicitly call bootstrap_js_builtins.
     Ok(())
 }
 

@@ -278,15 +278,6 @@ pub fn bootstrap_js_builtins(ctx: &mut Context) -> Result<(), JsError> {
     Ok(())
 }
 
-pub fn bootstrap_math(ctx: &mut Context) -> Result<(), JsError> {
-    ctx.eval(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../builtins/Math.js"
-    )))
-    .map(|_| ())
-    .map_err(|e| JsError(format!("bootstrap Math: {}", e)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
