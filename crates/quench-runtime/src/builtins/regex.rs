@@ -109,6 +109,11 @@ mod tests {
         assert!(is_global_or_sticky);
         assert!(is_sticky);
     }
+
+    #[test]
+    fn regexp_escape_escapes_first_alphanumeric_and_hyphen() {
+        assert_eq!(regexp_escape("a-b"), r#"\x61\x2Db"#);
+    }
 }
 
 use std::cell::RefCell;
@@ -223,6 +228,10 @@ pub fn register_regexp(ctx: &mut Context) {
     regexp_obj_rc
         .borrow_mut()
         .set("lastIndex", Value::Number(0.0));
+    regexp_obj_rc.borrow_mut().set(
+        "escape",
+        Value::NativeFunction(Rc::new(NativeFunction::new(regexp_escape_impl))),
+    );
 
     // Set up prototype chain
     regexp_proto.borrow_mut().set("constructor", regexp_fn);
@@ -308,6 +317,38 @@ fn regexp_constructor_impl(
         obj.prototype = Some(Rc::clone(regexp_proto));
         Ok(Value::Object(Rc::new(RefCell::new(obj))))
     }
+}
+
+fn regexp_escape_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let input = args.first().map(to_js_string).unwrap_or_default();
+    Ok(Value::String(regexp_escape(&input)))
+}
+
+fn regexp_escape(input: &str) -> String {
+    let mut escaped = String::new();
+    for (index, ch) in input.chars().enumerate() {
+        if index == 0 && ch.is_ascii_alphanumeric() {
+            escaped.push_str(&format!(r#"\x{:02X}"#, ch as u32));
+        } else if "^$\\.*+?()[]{}|/".contains(ch) {
+            escaped.push('\\');
+            escaped.push(ch);
+        } else if ch.is_ascii_punctuation() {
+            escaped.push_str(&format!(r#"\x{:02X}"#, ch as u32));
+        } else if ch == '\n' {
+            escaped.push_str(r#"\n"#);
+        } else if ch == '\r' {
+            escaped.push_str(r#"\r"#);
+        } else if ch == '\t' {
+            escaped.push_str(r#"\t"#);
+        } else if ch == '\u{000B}' {
+            escaped.push_str(r#"\v"#);
+        } else if ch == '\u{000C}' {
+            escaped.push_str(r#"\f"#);
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped
 }
 
 /// Read the flags and lastIndex of a RegExp object, and whether it is
