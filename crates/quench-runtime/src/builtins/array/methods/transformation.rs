@@ -195,7 +195,7 @@ pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
         };
         result.push(mapped);
     }
-    Ok(make_array(result))
+    make_filter_result(&receiver, result)
 }
 
 /// Array.prototype.filter(callback, thisArg?)
@@ -529,6 +529,14 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert!(ctx
             .eval("var A=function(){Object.preventExtensions(this)}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=A; a.flatMap(function(){return [1]})")
+            .is_err());
+    }
+
+    #[test]
+    fn map_throws_when_species_result_is_non_extensible() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var A=function(){Object.preventExtensions(this)}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=A; a.map(function(){return 1})")
             .is_err());
     }
 
