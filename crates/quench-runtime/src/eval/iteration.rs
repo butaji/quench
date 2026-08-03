@@ -741,6 +741,21 @@ fn run_for_of_iteration(
                 suspend_init = true;
                 return Ok(Value::Undefined);
             }
+            if let Some(control_flow) = take_control_flow() {
+                match control_flow {
+                    ControlFlow::Return(value)
+                    | ControlFlow::Yield(value)
+                    | ControlFlow::YieldDelegate(value) => {
+                        set_control_flow(ControlFlow::Return(value));
+                        return Ok(Value::Undefined);
+                    }
+                    ControlFlow::Throw(value) => {
+                        crate::value::set_thrown_value(value);
+                        return Err(JsError("Generator threw".to_string()));
+                    }
+                    other => set_control_flow(other),
+                }
+            }
         }
         if body_only && !resume_init {
             if let Some(tail) = body_tail {

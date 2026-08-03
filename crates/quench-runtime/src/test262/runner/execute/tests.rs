@@ -1312,3 +1312,19 @@ fn for_loop_increment_closure_captures_iteration_binding() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn for_of_destructuring_closes_iterator_on_rest_reference_completion() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for relative in [
+        "tests/test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
+        "tests/test262/test/language/statements/for-of/dstr/array-rest-iter-rtrn-close.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join(relative);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
