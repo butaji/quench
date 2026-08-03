@@ -11,7 +11,7 @@ commands, not copied status or milestones.
 cargo nextest run -p quench-runtime
 
 # Fast Test262 harness smoke/run (the staged test is one harness test)
-cargo nextest run -p quench-runtime --test test262 --profile test262 --run-ignored all
+cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
 # Run one test
 cargo run --bin run-test -- tests/test262/path/to/test.js
@@ -26,7 +26,7 @@ TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --
 TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
 
 # Fast digest invocation; output remains the Test262 SSOT
-TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 --run-ignored all
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
 # Survive a process crash or stack overflow
 TEST262_STAGE=N bash tools/run-each.sh

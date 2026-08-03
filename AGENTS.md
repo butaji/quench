@@ -52,7 +52,7 @@ cargo clippy -p quench-runtime --all-targets
 # Diagnostic tools (see docs/tools.md)
 cargo run --bin run-test -- <test.js>        # single-test runner with metadata
 TEST262_DIGEST=1 TEST262_STAGE=N cargo test   # collect ALL failures, grouped by error
-TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 --run-ignored all
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 bash tools/run-each.sh                        # process-isolated (survives crashes)
 
 # Run the configured stage (the digest output is the coverage SSOT)

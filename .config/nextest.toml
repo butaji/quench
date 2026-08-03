@@ -7,3 +7,4 @@ failure-output = "immediate-final"
 test-threads = 1
 status-level = "fail"
 failure-output = "immediate-final"
+fail-fast = false
