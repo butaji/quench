@@ -242,3 +242,6 @@ these small fixtures isolate the currently implemented contract.
 |   232 | Buffer `isAscii`/`isUtf8` predicates                           | `tools/run-node-tests.sh --stage 232` |
 |   233 | `util` TextEncoder/TextDecoder exports                         | `tools/run-node-tests.sh --stage 233` |
 |   234 | `internal/errors` code classes                                 | `tools/run-node-tests.sh --stage 234` |
+|   235 | Buffer `fill` invalid hex validation                           | `tools/run-node-tests.sh --stage 235` |
+|   236 | Buffer `fill` null coercion                                    | `tools/run-node-tests.sh --stage 236` |
+|   237 | Buffer `fill` range argument validation                        | `tools/run-node-tests.sh --stage 237` |
