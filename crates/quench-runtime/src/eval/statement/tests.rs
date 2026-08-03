@@ -625,7 +625,7 @@ mod var_declarations_misc {
         let result = ctx.eval(
             "var obj = { test262id: 1 }; \
              with (obj) { var test262id = delete obj.test262id; } \
-             if (obj.test262id !== undefined || test262id !== true) { throw new Error('binding mismatch'); }",
+             if (obj.test262id !== true || test262id !== undefined) { throw new Error('binding mismatch'); }",
         );
         assert!(result.is_ok(), "{result:?}");
     }

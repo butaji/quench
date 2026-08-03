@@ -1195,6 +1195,13 @@ fn eval_var_decl(
     if !existing_var && !already_declared {
         env.borrow_mut().declare_var(name.to_string(), *kind);
     }
+    let var_target = if *kind == VarKind::Var {
+        env.borrow()
+            .binding_scope(name)
+            .filter(|scope| scope.borrow().is_with_environment())
+    } else {
+        None
+    };
     let mut value = if let Some(expr) = init {
         if let Expression::Class(class) = expr {
             let inferred_name = if class.name.is_none() {
@@ -1249,10 +1256,17 @@ fn eval_var_decl(
 
     if init.is_some() {
         if *kind == VarKind::Var {
-            let target = env.borrow().binding_scope(name);
+            let target = var_target.or_else(|| env.borrow().binding_scope(name));
             if let Some(scope) = target {
                 let mut scope = scope.borrow_mut();
-                if !scope.set(name.to_string(), value.clone(), strict) {
+                let set = if scope.is_with_environment() {
+                    scope
+                        .set_object_property_after_get(name, value.clone(), strict)
+                        .is_some_and(|set| set)
+                } else {
+                    scope.set(name.to_string(), value.clone(), strict)
+                };
+                if !set {
                     scope.define(name.to_string(), value.clone());
                 }
             } else {
