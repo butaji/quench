@@ -2616,6 +2616,20 @@ class NodeEventEmitter {
   }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
+globalThis.process._events = {};
+for (const method of [
+  "on",
+  "addListener",
+  "once",
+  "emit",
+  "removeListener",
+  "off",
+  "removeAllListeners",
+  "listeners",
+  "listenerCount",
+]) {
+  globalThis.process[method] = NodeEventEmitter.prototype[method];
+}
 globalThis.__nodeEventEmitter.once = (emitter, event) =>
   new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));
 globalThis.__nodeEventEmitter.on = async function* (emitter, event) {
