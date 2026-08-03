@@ -339,3 +339,6 @@ changes through an open descriptor and cleaning up the temporary file.
 
 Stage 134 formalized callback `fs.truncate` length validation, asserting the
 Node error code for each invalid type and cleaning up the temporary file.
+
+Stage 135 formalized synchronous `fs.truncate` fractional-length validation,
+asserting `ERR_OUT_OF_RANGE` and cleaning up the temporary file.
