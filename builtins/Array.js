@@ -11,6 +11,12 @@ Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
 };
 
+Array.of = function ArrayOf() {
+  var result = new Array(arguments.length);
+  for (var i = 0; i < arguments.length; i++) result[i] = arguments[i];
+  return result;
+};
+
 // Array.prototype.forEach (ES2025 §23.1.3.17)
 Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.forEach called on null or undefined");

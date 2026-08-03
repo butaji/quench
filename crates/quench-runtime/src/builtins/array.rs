@@ -94,17 +94,6 @@ pub fn register_array(ctx: &mut Context) {
         "fromAsync",
         Value::NativeFunction(Rc::new(array_from_async)),
     );
-    array_constructor.set_static_method(
-        "of",
-        Value::NativeFunction(Rc::new({
-            let mut array_of = NativeFunction::new(|args| {
-                let arr = Object::new_array_from(args.to_vec());
-                Ok(Value::Object(Rc::new(RefCell::new(arr))))
-            });
-            define_method_length(&mut array_of, 0.0);
-            array_of
-        })),
-    );
 
     // Set Array.prototype.constructor = the NativeConstructor (non-enumerable)
     let array_constructor_rc = Rc::new(array_constructor.clone());
