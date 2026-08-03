@@ -108,8 +108,8 @@ fixture cluster, and the next concrete slice.
 - `stream/iter` — gated by `--experimental-stream-iter`. Done.
 - `stream/promises` — stage 525 complete: promise-based `pipeline` and
   `finished` reuse the existing evented stream contracts.
-- `stream/web` — register WHATWG `ReadableStream`/`WritableStream`/
-  `TransformStream` polyfills; goal is to pass `test-stream-web*` fixtures.
+- `stream/web` — stage 526 registers minimal WHATWG
+  `ReadableStream`/`WritableStream`/`TransformStream` primitives.
 - `string_decoder` — stage 519 complete: UTF-8 `StringDecoder.write()` and
   `end()` preserve incomplete multibyte sequences across Buffer chunks.
 - `sys` — alias to `util`.
@@ -181,3 +181,6 @@ intrinsics, with no host callback or Rust surface expansion.
 Stage 525 confirms promise stream orchestration can remain in JavaScript:
 `pipeline`/`finished` subscribe to the existing `pipe`, `end`, and `error`
 events without expanding the Rust host.
+Stage 526 found rquickjs does not provide WHATWG stream globals, so the
+focused module uses a small queue/controller implementation in JavaScript;
+no Rust host state is required for the initial contract.
