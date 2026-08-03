@@ -30,3 +30,6 @@ tools/run-node-tests.sh tests/node/test/parallel/test-name.js
 
 Do not compress the polyfills. Leave `tests/node` as the Node.js submodule and
 do not modify unrelated external projects.
+
+Do not add or restore GitHub Actions or other GitHub CI configuration. Keep
+verification local through the repository tooling.

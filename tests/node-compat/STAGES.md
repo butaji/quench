@@ -354,3 +354,4 @@ these small fixtures isolate the currently implemented contract.
 |   355 | assert Error object reference mismatch                            | `tools/run-node-tests.sh --stage 355` |
 |   356 | assert.throws custom message formatting                           | `tools/run-node-tests.sh --stage 356` |
 |   357 | Buffer numeric read methods                                       | `tools/run-node-tests.sh --stage 357` |
+|   358 | Buffer write range validation                                     | `tools/run-node-tests.sh --stage 358` |
