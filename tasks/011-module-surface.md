@@ -256,3 +256,5 @@ boundary.
 Stage 555 registers `https` with explicit TLS-unsupported errors for request,
 get, and server operations until the planned OpenSSL/rustls host boundary is
 implemented.
+Stage 556 registers `http2` with explicit unsupported errors and stable
+session constants; real HTTP/2 remains a future host networking slice.
