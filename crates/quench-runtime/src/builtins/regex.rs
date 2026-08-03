@@ -289,8 +289,8 @@ mod tests {
     fn regexp_match_all_uses_species_matcher() {
         let mut ctx = crate::Context::new().unwrap();
         assert_eq!(
-            ctx.eval("var r = /\\d/u; r.constructor = {[Symbol.species]: function() { return /\\w/g; }}; r[Symbol.matchAll]('a*b').next().value[0]"),
-            Ok(Value::String("a".to_string()))
+            ctx.eval("var r = /\\d/u; r.constructor = {[Symbol.species]: function() { return /\\w/g; }}; var i = r[Symbol.matchAll]('a*b'); [i.next().value[0], i.next().done].join('|')"),
+            Ok(Value::String("a|true".to_string()))
         );
     }
 
@@ -616,6 +616,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let state = Rc::new(RefCell::new(
         regexp_match_all_last_index(&last_index)?.max(0.0) as usize,
     ));
+    let global = flags.contains('g');
     let iterator = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     let next_state = Rc::clone(&state);
     let next = NativeFunction::new(move |_args| {
@@ -626,7 +627,11 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
             done.set("done", Value::Boolean(true));
             return Ok(Value::Object(Rc::new(RefCell::new(done))));
         };
-        *next_state.borrow_mut() = matched.end().max(matched.start() + 1);
+        *next_state.borrow_mut() = if global {
+            matched.end().max(matched.start() + 1)
+        } else {
+            input.len()
+        };
         let mut next_result = Object::new(ObjectKind::Ordinary);
         next_result.set("value", build_exec_result(&input, &matched, &regex));
         next_result.set("done", Value::Boolean(false));
