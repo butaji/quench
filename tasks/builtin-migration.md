@@ -64,10 +64,12 @@ self-hosted JavaScript layer.
   now fully self-hosted over descriptor and prototype operations; their Rust
   accessor-chain implementations were removed.
 - [~] `Object.prototype.hasOwnProperty`, `isPrototypeOf`, and
-  `propertyIsEnumerable` remain Rust-owned core bindings because their current
+  `hasOwnProperty` and `isPrototypeOf` remain Rust-owned core bindings because their current
   function/class own-property and prototype representation is not exposed by
   `__ops__`; moving them would duplicate engine storage logic rather than
   reduce the Rust core.
+- [~] `Object.prototype.propertyIsEnumerable` is now JS-owned over the
+  canonical own-descriptor operation.
 - [~] Removed dormant duplicate Object migration bindings after self-hosting;
   Rust retains only the hidden locale-string primitive needed by the core
   bootstrap boundary.

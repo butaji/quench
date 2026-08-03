@@ -99,7 +99,6 @@ pub(crate) fn set_boxed_value(obj: &mut Object, value: Value) {
 fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     use prototype_methods::{
         object_prototype_has_own_property, object_prototype_is_prototype_of,
-        object_prototype_property_is_enumerable,
     };
 
     // Object.prototype.toString
@@ -166,14 +165,6 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
         "isPrototypeOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_is_prototype_of,
-        ))),
-    );
-
-    // Object.prototype.propertyIsEnumerable
-    object_proto_rc.borrow_mut().set_builtin_method(
-        "propertyIsEnumerable",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            object_prototype_property_is_enumerable,
         ))),
     );
 

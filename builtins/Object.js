@@ -46,6 +46,11 @@ Object.prototype.__lookupSetter__ = function ObjectLookupSetter(P) {
   return undefined;
 };
 
+Object.prototype.propertyIsEnumerable = function ObjectPropertyIsEnumerable(P) {
+  var descriptor = GetOwnPropDesc(ToObject(this), ToPropertyKey(P));
+  return descriptor !== undefined && descriptor.enumerable === true;
+};
+
 
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {

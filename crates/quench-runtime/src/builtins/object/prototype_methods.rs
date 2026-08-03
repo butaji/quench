@@ -152,39 +152,3 @@ pub fn object_prototype_is_prototype_of(args: Vec<Value>) -> Result<Value, JsErr
     }
     Ok(Value::Boolean(false))
 }
-
-/// Object.prototype.propertyIsEnumerable - checks if property is enumerable
-pub fn object_prototype_property_is_enumerable(args: Vec<Value>) -> Result<Value, JsError> {
-    let this_val = crate::interpreter::get_this_value()
-        .or_else(crate::builtins::get_native_this)
-        .unwrap_or(Value::Undefined);
-    let key_val = args.first();
-    if let Some(key_val) = key_val {
-        if let Value::Object(o) = &this_val {
-            let obj = o.borrow();
-
-            // Check for symbol properties first (stored in symbol_properties)
-            if let Value::Symbol(symbol) = key_val {
-                if obj.has_symbol(key_val) {
-                    return Ok(Value::Boolean(
-                        obj.get_descriptor(&symbol.property_key())
-                            .map(|flags| flags.enumerable)
-                            .unwrap_or(true),
-                    ));
-                }
-            }
-
-            // Check string properties and numeric array indices
-            if let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) {
-                if obj.has_own(&key) {
-                    return Ok(Value::Boolean(obj.is_enumerable(&key)));
-                }
-            }
-        } else if let Value::Class(class) = &this_val {
-            if let Some(key) = crate::builtins::object::helpers::get_property_key(key_val) {
-                return Ok(Value::Boolean(class.get_static_field(&key).is_some()));
-            }
-        }
-    }
-    Ok(Value::Boolean(false))
-}
