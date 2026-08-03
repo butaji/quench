@@ -634,6 +634,13 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_with_coerces_negative_index() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("[1, 2, 3].with(-1, 9)[2] === 9").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

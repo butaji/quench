@@ -288,6 +288,9 @@ self-hosted JavaScript layer.
 - [x] Use `CreateDataProperty` for immutable self-hosted Array result methods
   (`toReversed`, `toSpliced`, and `with`) so inherited index setters cannot
   intercept result creation and holes remain holes.
+- [x] Route self-hosted `toSpliced` and `with` indices through
+  `ToIntegerOrInfinity`, including correct negative/fractional clamping and
+  `RangeError` handling for out-of-range `with` indices.
 
 ## First increment
 

@@ -630,10 +630,11 @@ Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...it
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSpliced called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var actualStart = Math.min(Math.max(start, 0), len);
+  var relativeStart = ToIntegerOrInfinity(start);
+  var actualStart = relativeStart < 0 ? Math.max(len + relativeStart, 0) : Math.min(relativeStart, len);
   var actualDeleteCount;
   if (arguments.length === 1) actualDeleteCount = len - actualStart;
-  else actualDeleteCount = Math.min(Math.max(deleteCount, 0), len - actualStart);
+  else actualDeleteCount = Math.min(Math.max(ToIntegerOrInfinity(deleteCount), 0), len - actualStart);
   var itemCount = Math.max(arguments.length - 2, 0);
   var newLen = len - actualDeleteCount + itemCount;
   var A = new Array(newLen);
@@ -650,8 +651,9 @@ Array.prototype.with = function ArrayWith(index, value) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.with called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var relativeIndex = index >>> 0;
-  var actualIndex = relativeIndex >= len ? len - 1 : relativeIndex;
+  var relativeIndex = ToIntegerOrInfinity(index);
+  var actualIndex = relativeIndex < 0 ? len + relativeIndex : relativeIndex;
+  if (actualIndex < 0 || actualIndex >= len) throw new RangeError("Array.prototype.with index out of range");
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) CreateDataProperty(A, i, O[i]);
