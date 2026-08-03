@@ -370,7 +370,7 @@ pub fn register_date(ctx: &mut Context) {
         }))),
     );
     date_proto_rc.borrow_mut().set(
-        "valueOf",
+        "__valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(obj_rc) = this_val {

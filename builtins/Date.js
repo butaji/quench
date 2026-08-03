@@ -4,6 +4,7 @@ var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
 var _nativeToString = Date.prototype.__toString;
+var _nativeValueOf = Date.prototype.__valueOf;
 var _nativeToISOString = Date.prototype.toISOString;
 var _nativeToJSON = Date.prototype.toJSON;
 
@@ -23,4 +24,9 @@ Date.prototype.toISOString = function DateToISOString() {
 Date.prototype.toJSON = function DateToJSON(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Date.prototype.toJSON called on null or undefined");
   return _nativeToJSON.call(this, key);
+};
+
+Date.prototype.valueOf = function DateValueOf() {
+  if (this === null || this === undefined) throw ThrowTypeError("Date.prototype.valueOf called on null or undefined");
+  return _nativeValueOf.call(this);
 };
