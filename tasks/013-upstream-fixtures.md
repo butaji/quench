@@ -318,3 +318,6 @@ contents and cleanup.
 
 Stage 127 formalized DataView `fs.writeFileSync` input, asserting decoded
 contents and cleanup.
+
+Stage 128 formalized the upstream common `getArrayBufferViews` helper,
+asserting multiple views with matching byte lengths.

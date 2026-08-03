@@ -1,5 +1,6 @@
 const common = require("../common");
+const assert = require("assert");
 const buffer = Buffer.from("abc");
 const views = common.getArrayBufferViews(buffer);
-if (views.length < 3 || views.some((view) => view.byteLength !== 3))
-  throw new Error("common views mismatch");
+assert.ok(views.length >= 3);
+assert.ok(views.every((view) => view.byteLength === 3));
