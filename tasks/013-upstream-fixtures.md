@@ -447,3 +447,6 @@ helpers, asserting text and byte lengths and cleaning up the file.
 
 Stage 170 formalized pull `start`, `limit`, and `chunkSize` options, asserting
 the selected slice and cleaning up the file.
+
+Stage 171 formalized pull locking, post-read position state, and closed-handle
+errors, asserting `ERR_INVALID_STATE` and cleanup.
