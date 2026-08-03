@@ -12,5 +12,4 @@ arrayUnscopables.toReversed = true;
 arrayUnscopables.toSorted = true;
 arrayUnscopables.toSpliced = true;
 arrayUnscopables.values = true;
-arrayUnscopables.with = true;
 Array.prototype[Symbol.unscopables] = arrayUnscopables;

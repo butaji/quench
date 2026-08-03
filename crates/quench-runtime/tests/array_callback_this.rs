@@ -32,7 +32,7 @@ fn array_prototype_has_unscopables_object() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
         ctx.eval("var u=Array.prototype[Symbol.unscopables]; [Object.getPrototypeOf(u),u.find,u.values,u.toReversed,u.toSorted,u.toSpliced,u.with].join('|')"),
-        Ok(Value::String("|true|true|true|true|true|true".to_string()))
+        Ok(Value::String("|true|true|true|true|true|".to_string()))
     );
 }
 
