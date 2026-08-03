@@ -209,3 +209,5 @@ JavaScript object, matching the existing host/polyfill numeric contracts.
 Stage 535 confirms `assert/strict` can be an exact alias of the existing
 assertion implementation, avoiding duplicated assertion logic and preserving
 strict comparison behavior.
+Stage 536 confirms the legacy `sys` module is best represented as the exact
+`util` object alias, preserving shared formatting and inspection behavior.
