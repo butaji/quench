@@ -289,3 +289,4 @@ these small fixtures isolate the currently implemented contract.
 |   290 | `querystring` upstream-complete behavior                       | `tools/run-node-tests.sh --stage 290` |
 |   291 | `util.format` null-prototype object rendering                  | `tools/run-node-tests.sh --stage 291` |
 |   292 | `util.format` class null-prototype rendering                   | `tools/run-node-tests.sh --stage 292` |
+|   293 | `util.format` class instance rendering                        | `tools/run-node-tests.sh --stage 293` |
