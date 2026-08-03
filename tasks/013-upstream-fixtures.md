@@ -900,3 +900,6 @@ from forged prototypes and preserving invalid-argument error metadata.
 
 Stage 325 formalized the internal IPC channel-closed error, preserving its
 Node error code and native-error classification.
+
+Stage 326 formalized the upstream-complete `util` contract, combining legacy
+helpers, USV conversion, VT stripping, and native-error recognition.
