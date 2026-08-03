@@ -136,7 +136,17 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
             map_fn = None;
             Some(values)
         } else {
-            crate::eval::iteration::get_iterator(&items).ok()
+            let has_iterator = crate::builtins::map::helpers::iterator_prop_key()
+                .and_then(|key| match &items {
+                    Value::Object(object) => object.borrow().get(&key),
+                    _ => None,
+                })
+                .is_some();
+            if has_iterator {
+                Some(crate::eval::iteration::get_iterator(&items)?)
+            } else {
+                None
+            }
         }
     } else {
         None

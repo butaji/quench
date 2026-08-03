@@ -81,6 +81,16 @@ pub fn register_iterator(ctx: &mut Context) {
     let mut async_proto = Object::new(ObjectKind::Ordinary);
     async_proto.prototype = proto_rc.borrow().prototype.clone();
     let async_proto_rc = Rc::new(RefCell::new(async_proto));
+    if let Some(Value::Symbol(key)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let method = NativeFunction::new(|_args| {
+            Ok(crate::builtins::get_native_this().unwrap_or(Value::Undefined))
+        });
+        proto_rc
+            .borrow_mut()
+            .set_symbol(&key.property_key(), Value::NativeFunction(Rc::new(method)));
+    }
     ASYNC_ITERATOR_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&async_proto_rc)));
     if let Some(Value::Symbol(key)) =
         crate::builtins::symbol::get_well_known_symbol_no_ctx("asyncIterator")

@@ -815,6 +815,15 @@ mod tests {
             Ok(Value::Undefined)
         );
     }
+
+    #[test]
+    fn array_from_propagates_iterator_errors() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var b=new ArrayBuffer(4,{maxByteLength:8}); var a=new Uint8Array(b,0,4); b.resize(3); try {Array.from(Array.prototype.entries.call(a)); false;} catch(e) {e instanceof TypeError;}"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
