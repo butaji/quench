@@ -253,6 +253,15 @@ mod tests {
             Ok(Value::String("1,1,2|1,4,4".to_string()))
         );
     }
+
+    #[test]
+    fn copy_within_supports_negative_end() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[0, 1, 2, 3].copyWithin(1, 0, '-2').join(',')"),
+            Ok(Value::String("0,0,1,3".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

@@ -89,8 +89,10 @@ pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
 
 fn relative_index(value: Option<&Value>, len: i64) -> i64 {
     let number = value.map_or(0.0, to_number);
-    if number.is_nan() || number <= 0.0 {
+    if number.is_nan() || number == 0.0 {
         0
+    } else if number < 0.0 {
+        (len + number as i64).max(0)
     } else if number >= len as f64 {
         len
     } else {
