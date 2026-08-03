@@ -677,6 +677,39 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         "bind",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_bind))),
     );
+    for (name, length) in [
+        ("toString", 0.0),
+        ("call", 1.0),
+        ("apply", 2.0),
+        ("bind", 1.0),
+    ] {
+        if let Some(Value::NativeFunction(function)) = function_proto_rc.borrow().get(name) {
+            function.define_property(
+                "name",
+                Value::String(name.to_string()),
+                crate::value::PropertyFlags {
+                    value: Some(Value::String(name.to_string())),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+            function.define_property(
+                "length",
+                Value::Number(length),
+                crate::value::PropertyFlags {
+                    value: Some(Value::Number(length)),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        if let Some(flags) = function_proto_rc.borrow_mut().descriptors.get_mut(name) {
+            flags.writable = false;
+            flags.enumerable = false;
+        }
+    }
     // ES §16.1: caller/arguments accessors throw TypeError for strict/class functions
     let thrower = crate::eval::function::throw_type_error();
     if let Value::NativeFunction(function) = &thrower {
@@ -933,6 +966,18 @@ mod tests {
     fn function_prototype_invocation_returns_undefined() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(ctx.eval("Function.prototype()"), Ok(Value::Undefined));
+    }
+
+    #[test]
+    fn function_prototype_methods_have_standard_metadata() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval("['call', 'apply', 'bind', 'toString'].map(function (name) { var d = Object.getOwnPropertyDescriptor(Function.prototype, name); return [d.value.name, d.value.length, d.writable, d.enumerable, d.configurable].join('|'); }).join(';')")
+            .unwrap();
+        assert_eq!(
+            value,
+            Value::String("call|1|false|false|true;apply|2|false|false|true;bind|1|false|false|true;toString|0|false|false|true".into())
+        );
     }
 
     #[test]
