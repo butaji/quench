@@ -160,3 +160,4 @@ these small fixtures isolate the currently implemented contract.
 |   150 | promise `fs.realpath` and Buffer encoding                 | `tools/run-node-tests.sh --stage 150` |
 |   151 | promise fd metadata and permission methods                | `tools/run-node-tests.sh --stage 151` |
 |   152 | synchronous and callback `fs.access` validation           | `tools/run-node-tests.sh --stage 152` |
+|   153 | promise `fs.chmod` permission changes                     | `tools/run-node-tests.sh --stage 153` |
