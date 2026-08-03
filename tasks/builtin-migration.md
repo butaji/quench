@@ -80,8 +80,9 @@ self-hosted JavaScript layer.
   primitives; Rust retains weak-key storage and identity operations.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
-  and microtask scheduling. Constructor and combinator algorithms remain
-  pending.
+  and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and
+  `race` are also JS-owned over hidden Rust primitives; constructor and
+  combinator algorithms remain Rust-backed.
 - [~] RegExp `test` and `toString` are JS-owned over hidden Rust regex
   primitives; compiled matching and `exec` remain Rust-backed.
 - [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
