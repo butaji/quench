@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-122-${process.pid}`;
@@ -12,6 +13,7 @@ const fs = require("fs");
     )
   );
   fs.closeSync(fd);
-  if (written !== 2 || fs.readFileSync(path, "utf8") !== "bc")
-    throw new Error("write options mismatch");
+  assert.strictEqual(written, 2);
+  assert.strictEqual(fs.readFileSync(path, "utf8"), "bc");
+  fs.rmSync(path);
 })().then(() => undefined);
