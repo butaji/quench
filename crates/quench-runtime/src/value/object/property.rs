@@ -78,7 +78,7 @@ impl Object {
                 PropertyFlags {
                     value: Some(value.clone()),
                     writable: true,
-                    enumerable: true,
+                    enumerable: !key.starts_with("__"),
                     configurable: true,
                 },
             );
