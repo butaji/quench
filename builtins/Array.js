@@ -298,12 +298,17 @@ Array.prototype.concat = function ArrayConcat() {
   for (var i = 0; i < items.length; i++) {
     var E = items[i];
     var spreadable = IsArray(E);
+    if (E !== null && E !== undefined) {
+      var spreadFlag = E[Symbol.isConcatSpreadable];
+      if (spreadFlag !== undefined) spreadable = Boolean(spreadFlag);
+    }
     if (spreadable) {
       var k = 0;
       var len = ToLength(E.length);
       while (k < len) {
-        if (k in E) {
-          CreateDataProperty(A, n, E[k]);
+        var element = E[k];
+        if (element !== undefined || k in E) {
+          CreateDataProperty(A, n, element);
           n = n + 1;
         }
         k++;
