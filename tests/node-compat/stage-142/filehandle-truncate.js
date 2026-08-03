@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-142-${process.pid}`;
@@ -6,6 +7,6 @@ const fs = require("fs");
   const handle = await fs.promises.open(path, "r+");
   await handle.truncate(2);
   await handle.close();
-  if (fs.readFileSync(path, "utf8") !== "ab")
-    throw new Error("filehandle truncate mismatch");
+  assert.strictEqual(fs.readFileSync(path, "utf8"), "ab");
+  fs.rmSync(path);
 })().then(() => undefined);
