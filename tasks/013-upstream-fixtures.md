@@ -990,6 +990,9 @@ its standard message and operation metadata.
 Stage 355 formalized strict comparison of distinct Error objects and the
 resulting assertion failure.
 
+Stage 356 formalized custom `assert.throws` missing-exception message
+formatting with an expected constructor and user-provided message.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
