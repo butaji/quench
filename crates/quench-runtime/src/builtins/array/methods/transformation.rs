@@ -298,6 +298,15 @@ mod tests {
             .eval("var o = {}; Object.defineProperty(o, 'length', {get: function() { throw new Error('length'); }}); [].fill.call(o, 1)")
             .is_err());
     }
+
+    #[test]
+    fn copy_within_uses_array_like_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var o = {0: 1, 1: 2, 2: 3, length: 3}; Array.prototype.copyWithin.call(o, 0, 1); [o[0], o[1], o[2]].join('|')"),
+            Ok(Value::String("2|3|3".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

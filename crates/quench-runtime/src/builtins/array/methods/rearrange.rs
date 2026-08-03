@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, JsError, Object, Value};
+use crate::value::{to_js_string, to_number, JsError, Object, ObjectKind, Value};
 
 /// Get the array object from 'this'
 pub fn get_this_array_obj() -> Result<Rc<RefCell<Object>>, JsError> {
@@ -60,7 +60,13 @@ pub fn proto_reverse(_args: Vec<Value>) -> Result<Value, JsError> {
 
 pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
-    let len = o.borrow().elements.len() as i64;
+    let len = crate::eval::member::eval_object_member_value(
+        &o,
+        &Value::String("length".to_string()),
+        None,
+    )
+    .and_then(|value| crate::value::try_to_number(&value))?
+    .max(0.0) as i64;
     let target = relative_index(args.first(), len)?;
     let start = relative_index(args.get(1), len)?;
     let end = match args.get(2) {
@@ -68,6 +74,23 @@ pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
         Some(value) => relative_index(Some(value), len)?,
     };
     let count = (end - start).max(0).min(len - target);
+    if o.borrow().kind != ObjectKind::Array {
+        for offset in 0..count {
+            let source_key = (start + offset).to_string();
+            let target_key = (target + offset).to_string();
+            if o.borrow().has(&source_key) {
+                let value = crate::eval::member::eval_object_member_value(
+                    &o,
+                    &Value::String(source_key),
+                    None,
+                )?;
+                o.borrow_mut().set(&target_key, value);
+            } else {
+                o.borrow_mut().properties.shift_remove(&target_key);
+            }
+        }
+        return Ok(Value::Object(Rc::clone(&o)));
+    }
     let mut elements = o.borrow().elements.clone();
     let current_len = o
         .borrow()
