@@ -686,6 +686,9 @@ fn has_tail_call_in_statement(
                 Ok(false)
             }
         }
+        Statement::Labeled { body, .. } => {
+            has_tail_call_in_statement(body, env, in_arrow_function)
+        }
         Statement::If {
             consequent,
             alternate,
