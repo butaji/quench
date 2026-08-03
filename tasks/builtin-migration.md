@@ -27,6 +27,8 @@ self-hosted JavaScript layer.
 - [~] Object ownership/prototype/extensibility algorithms (`hasOwn`,
   `fromEntries`, prototype operations, freeze/seal queries) are JS-owned;
   Rust retains descriptor mutation primitives.
+- [~] `Object.groupBy` is implemented in the self-hosted JS layer over
+  iterator and object primitives.
 - [~] Object own-property descriptor/name queries are JS-owned; symbol-key
   enumeration remains Rust-backed until its canonical JS bridge is complete.
 - [~] `Object.assign` is JS-owned over canonical key enumeration and core
@@ -77,6 +79,8 @@ self-hosted JavaScript layer.
 - [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
   hidden Rust keyed-storage primitives; Rust retains keyed storage and
   iterator state.
+- [~] `Map.groupBy` is implemented in the self-hosted JS layer over Map
+  storage primitives.
 - [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage
   primitives; Rust retains weak-key storage and identity operations.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
