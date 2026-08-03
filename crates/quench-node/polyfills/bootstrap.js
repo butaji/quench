@@ -132,6 +132,13 @@ globalThis.console.timeEnd = (label = "default") => {
 };
 
 globalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);
+globalThis.DOMException = class DOMException extends Error {
+  constructor(message = "", name = "Error") {
+    super(message);
+    this.message = message;
+    this.name = name;
+  }
+};
 globalThis.process = {
   env: new Proxy(
     {},
@@ -2656,16 +2663,48 @@ for (const method of [
 }
 globalThis.__nodeEventEmitter.once = (emitter, event) =>
   new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));
-globalThis.__nodeEventEmitter.on = async function* (emitter, event) {
+globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
   const queue = [];
   let wake;
-  emitter.on(event, (...args) => {
+  let aborted = false;
+  let abortError = null;
+  const listener = (...args) => {
+    if (aborted) return;
     queue.push(args);
     if (wake) {
       wake();
       wake = undefined;
     }
-  });
+  };
+  emitter.on(event, listener);
+  if (options && options.signal) {
+    if (options.signal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    const onAbort = () => {
+      aborted = true;
+      abortError = new DOMException("The operation was aborted.", "AbortError");
+      if (wake) {
+        wake();
+        wake = undefined;
+      }
+    };
+    options.signal.addEventListener("abort", onAbort);
+    try {
+      while (true) {
+        if (aborted) throw abortError;
+        if (!queue.length)
+          await new Promise((resolve) => {
+            wake = resolve;
+          });
+        if (aborted) throw abortError;
+        yield queue.shift();
+      }
+    } finally {
+      options.signal.removeEventListener("abort", onAbort);
+      emitter.off(event, listener);
+    }
+  }
   while (true) {
     if (!queue.length)
       await new Promise((resolve) => {
