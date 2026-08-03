@@ -2402,6 +2402,14 @@ fn eval_arguments_declaration_conflicts_with_function_body_arguments() {
 }
 
 #[test]
+fn async_function_eval_arguments_conflict_rejects_with_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var caught = false; async function f(p = eval('var arguments')) { var arguments; } f().catch(function(error) { caught = error instanceof SyntaxError; });")
+        .unwrap();
+    assert_eq!(ctx.eval("caught").unwrap(), Value::Boolean(true));
+}
+
+#[test]
 fn await_using_async_dispose_method_keeps_binding_through_async_test_wrapper() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(
