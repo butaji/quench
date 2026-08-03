@@ -189,6 +189,66 @@ fn run_source_with_runtime(
             }),
         )?;
         ctx.globals().set(
+            "__quench_zlib_deflate",
+            Func::from(|value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+                use flate2::write::DeflateEncoder;
+                use flate2::Compression;
+                use std::io::Write;
+                let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+                let write_result = encoder.write_all(&value);
+                if let Err(e) = write_result {
+                    return Err(rquickjs::Error::new_from_js_message("zlib", "deflate failed", e.to_string()));
+                }
+                match encoder.finish() {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(rquickjs::Error::new_from_js_message("zlib", "deflate finish failed", e.to_string())),
+                }
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_zlib_inflate",
+            Func::from(|value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+                use flate2::read::DeflateDecoder;
+                use std::io::Read;
+                let mut decoder = DeflateDecoder::new(&value[..]);
+                let mut out = Vec::new();
+                match decoder.read_to_end(&mut out) {
+                    Ok(_) => Ok(out),
+                    Err(e) => Err(rquickjs::Error::new_from_js_message("zlib", "inflate failed", e.to_string())),
+                }
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_zlib_gzip",
+            Func::from(|value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+                use flate2::write::GzEncoder;
+                use flate2::Compression;
+                use std::io::Write;
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                let write_result = encoder.write_all(&value);
+                if let Err(e) = write_result {
+                    return Err(rquickjs::Error::new_from_js_message("zlib", "gzip failed", e.to_string()));
+                }
+                match encoder.finish() {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(rquickjs::Error::new_from_js_message("zlib", "gzip finish failed", e.to_string())),
+                }
+            }),
+        )?;
+        ctx.globals().set(
+            "__quench_zlib_gunzip",
+            Func::from(|value: Vec<u8>| -> rquickjs::Result<Vec<u8>> {
+                use flate2::read::GzDecoder;
+                use std::io::Read;
+                let mut decoder = GzDecoder::new(&value[..]);
+                let mut out = Vec::new();
+                match decoder.read_to_end(&mut out) {
+                    Ok(_) => Ok(out),
+                    Err(e) => Err(rquickjs::Error::new_from_js_message("zlib", "gunzip failed", e.to_string())),
+                }
+            }),
+        )?;
+        ctx.globals().set(
             "__quench_fs_mkdtemp",
             Func::from(|prefix: String| -> rquickjs::Result<String> {
                 let root = std::env::temp_dir();
