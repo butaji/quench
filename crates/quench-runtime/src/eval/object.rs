@@ -193,10 +193,16 @@ pub fn eval_callee_with_this(
                 false
             };
             let this_val = if matches!(callee, Expression::Identifier(_)) {
-                env.borrow()
-                    .with_base_object()
-                    .map(Value::Object)
-                    .unwrap_or(Value::Undefined)
+                let with_object = env.borrow().with_base_object();
+                if let (Some(object), Expression::Identifier(name)) = (with_object, callee) {
+                    if object.borrow().get_own_value(name).is_some() {
+                        Value::Object(object)
+                    } else {
+                        Value::Undefined
+                    }
+                } else {
+                    Value::Undefined
+                }
             } else {
                 Value::Undefined
             };

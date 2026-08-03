@@ -884,6 +884,21 @@ fn test_runner_path_eval_var_arguments_is_allowed() {
     assert_eq!(run_single_test(&harness, &test_path), TestOutcome::Pass);
 }
 
+#[test]
+fn test_runner_path_with_function_this_binding() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test262_dir = manifest_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/test262");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let test_path = test262_dir.join("test/language/statements/with/S12.10_A1.7_T1.js");
+
+    assert_eq!(run_single_test(&harness, &test_path), TestOutcome::Pass);
+}
+
 // ── Staged runner ───────────────────────────────────────────────────────────
 
 #[test]
