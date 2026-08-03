@@ -142,6 +142,14 @@ fn make_filter_result(receiver: &Value, elements: Vec<Value>) -> Result<Value, J
     Ok(result)
 }
 
+fn ensure_callable(callback: &Value) -> Result<(), JsError> {
+    if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        Ok(())
+    } else {
+        Err(JsError::new("TypeError: callback is not callable"))
+    }
+}
+
 /// Call a callback function with standard arguments
 pub fn call_callback(
     callback: &Value,
@@ -170,6 +178,7 @@ pub fn call_callback(
 /// Array.prototype.map(callback, thisArg?)
 pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
     let receiver = match crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
@@ -201,6 +210,7 @@ pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
 /// Array.prototype.filter(callback, thisArg?)
 pub fn proto_filter(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let receiver = match crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
     {
@@ -333,6 +343,7 @@ pub fn proto_reduce_right(args: Vec<Value>) -> Result<Value, JsError> {
 /// Array.prototype.forEach(callback, thisArg?)
 pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
     let receiver = match crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
@@ -364,6 +375,7 @@ pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_some(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
 
     for (i, elem) in elements.iter().enumerate() {
         let result = call_callback(&callback, elem, i, &elements)?;
@@ -423,6 +435,7 @@ fn array_like_value(receiver: &Value, index: usize) -> Result<Option<Value>, JsE
 /// Array.prototype.every(callback, thisArg?)
 pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
     let receiver = match crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
@@ -454,6 +467,16 @@ pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
 #[cfg(test)]
 mod tests {
     use crate::{Context, Value};
+
+    #[test]
+    fn array_iteration_methods_reject_non_callable_callbacks_on_empty_arrays() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx.eval("[].every(null)").is_err());
+        assert!(ctx.eval("[].filter(null)").is_err());
+        assert!(ctx.eval("[].forEach(null)").is_err());
+        assert!(ctx.eval("[].map(null)").is_err());
+        assert!(ctx.eval("[].some(null)").is_err());
+    }
 
     #[test]
     fn filter_uses_array_like_length() {
