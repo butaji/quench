@@ -327,3 +327,6 @@ asserting append and overwrite results with cleanup.
 
 Stage 130 formalized `fs.writeFileSync` flush validation and successful flush
 writing, asserting invalid types, output, and cleanup.
+
+Stage 131 formalized fd-based callback `fs.appendFile`, asserting success,
+exact appended contents, and cleanup.
