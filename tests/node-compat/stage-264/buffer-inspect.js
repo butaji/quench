@@ -1,7 +1,8 @@
-const { Buffer } = require("buffer");
+const buffer = require("buffer");
+const { Buffer } = buffer;
 const util = require("util");
 
-Buffer.INSPECT_MAX_BYTES = 2;
+buffer.INSPECT_MAX_BYTES = 2;
 const slow = Buffer.allocUnsafeSlow(4).fill("1234");
 let rendered;
 try {
