@@ -298,3 +298,4 @@ these small fixtures isolate the currently implemented contract.
 |   299 | POSIX path invalid argument validation                         | `tools/run-node-tests.sh --stage 299` |
 |   300 | Win32 path invalid argument validation                         | `tools/run-node-tests.sh --stage 300` |
 |   301 | Path basename suffix validation and removal                    | `tools/run-node-tests.sh --stage 301` |
+|   302 | POSIX/Win32 path separators and delimiters                    | `tools/run-node-tests.sh --stage 302` |
