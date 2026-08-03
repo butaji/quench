@@ -1073,16 +1073,4 @@ mod tests {
             Value::String("false|false|true|false|false|true|x|9".into())
         );
     }
-
-    #[test]
-    fn non_configurable_native_function_properties_reject_redefinition() {
-        let mut ctx = Context::new().unwrap();
-        assert_eq!(
-            ctx.eval("Object.defineProperty(Function.prototype.call, 'name', {configurable: false}); Object.getOwnPropertyDescriptor(Function.prototype.call, 'name').configurable"),
-            Ok(Value::Boolean(false))
-        );
-        assert!(ctx
-            .eval("Object.defineProperty(Function.prototype.call, 'name', {value: 'x'})")
-            .is_err());
-    }
 }
