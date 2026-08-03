@@ -930,6 +930,12 @@ mod tests {
     }
 
     #[test]
+    fn function_prototype_invocation_returns_undefined() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(ctx.eval("Function.prototype()"), Ok(Value::Undefined));
+    }
+
+    #[test]
     fn test_bind_sets_length_and_name() {
         let mut ctx = Context::new().unwrap();
         // Exercise Function.prototype.bind explicitly (proto_bind path)

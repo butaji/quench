@@ -295,6 +295,9 @@ pub(crate) fn call_value_impl(
         Value::NativeFunction(nf) => call_native_function(nf, args, this_val),
         Value::NativeConstructor(nc) => call_native_constructor(nc, args, this_val),
         Value::Object(o) => {
+            if crate::builtins::function::is_function_prototype(&o) {
+                return Ok(Value::Undefined);
+            }
             // Check if this object has an internal [[Call]] slot (set by the
             // Function constructor when called via super() from a class that
             // extends Function). If so, call the stored function directly.
