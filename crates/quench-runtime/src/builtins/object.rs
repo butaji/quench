@@ -11,8 +11,6 @@ mod tests;
 
 use crate::builtins::object_static::{
     object_assign, object_create, object_define_properties, object_define_property,
-    object_get_own_property_descriptor,
-    object_get_own_property_descriptors, object_get_own_property_names,
     object_get_own_property_symbols,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
@@ -78,22 +76,6 @@ pub fn register_object(ctx: &mut Context) {
             "defineProperties",
             object_define_properties,
         ))),
-    );
-    constructor.set_static_method(
-        "getOwnPropertyDescriptor",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            object_get_own_property_descriptor,
-        ))),
-    );
-    constructor.set_static_method(
-        "getOwnPropertyDescriptors",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            object_get_own_property_descriptors,
-        ))),
-    );
-    constructor.set_static_method(
-        "getOwnPropertyNames",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_get_own_property_names))),
     );
     constructor.set_static_method(
         "getOwnPropertySymbols",
