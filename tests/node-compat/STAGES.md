@@ -227,3 +227,6 @@ these small fixtures isolate the currently implemented contract.
 |   217 | Buffer backing metadata and pool size                         | `tools/run-node-tests.sh --stage 217` |
 |   218 | Buffer `toString` encoding case-insensitivity                 | `tools/run-node-tests.sh --stage 218` |
 |   219 | Buffer `write` unknown-encoding validation                    | `tools/run-node-tests.sh --stage 219` |
+|   220 | Buffer `write` overload validation                            | `tools/run-node-tests.sh --stage 220` |
+|   221 | Buffer `toString` offset/range clamping                        | `tools/run-node-tests.sh --stage 221` |
+|   222 | Buffer `from` encoding conversions (ascii, utf-16le)           | `tools/run-node-tests.sh --stage 222` |

@@ -596,3 +596,12 @@ Stage 218 formalized Buffer `toString` encoding case-insensitivity, asserting
 
 Stage 219 formalized Buffer `write` encoding validation, asserting
 `ERR_UNKNOWN_ENCODING` for unsupported encodings.
+
+Stage 220 formalized Buffer `write` overload validation, asserting
+`ERR_INVALID_ARG_TYPE` when a non-numeric offset is provided.
+
+Stage 221 formalized Buffer `toString` offset/range clamping, asserting
+end-bounds and negative-start clamping.
+
+Stage 222 formalized Buffer `from` encoding conversions, asserting ascii
+byte truncation and utf-16le round trips.
