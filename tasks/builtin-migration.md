@@ -22,6 +22,8 @@ self-hosted JavaScript layer.
   canonical SameValue and descriptor/constructor primitives.
 - [~] `Object.keys` is JS-owned through the canonical enumerable-key
   operation; Rust retains the underlying property storage and key traversal.
+- [~] `Object.values` and `Object.entries` are JS-owned over the same
+  enumerable-key operation.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
