@@ -250,6 +250,14 @@ mod tests {
             Ok(Value::String("a|a|true".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_match_all_propagates_string_coercion_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var o = {toString: function() { throw new Test262Error(); }}; /a/g[Symbol.matchAll](o)")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -435,7 +443,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         .unwrap_or_default();
     let regex =
         Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
-    let input = args.first().map(to_js_string).unwrap_or_default();
+    let input = regexp_search_string(args.first())?;
     let state = Rc::new(RefCell::new(0usize));
     let iterator = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     let next_state = Rc::clone(&state);
