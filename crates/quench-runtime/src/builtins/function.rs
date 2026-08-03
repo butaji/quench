@@ -649,7 +649,7 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
     }
 
     function_proto_rc.borrow_mut().set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             use crate::builtins::get_native_this;
             match get_native_this() {
@@ -679,7 +679,7 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_apply))),
     );
     function_proto_rc.borrow_mut().set(
-        "bind",
+        "__bind",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_bind))),
     );
     if let Some(Value::Symbol(symbol)) = crate::builtins::symbol::get_has_instance_symbol() {
@@ -727,10 +727,10 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         }
     }
     for (name, length) in [
-        ("toString", 0.0),
+        ("__toString", 0.0),
         ("call", 1.0),
         ("apply", 2.0),
-        ("bind", 1.0),
+        ("__bind", 1.0),
     ] {
         if let Some(Value::NativeFunction(function)) = function_proto_rc.borrow().get(name) {
             function.define_property(

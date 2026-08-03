@@ -2,8 +2,8 @@
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
-var _nativeBind = Function.prototype.bind;
-var _nativeToString = Function.prototype.toString;
+var _nativeBind = Function.prototype.__bind;
+var _nativeToString = Function.prototype.__toString;
 
 // Function.prototype.bind (ES2025 §20.2.3.3)
 Function.prototype.bind = function FunctionBind(thisArg) {
