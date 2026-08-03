@@ -993,6 +993,9 @@ resulting assertion failure.
 Stage 356 formalized custom `assert.throws` missing-exception message
 formatting with an expected constructor and user-provided message.
 
+Stage 357 formalized Buffer signed and unsigned numeric reads across little- and
+big-endian encodings.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
