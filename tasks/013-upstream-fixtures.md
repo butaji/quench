@@ -560,3 +560,6 @@ array compatibility, equality, and lexicographic ordering.
 
 Stage 207 formalized Buffer factory constructors, asserting `Buffer.of`
 coercion and `allocUnsafeSlow` sizing.
+
+Stage 208 formalized Buffer endian swap operations, asserting `swap16`,
+`swap32`, and `swap64` in-place byte reordering.
