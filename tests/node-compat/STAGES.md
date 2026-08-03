@@ -339,3 +339,4 @@ these small fixtures isolate the currently implemented contract.
 |   340 | common non-debug util type regression                              | `tools/run-node-tests.sh --stage 340` |
 |   341 | process stream TTY flags                                          | `tools/run-node-tests.sh --stage 341` |
 |   342 | AssertionError inheritance and throwing                           | `tools/run-node-tests.sh --stage 342` |
+|   343 | vm context creation and evaluation                                | `tools/run-node-tests.sh --stage 343` |

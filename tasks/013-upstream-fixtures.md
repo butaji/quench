@@ -951,3 +951,5 @@ report `isTTY === false` in the harness.
 
 Stage 342 formalized `assert.AssertionError` inheritance and assertion throwing
 behavior.
+
+Stage 343 formalized basic `vm` context creation and expression evaluation.
