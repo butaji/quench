@@ -359,3 +359,4 @@ these small fixtures isolate the currently implemented contract.
 |   360 | Buffer comparison methods                                        | `tools/run-node-tests.sh --stage 360` |
 |   361 | Buffer fill encoding validation                                  | `tools/run-node-tests.sh --stage 361` |
 |   362 | Buffer binary sharing and composition                            | `tools/run-node-tests.sh --stage 362` |
+|   363 | fs Buffer binary round-trip                                      | `tools/run-node-tests.sh --stage 363` |
