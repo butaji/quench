@@ -258,6 +258,15 @@ mod tests {
             .eval("var o = {toString: function() { throw new Test262Error(); }}; /a/g[Symbol.matchAll](o)")
             .is_err());
     }
+
+    #[test]
+    fn regexp_match_all_caches_last_index() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var r = /./g; r.lastIndex = 2; var i = r[Symbol.matchAll]('abcd'); r.lastIndex = 0; i.next().value[0]"),
+            Ok(Value::String("c".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -445,7 +454,14 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let regex =
         Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
     let input = regexp_search_string(args.first())?;
-    let state = Rc::new(RefCell::new(0usize));
+    let last_index = crate::eval::member::eval_object_member_value(
+        &regex_obj,
+        &Value::String("lastIndex".to_string()),
+        current_regex_env().as_ref(),
+    )?;
+    let state = Rc::new(RefCell::new(
+        crate::value::to_number(&last_index).max(0.0) as usize
+    ));
     let iterator = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     let next_state = Rc::clone(&state);
     let next = NativeFunction::new(move |_args| {
