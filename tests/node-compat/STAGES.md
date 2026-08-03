@@ -118,3 +118,4 @@ these small fixtures isolate the currently implemented contract.
 |   108 | symlink-aware `lstat` metadata                            | `tools/run-node-tests.sh --stage 108` |
 |   109 | promise-based symlink and readlink                        | `tools/run-node-tests.sh --stage 109` |
 |   110 | sync, callback, and promise `fs.unlink`                   | `tools/run-node-tests.sh --stage 110` |
+|   111 | sync, callback, and promise `fs.link`                     | `tools/run-node-tests.sh --stage 111` |

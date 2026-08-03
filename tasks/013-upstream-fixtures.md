@@ -267,3 +267,6 @@ target round-trip, promise `lstat`, and cleanup.
 
 Stage 110 added sync, callback, and promise `fs.unlink` coverage, including
 Node-compatible invalid path argument validation.
+
+Stage 111 added hard-link coverage for sync, callback, and promise `fs.link`,
+including invalid source and destination path validation.
