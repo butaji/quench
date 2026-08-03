@@ -4,12 +4,22 @@ var ThrowTypeError = ops.ThrowTypeError;
 var IsCallable = ops.IsCallable;
 
 // Save native implementations
-var _nativeFrom = Iterator.__from;
 var _nativeProtoFlatMap = Iterator.prototype.__flatMap;
 
 // Iterator.from (ES2025 §27.1.3.2)
 Iterator.from = function IteratorFrom(O) {
-  return _nativeFrom(O);
+  if (O === null || O === undefined) throw ThrowTypeError("Iterator.from called on null or undefined");
+  var object = Object(O);
+  var method = object[Symbol.iterator];
+  var iterator;
+  if (method === undefined) iterator = object;
+  else {
+    if (!IsCallable(method)) throw ThrowTypeError("@@iterator is not a function");
+    iterator = method.call(object);
+  }
+  var next = iterator.next;
+  if (!IsCallable(next)) throw ThrowTypeError("iterator.next is not a function");
+  return IteratorHelper(function() { return next.call(iterator); });
 };
 
 // Iterator.prototype.map (ES2025 §27.1.4.4)

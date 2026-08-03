@@ -124,6 +124,8 @@ self-hosted JavaScript layer.
   streaming primitives.
 - [~] Iterator `map`, `filter`, `take`, and `drop` now compose JS-owned
   streaming helper records; Rust retains only underlying iterator execution.
+- [~] `Iterator.from` now normalizes iterable and iterator inputs in JS and
+  forwards to the underlying `next`; Rust retains iterator state machinery.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
