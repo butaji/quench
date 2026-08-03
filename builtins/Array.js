@@ -176,10 +176,10 @@ Array.prototype.includes = function ArrayIncludes(searchElement /*, fromIndex */
   var O = ToObject(this);
   var len = ToLength(O.length);
   if (len === 0) return false;
-  var n = arguments.length > 1 ? arguments[1] : 0;
+  var n = arguments.length > 1 ? ToIntegerOrInfinity(arguments[1]) : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
   for (; k < len; k++) {
-    if (HasProperty(O, k) && SameValueZero(O[k], searchElement)) return true;
+    if (SameValueZero(O[k], searchElement)) return true;
   }
   return false;
 };
@@ -190,7 +190,7 @@ Array.prototype.indexOf = function ArrayIndexOf(searchElement /*, fromIndex */) 
   var O = ToObject(this);
   var len = ToLength(O.length);
   if (len === 0) return -1;
-  var n = arguments.length > 1 ? arguments[1] : 0;
+  var n = arguments.length > 1 ? ToIntegerOrInfinity(arguments[1]) : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
   for (; k < len; k++) {
     if (HasProperty(O, k) && O[k] === searchElement) return k;
@@ -467,7 +467,8 @@ Array.prototype.at = function ArrayAt(index) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.at called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var k = index >= 0 ? index : len + index;
+  var relativeIndex = ToIntegerOrInfinity(index);
+  var k = relativeIndex >= 0 ? relativeIndex : len + relativeIndex;
   return k < 0 || k >= len ? undefined : O[k];
 };
 
@@ -476,7 +477,8 @@ Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex
   var O = ToObject(this);
   var len = ToLength(O.length);
   if (len === 0) return -1;
-  var k = fromIndex === undefined ? len - 1 : (fromIndex >= 0 ? Math.min(fromIndex, len - 1) : len + fromIndex);
+  var relativeFrom = fromIndex === undefined ? len - 1 : ToIntegerOrInfinity(fromIndex);
+  var k = relativeFrom >= 0 ? Math.min(relativeFrom, len - 1) : len + relativeFrom;
   for (; k >= 0; k--) if (HasProperty(O, k) && O[k] === searchElement) return k;
   return -1;
 };

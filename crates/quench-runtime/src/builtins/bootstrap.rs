@@ -481,6 +481,28 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_at_coerces_index() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("[10, 20].at(false) === 10 && [10, 20].at({valueOf:function(){return 1;}}) === 20")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_array_search_coerces_from_index() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "[0, 1, 2].indexOf(1, 1.5) === 1 && \
+                 [0, 1, 2].lastIndexOf(1, 1.5) === 1 && \
+                 [,].includes(undefined)",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

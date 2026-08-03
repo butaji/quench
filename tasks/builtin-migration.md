@@ -98,6 +98,9 @@ self-hosted JavaScript layer.
   separate abstract operations.
 - [~] Added the shared JS `ToIntegerOrInfinity` operation and routed
   `Array.prototype.slice` index coercion through it.
+- [~] Routed Array `at`, `includes`, `indexOf`, and `lastIndexOf` positions
+  through `ToIntegerOrInfinity`; `includes` now observes sparse holes as
+  `undefined` per the spec.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`, `padEnd`, all trim variants, the public UTF-16 accessors
   (`charAt`, `charCodeAt`, `codePointAt`, `at`), `raw`, `isWellFormed`, and
