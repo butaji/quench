@@ -1246,11 +1246,7 @@ pub fn get_native_constructor_property_descriptor(
         } else {
             nc.name().to_string()
         };
-        let configurable = matches!(
-            nc.name().as_str(),
-            "BigInt" | "GeneratorFunction" | "AsyncFunction" | "AsyncGeneratorFunction"
-        );
-        return make_property_descriptor_string(&name, false, false, configurable);
+        return make_property_descriptor_string(&name, false, false, true);
     }
     if prop == "length" {
         let len = if is_function_constructor
@@ -1261,6 +1257,13 @@ pub fn get_native_constructor_property_descriptor(
                     | "GeneratorFunction"
                     | "AsyncFunction"
                     | "AsyncGeneratorFunction"
+                    | "Error"
+                    | "EvalError"
+                    | "RangeError"
+                    | "ReferenceError"
+                    | "SyntaxError"
+                    | "TypeError"
+                    | "URIError"
             ) {
             1.0
         } else {

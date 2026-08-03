@@ -240,9 +240,12 @@ fn test_type_error_prototype_constructor_is_type_error() {
 fn native_error_constructor_properties_are_non_enumerable() {
     let mut ctx = crate::Context::new().unwrap();
     let result = ctx
-        .eval("[Object.getOwnPropertyDescriptor(Error.prototype, 'constructor').enumerable, Object.getOwnPropertyDescriptor(TypeError.prototype, 'constructor').enumerable].join('|')")
+        .eval("var n = Object.getOwnPropertyDescriptor(TypeError, 'name'); var l = Object.getOwnPropertyDescriptor(TypeError, 'length'); [Object.getOwnPropertyDescriptor(Error.prototype, 'constructor').enumerable, Object.getOwnPropertyDescriptor(TypeError.prototype, 'constructor').enumerable, n.configurable, l.value].join('|')")
         .unwrap();
-    assert_eq!(result, crate::value::Value::String("false|false".into()));
+    assert_eq!(
+        result,
+        crate::value::Value::String("false|false|true|1".into())
+    );
 }
 
 #[test]
