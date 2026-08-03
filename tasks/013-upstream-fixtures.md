@@ -28,7 +28,7 @@ Each row is a slice. The prefix is the file-name prefix in
 
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
-| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563, 564, 565, 566, 567 (worker cleanup) |
+| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563, 564, 565, 566, 567, 568 (process IPC) |
 | 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503                    |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
@@ -169,3 +169,6 @@ Stage 567 made the worker-removal behavior an explicit contract: exiting
 workers must disappear from the public collection. The cleanup adapter also
 removes a worker synchronously on `kill()`, matching Node’s observable event
 ordering.
+
+Stage 568 filled the connected child-process IPC methods exposed through
+`worker.process` after a cluster fork.
