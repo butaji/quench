@@ -879,3 +879,6 @@ their minimum invocation count while recording the actual count.
 
 Stage 318 formalized `os.tmpdir` environment precedence, asserting trailing
 separator normalization and TMPDIR/TMP/TEMP fallback ordering.
+
+Stage 319 formalized POSIX `os.tmpdir` slash preservation, asserting backslash
+and root slash values are retained as POSIX environment paths.
