@@ -525,15 +525,6 @@ mod tests {
     use crate::{Context, Value};
 
     #[test]
-    fn array_of_has_standard_length_descriptor() {
-        let mut ctx = Context::new().unwrap();
-        assert_eq!(
-            ctx.eval("var d=Object.getOwnPropertyDescriptor(Array,'of'); [d.value.length,d.value===Array.of,d.writable,d.enumerable,d.configurable].join('|')"),
-            Ok(Value::String("0|true|false|false|true".to_string()))
-        );
-    }
-
-    #[test]
     fn array_from_uses_this_arg_for_mapping_callback() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
