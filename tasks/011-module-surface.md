@@ -236,3 +236,6 @@ Stage 546 adds V8 heap-statistics and coverage controls with stable numeric
 shapes; heap snapshots return an explicit unsupported-target error.
 Stage 547 adds `os.homedir`, `os.tmpdir`, and `os.userInfo` using the existing
 host-provided process directories and a stable identity object shape.
+Stage 548 adds `process.uptime`, `memoryUsage`, and `cpuUsage` with stable
+Node-compatible result shapes while the deeper host accounting remains a
+separate optimization slice.
