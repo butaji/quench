@@ -983,3 +983,6 @@ regular-expression validator.
 
 Stage 353 formalized strict reference mismatch handling for distinct object
 values and its `AssertionError` metadata.
+
+Stage 354 formalized the `assert.throws` missing-exception failure, including
+its standard message and operation metadata.

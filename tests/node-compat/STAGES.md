@@ -350,3 +350,4 @@ these small fixtures isolate the currently implemented contract.
 |   351 | assert.throws regex and function validators                       | `tools/run-node-tests.sh --stage 351` |
 |   352 | assert.throws regex mismatch handling                             | `tools/run-node-tests.sh --stage 352` |
 |   353 | assert strict reference mismatch                                  | `tools/run-node-tests.sh --stage 353` |
+|   354 | assert missing expected exception handling                        | `tools/run-node-tests.sh --stage 354` |
