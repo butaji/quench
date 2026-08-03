@@ -343,3 +343,4 @@ these small fixtures isolate the currently implemented contract.
 |   344 | assert Error object message handling                              | `tools/run-node-tests.sh --stage 344` |
 |   345 | assert.throws return value and constructor matching                | `tools/run-node-tests.sh --stage 345` |
 |   346 | assert.throws object matching                                     | `tools/run-node-tests.sh --stage 346` |
+|   347 | assert message formatting and operators                           | `tools/run-node-tests.sh --stage 347` |

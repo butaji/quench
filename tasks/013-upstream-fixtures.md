@@ -962,3 +962,6 @@ its constructor.
 
 Stage 346 formalized `assert.throws` matching an expected error object’s name
 and message properties.
+
+Stage 347 formalized assertion message formatting for long strict comparisons
+and operator metadata for loose inequality failures.
