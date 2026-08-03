@@ -536,3 +536,6 @@ counts, selected source ranges, and safe self-overlapping copies.
 
 Stage 199 formalized Buffer concatenation, asserting Uint8Array inputs,
 explicit truncation limits, and zero-filled output when the input list is empty.
+
+Stage 200 formalized Buffer fill values, asserting encoded string repetition,
+range bounds, and numeric byte filling.
