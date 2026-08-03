@@ -561,6 +561,15 @@ mod tests {
             Ok(Value::String("3,2,1".to_string()))
         );
     }
+
+    #[test]
+    fn array_to_sorted_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[3, 1, 2].toSorted().join(',')"),
+            Ok(Value::String("1,2,3".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

@@ -23,7 +23,9 @@ pub use accessors::{
 };
 pub use grouping::{proto_group_by, proto_group_by_to_map};
 pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
-pub use rearrange::{proto_copy_within, proto_fill, proto_reverse, proto_sort, proto_to_reversed};
+pub use rearrange::{
+    proto_copy_within, proto_fill, proto_reverse, proto_sort, proto_to_reversed, proto_to_sorted,
+};
 pub use search::{
     proto_find, proto_find_index, proto_find_last, proto_find_last_index, proto_includes,
     proto_index_of, proto_last_index_of,
@@ -80,6 +82,7 @@ fn setup_rearrange_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, cra
     m("fill", proto_fill);
     m("reverse", proto_reverse);
     m("toReversed", proto_to_reversed);
+    m("toSorted", proto_to_sorted);
     m("sort", proto_sort);
 }
 

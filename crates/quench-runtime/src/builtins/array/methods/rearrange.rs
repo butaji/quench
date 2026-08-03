@@ -240,6 +240,34 @@ pub fn proto_sort(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::clone(&o)))
 }
 
+pub fn proto_to_sorted(args: Vec<Value>) -> Result<Value, JsError> {
+    let mut elements = crate::builtins::array::methods::transformation::get_this_array()?;
+    let compare_fn = args.first().cloned();
+    match compare_fn {
+        Some(Value::Undefined) | None => {
+            elements.sort_by(|a, b| to_js_string(a).cmp(&to_js_string(b)))
+        }
+        Some(compare) => {
+            let mut sort_err = None;
+            elements.sort_by(|a, b| match call_compare_fn(&compare, a, b) {
+                Ok(value) => to_number(&value)
+                    .partial_cmp(&0.0)
+                    .unwrap_or(Ordering::Equal),
+                Err(error) => {
+                    sort_err = Some(error);
+                    Ordering::Equal
+                }
+            });
+            if let Some(error) = sort_err {
+                return Err(error);
+            }
+        }
+    }
+    Ok(crate::builtins::array::methods::transformation::make_array(
+        elements,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     fn create_test_context() -> crate::Context {
