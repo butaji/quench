@@ -834,3 +834,6 @@ platform-specific values exposed by POSIX and Win32 paths.
 
 Stage 303 formalized upstream-complete path normalization and joining,
 asserting POSIX/Win32 parent traversal and basename suffix behavior.
+
+Stage 304 formalized Win32 literal path normalization and basename behavior,
+asserting escaped separators and suffix removal.
