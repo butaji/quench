@@ -801,3 +801,6 @@ asserting the explicit null-prototype marker and property output.
 
 Stage 292 formalized `util.format` rendering for class instances with a null
 prototype, asserting the class name and null-prototype marker.
+
+Stage 293 formalized `util.format` rendering for ordinary class instances,
+asserting the class name and enumerable instance properties.
