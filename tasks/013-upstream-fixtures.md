@@ -494,3 +494,6 @@ the `NaN` result for decimal, integer, and floating-point placeholders.
 Stage 185 formalized numeric separators in `util.format` and
 `formatWithOptions`, asserting separator-aware Number and BigInt output,
 including large values.
+
+Stage 186 formalized `%s` formatting for objects, asserting abbreviated nested
+arrays and custom `toString` conversion.
