@@ -78,8 +78,10 @@ The remaining host work, in dependency order. Each row is a slice.
 - `__quench_tls_accept` — fd + cert → fd.
 - `__quench_tls_handshake` — fd → result.
 
-This requires `openssl-sys` or `rustls` in the dependency tree. Out of
-scope for the in-process slices; defer.
+This requires `openssl-sys` or `rustls` in the dependency tree. Stage 520
+registers the JS surface with an explicit unsupported error; defer this host
+boundary until the TCP socket slices are available so TLS can reuse their
+descriptor and lifecycle contracts.
 
 ### TTY
 

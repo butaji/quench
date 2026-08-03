@@ -113,8 +113,9 @@ fixture cluster, and the next concrete slice.
   `end()` preserve incomplete multibyte sequences across Buffer chunks.
 - `sys` — alias to `util`.
 - `timers` / `timers/promises` — done (task 003).
-- `tls` — TODO. Stage-520: real `tls.connect`/`tls.createServer` over
-  host OpenSSL.
+- `tls` — stage 520 registers the TLS surface and returns an explicit
+  `ERR_TLS_NOT_SUPPORTED` error for network operations until the planned host
+  OpenSSL/rustls boundary is available.
 - `trace_events` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
 - `tty` — TODO. Stage-521: `tty.WriteStream`, `tty.ReadStream`,
   `tty.isatty`, real termios via host.
@@ -161,3 +162,7 @@ to the existing `TextDecoder`. The focused stage caught that rquickjs does not
 flush `TextDecoder.decode(undefined)`, so `end()` explicitly supplies an empty
 typed array. Future slices should include a direct runtime probe for boundary
 inputs before finalizing the focused assertion.
+Stage 520 is complete as a surface slice. It exposes secure-context metadata
+and a stable unsupported error for connection/server operations; the real TLS
+host boundary remains tracked separately rather than hidden behind a generic
+missing-module error.
