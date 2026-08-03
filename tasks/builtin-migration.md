@@ -148,6 +148,12 @@ self-hosted JavaScript layer.
   JS-owned resource storage, reverse-order disposal, move semantics, and
   `Symbol.dispose`/`Symbol.asyncDispose`; async completion uses Promise
   composition and needs later conformance polish.
+- [~] `FinalizationRegistry` remains pending on native GC observation,
+  finalizer callbacks, and cleanup-job scheduling; these are Rust engine
+  integration rather than JS-definable storage.
+- [~] Async iterator intrinsic prototype wiring remains pending on realm-level
+  async iterator records and async-from-sync state; generator state machines
+  remain Rust core while async algorithms are self-hosted where possible.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
 
