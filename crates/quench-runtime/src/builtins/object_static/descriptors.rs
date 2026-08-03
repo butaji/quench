@@ -287,15 +287,8 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Value::NativeConstructor(nc) = &obj {
-        if let Some(value) = flags.value.clone() {
+        if let Some(value) = flags.value {
             nc.set_static_method(&prop, value);
-        }
-        return Ok(obj);
-    }
-
-    if let Value::NativeFunction(nf) = &obj {
-        if let Some(value) = flags.value.clone() {
-            nf.define_property(&prop, value, flags);
         }
         return Ok(obj);
     }
