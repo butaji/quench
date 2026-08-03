@@ -225,3 +225,6 @@ Stage 541 adds `util.styleText` with common ANSI styles, nested style arrays,
 and color-disable options while keeping formatting entirely in JavaScript.
 Stage 542 adds `util.callbackify`, including callback validation, success
 delivery, and synchronous exception delivery through the existing job queue.
+Stage 543 adds `util.transferableAbortSignal` and
+`util.transferableAbortController` with signal validation, marking, and abort
+propagation without requiring structured-clone host support.
