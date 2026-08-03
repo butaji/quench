@@ -484,3 +484,6 @@ negative zero.
 
 Stage 182 formalized `util.inspect` defaults and `formatWithOptions`, asserting
 the default numeric-separator setting and option-aware formatting.
+
+Stage 183 formalized `util.format` BigInt conversions, asserting `%d`, `%i`,
+and `%f` output for BigInt values.
