@@ -14,7 +14,7 @@ for (const name of [
   "latin1Write",
   "hexWrite",
   "ucs2Write",
-  "utf8Write",
+  "utf8Write"
 ]) {
   assert.strictEqual(typeof Buffer.prototype[name], "function");
 }

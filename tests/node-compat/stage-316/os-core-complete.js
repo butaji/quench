@@ -10,7 +10,7 @@ for (const value of [
   os.availableParallelism(),
   +os.availableParallelism,
   os.freemem(),
-  +os.freemem,
+  +os.freemem
 ]) {
   assert.strictEqual(typeof value, "number");
   assert.ok(!Number.isNaN(value));

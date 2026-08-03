@@ -82,6 +82,34 @@ surrounding tooling should:
 - `tools/diff-cluster.sh <prefix>` returns a useful diff in < 30 s per
   cluster.
 
+## Enforced source limits
+
+The repository now enforces these limits for every non-vendored `.js` and
+`.rs` source file:
+
+- 500 physical lines per file (`tools/lint-size.sh`)
+- 40 lines per function (`max-lines-per-function` in ESLint and
+  `clippy::too_many_lines`)
+- complexity no higher than 10 (`complexity` in ESLint and
+  `clippy::cognitive_complexity`)
+
+Run `tools/lint-all.sh` locally (or the language-specific scripts). The same
+checks run in `.github/workflows/lint.yml`. Existing oversized bootstrap and host files are
+reported as failures and must be decomposed in subsequent slices.
+
 ## Status
 
-In progress. Items 1, 5, and 6 are the immediate next slices.
+In progress. Items 1, 5, and 6 are the immediate next slices; repository-wide
+source-limit enforcement is now installed. The bootstrap diagnostics added for
+stage 514 exposed and fixed an initialization-order bug in the stream polyfill.
+Stage 516 also confirmed that one shared callback adapter is sufficient for the
+zlib convenience methods while preserving synchronous validation and async
+error delivery.
+Stage 518 added zlib unzip autodetection and confirmed the existing compressed
+byte primitives can support both gzip and deflate without another host hook.
+The bootstrap decomposition now also extracts util, querystring, URL, crypto,
+streams, OS, and performance implementations into readable files under the
+500-line limit; runtime concatenation preserves initialization order and the
+existing focused stages remain green.
+The core, text/assert, and path/common sections are now extracted as well;
+the remaining monolith is concentrated in the Buffer and fs implementations.

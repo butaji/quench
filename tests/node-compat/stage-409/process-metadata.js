@@ -14,7 +14,7 @@ for (const name of [
   "systemCPUTime",
   "maxRSS",
   "fsRead",
-  "fsWrite",
+  "fsWrite"
 ])
   if (typeof resources[name] !== "number")
     throw new Error("invalid resourceUsage shape");

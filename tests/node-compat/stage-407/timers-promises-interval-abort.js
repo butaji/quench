@@ -6,7 +6,7 @@ const timers = require("timers/promises");
   let error;
   try {
     for await (const _value of timers.setInterval(1, "value", {
-      signal: controller.signal,
+      signal: controller.signal
     })) {
       throw new Error("aborted interval yielded a value");
     }
