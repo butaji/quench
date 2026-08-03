@@ -633,6 +633,13 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             check_expr_for_fn_params(&expr.expression, strict)?;
         }
         ast::Statement::VariableDeclaration(var_decl) => {
+            if strict
+                && collect_bound_names(var_decl)
+                    .iter()
+                    .any(|name| strict_reserved_binding(name))
+            {
+                return Err(JsError("SyntaxError: invalid strict mode binding".into()));
+            }
             for d in &var_decl.declarations {
                 if let Some(init) = &d.init {
                     check_expr_for_fn_params(init, strict)?;
@@ -1481,6 +1488,21 @@ fn property_key_is_reserved(key: &ast::PropertyKey<'_>) -> bool {
     };
     matches!(
         identifier.name.as_str(),
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+    )
+}
+
+fn strict_reserved_binding(name: &str) -> bool {
+    matches!(
+        name,
         "implements"
             | "interface"
             | "let"
