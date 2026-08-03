@@ -129,32 +129,41 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let items = args.first().cloned().unwrap_or(Value::Undefined);
     let original_items = items.clone();
     let map_fn = args.get(1).cloned();
-    let elements = match items {
-        Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
-            object.borrow().elements.clone()
-        }
-        Value::Object(object) => {
-            let length = crate::eval::member::eval_object_member_value(
-                &object,
-                &Value::String("length".to_string()),
-                None,
-            )
-            .ok()
-            .and_then(|value| crate::value::try_to_number(&value).ok())
-            .unwrap_or(0.0)
-            .max(0.0) as usize;
-            (0..length)
-                .map(|index| {
-                    crate::eval::member::eval_object_member_value(
-                        &object,
-                        &Value::String(index.to_string()),
-                        None,
-                    )
-                    .unwrap_or(Value::Undefined)
-                })
-                .collect()
-        }
-        _ => Vec::new(),
+    let iterable = if matches!(items, Value::Object(ref object) if object.borrow().kind != ObjectKind::Array)
+    {
+        crate::eval::iteration::get_iterator(&items).ok()
+    } else {
+        None
+    };
+    let elements = match iterable {
+        Some(values) => values,
+        None => match items {
+            Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
+                object.borrow().elements.clone()
+            }
+            Value::Object(object) => {
+                let length = crate::eval::member::eval_object_member_value(
+                    &object,
+                    &Value::String("length".to_string()),
+                    None,
+                )
+                .ok()
+                .and_then(|value| crate::value::try_to_number(&value).ok())
+                .unwrap_or(0.0)
+                .max(0.0) as usize;
+                (0..length)
+                    .map(|index| {
+                        crate::eval::member::eval_object_member_value(
+                            &object,
+                            &Value::String(index.to_string()),
+                            None,
+                        )
+                        .unwrap_or(Value::Undefined)
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        },
     };
     let elements = if let Some(map_fn) = map_fn {
         elements

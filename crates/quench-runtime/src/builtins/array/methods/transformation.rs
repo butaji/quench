@@ -750,6 +750,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(ctx.eval("Array.from.length"), Ok(Value::Number(1.0)));
     }
+
+    #[test]
+    fn array_from_reads_sync_iterables() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.from(new Set([1,2])).join(',')"),
+            Ok(Value::String("1,2".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
