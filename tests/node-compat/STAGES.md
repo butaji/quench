@@ -200,3 +200,4 @@ these small fixtures isolate the currently implemented contract.
 |   190 | Buffer double-precision read/write and byte order           | `tools/run-node-tests.sh --stage 190` |
 |   191 | Buffer unsigned integer read/write and bounds errors        | `tools/run-node-tests.sh --stage 191` |
 |   192 | Buffer variable-width unsigned integer operations           | `tools/run-node-tests.sh --stage 192` |
+|   193 | Buffer Uint/UInt method aliases                              | `tools/run-node-tests.sh --stage 193` |
