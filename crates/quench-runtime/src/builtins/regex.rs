@@ -365,7 +365,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let last_index = crate::eval::member::eval_object_member_value(
         obj,
         &Value::String("lastIndex".to_string()),
-        None,
+        current_regex_env().as_ref(),
     )?;
     if !same_value_search(&last_index, &Value::Number(0.0)) {
         set_search_last_index(obj, &this_val, Value::Number(0.0))?;
@@ -378,7 +378,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let current_last_index = crate::eval::member::eval_object_member_value(
         obj,
         &Value::String("lastIndex".to_string()),
-        None,
+        current_regex_env().as_ref(),
     )?;
     if !same_value_search(&current_last_index, &last_index) {
         set_search_last_index(obj, &this_val, last_index)?;
@@ -388,10 +388,15 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         Value::Object(result) => crate::eval::member::eval_object_member_value(
             &result,
             &Value::String("index".to_string()),
-            None,
+            current_regex_env().as_ref(),
         ),
         _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
     }
+}
+
+fn current_regex_env() -> Option<Rc<RefCell<crate::env::Environment>>> {
+    crate::context::CURRENT_CONTEXT
+        .with(|cell| cell.borrow().map(|ptr| unsafe { (&*ptr).env().clone() }))
 }
 
 fn same_value_search(left: &Value, right: &Value) -> bool {
