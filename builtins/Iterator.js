@@ -4,7 +4,6 @@ var ThrowTypeError = ops.ThrowTypeError;
 var IsCallable = ops.IsCallable;
 
 // Save native implementations
-var _nativeProtoFlatMap = Iterator.prototype.__flatMap;
 
 // Iterator.from (ES2025 §27.1.3.2)
 Iterator.from = function IteratorFrom(O) {
@@ -85,7 +84,21 @@ Iterator.prototype.drop = function IteratorDrop(limit) {
 
 Iterator.prototype.flatMap = function(mapper) {
   if (!IsCallable(mapper)) throw ThrowTypeError("mapper is not a function");
-  return _nativeProtoFlatMap.call(this, mapper);
+  var outer = this;
+  var inner;
+  var index = 0;
+  return IteratorHelper(function() {
+    while (true) {
+      if (inner !== undefined) {
+        var innerStep = inner.next();
+        if (!innerStep.done) return innerStep;
+        inner = undefined;
+      }
+      var outerStep = outer.next();
+      if (outerStep.done) return outerStep;
+      inner = Iterator.from(mapper(outerStep.value, index++));
+    }
+  });
 };
 Iterator.prototype.reduce = function IteratorReduce(reducer, initialValue) {
   if (!IsCallable(reducer)) throw ThrowTypeError("reducer is not a function");

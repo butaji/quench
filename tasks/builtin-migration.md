@@ -126,6 +126,8 @@ self-hosted JavaScript layer.
   streaming helper records; Rust retains only underlying iterator execution.
 - [~] `Iterator.from` now normalizes iterable and iterator inputs in JS and
   forwards to the underlying `next`; Rust retains iterator state machinery.
+- [~] `Iterator.prototype.flatMap` now composes nested streaming iterators in
+  JS; Rust retains only iterator state and execution primitives.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
