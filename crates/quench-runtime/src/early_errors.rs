@@ -777,6 +777,15 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
             check_expr_for_fn_params(&expr.expression, strict)?;
         }
         ast::Statement::VariableDeclaration(var_decl) => {
+            if !var_decl.kind.is_var()
+                && collect_bound_names(var_decl)
+                    .iter()
+                    .any(|name| name == "let")
+            {
+                return Err(JsError(
+                    "SyntaxError: lexical declarations cannot bind 'let'".into(),
+                ));
+            }
             if strict
                 && collect_bound_names(var_decl)
                     .iter()

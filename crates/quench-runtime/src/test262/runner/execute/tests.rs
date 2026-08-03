@@ -1159,6 +1159,28 @@ fn class_heritage_expression_is_strict() {
 }
 
 #[test]
+fn const_declaration_rejects_let_binding_name() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/const/syntax/const-declaring-let-split-across-two-lines.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn const_update_assignment_throws_type_error() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/const/syntax/const-invalid-assignment-next-expression-for.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn generator_class_method_rejects_yield_parameter_binding() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -1457,9 +1457,6 @@ fn eval_for_init_decl(
     env: &Rc<RefCell<Environment>>,
     in_arrow_function: bool,
 ) -> Result<(), JsError> {
-    // For `const` in for-loop heads, declare as `let` in HEAD so the
-    // update expression can write to it. The per-iteration scope will
-    // enforce `const` for the body (via push_for_body_iteration_scope).
     let effective_kind = if *kind == VarKind::Const {
         VarKind::Let
     } else {
@@ -1689,6 +1686,15 @@ fn eval_for(
                 .clear_per_iteration();
         }
         if let Some(update) = update {
+            if matches!(
+                init,
+                Some(ForInit::VarDeclaration {
+                    kind: VarKind::Const,
+                    ..
+                })
+            ) {
+                return Err(JsError("TypeError: Assignment to constant variable".into()));
+            }
             let _ = eval_expression(update, env, in_arrow_function)?;
         }
         if head_lexical {
