@@ -565,8 +565,6 @@ Array.prototype.toReversed = function ArrayToReversed() {
   return A;
 };
 
-// Array.prototype.toSorted — kept as native (would recurse via _nativeSort)
-
 // Array.prototype.toSpliced (ES2023 §23.1.3.37)
 Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...items */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSpliced called on null or undefined");
