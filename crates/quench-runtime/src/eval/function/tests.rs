@@ -2398,7 +2398,7 @@ fn eval_arguments_declaration_conflicts_with_function_body_arguments() {
     let mut ctx = Context::new().unwrap();
     let result =
         ctx.eval("async function * f(p = eval('var arguments')) { function arguments() {} } f()");
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]

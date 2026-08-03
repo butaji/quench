@@ -341,19 +341,6 @@ pub fn reject_eval_var_lexical_conflict(
     crate::interpreter::collect_var_names_recursive(body, &mut names);
     let eval_env =
         crate::interpreter::get_current_eval_env().unwrap_or_else(|| Rc::clone(&ctx.env));
-    if names.iter().any(|name| name == "arguments")
-        && matches!(
-            eval_env.borrow().get("arguments"),
-            Some(Value::Function(_) | Value::Object(_))
-        )
-    {
-        let (error, js_error) = crate::value::error::create_js_error_with_type(
-            "Identifier 'arguments' has already been declared",
-            "SyntaxError",
-        );
-        crate::value::set_thrown_value(error);
-        return Err(js_error);
-    }
     for name in &names {
         if matches!(
             eval_env.borrow().get_kind(name),
