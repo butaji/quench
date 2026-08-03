@@ -1926,6 +1926,46 @@ struct BreakContinueChecker {
 }
 
 impl<'a> Visit<'a> for BreakContinueChecker {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        let saved = (
+            self.for_depth,
+            self.switch_depth,
+            std::mem::take(&mut self.iter_labels),
+            std::mem::take(&mut self.all_labels),
+        );
+        self.for_depth = 0;
+        self.switch_depth = 0;
+        if let Some(body) = &function.body {
+            self.visit_function_body(body);
+        }
+        self.for_depth = saved.0;
+        self.switch_depth = saved.1;
+        self.iter_labels = saved.2;
+        self.all_labels = saved.3;
+    }
+
+    fn visit_static_block(&mut self, block: &ast::StaticBlock<'a>) {
+        let saved = (
+            self.for_depth,
+            self.switch_depth,
+            std::mem::take(&mut self.iter_labels),
+            std::mem::take(&mut self.all_labels),
+        );
+        self.for_depth = 0;
+        self.switch_depth = 0;
+        for statement in &block.body {
+            self.visit_statement(statement);
+        }
+        self.for_depth = saved.0;
+        self.switch_depth = saved.1;
+        self.iter_labels = saved.2;
+        self.all_labels = saved.3;
+    }
+
     fn visit_break_statement(&mut self, it: &oxc::ast::ast::BreakStatement) {
         if self.error.is_some() {
             return;
