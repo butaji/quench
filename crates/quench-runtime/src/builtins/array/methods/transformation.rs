@@ -118,6 +118,7 @@ pub fn call_callback(
 /// Array.prototype.map(callback, thisArg?)
 pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
     let receiver = match crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
     {
@@ -135,9 +136,9 @@ pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
         let callback_args = vec![elem, Value::Number(i as f64), receiver.clone()];
         let mapped = match &callback {
             Value::Function(_) => {
-                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+                call_value_with_this(callback.clone(), callback_args, this_arg.clone())?
             }
-            Value::NativeFunction(native) => native.call(Value::Undefined, callback_args)?,
+            Value::NativeFunction(native) => native.call(this_arg.clone(), callback_args)?,
             _ => return Err(JsError("Callback is not a function".to_string())),
         };
         result.push(mapped);
@@ -757,6 +758,15 @@ mod tests {
         assert_eq!(
             ctx.eval("Array.from(new Set([1,2])).join(',')"),
             Ok(Value::String("1,2".to_string()))
+        );
+    }
+
+    #[test]
+    fn array_map_binds_this_argument() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var receiver={}; [1].map(function(){return this===receiver;},receiver)[0]"),
+            Ok(Value::Boolean(true))
         );
     }
 }
