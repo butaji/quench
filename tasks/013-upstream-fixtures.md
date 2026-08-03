@@ -948,3 +948,6 @@ Stage 340 formalized a non-debug common fixture regression check for
 
 Stage 341 formalized non-TTY process stream flags, ensuring stdout and stderr
 report `isTTY === false` in the harness.
+
+Stage 342 formalized `assert.AssertionError` inheritance and assertion throwing
+behavior.
