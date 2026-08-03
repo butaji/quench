@@ -144,3 +144,4 @@ these small fixtures isolate the currently implemented contract.
 |   134 | invalid callback `fs.truncate` lengths                    | `tools/run-node-tests.sh --stage 134` |
 |   135 | fractional `fs.truncateSync` lengths                      | `tools/run-node-tests.sh --stage 135` |
 |   136 | encoded synchronous `fs.readFileSync` results             | `tools/run-node-tests.sh --stage 136` |
+|   137 | buffer option on synchronous `fs.readFileSync`            | `tools/run-node-tests.sh --stage 137` |

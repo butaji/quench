@@ -345,3 +345,6 @@ asserting `ERR_OUT_OF_RANGE` and cleaning up the temporary file.
 
 Stage 136 formalized hexadecimal and base64 `fs.readFileSync` encodings,
 asserting their exact decoded-string results and cleaning up the temporary file.
+
+Stage 137 formalized the synchronous `fs.readFileSync` buffer option,
+asserting returned contents and preservation of an untouched buffer byte.
