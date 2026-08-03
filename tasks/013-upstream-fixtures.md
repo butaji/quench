@@ -751,3 +751,14 @@ quoted strings and named/anonymous function labels.
 
 Stage 278 formalized the `node:test` options callback invocation, asserting
 a test with options runs its callback.
+
+Stage 279 formalized `url.format`, asserting empty-query preservation and
+legacy URL-object serialization.
+
+Stage 280 formalized `url.parse` component extraction, asserting protocol,
+host, port, path, query, and hash fields plus `ERR_INVALID_ARG_TYPE` for
+non-string input.
+
+Stage 281 formalized `url.parse` error codes, asserting `ERR_INVALID_URL`,
+`ERR_INVALID_ARG_VALUE`, and raw `URIError` propagation (verified against
+Node).

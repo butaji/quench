@@ -275,3 +275,6 @@ these small fixtures isolate the currently implemented contract.
 |   276 | `util.format` float and numeric edge cases                     | `tools/run-node-tests.sh --stage 276` |
 |   277 | `util.inspect` string and function rendering                   | `tools/run-node-tests.sh --stage 277` |
 |   278 | `node:test` options callback invocation                        | `tools/run-node-tests.sh --stage 278` |
+|   279 | `url.format` string and legacy object output                   | `tools/run-node-tests.sh --stage 279` |
+|   280 | `url.parse` component extraction and validation                | `tools/run-node-tests.sh --stage 280` |
+|   281 | `url.parse` error codes and invalid inputs                     | `tools/run-node-tests.sh --stage 281` |
