@@ -122,6 +122,9 @@ fn make_filter_result(receiver: &Value, elements: Vec<Value>) -> Result<Value, J
         _ => target,
     };
     if let Value::Object(object) = &result {
+        if !object.borrow().extensible && !elements.is_empty() {
+            return Err(JsError::new("TypeError: cannot define property"));
+        }
         for (index, value) in elements.iter().enumerate() {
             object.borrow_mut().set(&index.to_string(), value.clone());
         }
@@ -488,6 +491,14 @@ mod tests {
             ctx.eval("var a=[1]; var C=function(){}; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.filter(function(){return true}); Object.getPrototypeOf(r)===C.prototype"),
             Ok(Value::Boolean(true))
         );
+    }
+
+    #[test]
+    fn filter_throws_when_species_result_is_non_extensible() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var A=function(){this.length=0; Object.preventExtensions(this)}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=A; a.filter(function(){return true})")
+            .is_err());
     }
 
     #[test]
