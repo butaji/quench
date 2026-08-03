@@ -897,3 +897,6 @@ and object extension checks plus USV conversion and VT control stripping.
 
 Stage 324 formalized `util` validation behavior, distinguishing native errors
 from forged prototypes and preserving invalid-argument error metadata.
+
+Stage 325 formalized the internal IPC channel-closed error, preserving its
+Node error code and native-error classification.
