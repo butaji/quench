@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchClusterProcessRequire = globalThis.require;\nconst __quenchClusterProcess = __quenchClusterProcessRequire("cluster");\nconst __quenchOriginalClusterFork = __quenchClusterProcess.fork;\n__quenchClusterProcess.fork = (...args) => { const worker = __quenchOriginalClusterFork(...args); if (worker.process) { worker.process.connected = true; worker.process.disconnect = () => worker.disconnect(); worker.process.send = (...values) => worker.send(...values); worker.once("disconnect", () => { worker.process.connected = false; }); } return worker; };\n'
+);
