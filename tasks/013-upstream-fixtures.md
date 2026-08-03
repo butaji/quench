@@ -707,3 +707,12 @@ predicate fires only for its own category across all value kinds.
 
 Stage 255 formalized typed-array brand checks, asserting DataView and
 TypedArray are distinguished by brand even under prototype spoofing.
+
+Stage 256 formalized `util.types` vm module namespace and key checks,
+asserting `isModuleNamespaceObject` and empty key-object/crypto-key results.
+
+Stage 257 formalized Buffer ascii byte conversion, asserting high-bit
+characters map to the exact low-byte sequence (verified against Node).
+
+Stage 258 formalized Buffer detached-arraybuffer state validation, asserting
+`ERR_INVALID_STATE` when operating on a transferred (detached) buffer.

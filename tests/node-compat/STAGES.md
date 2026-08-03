@@ -263,3 +263,6 @@ these small fixtures isolate the currently implemented contract.
 |   253 | `util.types` basic predicates                                  | `tools/run-node-tests.sh --stage 253` |
 |   254 | `util.types` full predicate matrix                             | `tools/run-node-tests.sh --stage 254` |
 |   255 | typed-array brand checks (DataView vs TypedArray)               | `tools/run-node-tests.sh --stage 255` |
+|   256 | `util.types` vm module namespace and key checks                 | `tools/run-node-tests.sh --stage 256` |
+|   257 | Buffer ascii byte conversion                                    | `tools/run-node-tests.sh --stage 257` |
+|   258 | Buffer detached-arraybuffer state validation                   | `tools/run-node-tests.sh --stage 258` |
