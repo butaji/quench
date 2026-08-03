@@ -557,3 +557,6 @@ UTF-8 output, and UTF-16LE encoding.
 
 Stage 206 formalized Buffer instance and static comparison, asserting typed
 array compatibility, equality, and lexicographic ordering.
+
+Stage 207 formalized Buffer factory constructors, asserting `Buffer.of`
+coercion and `allocUnsafeSlow` sizing.
