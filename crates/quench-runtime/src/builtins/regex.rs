@@ -276,6 +276,14 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn regexp_match_all_propagates_last_index_conversion_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var r = /./; r.lastIndex = {valueOf: function() { throw new Test262Error(); }}; r[Symbol.matchAll]('')")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -469,7 +477,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         current_regex_env().as_ref(),
     )?;
     let state = Rc::new(RefCell::new(
-        crate::value::to_number(&last_index).max(0.0) as usize
+        regexp_match_all_last_index(&last_index)?.max(0.0) as usize,
     ));
     let iterator = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     let next_state = Rc::clone(&state);
@@ -501,6 +509,22 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         );
     }
     Ok(Value::Object(iterator))
+}
+
+fn regexp_match_all_last_index(value: &Value) -> Result<f64, JsError> {
+    if let Value::Object(object) = value {
+        let method = object
+            .borrow()
+            .get("valueOf")
+            .ok_or_else(|| JsError::new("TypeError: missing valueOf".to_string()))?;
+        let primitive = crate::eval::function::call_value_with_this(
+            method,
+            Vec::new(),
+            Value::Object(Rc::clone(object)),
+        )?;
+        return Ok(crate::value::to_number(&primitive));
+    }
+    Ok(crate::value::to_number(value))
 }
 
 fn current_regex_env() -> Option<Rc<RefCell<crate::env::Environment>>> {
