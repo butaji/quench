@@ -38,10 +38,9 @@ relevant test262 stage.
   complete.
 
 - **R29 — Arguments length expansion.** Sloppy duplicate-parameter arguments
-  now map only the last occurrence of a parameter name, preserving earlier
-  argument values. `Object.defineProperty(arguments, "length", {value: N})`
-  still needs to expose the expected expanded indexed results to concat and
-  related array-like consumers.
+  map only the last occurrence of a parameter name, preserving earlier
+  argument values. Redefining `arguments.length` now expands indexed access
+  with `undefined` values for concat and related array-like consumers.
 
 - **R22 — Migrate all builtins to JS.** The migration is tracked in
   `tasks/builtin-migration.md`; `bootstrap_js_builtins` is active for normal
