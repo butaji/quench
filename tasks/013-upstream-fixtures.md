@@ -312,3 +312,6 @@ identity/content, close, and cleanup.
 
 Stage 125 formalized fd-based `fs.writeFileSync`, asserting exact output and
 cleanup after closing the descriptor.
+
+Stage 126 formalized typed-array `fs.writeFileSync` input, asserting decoded
+contents and cleanup.
