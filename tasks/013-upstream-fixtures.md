@@ -680,3 +680,12 @@ and `allocUnsafe` truncate fractional sizes to integer lengths.
 
 Stage 246 formalized Buffer `indexOf` UCS-2 odd-offset handling, asserting
 an odd byte offset in ucs2 search yields no match.
+
+Stage 247 formalized Buffer `indexOf` encoding overload, asserting a hex
+string with an explicit encoding argument is matched.
+
+Stage 248 formalized `util.inspect` Buffer rendering, asserting the canonical
+`<Buffer ...>` hex output.
+
+Stage 249 formalized Buffer `INSPECT_MAX_BYTES` live limit, asserting the
+truncated `<Buffer ... ... N more byte>` rendering.
