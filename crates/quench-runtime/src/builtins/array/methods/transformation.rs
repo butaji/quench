@@ -325,6 +325,12 @@ pub fn proto_some(args: Vec<Value>) -> Result<Value, JsError> {
 fn array_like_length(receiver: &Value) -> Result<usize, JsError> {
     let length = match receiver {
         Value::Object(object) => {
+            if matches!(
+                object.borrow().get_own_value("__quench_proxy_revoked"),
+                Some(Value::Boolean(true))
+            ) {
+                return Err(JsError::new("TypeError: revoked proxy"));
+            }
             if object.borrow().kind == ObjectKind::Array {
                 return Ok(object.borrow().elements.len());
             }
@@ -430,6 +436,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.every,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
             Ok(Value::String("1|false|false|true".to_string()))
+        );
+    }
+
+    #[test]
+    fn filter_rejects_revoked_proxy_before_callback() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var o=Proxy.revocable([],{}); var called=false; o.revoke(); try { Array.prototype.filter.call(o.proxy,function(){called=true;}); false } catch(e) { !called }"),
+            Ok(Value::Boolean(true))
         );
     }
 
