@@ -22,7 +22,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
 - Process: `process` (via `globalThis.process`), `worker_threads` (stub).
 - Networking: `http` (in-process), `https` (TODO), `http2` (TODO), `net`
   (stub), `dgram` (TODO), `tls` (TODO), `dns`, `dns/promises`.
-- I/O: `readline`, `readline/promises` (TODO), `repl` (TODO), `tty` (TODO),
+- I/O: `readline`, `readline/promises`, `repl` (TODO), `tty` (TODO),
   `console` (via `globalThis.console`), `module` (TODO),
   `diagnostics_channel`, `inspector` (return ERR), `wasi` (return
   ERR), `domain` (legacy).
@@ -97,7 +97,8 @@ fixture cluster, and the next concrete slice.
 - `punycode` — stage 528 complete: Unicode domain conversion and UCS-2
   helpers use a compact JavaScript Bootstring implementation.
 - `querystring` — done.
-- `readline` / `readline/promises` — partial. Need: `Interface` class,
+- `readline` / `readline/promises` — partial; stage 532 adds the promise
+  `Interface` and `createInterface` surface. Need: `Interface` class,
   `createInterface`, `emitKeypressEvents`, real keypress decoding via
   host `__quench_tty_*`.
 - `repl` — TODO. Stage-518: minimal `repl.start()` in-process using
@@ -198,3 +199,6 @@ Stage 530 keeps diagnostics state in a module-level channel map, so repeated
 Stage 531 keeps the legacy domain implementation deliberately small and
 state-based; it adds no host exception machinery while preserving lifecycle
 and callback binding contracts.
+Stage 532 layers promise questions over the existing line-event convention;
+the focused test uses a tiny input double, keeping terminal I/O out of the
+module slice until the tracked TTY callbacks are implemented.
