@@ -5,6 +5,8 @@ var ThrowTypeError = ops.ThrowTypeError;
 // Save native implementations
 var _nativeToFixed = Number.prototype.__toFixed;
 var _nativeToExponential = Number.prototype.__toExponential;
+var _nativeToString = Number.prototype.__toString;
+var _nativeValueOf = Number.prototype.__valueOf;
 var _nativeToPrecision = Number.prototype.toPrecision;
 
 Number.isNaN = function NumberIsNaN(value) {
@@ -47,4 +49,14 @@ Number.prototype.toExponential = function NumberToExponential(digits) {
 Number.prototype.toPrecision = function NumberToPrecision(precision) {
   if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.toPrecision called on null or undefined");
   return _nativeToPrecision.call(this, precision);
+};
+
+Number.prototype.toString = function NumberToString(radix) {
+  if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.toString called on null or undefined");
+  return _nativeToString.call(this, radix);
+};
+
+Number.prototype.valueOf = function NumberValueOf() {
+  if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.valueOf called on null or undefined");
+  return _nativeValueOf.call(this);
 };

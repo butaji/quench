@@ -54,7 +54,7 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     );
 
     proto.borrow_mut().set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec, Number.prototype.toString unwraps the boxed number and
             // returns its ToString representation. This must take precedence
@@ -87,7 +87,7 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     );
 
     proto.borrow_mut().set(
-        "valueOf",
+        "__valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Number(0.0));
             if let Value::Object(obj) = &this_val {
@@ -98,7 +98,7 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
             Ok(Value::Number(to_number(&this_val)))
         }))),
     );
-    for name in ["__toFixed", "__toExponential", "toString", "valueOf"] {
+    for name in ["__toFixed", "__toExponential", "__toString", "__valueOf"] {
         if let Some(flags) = proto.borrow_mut().descriptors.get_mut(name) {
             flags.enumerable = false;
         }
