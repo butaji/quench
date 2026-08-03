@@ -1,7 +1,8 @@
 const fs = require("fs");
+const assert = require("assert");
 try {
   fs.symlinkSync("", "", "invalid");
-  throw new Error("accepted invalid symlink type");
+  assert.fail("accepted invalid symlink type");
 } catch (error) {
-  if (error.code !== "ERR_INVALID_ARG_VALUE") throw error;
+  assert.strictEqual(error.code, "ERR_INVALID_ARG_VALUE");
 }

@@ -170,3 +170,4 @@ these small fixtures isolate the currently implemented contract.
 |   160 | encoded synchronous `fs.readlink` results                 | `tools/run-node-tests.sh --stage 160` |
 |   161 | upstream symlink capability helper                        | `tools/run-node-tests.sh --stage 161` |
 |   162 | invalid target validation for `fs.symlinkSync`            | `tools/run-node-tests.sh --stage 162` |
+|   163 | invalid type validation for `fs.symlinkSync`              | `tools/run-node-tests.sh --stage 163` |
