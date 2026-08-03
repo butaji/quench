@@ -3,6 +3,16 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 var _nativeThen = Promise.prototype.then;
+var _nativeResolve = Promise.__resolve;
+var _nativeReject = Promise.__reject;
+
+Promise.resolve = function PromiseResolve(value) {
+  return _nativeResolve.call(this, value);
+};
+
+Promise.reject = function PromiseReject(reason) {
+  return _nativeReject.call(this, reason);
+};
 
 // Promise.prototype.then (ES2025 §27.2.5.4)
 Promise.prototype.then = function PromiseThen(onFulfilled, onRejected) {

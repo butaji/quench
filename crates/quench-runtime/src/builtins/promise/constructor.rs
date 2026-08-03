@@ -102,7 +102,7 @@ pub fn create_promise_constructor(
     // Set static methods
     let proto_for_static_clone = Rc::clone(&proto_for_static);
     constructor.set_static_method(
-        "resolve",
+        "__resolve",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
             promise_resolve_impl_static(args, Rc::clone(&proto_for_static_clone))
         }))),
@@ -110,7 +110,7 @@ pub fn create_promise_constructor(
 
     let proto_for_static_clone2 = Rc::clone(&proto_for_static);
     constructor.set_static_method(
-        "reject",
+        "__reject",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
             promise_reject_impl_static(args, Rc::clone(&proto_for_static_clone2))
         }))),
