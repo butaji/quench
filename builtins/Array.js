@@ -418,7 +418,11 @@ Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex
   return -1;
 };
 
-// Array.prototype.toSorted remains native until its allocation path is moved.
+Array.prototype.toSorted = function ArrayToSorted(comparefn) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSorted called on null or undefined");
+  var result = this.slice();
+  return result.sort(comparefn);
+};
 
 // Array.prototype.splice (ES2025 §23.1.3.30)
 Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */) {

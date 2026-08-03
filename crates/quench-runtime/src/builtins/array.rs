@@ -10,7 +10,6 @@ use crate::Context;
 
 pub mod methods;
 
-use methods::setup_prototype_methods;
 
 /// Maximum length accepted by the Array constructor before it would
 /// materialize an unreasonable number of elements (2^20).
@@ -54,7 +53,6 @@ pub fn register_array(ctx: &mut Context) {
     let array_proto = Object::new(ObjectKind::Array);
     let array_proto_rc = Rc::new(RefCell::new(array_proto));
 
-    setup_prototype_methods(&array_proto_rc);
     setup_array_length_getter(&array_proto_rc);
 
     if let Some(object_proto) = crate::builtins::get_object_prototype() {

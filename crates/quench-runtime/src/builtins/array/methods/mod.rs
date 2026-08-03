@@ -28,16 +28,3 @@ pub use transformation::{
     proto_every, proto_filter, proto_flat, proto_flat_map, proto_for_each, proto_map, proto_reduce,
     proto_reduce_right, proto_some,
 };
-
-pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>) {
-    use crate::value::{NativeFunction, Value};
-    use std::rc::Rc;
-
-    proto.borrow_mut().set_builtin_method(
-        "toSorted",
-        Value::NativeFunction(Rc::new(NativeFunction::new_with_name(
-            "toSorted",
-            proto_to_sorted,
-        ))),
-    );
-}

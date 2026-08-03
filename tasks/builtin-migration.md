@@ -37,8 +37,7 @@ self-hosted JavaScript layer.
   primitive; Rust retains symbol identity and key storage.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
-  Rust retains indexed storage, construction, iteration plumbing, and the
-  native `toSorted` path pending polish.
+  Rust retains indexed storage, construction, and iteration plumbing.
 - [~] `Array.isArray` is JS-owned through the canonical type predicate; Rust
   retains Array construction and indexed storage.
 - [~] `Array.of` is JS-owned; Rust retains the Array constructor and indexed
