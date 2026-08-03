@@ -228,3 +228,5 @@ delivery, and synchronous exception delivery through the existing job queue.
 Stage 543 adds `util.transferableAbortSignal` and
 `util.transferableAbortController` with signal validation, marking, and abort
 propagation without requiring structured-clone host support.
+Stage 544 adds the `console` module constructor and table, tracing, grouping,
+and assertion methods by delegating output to the existing process streams.
