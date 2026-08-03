@@ -487,3 +487,6 @@ the default numeric-separator setting and option-aware formatting.
 
 Stage 183 formalized `util.format` BigInt conversions, asserting `%d`, `%i`,
 and `%f` output for BigInt values.
+
+Stage 184 formalized numeric `util.format` conversions for symbols, asserting
+the `NaN` result for decimal, integer, and floating-point placeholders.
