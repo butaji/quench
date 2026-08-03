@@ -13,6 +13,13 @@ fn array_from_async_awaits_mapping_promises() {
 }
 
 #[test]
+fn array_from_async_awaits_non_promise_thenables() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var result; var v={}; var input={length:1,0:{then:function(resolve){resolve(v);}}}; Array.fromAsync(input).then(a=>{result=a[0]===v;});").unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(

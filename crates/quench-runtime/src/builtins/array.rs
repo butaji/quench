@@ -75,6 +75,13 @@ pub fn register_array(ctx: &mut Context) {
 
     // Set static methods on the constructor
     let mut array_from_async = NativeFunction::new(|args| match array_from_impl(args) {
+        Ok(array) if array_contains_thenable(&array) => {
+            let promises = array_to_promise_values(&array)?;
+            crate::builtins::promise::promise_all_impl(
+                vec![promises],
+                crate::builtins::promise::get_promise_proto(),
+            )
+        }
         Ok(array) if array_contains_promise(&array) => crate::builtins::promise::promise_all_impl(
             vec![array],
             crate::builtins::promise::get_promise_proto(),
@@ -109,6 +116,39 @@ pub fn register_array(ctx: &mut Context) {
         "Array".to_string(),
         Value::NativeConstructor(array_constructor_rc),
     );
+}
+
+fn array_contains_thenable(array: &Value) -> bool {
+    let Value::Object(array) = array else {
+        return false;
+    };
+    array.borrow().elements.iter().any(|value| {
+        matches!(value, Value::Object(object) if object.borrow().get("then").is_some_and(|then| then.is_callable()))
+    })
+}
+
+fn array_to_promise_values(array: &Value) -> Result<Value, JsError> {
+    let Value::Object(array) = array else {
+        return Ok(array.clone());
+    };
+    let values = array
+        .borrow()
+        .elements
+        .iter()
+        .map(|value| {
+            if matches!(value, Value::Object(object) if object.borrow().get("then").is_some_and(|then| then.is_callable())) {
+                crate::builtins::promise::promise_resolve_impl_static(
+                    vec![value.clone()],
+                    crate::builtins::promise::get_promise_proto(),
+                )
+            } else {
+                Ok(value.clone())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(values),
+    ))))
 }
 
 fn array_contains_promise(array: &Value) -> bool {
