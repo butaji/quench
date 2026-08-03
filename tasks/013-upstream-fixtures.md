@@ -804,3 +804,6 @@ prototype, asserting the class name and null-prototype marker.
 
 Stage 293 formalized `util.format` rendering for ordinary class instances,
 asserting the class name and enumerable instance properties.
+
+Stage 294 formalized `util.format` rendering for Array subclasses, asserting
+the subclass name, sparse length, and enumerable properties.

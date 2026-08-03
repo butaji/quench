@@ -290,3 +290,4 @@ these small fixtures isolate the currently implemented contract.
 |   291 | `util.format` null-prototype object rendering                  | `tools/run-node-tests.sh --stage 291` |
 |   292 | `util.format` class null-prototype rendering                   | `tools/run-node-tests.sh --stage 292` |
 |   293 | `util.format` class instance rendering                        | `tools/run-node-tests.sh --stage 293` |
+|   294 | `util.format` Array subclass rendering                         | `tools/run-node-tests.sh --stage 294` |
