@@ -61,11 +61,11 @@ pub fn proto_reverse(_args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
     let len = o.borrow().elements.len() as i64;
-    let target = relative_index(args.first(), len);
-    let start = relative_index(args.get(1), len);
+    let target = relative_index(args.first(), len)?;
+    let start = relative_index(args.get(1), len)?;
     let end = match args.get(2) {
         None | Some(Value::Undefined) => len,
-        Some(value) => relative_index(Some(value), len),
+        Some(value) => relative_index(Some(value), len)?,
     };
     let count = (end - start).max(0).min(len - target);
     let mut elements = o.borrow().elements.clone();
@@ -102,10 +102,10 @@ pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
     let mut elements = o.borrow().elements.clone();
     let len = elements.len() as i64;
-    let start = relative_index(args.get(1), len);
+    let start = relative_index(args.get(1), len)?;
     let end = match args.get(2) {
         None | Some(Value::Undefined) => len,
-        Some(value) => relative_index(Some(value), len),
+        Some(value) => relative_index(Some(value), len)?,
     };
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     for index in start..end.min(len) {
@@ -115,16 +115,19 @@ pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::clone(&o)))
 }
 
-fn relative_index(value: Option<&Value>, len: i64) -> i64 {
-    let number = value.map_or(0.0, to_number);
+fn relative_index(value: Option<&Value>, len: i64) -> Result<i64, JsError> {
+    let number = match value {
+        Some(value) => crate::value::try_to_number(value)?,
+        None => 0.0,
+    };
     if number.is_nan() || number == 0.0 {
-        0
+        Ok(0)
     } else if number < 0.0 {
-        (len + number as i64).max(0)
+        Ok((len + number as i64).max(0))
     } else if number >= len as f64 {
-        len
+        Ok(len)
     } else {
-        number as i64
+        Ok(number as i64)
     }
 }
 

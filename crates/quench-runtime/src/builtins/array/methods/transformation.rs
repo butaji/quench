@@ -280,6 +280,16 @@ mod tests {
             Ok(Value::String("1,1".to_string()))
         );
     }
+
+    #[test]
+    fn fill_propagates_end_coercion_errors() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var err = {}; var end = {valueOf: function() { throw err; }}; try { [].fill(1, 0, end); false; } catch (e) { e === err; }")
+                .unwrap(),
+            Value::Boolean(true)
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
