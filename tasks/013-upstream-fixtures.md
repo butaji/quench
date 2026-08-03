@@ -846,3 +846,6 @@ the normalized root, directory, basename, extension, and name fields.
 
 Stage 307 formalized POSIX `dirname` behavior for root paths, trailing
 separators, and relative paths.
+
+Stage 308 formalized POSIX `dirname` handling of trailing separators and
+all-slash paths.
