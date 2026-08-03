@@ -277,6 +277,9 @@ self-hosted JavaScript layer.
 - [x] Normalize self-hosted prototype methods with `prototype: undefined`,
   preventing ordinary function prototype objects from leaking onto builtins
   such as `Array.prototype.join`.
+- [x] Preserve specified self-hosted builtin function lengths (notably
+  `Array.prototype.flat.length === 0`) and expose function `name`/`length`
+  descriptors through `GetOwnPropDesc`.
 
 ## First increment
 

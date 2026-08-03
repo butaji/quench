@@ -596,6 +596,20 @@ pub fn make_ops_object() -> Value {
                     Ok(Value::Undefined)
                 }
             }
+            Value::Function(function) => {
+                if function.is_property_deleted(&key) {
+                    return Ok(Value::Undefined);
+                }
+                let Some(value) = function.get_property(&key) else {
+                    return Ok(Value::Undefined);
+                };
+                let mut desc = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                desc.set("value", value);
+                desc.set("writable", Value::Boolean(false));
+                desc.set("enumerable", Value::Boolean(false));
+                desc.set("configurable", Value::Boolean(true));
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(desc))))
+            }
             _ => Ok(Value::Undefined),
         }
     });

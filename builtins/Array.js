@@ -573,11 +573,12 @@ Array.prototype.shift = function ArrayShift() {
 };
 
 // Array.prototype.flat (ES2025 §23.1.3.13)
-Array.prototype.flat = function ArrayFlat(depth) {
+Array.prototype.flat = function ArrayFlat() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flat called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var d = depth === undefined ? 1 : depth >>> 0;
+  var depth = arguments.length === 0 ? undefined : arguments[0];
+  var d = depth === undefined ? 1 : ToIntegerOrInfinity(depth);
   var result = [];
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) {
