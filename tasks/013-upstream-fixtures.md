@@ -237,3 +237,6 @@ as chainable termination surfaces.
 
 Stage 100 added a complete `fs.readdir` `withFileTypes` contract for sync,
 callback, and promise calls, including file and directory predicates.
+
+Stage 101 verified the internal `fs` flag parser across read, write, append,
+exclusive, synchronous, and invalid flag forms.
