@@ -980,3 +980,6 @@ validators for thrown errors.
 
 Stage 352 formalized assertion failures when a thrown value does not satisfy a
 regular-expression validator.
+
+Stage 353 formalized strict reference mismatch handling for distinct object
+values and its `AssertionError` metadata.
