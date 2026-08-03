@@ -117,12 +117,29 @@ pub fn call_callback(
 
 /// Array.prototype.map(callback, thisArg?)
 pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = match crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
+    {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
+    let length = array_like_length(&receiver)?;
 
     let mut result = Vec::new();
-    for (i, elem) in elements.iter().enumerate() {
-        let mapped = call_callback(&callback, elem, i, &elements)?;
+    for i in 0..length {
+        let Some(elem) = array_like_value(&receiver, i)? else {
+            result.push(Value::Undefined);
+            continue;
+        };
+        let callback_args = vec![elem, Value::Number(i as f64), receiver.clone()];
+        let mapped = match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+            }
+            Value::NativeFunction(native) => native.call(Value::Undefined, callback_args)?,
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        };
         result.push(mapped);
     }
     Ok(make_array(result))
@@ -617,6 +634,15 @@ mod tests {
         assert!(ctx
             .eval("var o={length:43}; Object.defineProperty(o,'42',{configurable:false,writable:true}); Array.prototype.copyWithin.call(o,42,0)")
             .is_err());
+    }
+
+    #[test]
+    fn array_map_passes_original_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var a=[1]; var same=false; a.map(function(v,i,o){same=o===a;}); same"),
+            Ok(Value::Boolean(true))
+        );
     }
 }
 
