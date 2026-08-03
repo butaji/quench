@@ -741,3 +741,13 @@ The `INSPECT_MAX_BYTES` contract was aligned with real Node: `Buffer`
 carries no such static (it is `undefined`), and the truncation limit is
 controlled solely by the `require("buffer").INSPECT_MAX_BYTES` accessor
 (verified against Node 26).
+
+Stage 276 formalized `util.format` float and numeric edge cases, asserting
+symbol/empty float coercion to `NaN` and negative-zero integer/string
+rendering (verified against Node).
+
+Stage 277 formalized `util.inspect` string and function rendering, asserting
+quoted strings and named/anonymous function labels.
+
+Stage 278 formalized the `node:test` options callback invocation, asserting
+a test with options runs its callback.
