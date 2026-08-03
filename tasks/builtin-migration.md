@@ -291,6 +291,9 @@ self-hosted JavaScript layer.
 - [x] Route self-hosted `toSpliced` and `with` indices through
   `ToIntegerOrInfinity`, including correct negative/fractional clamping and
   `RangeError` handling for out-of-range `with` indices.
+- [x] Validate array length assignments before storage mutation, rejecting
+  non-integer or out-of-range values with `RangeError` and preventing huge
+  allocations/timeouts for values at or above 2³².
 
 ## First increment
 

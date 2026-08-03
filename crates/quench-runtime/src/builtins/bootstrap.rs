@@ -641,6 +641,15 @@ mod tests {
     }
 
     #[test]
+    fn array_length_assignment_rejects_values_above_uint32() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("try { [].length = 4294967296; false } catch (e) { e instanceof RangeError }")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx
