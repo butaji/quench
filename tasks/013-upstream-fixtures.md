@@ -578,3 +578,12 @@ byte copying with offset/length bounds and defaults.
 
 Stage 213 formalized the `vm.runInNewContext` shim, evaluating code in a
 fresh context with the supplied sandbox globals.
+
+Stage 214 formalized Buffer `from` string coercion, asserting boxed strings
+and `Symbol.toPrimitive` sources.
+
+Stage 215 formalized Buffer `from` argument validation, asserting
+`ERR_INVALID_ARG_TYPE` for invalid inputs and array-like construction.
+
+Stage 216 formalized Buffer constants, asserting `kMaxLength` equals
+`constants.MAX_LENGTH` and `MAX_STRING_LENGTH` presence.
