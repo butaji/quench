@@ -207,6 +207,14 @@ mod tests {
             .eval("var o = {exec: function() { return {get index() { throw new Test262Error(); }}; }}; RegExp.prototype[Symbol.search].call(o)")
             .is_err());
     }
+
+    #[test]
+    fn regexp_symbol_search_propagates_last_index_getter_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var o = {get lastIndex() { throw new Test262Error(); }, exec: function() { return null; }}; RegExp.prototype[Symbol.search].call(o)")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -337,7 +345,11 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let exec = obj.borrow().get("exec").ok_or_else(|| {
         JsError::new("TypeError: RegExp.prototype[@@search] requires callable exec".to_string())
     })?;
-    let last_index = obj.borrow().get("lastIndex").unwrap_or(Value::Number(0.0));
+    let last_index = crate::eval::member::eval_object_member_value(
+        obj,
+        &Value::String("lastIndex".to_string()),
+        None,
+    )?;
     obj.borrow_mut().set("lastIndex", Value::Number(0.0));
     let result = crate::eval::function::call_value_with_this(
         exec,
