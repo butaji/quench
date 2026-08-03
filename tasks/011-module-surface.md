@@ -134,8 +134,8 @@ fixture cluster, and the next concrete slice.
 - `worker_threads` — stub. Need: real `worker_threads` via host
   `std::thread`. Out of scope for the in-process simulator: track as
   "unsupported on this target" with `ERR_WORKER_NOT_SUPPORTED`.
-- `zlib` — TODO. Stage-522: `zlib.createGzip`, `zlib.createGunzip`,
-  `zlib.createDeflate`, `zlib.createInflate`, `zlib.constants`.
+- `zlib` — stage 522 complete: `createGzip`, `createGunzip`,
+  `createDeflate`, and `createInflate` provide evented in-process transforms.
 - `zlib/iter` — gated by `--experimental-stream-iter`.
 
 ## Slicing rules
@@ -167,3 +167,6 @@ Stage 520 is complete as a surface slice. It exposes secure-context metadata
 and a stable unsupported error for connection/server operations; the real TLS
 host boundary remains tracked separately rather than hidden behind a generic
 missing-module error.
+Stage 522 reuses the existing synchronous compression primitives through a
+small evented adapter, avoiding another Rust callback while preserving stream
+`data`/`end` and `pipe` behavior for the focused contract.
