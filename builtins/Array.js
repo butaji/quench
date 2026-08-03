@@ -5,6 +5,7 @@ var IsArray = ops.IsArray;
 var ToObject = ops.ToObject;
 var ThrowTypeError = ops.ThrowTypeError;
 var SameValueZero = ops.SameValueZero;
+var HasProperty = ops.HasProperty;
 
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
@@ -44,7 +45,7 @@ Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       callbackfn.call(thisArg, O[k], k, O);
     }
   }
@@ -60,7 +61,7 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var A = new Array(len);
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       A[k] = callbackfn.call(thisArg, O[k], k, O);
     }
   }
@@ -77,7 +78,7 @@ Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
   var A = new Array(0);
   var to = 0;
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       var kValue = O[k];
       if (callbackfn.call(thisArg, kValue, k, O)) {
         A[to] = kValue;
@@ -98,11 +99,11 @@ Array.prototype.reduce = function ArrayReduce(callbackfn /*, initialValue */) {
   var k = 0;
   var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
   if (arguments.length < 2) {
-    while (k < len && !(k in O)) k++;
+    while (k < len && !HasProperty(O, k)) k++;
     accumulator = O[k++];
   }
   for (; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       accumulator = callbackfn.call(undefined, accumulator, O[k], k, O);
     }
   }
@@ -117,7 +118,7 @@ Array.prototype.find = function ArrayFind(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       var kValue = O[k];
       if (callbackfn.call(thisArg, kValue, k, O)) return kValue;
     }
@@ -133,7 +134,7 @@ Array.prototype.some = function ArraySome(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       if (callbackfn.call(thisArg, O[k], k, O)) return true;
     }
   }
@@ -148,7 +149,7 @@ Array.prototype.every = function ArrayEvery(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       if (!callbackfn.call(thisArg, O[k], k, O)) return false;
     }
   }
@@ -164,7 +165,7 @@ Array.prototype.includes = function ArrayIncludes(searchElement /*, fromIndex */
   var n = arguments.length > 1 ? arguments[1] : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
   for (; k < len; k++) {
-    if (k in O && SameValueZero(O[k], searchElement)) return true;
+    if (HasProperty(O, k) && SameValueZero(O[k], searchElement)) return true;
   }
   return false;
 };
@@ -178,7 +179,7 @@ Array.prototype.indexOf = function ArrayIndexOf(searchElement /*, fromIndex */) 
   var n = arguments.length > 1 ? arguments[1] : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
   for (; k < len; k++) {
-    if (k in O && O[k] === searchElement) return k;
+    if (HasProperty(O, k) && O[k] === searchElement) return k;
   }
   return -1;
 };
@@ -193,7 +194,7 @@ Array.prototype.join = function ArrayJoin(separator) {
   var R = '';
   for (var k = 0; k < len; k++) {
     if (k > 0) R += sep;
-    if (k in O) {
+    if (HasProperty(O, k)) {
       var elem = O[k];
       R += (elem === null || elem === undefined) ? '' : String(elem);
     }
@@ -238,7 +239,7 @@ Array.prototype.slice = function ArraySlice(start, end) {
   var A = new Array(count);
   var n = 0;
   while (k < final) {
-    if (k in O) A[n] = O[k];
+    if (HasProperty(O, k)) A[n] = O[k];
     k++;
     n++;
   }
@@ -283,8 +284,8 @@ Array.prototype.reverse = function ArrayReverse() {
   var lower = 0;
   while (lower !== middle) {
     var upper = len - lower - 1;
-    var lowerExists = lower in O;
-    var upperExists = upper in O;
+    var lowerExists = HasProperty(O, lower);
+    var upperExists = HasProperty(O, upper);
     var lowerValue = lowerExists ? O[lower] : undefined;
     var upperValue = upperExists ? O[upper] : undefined;
     if (lowerExists && upperExists) {
@@ -325,11 +326,11 @@ Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialVa
   var k = len - 1;
   var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
   if (arguments.length < 2) {
-    while (k >= 0 && !(k in O)) k--;
+    while (k >= 0 && !HasProperty(O, k)) k--;
     accumulator = O[k--];
   }
   for (; k >= 0; k--) {
-    if (k in O) accumulator = callbackfn.call(undefined, accumulator, O[k], k, O);
+    if (HasProperty(O, k)) accumulator = callbackfn.call(undefined, accumulator, O[k], k, O);
   }
   return accumulator;
 };
@@ -372,7 +373,7 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return k;
+    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
   }
   return -1;
 };
@@ -388,7 +389,7 @@ Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
   var direction = 1;
   if (from < to && to < from + count) { from += count - 1; to += count - 1; direction = -1; }
   while (count > 0) {
-    if (from in O) O[to] = O[from]; else delete O[to];
+    if (HasProperty(O, from)) O[to] = O[from]; else delete O[to];
     from += direction; to += direction; count--;
   }
   return O;
@@ -400,7 +401,7 @@ Array.prototype.sort = function ArraySort(comparefn) {
   var O = ToObject(this);
   var len = O.length >>> 0;
   var values = [];
-  for (var i = 0; i < len; i++) if (i in O) values.push(O[i]);
+  for (var i = 0; i < len; i++) if (HasProperty(O, i)) values.push(O[i]);
   for (var i = 1; i < values.length; i++) {
     var value = values[i];
     var j = i - 1;
@@ -433,7 +434,7 @@ Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex
   var len = O.length >>> 0;
   if (len === 0) return -1;
   var k = fromIndex === undefined ? len - 1 : (fromIndex >= 0 ? Math.min(fromIndex, len - 1) : len + fromIndex);
-  for (; k >= 0; k--) if (k in O && O[k] === searchElement) return k;
+  for (; k >= 0; k--) if (HasProperty(O, k) && O[k] === searchElement) return k;
   return -1;
 };
 
@@ -460,21 +461,21 @@ Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */
   // Gather deleted
   var removed = new Array(actualDeleteCount);
   for (var i = 0; i < actualDeleteCount; i++) {
-    if (actualStart + i in O) removed[i] = O[actualStart + i];
+    if (HasProperty(O, actualStart + i)) removed[i] = O[actualStart + i];
   }
   // Move elements
   if (itemCount < actualDeleteCount) {
     for (var i = actualStart; i < len - actualDeleteCount; i++) {
       var from = i + actualDeleteCount;
       var to = i + itemCount;
-      if (from in O) O[to] = O[from]; else delete O[to];
+      if (HasProperty(O, from)) O[to] = O[from]; else delete O[to];
     }
     for (var i = len - 1; i >= len - (actualDeleteCount - itemCount); i--) delete O[i];
   } else if (itemCount > actualDeleteCount) {
     for (var i = len - 1; i >= actualStart; i--) {
       var from = i;
       var to = i + (itemCount - actualDeleteCount);
-      if (from in O) O[to] = O[from]; else delete O[to];
+      if (HasProperty(O, from)) O[to] = O[from]; else delete O[to];
     }
   }
   // Insert new items
@@ -491,7 +492,7 @@ Array.prototype.unshift = function ArrayUnshift() {
   var argCount = arguments.length;
   if (argCount > 0) {
     for (var k = len - 1; k >= 0; k--) {
-      if (k in O) O[k + argCount] = O[k]; else delete O[k + argCount];
+    if (HasProperty(O, k)) O[k + argCount] = O[k]; else delete O[k + argCount];
     }
     for (var j = 0; j < argCount; j++) O[j] = arguments[j];
   }
@@ -508,7 +509,7 @@ Array.prototype.shift = function ArrayShift() {
   if (len === 0) { O.length = 0; return undefined; }
   var first = O[0];
   for (var k = 1; k < len; k++) {
-    if (k in O) O[k - 1] = O[k]; else delete O[k - 1];
+    if (HasProperty(O, k)) O[k - 1] = O[k]; else delete O[k - 1];
   }
   delete O[len - 1];
   O.length = len - 1;
@@ -523,7 +524,7 @@ Array.prototype.flat = function ArrayFlat(depth) {
   var d = depth === undefined ? 1 : depth >>> 0;
   var result = [];
   for (var i = 0; i < len; i++) {
-    if (i in O) {
+    if (HasProperty(O, i)) {
       if (d > 0 && IsArray(O[i])) {
         var sub = O[i].flat(d - 1);
         for (var j = 0; j < sub.length; j++) result.push(sub[j]);
@@ -544,7 +545,7 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var result = [];
   for (var i = 0; i < len; i++) {
-    if (i in O) {
+    if (HasProperty(O, i)) {
       var val = callbackfn.call(thisArg, O[i], i, O);
       if (IsArray(val)) { for (var j = 0; j < val.length; j++) result.push(val[j]); }
       else { result.push(val); }
@@ -560,7 +561,7 @@ Array.prototype.toReversed = function ArrayToReversed() {
   var len = O.length >>> 0;
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    if (i in O) A[len - 1 - i] = O[i];
+    if (HasProperty(O, i)) A[len - 1 - i] = O[i];
   }
   return A;
 };
@@ -577,10 +578,10 @@ Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...it
   var itemCount = Math.max(arguments.length - 2, 0);
   var newLen = len - actualDeleteCount + itemCount;
   var A = new Array(newLen);
-  for (var i = 0; i < actualStart; i++) { if (i in O) A[i] = O[i]; }
+  for (var i = 0; i < actualStart; i++) { if (HasProperty(O, i)) A[i] = O[i]; }
   for (var i = 0; i < itemCount; i++) A[actualStart + i] = arguments[i + 2];
   for (var i = actualStart + actualDeleteCount; i < len; i++) {
-    if (i in O) A[i - actualDeleteCount + itemCount] = O[i];
+    if (HasProperty(O, i)) A[i - actualDeleteCount + itemCount] = O[i];
   }
   return A;
 };
@@ -594,7 +595,7 @@ Array.prototype.with = function ArrayWith(index, value) {
   var actualIndex = relativeIndex >= len ? len - 1 : relativeIndex;
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    if (i in O) A[i] = O[i];
+    if (HasProperty(O, i)) A[i] = O[i];
   }
   A[actualIndex] = value;
   return A;
@@ -608,7 +609,7 @@ Array.prototype.findLast = function ArrayFindLast(callbackfn /*, thisArg */) {
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
-    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return O[k];
+    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return O[k];
   }
   return undefined;
 };
@@ -621,7 +622,7 @@ Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisA
   var len = O.length >>> 0;
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
-    if (k in O && callbackfn.call(thisArg, O[k], k, O)) return k;
+    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
   }
   return -1;
 };
@@ -635,7 +636,7 @@ Array.prototype.group = function ArrayGroup(callbackfn /*, thisArg */) {
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var groups = {};
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       var key = callbackfn.call(thisArg, O[k], k, O);
       if (groups[key] === undefined) groups[key] = [];
       groups[key].push(O[k]);
@@ -653,7 +654,7 @@ Array.prototype.groupToMap = function ArrayGroupToMap(callbackfn /*, thisArg */)
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var map = new Map();
   for (var k = 0; k < len; k++) {
-    if (k in O) {
+    if (HasProperty(O, k)) {
       var key = callbackfn.call(thisArg, O[k], k, O);
       var items = map.get(key);
       if (items === undefined) { items = []; map.set(key, items); }
