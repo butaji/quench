@@ -432,3 +432,6 @@ round-trip contents after closing the handle and cleaning up the file.
 
 Stage 165 formalized iterable input to promise file-handle `writeFile`,
 asserting concatenated string/Buffer contents and cleanup.
+
+Stage 166 formalized async-iterable input to promise file-handle `writeFile`,
+asserting concatenated contents and cleanup.

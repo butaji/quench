@@ -173,3 +173,4 @@ these small fixtures isolate the currently implemented contract.
 |   163 | invalid type validation for `fs.symlinkSync`              | `tools/run-node-tests.sh --stage 163` |
 |   164 | promise file-handle basic `writeFile`                     | `tools/run-node-tests.sh --stage 164` |
 |   165 | promise file-handle iterable `writeFile`                  | `tools/run-node-tests.sh --stage 165` |
+|   166 | promise file-handle async-iterable `writeFile`            | `tools/run-node-tests.sh --stage 166` |
