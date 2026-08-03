@@ -1,16 +1,17 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-144-${process.pid}`;
   const handle = await fs.promises.open(path, "w+");
   await handle.chmod(0o600);
-  if ((fs.statSync(path).mode & 0o777) !== 0o600)
-    throw new Error("filehandle chmod mismatch");
+  assert.strictEqual(fs.statSync(path).mode & 0o777, 0o600);
   await handle.close();
   try {
     await handle.stat();
-    throw new Error("closed handle remained usable");
+    assert.fail("closed handle remained usable");
   } catch (error) {
-    if (error.code !== "EBADF") throw error;
+    assert.strictEqual(error.code, "EBADF");
   }
+  fs.rmSync(path);
 })().then(() => undefined);
