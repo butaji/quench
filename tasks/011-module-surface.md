@@ -247,3 +247,6 @@ Stage 551 adds `process.report` metadata, `getReport`, and report flags with
 an explicit JavaScript-runtime report shape and no native dump dependency.
 Stage 552 adds the common single-directory wildcard form of
 `fs.promises.glob` as an async generator over the existing directory primitive.
+Stage 553 registers `dns` and `dns/promises` with server configuration,
+resolver, callback lookup, and promise lookup contracts; real DNS resolution
+remains a subsequent host-boundary slice.
