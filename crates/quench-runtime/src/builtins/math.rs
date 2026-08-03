@@ -84,6 +84,9 @@ pub fn register_math(ctx: &mut Context) {
     register_binary_math_fns(&math);
     register_reduce_math_fns(&math);
     register_math_constants(&math);
+    for flags in math.borrow_mut().descriptors.values_mut() {
+        flags.enumerable = false;
+    }
 
     ctx.set_global("Math".to_string(), Value::Object(math));
 }
@@ -409,5 +412,14 @@ mod tests {
             ctx.eval("Math.LN2").unwrap(),
             Value::Number(std::f64::consts::LN_2)
         );
+    }
+
+    #[test]
+    fn math_methods_are_non_enumerable() {
+        let mut ctx = crate::Context::new().unwrap();
+        let value = ctx
+            .eval("[Object.getOwnPropertyDescriptor(Math, 'tan').enumerable, Object.getOwnPropertyDescriptor(Math, 'trunc').enumerable].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("false|false".into()));
     }
 }
