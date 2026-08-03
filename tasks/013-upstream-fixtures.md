@@ -426,3 +426,6 @@ asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
 
 Stage 163 formalized invalid symlink-type validation, asserting Node's
 `ERR_INVALID_ARG_VALUE` diagnostic.
+
+Stage 164 formalized basic promise file-handle `writeFile`, asserting the
+round-trip contents after closing the handle and cleaning up the file.
