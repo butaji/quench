@@ -11,6 +11,8 @@
 
 use crate::value::JsError;
 use crate::Context;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Embedded JS builtin source files.
 /// Each is loaded via `include_str!` at compile time and evaluated in order.
@@ -281,7 +283,54 @@ pub fn bootstrap_js_builtins(ctx: &mut Context) -> Result<(), JsError> {
         ctx.eval(source)
             .map_err(|e| JsError(format!("bootstrap {}: {}", name, e)))?;
     }
+    normalize_intrinsic_prototypes(ctx);
     Ok(())
+}
+
+fn normalize_intrinsic_prototypes(ctx: &Context) {
+    for name in [
+        "Object",
+        "Function",
+        "Error",
+        "TypeError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "EvalError",
+        "URIError",
+        "AggregateError",
+        "SuppressedError",
+        "Number",
+        "Boolean",
+        "String",
+        "Array",
+        "Map",
+        "Set",
+        "WeakMap",
+        "WeakSet",
+        "WeakRef",
+        "Promise",
+        "RegExp",
+        "Date",
+        "BigInt",
+        "Symbol",
+        "ArrayBuffer",
+        "SharedArrayBuffer",
+        "DataView",
+        "TypedArray",
+    ] {
+        if let Some(value) = ctx.get_global(name) {
+            if let crate::value::Value::NativeConstructor(constructor) = value {
+                normalize_prototype(&constructor.prototype);
+            }
+        }
+    }
+}
+
+fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
+    for descriptor in prototype.borrow_mut().descriptors.values_mut() {
+        descriptor.enumerable = false;
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +434,15 @@ mod tests {
     fn object_keys_primitives_return_empty() {
         let mut ctx = new_ctx();
         let r = ctx.eval("Object.keys(42).length === 0").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_array_methods_are_non_enumerable() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("Object.keys(Array.prototype).indexOf('pop') === -1")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 

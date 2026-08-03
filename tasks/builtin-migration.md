@@ -25,6 +25,8 @@ self-hosted JavaScript layer.
 - [~] The `__ops__` bridge is active and normal contexts enter
   `bootstrap_js_builtins` after native registration; realm lifecycle cleanup
   remains pending.
+- [~] Bootstrap normalizes own properties on intrinsic prototypes to the
+  spec-required non-enumerable default after self-hosted JS installation.
 - [~] Object and Reflect algorithms are JS-owned where practical; descriptor,
   call, and proxy-sensitive primitives remain in `__ops__`/Rust.
 - [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains

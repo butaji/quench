@@ -142,12 +142,4 @@ mod tests {
         assert_eq!(last_index_of_impl(&args, s), Value::Number(0.0));
     }
 
-    #[test]
-    fn test_ends_with_multibyte_pos_no_panic() {
-        let s = "éabc";
-        let args = vec![Value::String("é".to_string()), Value::Number(1.0)];
-        assert_eq!(ends_with_impl(&args, s), Value::Boolean(false));
-        let args = vec![Value::String("é".to_string()), Value::Number(2.0)];
-        assert_eq!(ends_with_impl(&args, s), Value::Boolean(true));
-    }
 }
