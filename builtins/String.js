@@ -118,6 +118,43 @@ String.prototype.valueOf = function StringValueOf() {
   return _valueOf.call(this);
 };
 
+String.prototype.isWellFormed = function StringIsWellFormed() {
+  var string = _String(this);
+  for (var i = 0; i < string.length; i++) {
+    var code = string.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      var next = i + 1 < string.length ? string.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+};
+
+String.prototype.toWellFormed = function StringToWellFormed() {
+  var string = _String(this);
+  var result = "";
+  for (var i = 0; i < string.length; i++) {
+    var code = string.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      var next = i + 1 < string.length ? string.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += string.charAt(i) + string.charAt(i + 1);
+        i++;
+      } else {
+        result += "\ufffd";
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      result += "\ufffd";
+    } else {
+      result += string.charAt(i);
+    }
+  }
+  return result;
+};
+
 String.prototype.match = function StringMatch(regexp) {
   return _match.call(this, regexp);
 };
