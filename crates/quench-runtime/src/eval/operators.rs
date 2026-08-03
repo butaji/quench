@@ -541,7 +541,7 @@ fn function_instanceof(
     false
 }
 
-fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
+pub(crate) fn eval_instanceof(left: &Value, right: &Value) -> Result<Value, JsError> {
     if let Value::Object(ctor) = right {
         if let Some(symbol) = crate::builtins::symbol::get_has_instance_symbol() {
             let method = crate::eval::member::eval_object_member_value(ctor, &symbol, None)?;

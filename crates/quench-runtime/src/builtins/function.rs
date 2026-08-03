@@ -682,6 +682,50 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
         "bind",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_bind))),
     );
+    if let Some(Value::Symbol(symbol)) = crate::builtins::symbol::get_has_instance_symbol() {
+        let key = symbol.property_key();
+        function_proto_rc.borrow_mut().set_symbol(
+            &key,
+            Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+                let target = crate::builtins::get_native_this().ok_or_else(|| {
+                    JsError("TypeError: @@hasInstance called on non-callable".to_string())
+                })?;
+                if !target.is_callable() {
+                    return Err(JsError(
+                        "TypeError: @@hasInstance called on non-callable".to_string(),
+                    ));
+                }
+                let value = args.first().cloned().unwrap_or(Value::Undefined);
+                crate::eval::operators::eval_instanceof(&value, &target)
+            }))),
+        );
+        if let Some(Value::NativeFunction(function)) = function_proto_rc.borrow().get(&key) {
+            function.define_property(
+                "name",
+                Value::String("[Symbol.hasInstance]".to_string()),
+                crate::value::PropertyFlags {
+                    value: Some(Value::String("[Symbol.hasInstance]".to_string())),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+            function.define_property(
+                "length",
+                Value::Number(1.0),
+                crate::value::PropertyFlags {
+                    value: Some(Value::Number(1.0)),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                },
+            );
+        }
+        if let Some(flags) = function_proto_rc.borrow_mut().descriptors.get_mut(&key) {
+            flags.writable = false;
+            flags.enumerable = false;
+        }
+    }
     for (name, length) in [
         ("toString", 0.0),
         ("call", 1.0),
@@ -990,6 +1034,18 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert!(ctx.eval("Function.prototype.apply.call({}, null)").is_err());
         assert!(ctx.eval("Function.prototype.bind.call({}, null)").is_err());
+    }
+
+    #[test]
+    fn function_prototype_has_instance_is_callable() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval("function F() {}; var o = new F(); var d = Object.getOwnPropertyDescriptor(Function.prototype, Symbol.hasInstance); [F[Symbol.hasInstance](o), F[Symbol.hasInstance]({}), d.value.name, d.value.length, d.writable, d.enumerable, d.configurable].join('|')")
+            .unwrap();
+        assert_eq!(
+            value,
+            Value::String("true|false|[Symbol.hasInstance]|1|false|false|true".into())
+        );
     }
 
     #[test]
