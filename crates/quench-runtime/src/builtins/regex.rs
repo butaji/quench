@@ -232,6 +232,15 @@ mod tests {
             Ok(Value::String("0|-Infinity".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_has_match_all_method() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof RegExp.prototype[Symbol.matchAll]"),
+            Ok(Value::String("function".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -394,6 +403,12 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
+fn regexp_symbol_match_all_impl(_args: Vec<Value>) -> Result<Value, JsError> {
+    Err(JsError::new(
+        "TypeError: RegExp.prototype[@@matchAll] is not implemented".to_string(),
+    ))
+}
+
 fn current_regex_env() -> Option<Rc<RefCell<crate::env::Environment>>> {
     crate::context::CURRENT_CONTEXT
         .with(|cell| cell.borrow().map(|ptr| unsafe { (&*ptr).env().clone() }))
@@ -542,6 +557,41 @@ pub fn register_regexp(ctx: &mut Context) {
         regexp_proto.borrow_mut().define(
             &symbol.property_key(),
             Value::NativeFunction(Rc::new(search)),
+            PropertyFlags {
+                value: None,
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("matchAll")
+    {
+        let method = NativeFunction::new(regexp_symbol_match_all_impl);
+        method.define_property(
+            "name",
+            Value::String("[Symbol.matchAll]".to_string()),
+            PropertyFlags {
+                value: Some(Value::String("[Symbol.matchAll]".to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        method.define_property(
+            "length",
+            Value::Number(1.0),
+            PropertyFlags {
+                value: Some(Value::Number(1.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+        regexp_proto.borrow_mut().define(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(method)),
             PropertyFlags {
                 value: None,
                 writable: true,
