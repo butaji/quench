@@ -212,7 +212,7 @@ Array.prototype.join = function ArrayJoin(separator) {
 Array.prototype.push = function ArrayPush() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   for (var i = 0; i < arguments.length; i++) O[len + i] = arguments[i];
   O.length = len + arguments.length;
   return O.length;
@@ -221,7 +221,7 @@ Array.prototype.push = function ArrayPush() {
 Array.prototype.pop = function ArrayPop() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.pop called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0) {
     O.length = 0;
     return undefined;
@@ -237,7 +237,7 @@ Array.prototype.pop = function ArrayPop() {
 Array.prototype.slice = function ArraySlice(start, end) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.slice called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var relativeStart = start === undefined ? 0 : start;
   var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
   var relativeEnd = end === undefined ? len : end;
@@ -266,7 +266,7 @@ Array.prototype.concat = function ArrayConcat() {
     var spreadable = IsArray(E);
     if (spreadable) {
       var k = 0;
-      var len = E.length >>> 0;
+      var len = ToLength(E.length);
       while (k < len) {
         if (k in E) {
           A[n] = E[k];
@@ -286,7 +286,7 @@ Array.prototype.concat = function ArrayConcat() {
 Array.prototype.reverse = function ArrayReverse() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reverse called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var middle = Math.floor(len / 2);
   var lower = 0;
   while (lower !== middle) {
@@ -314,7 +314,7 @@ Array.prototype.reverse = function ArrayReverse() {
 Array.prototype.fill = function ArrayFill(value /*, start, end */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.fill called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var relativeStart = arguments.length > 1 ? arguments[1] : 0;
   var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
   var relativeEnd = arguments.length > 2 ? arguments[2] : len;
@@ -328,7 +328,7 @@ Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialVa
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reduceRight called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0 && arguments.length < 2) throw ThrowTypeError("Reduce of empty array with no initial value");
   var k = len - 1;
   var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
@@ -346,7 +346,7 @@ Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialVa
 Array.prototype.keys = function ArrayKeys() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.keys called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var keys = new Array(len);
   for (var i = 0; i < len; i++) keys[i] = i;
   return keys;
@@ -356,7 +356,7 @@ Array.prototype.keys = function ArrayKeys() {
 Array.prototype.values = function ArrayValues() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.values called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var vals = new Array(len);
   for (var i = 0; i < len; i++) vals[i] = O[i];
   return vals;
@@ -366,7 +366,7 @@ Array.prototype.values = function ArrayValues() {
 Array.prototype.entries = function ArrayEntries() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.entries called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var entries = new Array(len);
   for (var i = 0; i < len; i++) entries[i] = [i, O[i]];
   return entries;
@@ -377,7 +377,7 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findIndex called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
@@ -388,7 +388,7 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
 Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.copyWithin called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var to = target >= 0 ? target : Math.max(len + target, 0);
   var from = start >= 0 ? start : Math.max(len + start, 0);
   var final = end === undefined ? len : (end >= 0 ? end : Math.max(len + end, 0));
@@ -406,7 +406,7 @@ Array.prototype.sort = function ArraySort(comparefn) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.sort called on null or undefined");
   if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var values = [];
   for (var i = 0; i < len; i++) if (HasProperty(O, i)) values.push(O[i]);
   for (var i = 1; i < values.length; i++) {
@@ -430,7 +430,7 @@ Array.prototype.toString = function ArrayToString() {
 Array.prototype.at = function ArrayAt(index) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.at called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var k = index >= 0 ? index : len + index;
   return k < 0 || k >= len ? undefined : O[k];
 };
@@ -438,7 +438,7 @@ Array.prototype.at = function ArrayAt(index) {
 Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.lastIndexOf called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0) return -1;
   var k = fromIndex === undefined ? len - 1 : (fromIndex >= 0 ? Math.min(fromIndex, len - 1) : len + fromIndex);
   for (; k >= 0; k--) if (HasProperty(O, k) && O[k] === searchElement) return k;
@@ -455,7 +455,7 @@ Array.prototype.toSorted = function ArrayToSorted(comparefn) {
 Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.splice called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var relativeStart = start >>> 0;
   var actualStart = relativeStart >= len ? len : relativeStart;
   var actualDeleteCount;
@@ -495,7 +495,7 @@ Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */
 Array.prototype.unshift = function ArrayUnshift() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.unshift called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var argCount = arguments.length;
   if (argCount > 0) {
     for (var k = len - 1; k >= 0; k--) {
@@ -512,7 +512,7 @@ Array.prototype.unshift = function ArrayUnshift() {
 Array.prototype.shift = function ArrayShift() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.shift called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0) { O.length = 0; return undefined; }
   var first = O[0];
   for (var k = 1; k < len; k++) {
@@ -527,7 +527,7 @@ Array.prototype.shift = function ArrayShift() {
 Array.prototype.flat = function ArrayFlat(depth) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flat called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var d = depth === undefined ? 1 : depth >>> 0;
   var result = [];
   for (var i = 0; i < len; i++) {
@@ -548,7 +548,7 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.flatMap called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var result = [];
   for (var i = 0; i < len; i++) {
@@ -565,7 +565,7 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
 Array.prototype.toReversed = function ArrayToReversed() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toReversed called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) A[len - 1 - i] = O[i];
@@ -577,7 +577,7 @@ Array.prototype.toReversed = function ArrayToReversed() {
 Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...items */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSpliced called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var actualStart = Math.min(Math.max(start, 0), len);
   var actualDeleteCount;
   if (arguments.length === 1) actualDeleteCount = len - actualStart;
@@ -597,7 +597,7 @@ Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...it
 Array.prototype.with = function ArrayWith(index, value) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.with called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var relativeIndex = index >>> 0;
   var actualIndex = relativeIndex >= len ? len - 1 : relativeIndex;
   var A = new Array(len);
@@ -613,7 +613,7 @@ Array.prototype.findLast = function ArrayFindLast(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findLast called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
     if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return O[k];
@@ -626,7 +626,7 @@ Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisA
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findLastIndex called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
     if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
@@ -639,7 +639,7 @@ Array.prototype.group = function ArrayGroup(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.group called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var groups = {};
   for (var k = 0; k < len; k++) {
@@ -657,7 +657,7 @@ Array.prototype.groupToMap = function ArrayGroupToMap(callbackfn /*, thisArg */)
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.groupToMap called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var map = new Map();
   for (var k = 0; k < len; k++) {
