@@ -3,7 +3,7 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeToString = Date.prototype.toString;
+var _nativeToString = Date.prototype.__toString;
 var _nativeToISOString = Date.prototype.toISOString;
 var _nativeToJSON = Date.prototype.toJSON;
 

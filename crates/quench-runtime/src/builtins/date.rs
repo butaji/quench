@@ -360,7 +360,7 @@ pub fn register_date(ctx: &mut Context) {
     let date_proto_rc = Rc::new(RefCell::new(date_proto));
 
     date_proto_rc.borrow_mut().set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             Ok(Value::String(format!(
