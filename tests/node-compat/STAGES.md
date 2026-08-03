@@ -168,3 +168,4 @@ these small fixtures isolate the currently implemented contract.
 |   158 | synchronous, callback, and promise hard links             | `tools/run-node-tests.sh --stage 158` |
 |   159 | invalid source/target validation for `fs.linkSync`        | `tools/run-node-tests.sh --stage 159` |
 |   160 | encoded synchronous `fs.readlink` results                 | `tools/run-node-tests.sh --stage 160` |
+|   161 | upstream symlink capability helper                        | `tools/run-node-tests.sh --stage 161` |
