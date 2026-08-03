@@ -512,3 +512,6 @@ big- and little-endian round trips, byte order, and Infinity handling.
 
 Stage 191 formalized Buffer unsigned integer read/write operations, asserting
 endianness, round trips, and `ERR_BUFFER_OUT_OF_BOUNDS` diagnostics.
+
+Stage 192 formalized variable-width Buffer unsigned integer operations,
+asserting six-byte big- and little-endian round trips.
