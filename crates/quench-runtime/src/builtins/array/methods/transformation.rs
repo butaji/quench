@@ -212,11 +212,25 @@ pub fn proto_reduce_right(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.forEach(callback, thisArg?)
 pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let length = array_like_length(&receiver)?;
 
-    for (i, elem) in elements.iter().enumerate() {
-        call_callback(&callback, elem, i, &elements)?;
+    for i in 0..length {
+        let Some(elem) = array_like_value(&receiver, i)? else {
+            continue;
+        };
+        let callback_args = vec![elem, Value::Number(i as f64), receiver.clone()];
+        match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?;
+            }
+            Value::NativeFunction(native) => {
+                native.call(Value::Undefined, callback_args)?;
+            }
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        }
     }
     Ok(Value::Undefined)
 }
@@ -446,6 +460,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("var accessed=false; var o={length:2}; Object.defineProperty(o,'1',{get:function(){return 6.99;},configurable:true}); Object.defineProperty(o,'0',{get:function(){delete o[1];return 0;},configurable:true}); Array.prototype.every.call(o,function(){accessed=true;return true;}); accessed"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_for_each_passes_original_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; Math.length=1; Math[0]=1; Array.prototype.forEach.call(Math,function(v,i,obj){seen=Object.prototype.toString.call(obj)==='[object Math]';}); seen"),
             Ok(Value::Boolean(true))
         );
     }
