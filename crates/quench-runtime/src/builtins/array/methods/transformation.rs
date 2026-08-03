@@ -213,8 +213,12 @@ pub fn proto_reduce_right(args: Vec<Value>) -> Result<Value, JsError> {
 /// Array.prototype.forEach(callback, thisArg?)
 pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
+    {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
     let length = array_like_length(&receiver)?;
 
     for i in 0..length {
@@ -284,8 +288,12 @@ fn array_like_value(receiver: &Value, index: usize) -> Result<Option<Value>, JsE
 /// Array.prototype.every(callback, thisArg?)
 pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
+    {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
     let length = array_like_length(&receiver)?;
 
     for i in 0..length {
@@ -479,6 +487,15 @@ mod tests {
         assert_eq!(
             ctx.eval("Array.prototype.concat.call(101).length"),
             Ok(Value::Number(1.0))
+        );
+    }
+
+    #[test]
+    fn array_every_boxes_boolean_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var accessed=false; Boolean.prototype[0]=1; Boolean.prototype.length=1; Array.prototype.every.call(false,function(v,i,obj){accessed=obj instanceof Boolean;return accessed;}); accessed"),
+            Ok(Value::Boolean(true))
         );
     }
 }
