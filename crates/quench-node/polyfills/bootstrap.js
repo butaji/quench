@@ -7103,73 +7103,121 @@ globalThis.require = (specifier) => {
       }
       return 0;
     };
+    const matchSubnetV4 = (addr, net, prefix) => {
+      const a = addr.split(".").map(Number);
+      const n = net.split(".").map(Number);
+      if (a.length !== 4 || n.length !== 4) return false;
+      const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+      const ai = ((a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]) >>> 0;
+      const ni = ((n[0] << 24) | (n[1] << 16) | (n[2] << 8) | n[3]) >>> 0;
+      return (ai & mask) === (ni & mask);
+    };
+    const expandV6 = (s) => {
+      const dc = s.indexOf("::");
+      if (dc === -1) return s.split(":");
+      const head = s.slice(0, dc) || "";
+      const tail = s.slice(dc + 2) || "";
+      const h = head === "" ? [] : head.split(":");
+      const t = tail === "" ? [] : tail.split(":");
+      const fill = 8 - h.length - t.length;
+      return [...h, ...Array(fill).fill("0"), ...t];
+    };
+    const matchSubnetV6 = (addr, net, prefix) => {
+      const ea = expandV6(addr).map((x) => parseInt(x, 16));
+      const en = expandV6(net).map((x) => parseInt(x, 16));
+      if (ea.length !== 8 || en.length !== 8) return false;
+      if (prefix === 0) return true;
+      for (let i = 0; i < 8; i++) {
+        if (prefix <= i * 16) break;
+        const bits = Math.min(16, prefix - i * 16);
+        const mask = bits === 16 ? 0xffff : (0xffff << (16 - bits)) & 0xffff;
+        if ((ea[i] & mask) !== (en[i] & mask)) return false;
+      }
+      return true;
+    };
     return {
       isIP,
       isIPv4,
       isIPv6,
       BlockList: class BlockList {
+        [Symbol.toStringTag] = "BlockList";
         constructor() {
-          this._v4 = new Set();
-          this._v6 = new Set();
+          this._v4 = new Map();
+          this._v6 = new Map();
           this._v4Ranges = [];
           this._v6Ranges = [];
           this._v4Subnets = [];
           this._v6Subnets = [];
+          this._rules = [];
         }
-        _checkType(type, defaultType) {
-          if (type === undefined) return defaultType;
+        get rules() {
+          return this._rules.slice().reverse();
+        }
+        [Symbol.for("nodejs.util.inspect.custom")](options) {
+          return this;
+        }
+        _checkType(type) {
           if (typeof type !== "string") {
-            const e = new TypeError("Invalid type");
+            const e = new TypeError("Invalid type [ERR_INVALID_ARG_TYPE]");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
-          if (type !== "ipv4" && type !== "ipv6") {
-            const e = new TypeError("Invalid type");
+          const lower = type.toLowerCase();
+          if (lower !== "ipv4" && lower !== "ipv6") {
+            const e = new TypeError(
+              `Invalid type '${type}' [ERR_INVALID_ARG_VALUE]`,
+            );
             e.code = "ERR_INVALID_ARG_VALUE";
             throw e;
           }
-          return type;
-        }
-        _checkTypeStrict(type) {
-          if (typeof type !== "string") {
-            const e = new TypeError("Invalid type");
-            e.code = "ERR_INVALID_ARG_TYPE";
-            throw e;
-          }
-          if (type !== "ipv4" && type !== "ipv6") {
-            const e = new TypeError("Invalid type");
-            e.code = "ERR_INVALID_ARG_VALUE";
-            throw e;
-          }
-          return type;
+          return lower;
         }
         addAddress(address, type) {
-          if (typeof address !== "string") {
+          let str;
+          let explicit;
+          if (typeof address === "string") {
+            str = address;
+            explicit = type !== undefined;
+          } else if (address && typeof address.address === "string") {
+            str = address.address;
+            explicit = address.family !== undefined;
+          } else {
             const e = new TypeError("Invalid address");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
           let resolvedType = type;
           if (resolvedType === undefined) {
-            resolvedType = isIPv4(address) ? "ipv4" : isIPv6(address) ? "ipv6" : null;
+            resolvedType = isIPv4(str) ? "ipv4" : isIPv6(str) ? "ipv6" : null;
             if (resolvedType === null) {
               const e = new TypeError("Invalid address");
               e.code = "ERR_INVALID_ARG_VALUE";
               throw e;
             }
           } else {
-            this._checkTypeStrict(resolvedType);
+            resolvedType = this._checkType(resolvedType);
           }
-          if (resolvedType === "ipv4") this._v4.add(address);
-          else this._v6.add(address);
+          if (resolvedType === "ipv4") {
+            const existing = this._v4.get(str);
+            this._v4.set(str, { explicit: (existing && existing.explicit) || explicit });
+            this._rules.push(`Address: IPv4 ${str}`);
+          } else {
+            const existing = this._v6.get(str);
+            this._v6.set(str, { explicit: (existing && existing.explicit) || explicit });
+            this._rules.push(`Address: IPv6 ${str}`);
+          }
         }
         addRange(start, end, type) {
-          if (typeof start !== "string") {
+          if (typeof start === "string") start = start;
+          else if (start && typeof start.address === "string") start = start.address;
+          else {
             const e = new TypeError("Invalid start");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
-          if (typeof end !== "string") {
+          if (typeof end === "string") end = end;
+          else if (end && typeof end.address === "string") end = end.address;
+          else {
             const e = new TypeError("Invalid end");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
@@ -7178,19 +7226,42 @@ globalThis.require = (specifier) => {
           if (resolvedType === undefined) {
             resolvedType = isIPv4(start) ? "ipv4" : "ipv6";
           } else {
-            this._checkType(resolvedType);
+            resolvedType = this._checkType(resolvedType);
           }
-          if (resolvedType === "ipv4") this._v4Ranges.push([start, end]);
-          else this._v6Ranges.push([start, end]);
+          if (resolvedType === "ipv4") {
+            if (compareV4(start, end) > 0) {
+              const e = new TypeError(
+                'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
+              );
+              e.code = "ERR_INVALID_ARG_VALUE";
+              throw e;
+            }
+            this._v4Ranges.push([start, end]);
+            this._rules.push(`Range: IPv4 ${start}-${end}`);
+          } else {
+            if (compareV6(start, end) > 0) {
+              const e = new TypeError(
+                'The value of "start" must be lower than "end" [ERR_INVALID_ARG_VALUE]',
+              );
+              e.code = "ERR_INVALID_ARG_VALUE";
+              throw e;
+            }
+            this._v6Ranges.push([start, end]);
+            this._rules.push(`Range: IPv6 ${start}-${end}`);
+          }
         }
         addSubnet(net, prefix, type) {
-          if (typeof net !== "string") {
-            const e = new TypeError("Invalid net");
+          if (typeof net === "string") {
+            // keep
+          } else if (net && typeof net.address === "string") {
+            net = net.address;
+          } else {
+            const e = new TypeError("Invalid net [ERR_INVALID_ARG_TYPE]");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
           if (typeof prefix !== "number") {
-            const e = new TypeError("Invalid prefix");
+            const e = new TypeError("Invalid prefix [ERR_INVALID_ARG_TYPE]");
             e.code = "ERR_INVALID_ARG_TYPE";
             throw e;
           }
@@ -7198,39 +7269,104 @@ globalThis.require = (specifier) => {
           if (resolvedType === undefined) {
             resolvedType = isIPv4(net) ? "ipv4" : "ipv6";
           } else {
-            this._checkType(resolvedType);
+            resolvedType = this._checkType(resolvedType);
           }
-          if (resolvedType === "ipv4") this._v4Subnets.push([net, prefix]);
-          else this._v6Subnets.push([net, prefix]);
+          const maxPrefix = resolvedType === "ipv4" ? 32 : 128;
+          if (!Number.isFinite(prefix) || prefix < 0 || prefix > maxPrefix) {
+            const e = new TypeError(
+              `Prefix must be between 0 and ${maxPrefix} [ERR_OUT_OF_RANGE]`,
+            );
+            e.code = "ERR_OUT_OF_RANGE";
+            throw e;
+          }
+          if (resolvedType === "ipv4") {
+            this._v4Subnets.push([net, prefix]);
+            this._rules.push(`Subnet: IPv4 ${net}/${prefix}`);
+          } else {
+            this._v6Subnets.push([net, prefix]);
+            this._rules.push(`Subnet: IPv6 ${net}/${prefix}`);
+          }
         }
         check(address, type) {
-          if (typeof address !== "string") return false;
+          let str;
+          if (typeof address === "string") str = address;
+          else if (address && typeof address.address === "string") str = address.address;
+          else {
+            const e = new TypeError("Invalid address [ERR_INVALID_ARG_TYPE]");
+            e.code = "ERR_INVALID_ARG_TYPE";
+            throw e;
+          }
           let resolvedType = type;
           if (typeof resolvedType === "string") resolvedType = resolvedType.toLowerCase();
+          const explicitType = resolvedType !== undefined;
           if (resolvedType === undefined) {
-            if (isIPv4(address)) resolvedType = "ipv4";
-            else if (isIPv6(address)) resolvedType = "ipv6";
+            if (isIPv4(str)) resolvedType = "ipv4";
+            else if (isIPv6(str)) resolvedType = "ipv6";
             else return false;
           } else {
             this._checkType(resolvedType);
           }
+          let inputKind = "string";
+          if (address && typeof address !== "string" && typeof address.address === "string") {
+            inputKind = "socket";
+          }
           if (resolvedType === "ipv4") {
-            if (this._v4.has(address)) return true;
+            if (this._v4.has(str)) {
+              const entry = this._v4.get(str);
+              if (
+                explicitType ||
+                (inputKind === "socket") ||
+                (inputKind === "string" && !entry.explicit)
+              )
+                return true;
+            }
             for (const [s, e] of this._v4Ranges) {
-              if (compareV4(address, s) >= 0 && compareV4(address, e) <= 0) return true;
+              if (compareV4(str, s) >= 0 && compareV4(str, e) <= 0) return true;
             }
-            // Symmetric: check IPv4-mapped entries in the v6 list.
-            if (this._v6.has("::ffff:" + address)) return true;
+            for (const [net, prefix] of this._v4Subnets) {
+              if (matchSubnetV4(str, net, prefix)) return true;
+            }
+            const mapped = "::ffff:" + str;
+            if (this._v6.has(mapped)) return true;
           } else {
-            if (this._v6.has(address)) return true;
-            for (const [s, e] of this._v6Ranges) {
-              if (compareV6(address, s) >= 0 && compareV6(address, e) <= 0) return true;
+            if (this._v6.has(str)) {
+              const entry = this._v6.get(str);
+              if (
+                explicitType ||
+                (inputKind === "socket") ||
+                (inputKind === "string" && !entry.explicit)
+              )
+                return true;
             }
-            // IPv4-mapped IPv6 also checks against the IPv4 list.
-            const dc = address.indexOf("::ffff:");
+            for (const [s, e] of this._v6Ranges) {
+              if (compareV6(str, s) >= 0 && compareV6(str, e) <= 0) return true;
+            }
+            for (const [net, prefix] of this._v6Subnets) {
+              if (matchSubnetV6(str, net, prefix)) return true;
+            }
+            const dc = str.indexOf("::ffff:");
             if (dc !== -1) {
-              const tail = address.slice(dc + 7);
-              if (tail.indexOf(":") === -1 && this._v4.has(tail)) return true;
+              const tail = str.slice(dc + 7);
+              let v4 = null;
+              if (tail.indexOf(":") === -1) {
+                v4 = tail;
+              } else {
+                const parts = tail.split(":");
+                if (parts.length === 2 && /^[0-9a-fA-F]+$/.test(parts[0]) && /^[0-9a-fA-F]+$/.test(parts[1])) {
+                  const a = parseInt(parts[0], 16);
+                  const b = parseInt(parts[1], 16);
+                  v4 = `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
+                }
+              }
+              if (v4 !== null) {
+                if (this._v4.has(v4)) return true;
+                for (const [s, e] of this._v4Ranges) {
+                  if (compareV4(v4, s) >= 0 && compareV4(v4, e) <= 0) return true;
+                }
+                for (const [net, prefix] of this._v4Subnets) {
+                  if (matchSubnetV4(v4, net, prefix)) return true;
+                }
+              }
             }
           }
           return false;
@@ -7239,7 +7375,7 @@ globalThis.require = (specifier) => {
       SocketAddress: class SocketAddress {
         constructor(input) {
           this.address = input && input.address ? String(input.address) : "";
-          this.family = input && input.family ? input.family : "ipv4";
+          this.family = input && input.family !== undefined ? input.family : undefined;
           this.flowlabel = (input && input.flowlabel) || 0;
           this.port = (input && input.port) || 0;
         }
