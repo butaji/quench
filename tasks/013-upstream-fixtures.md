@@ -444,3 +444,6 @@ asserting the decoded Latin-1 round trip and cleanup.
 
 Stage 169 formalized file-handle pull iteration through the upstream stream
 helpers, asserting text and byte lengths and cleaning up the file.
+
+Stage 170 formalized pull `start`, `limit`, and `chunkSize` options, asserting
+the selected slice and cleaning up the file.
