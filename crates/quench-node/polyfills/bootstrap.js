@@ -200,7 +200,16 @@ globalThis.process = {
       signal = pid.signal;
       pid = undefined;
     }
-    return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM"));
+    const cluster = globalThis.__nodeCluster;
+    if (cluster && Number.isInteger(pid)) {
+      for (const worker of cluster.workers) {
+        if (worker.process && worker.process.pid === pid) {
+          worker.kill(signal);
+          return true;
+        }
+      }
+    }
+    return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;
   },
   platform:
     globalThis.__quench_platform === "macos"
@@ -6974,7 +6983,12 @@ globalThis.require = (specifier) => {
         this.state = "none";
         this.exitedAfterDisconnect = false;
         const pid = 1000 + id;
-        this.process = { pid, exitCode: undefined, signalCode: undefined };
+        this.process = {
+          pid,
+          exitCode: undefined,
+          signalCode: undefined,
+          kill: (signal) => this.kill(signal),
+        };
         this._sends = 0;
         const alive = globalThis.__quench_node_pids || new Set();
         globalThis.__quench_node_pids = alive;
@@ -7004,12 +7018,25 @@ globalThis.require = (specifier) => {
       }
       kill(signal) {
         if (this.state === "dead") return this;
+        const previousState = this.state;
         this.process.exitCode = null;
         this.process.signalCode = String(signal || "SIGTERM");
-        this._markDead();
+        if (previousState === "online" || previousState === "listening") {
+          this.state = "disconnected";
+        } else {
+          this._markDead();
+        }
         queueMicrotask(() => {
-          cluster.emit("exit", this, this.process.exitCode, this.process.signalCode);
-          this.emit("exit", this.process.exitCode, this.process.signalCode);
+          if (previousState === "online" || previousState === "listening") {
+            cluster.emit("disconnect", this);
+            this.emit("disconnect");
+            this._markDead();
+            cluster.emit("exit", this, this.process.exitCode, this.process.signalCode);
+            this.emit("exit", this.process.exitCode, this.process.signalCode);
+          } else {
+            cluster.emit("exit", this, this.process.exitCode, this.process.signalCode);
+            this.emit("exit", this.process.exitCode, this.process.signalCode);
+          }
         });
         return this;
       }
@@ -7076,10 +7103,8 @@ globalThis.require = (specifier) => {
         cluster.isWorker = previousIsWorker;
         globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
         if (worker.state === "dead") return;
-        worker.process.exitCode = undefined;
-        worker.process.signalCode = null;
-        worker._markDead();
         queueMicrotask(() => {
+          if (worker.state !== "online" && worker.state !== "listening") return;
           const exitCode =
             process.exitCode !== undefined && process.exitCode !== 0
               ? process.exitCode
@@ -7087,6 +7112,8 @@ globalThis.require = (specifier) => {
                 ? 1
                 : 0;
           worker.process.exitCode = exitCode;
+          worker.process.signalCode = null;
+          worker._markDead();
           cluster.emit("disconnect", worker);
           worker.emit("disconnect");
           cluster.emit("exit", worker, exitCode, null);
