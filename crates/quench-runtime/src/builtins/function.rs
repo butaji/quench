@@ -131,7 +131,10 @@ fn proto_apply(args: Vec<Value>) -> Result<Value, JsError> {
 
     let call_args = extract_args_from_array_like(array_like)?;
     crate::interpreter::set_this_value(this_arg.clone());
+    let previous_new_target = crate::interpreter::get_new_target();
+    crate::interpreter::set_new_target(None);
     let result = crate::eval::call_value_with_this(func, call_args, this_arg);
+    crate::interpreter::set_new_target(previous_new_target);
     crate::interpreter::take_this_value();
     result
 }

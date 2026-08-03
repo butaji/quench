@@ -64,8 +64,10 @@ pub fn register_array(ctx: &mut Context) {
     let array_constructor = NativeConstructor::new(
         move |args: Vec<Value>| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-            if let Value::Object(obj_rc) = this_val {
-                return make_array_with_new(obj_rc, &args, &array_proto_for_ctor);
+            if crate::interpreter::get_new_target().is_some() {
+                if let Value::Object(obj_rc) = this_val {
+                    return make_array_with_new(obj_rc, &args, &array_proto_for_ctor);
+                }
             }
             make_array_direct(&args, &array_proto_for_ctor)
         },
