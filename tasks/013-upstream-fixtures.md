@@ -605,3 +605,12 @@ end-bounds and negative-start clamping.
 
 Stage 222 formalized Buffer `from` encoding conversions, asserting ascii
 byte truncation and utf-16le round trips.
+
+Stage 223 formalized Buffer base64 whitespace tolerance, asserting embedded
+newlines and spaces are ignored during decoding.
+
+Stage 224 formalized Buffer base64 invalid-input handling, asserting leading
+invalid padding yields an empty Buffer.
+
+Stage 225 formalized Buffer `inspect`, asserting the canonical `<Buffer ...>`
+hex-hex rendering.

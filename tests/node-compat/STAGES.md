@@ -230,3 +230,6 @@ these small fixtures isolate the currently implemented contract.
 |   220 | Buffer `write` overload validation                            | `tools/run-node-tests.sh --stage 220` |
 |   221 | Buffer `toString` offset/range clamping                        | `tools/run-node-tests.sh --stage 221` |
 |   222 | Buffer `from` encoding conversions (ascii, utf-16le)           | `tools/run-node-tests.sh --stage 222` |
+|   223 | Buffer base64 whitespace tolerance                             | `tools/run-node-tests.sh --stage 223` |
+|   224 | Buffer base64 invalid-input handling                           | `tools/run-node-tests.sh --stage 224` |
+|   225 | Buffer `inspect` hex rendering                                 | `tools/run-node-tests.sh --stage 225` |
