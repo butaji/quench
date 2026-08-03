@@ -57,6 +57,9 @@ self-hosted JavaScript layer.
   `toString`; direct `toString`, `valueOf`, ownership, prototype, enumerable,
   and legacy accessor bindings remain Rust-owned because JS would only add
   pass-through LOC.
+- [~] Removed dormant duplicate Object migration bindings after self-hosting;
+  Rust retains only the hidden locale-string primitive needed by the core
+  bootstrap boundary.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   the dormant Rust method layer has been removed; Rust retains indexed

@@ -6,7 +6,6 @@ var IsCallable = ops.IsCallable;
 var EnumerableOwnKeys = ops.EnumerableOwnKeys;
 var ToObject = ops.ToObject;
 var IsExtensible = ops.IsExtensible;
-var IsCallable = ops.IsCallable;
 var HasProperty = ops.HasProperty;
 var HasOwnProperty = ops.HasOwnProperty;
 var GetPrototypeOf = ops.GetPrototypeOf;
@@ -20,8 +19,6 @@ var DefineProp = ops.DefineProp;
 var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
-var _objectToLocaleString = Object.prototype.__toLocaleString;
-
 Object.prototype.toLocaleString = function ObjectToLocaleString() {
   return this.toString();
 };
