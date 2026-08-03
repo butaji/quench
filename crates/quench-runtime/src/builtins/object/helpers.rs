@@ -66,9 +66,7 @@ pub fn get_object_builtin_tag(o: &Rc<RefCell<Object>>) -> String {
             if matches!(obj.data, ObjData::Args { .. }) {
                 return "Arguments".to_string();
             }
-            if obj.prototype.is_none() {
-                return get_object_kind_tag(obj.kind.clone());
-            }
+            return get_object_kind_tag(obj.kind.clone());
         }
         current = obj.prototype.clone();
     }

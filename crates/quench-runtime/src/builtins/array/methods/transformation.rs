@@ -824,6 +824,19 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_prototype_is_an_exotic_array() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.prototype[2]=42; Array.prototype.length"),
+            Ok(Value::Number(3.0))
+        );
+        assert_eq!(
+            ctx.eval("({}).toString.call(Array.prototype)"),
+            Ok(Value::String("[object Array]".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
