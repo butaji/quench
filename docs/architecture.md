@@ -53,6 +53,8 @@ queue in `tasks/refactor-plan.md` (R18+).
   synchronization, and scheduling. Rust may also retain an implementation
   when the equivalent JS builtin would materially increase total maintained
   LOC; that exception must be recorded in `tasks/builtin-migration.md`.
+  A one-line JS forwarding proxy is not considered a migration: it increases
+  maintained LOC without moving an ECMAScript algorithm.
 - **`__ops__` diverges from the canonical ops** (R21): `SameValueZero` calls
   `same_value`, `HasProperty` implements `has_own`, `IsCallable` misses
   callable objects, and `DefineProp`/`SealObject`/`FreezeObject` duplicate

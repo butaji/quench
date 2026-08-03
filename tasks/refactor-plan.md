@@ -41,7 +41,9 @@ relevant test262 stage.
   measure the relevant Test262 stage during the later polish pass, and remove
   duplicate Rust registrations only when JS adds an algorithm or validation.
   Rust remains for interpreter core, performance-sensitive storage/scheduling,
-  crate-backed primitives, and lower-LOC direct bindings.
+  crate-backed primitives, and lower-LOC direct bindings. A JS file that only
+  forwards a call to one Rust primitive is not a migration target; keep that
+  binding in Rust and record the exception in `tasks/builtin-migration.md`.
 
 - **R23 — Thread-local reduction.** 48 `thread_local!` slots vs the
   shrink-to-zero principle. Targets: strict mode (`interpreter.rs:290`,
