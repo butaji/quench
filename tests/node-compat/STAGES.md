@@ -355,3 +355,4 @@ these small fixtures isolate the currently implemented contract.
 |   356 | assert.throws custom message formatting                           | `tools/run-node-tests.sh --stage 356` |
 |   357 | Buffer numeric read methods                                       | `tools/run-node-tests.sh --stage 357` |
 |   358 | Buffer write range validation                                     | `tools/run-node-tests.sh --stage 358` |
+|   359 | Buffer write encoding support                                    | `tools/run-node-tests.sh --stage 359` |
