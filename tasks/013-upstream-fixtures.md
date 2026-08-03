@@ -360,3 +360,6 @@ explicit file position, asserting byte count, resulting contents, and cleanup.
 
 Stage 141 formalized promise file-handle vectored writes and reads, asserting
 both byte counts, reconstructed contents, and cleanup.
+
+Stage 142 formalized promise file-handle truncation, asserting the resulting
+contents after shrinking an open file and cleaning up the temporary file.
