@@ -309,8 +309,8 @@ Array.prototype.concat = function ArrayConcat() {
         var element = E[k];
         if (element !== undefined || k in E) {
           CreateDataProperty(A, n, element);
-          n = n + 1;
         }
+        n = n + 1;
         k++;
       }
     } else {
@@ -318,6 +318,7 @@ Array.prototype.concat = function ArrayConcat() {
       n = n + 1;
     }
   }
+  A.length = n;
   return A;
 };
 
