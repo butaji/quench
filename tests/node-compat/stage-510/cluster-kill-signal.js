@@ -14,7 +14,7 @@ if (cluster.isWorker) {
   worker.on("exit", (code, signal) => {
     assert.strictEqual(code, null);
     assert.strictEqual(signal, "SIGKILL");
-    assert.strictEqual(disconnectFired, false);
+    assert.strictEqual(disconnectFired, true);
     assert.strictEqual(worker.exitedAfterDisconnect, false);
     assert.strictEqual(worker.state, "dead");
     assert.strictEqual(worker.process.exitCode, null);
