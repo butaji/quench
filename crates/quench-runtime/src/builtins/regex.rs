@@ -241,6 +241,15 @@ mod tests {
             Ok(Value::String("function".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_match_all_iterator_returns_matches() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var i = /a/g[Symbol.matchAll]('aba'); [i.next().value[0], i.next().value[0], i.next().done].join('|')"),
+            Ok(Value::String("a|a|true".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -403,10 +412,51 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
-fn regexp_symbol_match_all_impl(_args: Vec<Value>) -> Result<Value, JsError> {
-    Err(JsError::new(
-        "TypeError: RegExp.prototype[@@matchAll] is not implemented".to_string(),
-    ))
+fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError::new("TypeError: incompatible receiver".to_string()))?;
+    let Value::Object(regex_obj) = this_val else {
+        return Err(JsError::new("TypeError: incompatible receiver".to_string()));
+    };
+    let flags = regex_obj
+        .borrow()
+        .internal_regex_flags
+        .clone()
+        .unwrap_or_default();
+    if !flags.contains('g') {
+        return Err(JsError::new(
+            "TypeError: matchAll requires global RegExp".to_string(),
+        ));
+    }
+    let source = regex_obj
+        .borrow()
+        .internal_regex_source
+        .clone()
+        .unwrap_or_default();
+    let regex =
+        Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
+    let input = args.first().map(to_js_string).unwrap_or_default();
+    let state = Rc::new(RefCell::new(0usize));
+    let iterator = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
+    let next_state = Rc::clone(&state);
+    let next = NativeFunction::new(move |_args| {
+        let start = *next_state.borrow();
+        let Some(matched) = regex.find_from(&input, start).next() else {
+            let mut done = Object::new(ObjectKind::Ordinary);
+            done.set("value", Value::Undefined);
+            done.set("done", Value::Boolean(true));
+            return Ok(Value::Object(Rc::new(RefCell::new(done))));
+        };
+        *next_state.borrow_mut() = matched.end().max(matched.start() + 1);
+        let mut next_result = Object::new(ObjectKind::Ordinary);
+        next_result.set("value", build_exec_result(&input, &matched, &regex));
+        next_result.set("done", Value::Boolean(false));
+        Ok(Value::Object(Rc::new(RefCell::new(next_result))))
+    });
+    iterator
+        .borrow_mut()
+        .set("next", Value::NativeFunction(Rc::new(next)));
+    Ok(Value::Object(iterator))
 }
 
 fn current_regex_env() -> Option<Rc<RefCell<crate::env::Environment>>> {
