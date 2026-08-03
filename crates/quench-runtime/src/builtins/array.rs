@@ -75,11 +75,20 @@ pub fn register_array(ctx: &mut Context) {
 
     // Set static methods on the constructor
     let mut array_from_async = NativeFunction::new(|args| {
-        let array = array_from_impl(args)?;
-        crate::builtins::promise::promise_resolve_impl_static(
-            vec![array],
-            crate::builtins::promise::get_promise_proto(),
-        )
+        match array_from_impl(args) {
+            Ok(array) => crate::builtins::promise::promise_resolve_impl_static(
+                vec![array],
+                crate::builtins::promise::get_promise_proto(),
+            ),
+            Err(error) => {
+                let reason = crate::value::get_thrown_value()
+                    .unwrap_or_else(|| Value::String(error.0));
+                crate::builtins::promise::promise_reject_impl_static(
+                    vec![reason],
+                    crate::builtins::promise::get_promise_proto(),
+                )
+            }
+        }
     });
     define_static_method_length(&mut array_from_async);
     array_constructor.set_static_method(

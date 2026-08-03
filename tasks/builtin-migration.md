@@ -299,6 +299,9 @@ self-hosted JavaScript layer.
   handle the maximum length without exhausting memory.
 - [x] Apply array-length validation to the fallback assignment path as well,
   including arrays created in another realm.
+- [x] Ensure the native `Array.fromAsync` boundary converts synchronous
+  mapping/iteration errors into rejected Promises instead of leaking them as
+  direct exceptions.
 - [x] Use `CreateDataProperty` for `flat`/`flatMap` output indices instead of
   `push`, preventing inherited index setters from intercepting flattened
   result construction.
