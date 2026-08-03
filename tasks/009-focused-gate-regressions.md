@@ -525,3 +525,28 @@ Upstream `test-net-isip.js` and `test-net-isipv6.js` still fail on
 a small set of edge cases (zone identifiers containing `@`, and a few
 multi-`::` addresses). Tracked as the next sub-slice if the
 remaining cases can be tightened cheaply.
+
+## Status — url.pathToFileURL / url.fileURLToPath / path.resolve slice (done)
+
+Follow-on slice landed. Changes:
+
+- `__nodePath.resolve(...parts)` now resolves relative paths against
+  the host's current working directory (via `__quench_cwd_get`) and
+  preserves a trailing path separator when present in the input.
+  This unblocks `url.pathToFileURL('test/')` which depends on
+  `path.resolve` returning a path with a trailing slash.
+- `url.pathToFileURL(value, options)` now percent-encodes each
+  non-leading path segment (using the WHATWG
+  `application/x-www-form-urlencoded` percent-encoding set) and
+  preserves a trailing slash for directory inputs.
+  Windows-specific behaviour (drive letter prefix, UNC paths,
+  forbidden hostname characters) is tracked as a future sub-slice.
+- `url.fileURLToPath(value)` now accepts either a string URL or a
+  WHATWG `URL` instance and decodes the percent-encoded path.
+
+Focused-stage suite: **510/510 pass**.
+
+Upstream `test-url-pathtofileurl.js` is closer to passing (the
+trailing-slash case now succeeds) but still fails on the Windows-only
+forbidden-hostname-character block, which requires additional
+Windows-path handling.
