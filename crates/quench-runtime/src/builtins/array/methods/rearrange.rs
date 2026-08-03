@@ -318,4 +318,13 @@ mod tests {
             Ok(crate::value::Value::String("false,false,false".to_string()))
         );
     }
+
+    #[test]
+    fn fill_has_standard_length_descriptor() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.fill,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
+            Ok(crate::value::Value::String("1|false|false|true".to_string()))
+        );
+    }
 }

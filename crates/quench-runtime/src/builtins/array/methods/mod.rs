@@ -54,6 +54,7 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     set_method_length(proto, "every", 1.0);
     setup_mutation_methods(&m);
     setup_rearrange_methods(&m);
+    set_method_length(proto, "fill", 1.0);
     setup_accessor_methods(proto, &m);
     setup_search_methods(&m);
     setup_grouping_methods(&m);
