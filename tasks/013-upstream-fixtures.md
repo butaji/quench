@@ -285,3 +285,6 @@ forms, asserting byte counts, returned buffers, and cleanup.
 
 Stage 116 formalized the write/read fixture and added sync vectored
 `fs.writev` coverage with exact contents and cleanup.
+
+Stage 117 formalized `fs.open` write-mode truncation, asserting stale content
+is removed before writing and cleaning up the path.
