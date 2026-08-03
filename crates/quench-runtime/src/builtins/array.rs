@@ -3,7 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{JsError, NativeConstructor, NativeFunction, Object, ObjectKind, Value};
+use crate::value::{
+    JsError, NativeConstructor, NativeFunction, Object, ObjectKind, PropertyFlags, Value,
+};
 use crate::Context;
 
 pub mod methods;
@@ -86,19 +88,20 @@ pub fn register_array(ctx: &mut Context) {
             ))
         }))),
     );
-    array_constructor.set_static_method(
-        "from",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| array_from_impl(args)))),
-    );
+    let mut array_from = NativeFunction::new(|args| array_from_impl(args));
+    define_static_method_length(&mut array_from);
+    array_constructor.set_static_method("from", Value::NativeFunction(Rc::new(array_from)));
+    let mut array_from_async = NativeFunction::new(|args| {
+        let array = array_from_impl(args)?;
+        crate::builtins::promise::promise_resolve_impl_static(
+            vec![array],
+            crate::builtins::promise::get_promise_proto(),
+        )
+    });
+    define_static_method_length(&mut array_from_async);
     array_constructor.set_static_method(
         "fromAsync",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let array = array_from_impl(args)?;
-            crate::builtins::promise::promise_resolve_impl_static(
-                vec![array],
-                crate::builtins::promise::get_promise_proto(),
-            )
-        }))),
+        Value::NativeFunction(Rc::new(array_from_async)),
     );
     array_constructor.set_static_method(
         "of",
@@ -178,6 +181,19 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::new(RefCell::new(
         Object::new_array_from(elements),
     ))))
+}
+
+fn define_static_method_length(function: &mut NativeFunction) {
+    function.define_property(
+        "length",
+        Value::Number(1.0),
+        PropertyFlags {
+            value: Some(Value::Number(1.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
 }
 
 fn make_array_with_new(
