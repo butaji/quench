@@ -393,3 +393,52 @@ Retrospective (additions):
   synchronously so the cluster `state` transitions to `'listening'`
   before the worker's `worker.on('listening')` handler runs. This
   split (sync hook, async server event) preserves both contracts.
+
+## Status — cluster kill/disconnect state machine + worker.process.kill slice (done)
+
+Follow-on slice landed. Changes:
+
+- `worker.kill(signal)` now transitions through the `'disconnected'`
+  state (online/listening → disconnected → dead) and emits both
+  `disconnect` (on the cluster and the worker) and `exit` (on the
+  cluster first, then the worker). The exit uses
+  `process.exitCode = null` and `process.signalCode = signal` (or
+  `'SIGTERM'`).
+- The re-eval natural-exit microtask (`cluster.fork`'s post-eval
+  closure) only fires if the worker is still in `'online'` or
+  `'listening'` state. If `kill()` or `disconnect()` was called from a
+  microtask (e.g. the `http.Server.once('listening', …)` handler),
+  the natural-exit defers to the kill/disconnect microtask so the
+  `process.exitCode` / `process.signalCode` set by `kill()` is not
+  clobbered.
+- The post-eval sync code no longer resets `worker.process.exitCode`
+  / `worker.process.signalCode` before the natural-exit microtask.
+  Resetting there clobbered values set by `kill()` (which had run in
+  the prior microtask). The natural-exit and kill set these values
+  themselves.
+- `NodeClusterWorker` now exposes a `process.kill(signal)` method on
+  the `worker.process` object, matching the Node ChildProcess API.
+  This delegates to `worker.kill(signal)`, so the upstream
+  `test-cluster-worker-kill.js` fixture's
+  `worker.process.kill(KILL_SIGNAL)` correctly kills the worker with
+  the given signal.
+- Stage 510 (`cluster-kill-signal.js`) updated to assert that
+  `disconnectFired === true` (Node's `worker.kill()` emits `disconnect`
+  before `exit`), `exitedAfterDisconnect === false`, and the exit
+  contract: `code === null`, `signal === 'SIGKILL'`,
+  `process.exitCode === null`, `process.signalCode === 'SIGKILL'`.
+
+Focused-stage suite: **509/509 pass**.
+
+Upstream fixtures:
+- `test-cluster-fork-env.js`, `test-cluster-disconnect-with-no-workers.js`,
+  `test-cluster-worker-exit.js` pass.
+- `test-cluster-worker-kill.js` still fails on
+  `process.on('exit', …)` (the in-process `process` is not yet an
+  EventEmitter) and `common.mustCall` ordering; tracked as the next
+  sub-slice.
+- `test-cluster-basic.js`, `test-cluster-disconnect.js` need real
+  TCP (`net.connect` + read/write).
+- `test-cluster-setup-primary.js`, `test-cluster-setup-primary-emit.js`,
+  `test-cluster-isprimary.js` need `cluster.setupPrimary` arg
+  variants and the `process.send` / `cluster.fork` stdio options.
