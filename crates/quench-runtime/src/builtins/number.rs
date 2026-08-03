@@ -329,14 +329,14 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
     number_ctor.set_static_method("parseInt", number_obj.borrow().get("parseInt").unwrap());
     number_ctor.set_static_method("parseFloat", number_obj.borrow().get("parseFloat").unwrap());
-    number_ctor.set_static_method("MAX_VALUE", Value::Number(f64::MAX));
-    number_ctor.set_static_method("MIN_VALUE", Value::Number(f64::from_bits(1)));
-    number_ctor.set_static_method("NaN", Value::Number(f64::NAN));
-    number_ctor.set_static_method("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY));
-    number_ctor.set_static_method("POSITIVE_INFINITY", Value::Number(f64::INFINITY));
-    number_ctor.set_static_method("EPSILON", Value::Number(f64::EPSILON));
-    number_ctor.set_static_method("MAX_SAFE_INTEGER", Value::Number(9007199254740991.0));
-    number_ctor.set_static_method("MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
+    number_ctor.set_static_constant("MAX_VALUE", Value::Number(f64::MAX));
+    number_ctor.set_static_constant("MIN_VALUE", Value::Number(f64::from_bits(1)));
+    number_ctor.set_static_constant("NaN", Value::Number(f64::NAN));
+    number_ctor.set_static_constant("NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY));
+    number_ctor.set_static_constant("POSITIVE_INFINITY", Value::Number(f64::INFINITY));
+    number_ctor.set_static_constant("EPSILON", Value::Number(f64::EPSILON));
+    number_ctor.set_static_constant("MAX_SAFE_INTEGER", Value::Number(9007199254740991.0));
+    number_ctor.set_static_constant("MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
 
     // Number.prototype.constructor = Number
     proto.borrow_mut().set(

@@ -25,6 +25,7 @@ pub struct NativeConstructor {
     /// Wrapped in RefCell so we can mutate even when shared via Rc
     static_methods: std::cell::RefCell<std::collections::HashMap<String, Value>>,
     deleted_static_methods: std::cell::RefCell<HashSet<String>>,
+    non_deletable_static_methods: std::cell::RefCell<HashSet<String>>,
     /// Accessor properties (getters/setters) defined via Object.defineProperty
     /// Wrapped in RefCell so we can mutate even when shared via Rc
     accessors:
@@ -44,6 +45,7 @@ impl NativeConstructor {
             prototype,
             static_methods: std::cell::RefCell::new(std::collections::HashMap::new()),
             deleted_static_methods: std::cell::RefCell::new(HashSet::new()),
+            non_deletable_static_methods: std::cell::RefCell::new(HashSet::new()),
             accessors: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             name: std::cell::RefCell::new(String::new()),
         }
@@ -91,6 +93,13 @@ impl NativeConstructor {
             .insert(name.to_string(), value);
     }
 
+    pub fn set_static_constant(&self, name: &str, value: Value) {
+        self.set_static_method(name, value);
+        self.non_deletable_static_methods
+            .borrow_mut()
+            .insert(name.to_string());
+    }
+
     /// Get a static method from the constructor
     pub fn get_static_method(&self, name: &str) -> Option<Value> {
         if self.deleted_static_methods.borrow().contains(name) {
@@ -104,6 +113,9 @@ impl NativeConstructor {
     }
 
     pub fn delete_static_method(&self, name: &str) -> bool {
+        if self.non_deletable_static_methods.borrow().contains(name) {
+            return false;
+        }
         if self.static_methods.borrow().contains_key(name) || matches!(name, "length" | "name") {
             self.deleted_static_methods
                 .borrow_mut()
@@ -170,6 +182,9 @@ impl Clone for NativeConstructor {
             static_methods: std::cell::RefCell::new(self.static_methods.borrow().clone()),
             deleted_static_methods: std::cell::RefCell::new(
                 self.deleted_static_methods.borrow().clone(),
+            ),
+            non_deletable_static_methods: std::cell::RefCell::new(
+                self.non_deletable_static_methods.borrow().clone(),
             ),
             accessors: std::rc::Rc::clone(&self.accessors),
             name: std::cell::RefCell::new(self.name.borrow().clone()),

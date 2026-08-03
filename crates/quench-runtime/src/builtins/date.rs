@@ -75,7 +75,9 @@ fn register_string_converter(ctx: &mut Context) {
     let string_fn = create_string_constructor_fn(string_proto_clone);
 
     let string_obj = create_string_constructor_object(string_proto.clone(), string_fn.clone());
-    string_proto.borrow_mut().set("constructor", string_fn);
+    string_proto
+        .borrow_mut()
+        .set("constructor", Value::Object(Rc::clone(&string_obj)));
     ctx.set_global("String".to_string(), Value::Object(string_obj));
 }
 

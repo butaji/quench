@@ -1042,3 +1042,25 @@ fn module_fixture_is_available_to_static_import() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn number_nan_is_non_deletable() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/types/object/S8.6.1_A3.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn string_primitive_constructor_is_string() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/types/string/S8.4_A12.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
