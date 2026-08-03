@@ -155,3 +155,4 @@ these small fixtures isolate the currently implemented contract.
 |   145 | promise file-handle read/write file methods               | `tools/run-node-tests.sh --stage 145` |
 |   146 | promise file-handle append file method                    | `tools/run-node-tests.sh --stage 146` |
 |   147 | native synchronous `fs.realpath`                          | `tools/run-node-tests.sh --stage 147` |
+|   148 | encoded synchronous `fs.realpath` results                 | `tools/run-node-tests.sh --stage 148` |
