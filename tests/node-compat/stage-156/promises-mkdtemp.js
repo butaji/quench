@@ -1,9 +1,10 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const prefix = `/tmp/quench-node-stage-156-${process.pid}-`;
   const path = await fs.promises.mkdtemp(prefix);
-  if (!path.startsWith(prefix) || !fs.statSync(path).isDirectory())
-    throw new Error("promise mkdtemp mismatch");
+  assert.strictEqual(path.startsWith(prefix), true);
+  assert.strictEqual(fs.statSync(path).isDirectory(), true);
   fs.rmdirSync(path);
 })().then(() => undefined);
