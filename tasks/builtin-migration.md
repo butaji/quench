@@ -66,6 +66,10 @@ self-hosted JavaScript layer.
   storage primitives.
 - [~] `Array.from` is JS-owned; Rust retains `fromAsync` and core iterator/
   storage primitives.
+- [~] Array-like length coercion is moving through the JS-owned `ToLength`
+  helper in `builtins/Array.js`; only the first core method group is migrated
+  in this increment. This is an ECMAScript algorithm, not a Rust storage
+  primitive.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`, `padEnd`, all trim variants, the public UTF-16 accessors
   (`charAt`, `charCodeAt`, `codePointAt`, `at`), `raw`, `isWellFormed`, and
