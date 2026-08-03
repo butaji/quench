@@ -17,6 +17,11 @@ var _slice = String.prototype.__slice;
 var _split = String.prototype.__split;
 var _toString = String.prototype.__toString;
 var _valueOf = String.prototype.__valueOf;
+var _match = String.prototype.__match;
+var _search = String.prototype.__search;
+var _replace = String.prototype.__replace;
+var _regexSplit = String.prototype.__regexSplit;
+var _replaceAll = String.prototype.__replaceAll;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -78,6 +83,7 @@ String.prototype.slice = function StringSlice(start, end) {
 };
 
 String.prototype.split = function StringSplit(separator, limit) {
+  if (separator instanceof RegExp) return _regexSplit.call(this, separator, limit);
   return _split.call(this, separator, limit);
 };
 
@@ -87,6 +93,22 @@ String.prototype.toString = function StringToString() {
 
 String.prototype.valueOf = function StringValueOf() {
   return _valueOf.call(this);
+};
+
+String.prototype.match = function StringMatch(regexp) {
+  return _match.call(this, regexp);
+};
+
+String.prototype.search = function StringSearch(regexp) {
+  return _search.call(this, regexp);
+};
+
+String.prototype.replace = function StringReplace(searchValue, replaceValue) {
+  return _replace.call(this, searchValue, replaceValue);
+};
+
+String.prototype.replaceAll = function StringReplaceAll(searchValue, replaceValue) {
+  return _replaceAll.call(this, searchValue, replaceValue);
 };
 
 String.prototype.repeat = function StringRepeat(count) {

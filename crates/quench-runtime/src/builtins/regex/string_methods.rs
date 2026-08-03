@@ -20,23 +20,23 @@ pub fn register_string_regex_methods(ctx: &mut Context) {
     if let Some(proto) = get_string_prototype(ctx) {
         let mut proto_mut = proto.borrow_mut();
         proto_mut.set(
-            "match",
+            "__match",
             Value::NativeFunction(Rc::new(NativeFunction::new(string_match_impl))),
         );
         proto_mut.set(
-            "search",
+            "__search",
             Value::NativeFunction(Rc::new(NativeFunction::new(string_search_impl))),
         );
         proto_mut.set(
-            "replace",
+            "__replace",
             Value::NativeFunction(Rc::new(NativeFunction::new(string_replace_impl))),
         );
         proto_mut.set(
-            "split",
+            "__regexSplit",
             Value::NativeFunction(Rc::new(NativeFunction::new(string_split_impl))),
         );
         proto_mut.set(
-            "replaceAll",
+            "__replaceAll",
             Value::NativeFunction(Rc::new(NativeFunction::new(string_replace_all_impl))),
         );
     }
