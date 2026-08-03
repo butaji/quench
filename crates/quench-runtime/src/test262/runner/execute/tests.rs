@@ -91,6 +91,18 @@ fn bigint_hex_literals_are_not_rejected_as_legacy_octal() {
 }
 
 #[test]
+fn eval_super_property_from_class_method_is_valid() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path =
+        PathBuf::from(&root).join("test/language/expressions/super/prop-dot-cls-val-from-eval.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn regexp_modifier_overlap_is_rejected_during_parse() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
