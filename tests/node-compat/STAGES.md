@@ -212,3 +212,4 @@ these small fixtures isolate the currently implemented contract.
 |   202 | Buffer JSON shape and round-trip restoration                  | `tools/run-node-tests.sh --stage 202` |
 |   203 | Buffer equality, typed arrays, and validation                 | `tools/run-node-tests.sh --stage 203` |
 |   204 | Buffer byte lengths across encodings and views                | `tools/run-node-tests.sh --stage 204` |
+|   205 | Buffer string writes, offsets, and UTF-16 encoding             | `tools/run-node-tests.sh --stage 205` |
