@@ -396,3 +396,6 @@ Stage 152 formalized invalid numeric paths for synchronous and callback
 
 Stage 153 formalized promise `fs.chmod`, asserting updated permission bits and
 cleaning up the temporary file.
+
+Stage 154 formalized promise copy/rename/unlink mutations, asserting preserved
+contents after the rename and cleaning up all temporary files.
