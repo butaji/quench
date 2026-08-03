@@ -517,6 +517,14 @@ mod tests {
     }
 
     #[test]
+    fn flat_throws_when_species_result_is_non_extensible() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var A=function(){Object.preventExtensions(this)}; var a=[[1]]; a.constructor={}; a.constructor[Symbol.species]=A; a.flat()")
+            .is_err());
+    }
+
+    #[test]
     fn array_search_transform_methods_have_standard_lengths() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
@@ -978,9 +986,10 @@ pub fn flatten_array(arr: Vec<Value>, depth: i32) -> Vec<Value> {
 
 /// Array.prototype.flat(depth?)
 pub fn proto_flat(args: Vec<Value>) -> Result<Value, JsError> {
+    let receiver = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
     let elements = get_this_array()?;
     let depth = args.first().map(|v| to_number(v) as i32).unwrap_or(1);
-    Ok(make_array(flatten_array(elements, depth)))
+    make_filter_result(&receiver, flatten_array(elements, depth))
 }
 
 /// Array.prototype.flatMap(callback, thisArg?)
