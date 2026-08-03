@@ -33,7 +33,6 @@ This is the fastest path to 100% conformance with minimum LOC because:
 - **Builtins self-hosted in JS.** JS is ~1/3 the LOC of equivalent
   Rust for spec algorithms. Once `__ops__` is complete, builtins move
   to JS (`builtins/*.js`) and the Rust core shrinks.
-  *(Currently dormant — see Current state below.)*
 
 ## Current state (2026-08 review)
 

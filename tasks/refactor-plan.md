@@ -32,14 +32,16 @@ relevant test262 stage.
   `CreateDataProperty` uses `.set()`, and `DefineProp`/`SealObject`/
   `FreezeObject`/`SetPrototypeOf` duplicate descriptor logic that lives in
   `builtins/object_static/descriptors.rs`. One op = one implementation; add a
-  failing test per op. Required before R22 revives the JS layer.
+  failing test per op. Required before conformance polish can declare the
+  self-hosted layer complete.
 
 - **R22 — Migrate all builtins to JS.** The migration is tracked in
-  `tasks/builtin-migration.md`. `bootstrap_js_builtins` is currently dormant;
-  migrate one family at a time on top of canonical `__ops__`, measure the
-  relevant Test262 stage, and delete duplicate Rust registrations only after
-  the JS path is green. Rust remains for the interpreter core,
-  performance-sensitive storage/scheduling, and crate-backed primitives.
+  `tasks/builtin-migration.md`; `bootstrap_js_builtins` is active for normal
+  contexts. Continue one family at a time on top of canonical `__ops__`,
+  measure the relevant Test262 stage during the later polish pass, and remove
+  duplicate Rust registrations only when JS adds an algorithm or validation.
+  Rust remains for interpreter core, performance-sensitive storage/scheduling,
+  crate-backed primitives, and lower-LOC direct bindings.
 
 - **R23 — Thread-local reduction.** 48 `thread_local!` slots vs the
   shrink-to-zero principle. Targets: strict mode (`interpreter.rs:290`,
