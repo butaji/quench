@@ -25,6 +25,13 @@ var _replaceAll = String.prototype.__replaceAll;
 var _fromCharCode = String.__fromCharCode;
 var _fromCodePoint = String.__fromCodePoint;
 
+function ToLength(value) {
+  var n = Number(value);
+  if (n !== n || n <= 0) return 0;
+  if (n === Infinity) return 9007199254740991;
+  return Math.min(Math.floor(n), 9007199254740991);
+}
+
 String.fromCharCode = function StringFromCharCode() {
   return _fromCharCode.apply(this, arguments);
 };
@@ -36,7 +43,7 @@ String.fromCodePoint = function StringFromCodePoint() {
 String.raw = function StringRaw(template) {
   var cooked = Object(template);
   var raw = Object(cooked.raw);
-  var len = raw.length >>> 0;
+  var len = ToLength(raw.length);
   if (len === 0) return "";
   var result = "";
   for (var i = 0; i < len; i++) {

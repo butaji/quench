@@ -76,6 +76,8 @@ self-hosted JavaScript layer.
   `toWellFormed` are now authored in `builtins/String.js`; Rust retains string
   storage, iteration, UTF-16 primitives, and RegExp execution. Remaining
   String methods are pending migration.
+- [~] `String.raw` now uses a JS-owned `ToLength` coercion instead of a
+  bitwise length conversion; its UTF-16/string primitives remain Rust-backed.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned
