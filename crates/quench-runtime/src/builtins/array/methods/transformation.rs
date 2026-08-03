@@ -235,26 +235,57 @@ pub fn proto_some(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Boolean(false))
 }
 
+fn array_like_length(receiver: &Value) -> Result<usize, JsError> {
+    let Value::Object(object) = receiver else {
+        return Err(JsError(
+            "Array.prototype method called on non-object".to_string(),
+        ));
+    };
+    if object.borrow().kind == ObjectKind::Array {
+        return Ok(object.borrow().elements.len());
+    }
+    let length = crate::eval::member::eval_object_member_value(
+        object,
+        &Value::String("length".to_string()),
+        None,
+    )?;
+    Ok(crate::value::try_to_number(&length)?.max(0.0) as usize)
+}
+
+fn array_like_value(receiver: &Value, index: usize) -> Result<Option<Value>, JsError> {
+    let Value::Object(object) = receiver else {
+        return Ok(None);
+    };
+    let key = index.to_string();
+    if !object.borrow().has(&key) {
+        return Ok(None);
+    }
+    Ok(Some(crate::eval::member::eval_object_member_value(
+        object,
+        &Value::String(key),
+        None,
+    )?))
+}
+
 /// Array.prototype.every(callback, thisArg?)
 pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::get_native_this();
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let length = array_like_length(&receiver)?;
 
-    for i in 0..elements.len() {
-        let Some(elem) = receiver.as_ref().and_then(|receiver| {
-            let Value::Object(object) = receiver else {
-                return Some(Value::Undefined);
-            };
-            let key = i.to_string();
-            if !object.borrow().has(&key) {
-                return None;
-            }
-            crate::eval::member::eval_object_member_value(object, &Value::String(key), None).ok()
-        }) else {
+    for i in 0..length {
+        let Some(elem) = array_like_value(&receiver, i)? else {
             continue;
         };
-        let result = call_callback(&callback, &elem, i, &elements)?;
+        let callback_args = vec![elem, Value::Number(i as f64), receiver.clone()];
+        let result = match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+            }
+            Value::NativeFunction(native) => native.call(Value::Undefined, callback_args)?,
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        };
         if !to_bool(&result) {
             return Ok(Value::Boolean(false));
         }
@@ -406,6 +437,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("var seen=false; var a=[1,2,,4]; a.every(function(v,i){if(i===0)a[2]=3;if(v===3)seen=true;return true;}); seen"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_every_defers_array_like_getters() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var accessed=false; var o={length:2}; Object.defineProperty(o,'1',{get:function(){return 6.99;},configurable:true}); Object.defineProperty(o,'0',{get:function(){delete o[1];return 0;},configurable:true}); Array.prototype.every.call(o,function(){accessed=true;return true;}); accessed"),
             Ok(Value::Boolean(true))
         );
     }
