@@ -414,3 +414,6 @@ asserting shared contents and cleaning up both links and the source.
 
 Stage 159 formalized invalid source and target argument validation for
 `fs.linkSync`, asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
+
+Stage 160 formalized UTF-8 and Buffer encoding options for synchronous
+`fs.readlink`, asserting equivalent link targets and cleaning up both entries.

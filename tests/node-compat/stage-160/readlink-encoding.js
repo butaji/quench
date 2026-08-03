@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const target = `/tmp/quench-node-stage-160-target-${process.pid}`;
@@ -6,8 +7,8 @@ const fs = require("fs");
   fs.writeFileSync(target, "x");
   fs.symlinkSync(target, link);
   const expected = fs.readlinkSync(link);
-  if (fs.readlinkSync(link, "utf8") !== expected)
-    throw new Error("readlink utf8 mismatch");
-  if (fs.readlinkSync(link, "buffer").toString() !== expected)
-    throw new Error("readlink buffer mismatch");
+  assert.strictEqual(fs.readlinkSync(link, "utf8"), expected);
+  assert.strictEqual(fs.readlinkSync(link, "buffer").toString(), expected);
+  fs.unlinkSync(link);
+  fs.rmSync(target);
 })().then(() => undefined);
