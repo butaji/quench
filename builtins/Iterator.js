@@ -5,10 +5,6 @@ var IsCallable = ops.IsCallable;
 
 // Save native implementations
 var _nativeFrom = Iterator.__from;
-var _nativeProtoMap = Iterator.prototype.__map;
-var _nativeProtoFilter = Iterator.prototype.__filter;
-var _nativeProtoTake = Iterator.prototype.__take;
-var _nativeProtoDrop = Iterator.prototype.__drop;
 var _nativeProtoFlatMap = Iterator.prototype.__flatMap;
 
 // Iterator.from (ES2025 §27.1.3.2)
@@ -17,19 +13,66 @@ Iterator.from = function IteratorFrom(O) {
 };
 
 // Iterator.prototype.map (ES2025 §27.1.4.4)
+function IteratorHelper(next) {
+  var helper = Object.create(Iterator.prototype);
+  helper.next = next;
+  helper[Symbol.iterator] = function() { return this; };
+  return helper;
+}
+
 Iterator.prototype.map = function IteratorMap(mapper) {
   if (!IsCallable(mapper)) throw ThrowTypeError("mapper is not a function");
-  return _nativeProtoMap.call(this, mapper);
+  var iterator = this;
+  var index = 0;
+  return IteratorHelper(function() {
+    var step = iterator.next();
+    return step.done ? step : { value: mapper(step.value, index++), done: false };
+  });
 };
 
 // Iterator.prototype.filter (ES2025 §27.1.4.3)
 Iterator.prototype.filter = function IteratorFilter(filterer) {
   if (!IsCallable(filterer)) throw ThrowTypeError("filterer is not a function");
-  return _nativeProtoFilter.call(this, filterer);
+  var iterator = this;
+  var index = 0;
+  return IteratorHelper(function() {
+    var step = iterator.next();
+    while (!step.done) {
+      var value = step.value;
+      if (filterer(value, index++)) return { value: value, done: false };
+      step = iterator.next();
+    }
+    return step;
+  });
 };
 
-Iterator.prototype.take = function(limit) { return _nativeProtoTake.call(this, limit); };
-Iterator.prototype.drop = function(limit) { return _nativeProtoDrop.call(this, limit); };
+Iterator.prototype.take = function IteratorTake(limit) {
+  var count = Math.floor(Number(limit));
+  if (count < 0 || count !== count) throw ThrowTypeError("limit must be non-negative");
+  var iterator = this;
+  return IteratorHelper(function() {
+    if (count-- <= 0) return { value: undefined, done: true };
+    return iterator.next();
+  });
+};
+
+Iterator.prototype.drop = function IteratorDrop(limit) {
+  var count = Math.floor(Number(limit));
+  if (count < 0 || count !== count) throw ThrowTypeError("limit must be non-negative");
+  var iterator = this;
+  var skipped = false;
+  return IteratorHelper(function() {
+    if (!skipped) {
+      while (count-- > 0) {
+        var skippedStep = iterator.next();
+        if (skippedStep.done) return skippedStep;
+      }
+      skipped = true;
+    }
+    return iterator.next();
+  });
+};
+
 Iterator.prototype.flatMap = function(mapper) {
   if (!IsCallable(mapper)) throw ThrowTypeError("mapper is not a function");
   return _nativeProtoFlatMap.call(this, mapper);

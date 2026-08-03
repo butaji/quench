@@ -122,6 +122,8 @@ self-hosted JavaScript layer.
 - [~] Iterator `reduce`, `toArray`, `forEach`, `some`, `every`, and `find` now
   contain their iteration algorithms in JS; Rust retains iterator state and
   streaming primitives.
+- [~] Iterator `map`, `filter`, `take`, and `drop` now compose JS-owned
+  streaming helper records; Rust retains only underlying iterator execution.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
