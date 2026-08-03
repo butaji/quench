@@ -1,4 +1,4 @@
-var arrayUnscopables = __ops__.CreateObject(null);
+var arrayUnscopables = __ops__.CreateObject(Object.prototype);
 arrayUnscopables.copyWithin = true;
 arrayUnscopables.entries = true;
 arrayUnscopables.fill = true;
