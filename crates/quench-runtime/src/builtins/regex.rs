@@ -150,8 +150,8 @@ mod tests {
     #[test]
     fn regexp_escape_encodes_whitespace_and_line_terminators() {
         assert_eq!(
-            regexp_escape(" \u{00a0}\u{2028}\u{2029}\u{feff}"),
-            "\\x20\\xa0\\u2028\\u2029\\ufeff"
+            regexp_escape(" \u{00a0}\u{2028}\u{2029}\u{202f}\u{feff}"),
+            "\\x20\\xa0\\u2028\\u2029\\u202f\\ufeff"
         );
     }
 }
@@ -410,7 +410,7 @@ fn regexp_escape(input: &str) -> String {
             escaped.push_str(r#"\x20"#);
         } else if ch == '\u{00a0}' {
             escaped.push_str(r#"\xa0"#);
-        } else if matches!(ch, '\u{2028}' | '\u{2029}' | '\u{feff}') {
+        } else if matches!(ch, '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{feff}') {
             escaped.push_str(&format!(r#"\u{:04x}"#, ch as u32));
         } else if ch.is_ascii_punctuation() && ch != '_' {
             escaped.push_str(&format!(r#"\x{:02x}"#, ch as u32));
