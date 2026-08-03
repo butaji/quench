@@ -1086,3 +1086,47 @@ fn break_cannot_cross_static_initialization_boundary() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn class_method_rejects_super_call_in_parameter_default() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/definition/early-errors-class-method-formals-contains-super-call.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn mixed_static_private_accessors_are_rejected() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/private-non-static-getter-static-setter-early-error.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn class_static_block_rejects_arguments_identifier() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/static-init-invalid-arguments.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn generator_class_method_rejects_yield_parameter_binding() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/definition/methods-gen-yield-as-function-expression-binding-identifier.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}

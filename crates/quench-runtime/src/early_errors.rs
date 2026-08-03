@@ -287,6 +287,15 @@ fn contains_super_call(expression: &ast::Expression<'_>) -> bool {
     finder.0
 }
 
+fn contains_super_call_in_params(params: &ast::FormalParameters<'_>) -> bool {
+    params.items.iter().any(|param| {
+        param
+            .initializer
+            .as_ref()
+            .is_some_and(|init| contains_super_call(init))
+    })
+}
+
 struct DirectSuperCallFinder(bool);
 
 impl<'a> Visit<'a> for DirectSuperCallFinder {
@@ -322,6 +331,22 @@ fn contains_direct_super_call(function: &ast::Function<'_>) -> bool {
 }
 
 impl<'a> Visit<'a> for ClassNameChecker {
+    fn visit_static_block(&mut self, block: &ast::StaticBlock<'a>) {
+        let mut arguments = ArgumentsFinder(false);
+        for statement in &block.body {
+            arguments.visit_statement(statement);
+        }
+        if arguments.0 {
+            self.error = Some(JsError(
+                "SyntaxError: arguments is not allowed in a class static block".into(),
+            ));
+            return;
+        }
+        for statement in &block.body {
+            self.visit_statement(statement);
+        }
+    }
+
     fn visit_class(&mut self, class: &ast::Class<'a>) {
         if self.error.is_none()
             && class.id.as_ref().is_some_and(|id| {
@@ -370,6 +395,30 @@ impl<'a> Visit<'a> for ClassNameChecker {
                 }
             }
             if let ast::ClassElement::MethodDefinition(method) = element {
+                if contains_strict_yield_name(&method.value) {
+                    self.error = Some(JsError(
+                        "SyntaxError: yield is not allowed in a class method".into(),
+                    ));
+                    return;
+                }
+                if contains_super_call_in_params(&method.value.params) {
+                    self.error = Some(JsError(
+                        "SyntaxError: super() is not allowed in class method parameters".into(),
+                    ));
+                    return;
+                }
+                if method.value.params.items.iter().any(|param| {
+                    matches!(
+                        &param.pattern,
+                        ast::BindingPattern::BindingIdentifier(id)
+                            if matches!(id.name.as_str(), "arguments" | "eval")
+                    )
+                }) {
+                    self.error = Some(JsError(
+                        "SyntaxError: invalid class method parameter".into(),
+                    ));
+                    return;
+                }
                 if method.value.params.items.iter().any(|param| {
                     param
                         .initializer
@@ -420,31 +469,38 @@ impl<'a> Visit<'a> for DuplicatePrivateNameChecker {
         if self.error.is_some() {
             return;
         }
-        let mut names = HashMap::new();
+        let mut names: HashMap<String, (u8, bool)> = HashMap::new();
         for element in &class.body.body {
-            let (key, kind) = match element {
+            let (key, kind, is_static) = match element {
                 ast::ClassElement::MethodDefinition(method) => {
                     let kind = match method.kind {
                         ast::MethodDefinitionKind::Get => 4,
                         ast::MethodDefinitionKind::Set => 8,
                         _ => 1,
                     };
-                    (Some(&method.key), kind)
+                    (Some(&method.key), kind, method.r#static)
                 }
-                ast::ClassElement::PropertyDefinition(property) => (Some(&property.key), 2),
-                ast::ClassElement::AccessorProperty(property) => (Some(&property.key), 2),
-                _ => (None, 0),
+                ast::ClassElement::PropertyDefinition(property) => {
+                    (Some(&property.key), 2, property.r#static)
+                }
+                ast::ClassElement::AccessorProperty(property) => {
+                    (Some(&property.key), 2, property.r#static)
+                }
+                _ => (None, 0, false),
             };
             if let Some(name) = key.and_then(private_name) {
-                let previous = names.get(&name).copied().unwrap_or(0);
+                let (previous, previous_static) =
+                    names.get(&name).copied().unwrap_or((0, is_static));
                 let combined = previous | kind;
-                if previous != 0 && combined != 12 {
+                if previous != 0
+                    && ((combined != 12) || (previous_static != is_static && combined == 12))
+                {
                     self.error = Some(JsError(
                         "SyntaxError: duplicate private name in class body".into(),
                     ));
                     return;
                 }
-                names.insert(name, combined);
+                names.insert(name, (combined, is_static));
             }
             self.visit_class_element(element);
         }
@@ -936,6 +992,29 @@ impl<'a> Visit<'a> for YieldNameFinder {
 fn contains_yield_name(expression: &ast::Expression<'_>) -> bool {
     let mut finder = YieldNameFinder(false);
     finder.visit_expression(expression);
+    finder.0
+}
+
+struct StrictYieldNameFinder(bool);
+
+impl<'a> Visit<'a> for StrictYieldNameFinder {
+    fn visit_binding_identifier(&mut self, identifier: &ast::BindingIdentifier<'a>) {
+        self.0 |= identifier.name == "yield";
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &ast::IdentifierReference<'a>) {
+        self.0 |= identifier.name == "yield";
+    }
+}
+
+fn contains_strict_yield_name(function: &ast::Function<'_>) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let mut finder = StrictYieldNameFinder(false);
+    for statement in &body.statements {
+        finder.visit_statement(statement);
+    }
     finder.0
 }
 
