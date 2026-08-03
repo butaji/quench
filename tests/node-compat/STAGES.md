@@ -205,3 +205,4 @@ these small fixtures isolate the currently implemented contract.
 |   195 | Buffer signed integer read/write operations                  | `tools/run-node-tests.sh --stage 195` |
 |   196 | Buffer single-precision float read/write operations          | `tools/run-node-tests.sh --stage 196` |
 |   197 | Buffer slicing, callable construction, and comparison        | `tools/run-node-tests.sh --stage 197` |
+|   198 | Buffer copy ranges, counts, and overlap semantics             | `tools/run-node-tests.sh --stage 198` |

@@ -530,3 +530,6 @@ big/little-endian round trips and write return offsets.
 
 Stage 197 formalized Buffer slicing, callable construction, and comparison,
 asserting negative bounds, callable `Buffer`, and `Buffer.compare` behavior.
+
+Stage 198 formalized Buffer copy ranges and overlap semantics, asserting copied
+counts, selected source ranges, and safe self-overlapping copies.
