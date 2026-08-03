@@ -146,3 +146,4 @@ these small fixtures isolate the currently implemented contract.
 |   136 | encoded synchronous `fs.readFileSync` results             | `tools/run-node-tests.sh --stage 136` |
 |   137 | buffer option on synchronous `fs.readFileSync`            | `tools/run-node-tests.sh --stage 137` |
 |   138 | create behavior of `fs.readFileSync` append mode          | `tools/run-node-tests.sh --stage 138` |
+|   139 | default permission mode for `fs.writeFileSync`            | `tools/run-node-tests.sh --stage 139` |
