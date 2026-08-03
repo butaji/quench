@@ -119,6 +119,20 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
                     );
                 }
             }
+            if let Some(Value::Object(options)) = args.get(1) {
+                if let Some(cause) = options.borrow().get("cause") {
+                    error_rc.borrow_mut().define_own_property(
+                        "cause",
+                        &PropertyDescriptor {
+                            value: Some(cause),
+                            writable: Some(true),
+                            enumerable: Some(false),
+                            configurable: Some(true),
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
             Ok(Value::Object(error_rc))
         },
         Rc::clone(proto),

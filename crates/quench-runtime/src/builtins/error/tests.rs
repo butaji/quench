@@ -249,6 +249,18 @@ fn native_error_constructor_properties_are_non_enumerable() {
 }
 
 #[test]
+fn native_error_constructor_cause_is_an_own_property() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("var e = new TypeError('message', {cause: 7}); var d = Object.getOwnPropertyDescriptor(e, 'cause'); [e.cause, d.writable, d.enumerable, d.configurable].join('|')")
+        .unwrap();
+    assert_eq!(
+        result,
+        crate::value::Value::String("7|true|false|true".into())
+    );
+}
+
+#[test]
 fn core_error_message_own_property_spec() {
     let mut ctx = crate::Context::new().unwrap();
     // When called with msg, message IS own property
