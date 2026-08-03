@@ -88,6 +88,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/part-71.js"),
     include_str!("../polyfills/bootstrap-parts/part-72.js"),
     include_str!("../polyfills/bootstrap-parts/part-73.js"),
+    include_str!("../polyfills/bootstrap-parts/part-74.js"),
 ];
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
