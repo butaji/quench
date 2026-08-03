@@ -315,3 +315,6 @@ cleanup after closing the descriptor.
 
 Stage 126 formalized typed-array `fs.writeFileSync` input, asserting decoded
 contents and cleanup.
+
+Stage 127 formalized DataView `fs.writeFileSync` input, asserting decoded
+contents and cleanup.
