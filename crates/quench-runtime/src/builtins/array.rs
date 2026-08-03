@@ -74,7 +74,37 @@ pub fn register_array(ctx: &mut Context) {
     array_constructor.set_name("Array");
 
     // Set static methods on the constructor
-    let mut array_from_async = NativeFunction::new(|args| match array_from_impl(args) {
+    let mut array_from_async = NativeFunction::new(|args| {
+        if args.get(1).is_none() {
+            if let Some(Value::Object(items)) = args.first() {
+                if items.borrow().kind == ObjectKind::Array {
+                    let initial_len = items.borrow().elements.len();
+                    let first = items.borrow().elements.first().cloned();
+                    let promise = crate::builtins::promise::create_pending_promise();
+                    let items_for_job = Rc::clone(items);
+                    let promise_for_job = Rc::clone(&promise);
+                    let job = Value::NativeFunction(Rc::new(NativeFunction::new(move |_| {
+                        let mut values = items_for_job.borrow().elements.clone();
+                        values.truncate(initial_len);
+                        if let Some(first) = first.clone() {
+                            if values.is_empty() {
+                                values.push(first);
+                            } else {
+                                values[0] = first;
+                            }
+                        }
+                        crate::builtins::promise::settle_resolve(
+                            &promise_for_job,
+                            Value::Object(Rc::new(RefCell::new(Object::new_array_from(values)))),
+                        );
+                        Ok(Value::Undefined)
+                    })));
+                    crate::builtins::promise::queue_microtask_impl(job);
+                    return Ok(Value::Object(promise));
+                }
+            }
+        }
+        match array_from_impl(args) {
         Ok(array) if array_contains_thenable(&array) => {
             let promises = array_to_promise_values(&array)?;
             crate::builtins::promise::promise_all_impl(
@@ -96,6 +126,7 @@ pub fn register_array(ctx: &mut Context) {
                 vec![reason],
                 crate::builtins::promise::get_promise_proto(),
             )
+        }
         }
     });
     define_static_method_length(&mut array_from_async);

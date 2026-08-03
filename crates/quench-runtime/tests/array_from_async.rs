@@ -13,6 +13,13 @@ fn array_from_async_awaits_mapping_promises() {
 }
 
 #[test]
+fn array_from_async_observes_array_mutation_during_iteration() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var items=[1,2,3]; var result; var p=Array.fromAsync(items); items[0]=7; items[1]=8; p.then(v=>{result=v.join(',');});").unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("1,8,3".to_string())));
+}
+
+#[test]
 fn array_from_async_awaits_non_promise_thenables() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var result; var v={}; var input={length:1,0:{then:function(resolve){resolve(v);}}}; Array.fromAsync(input).then(a=>{result=a[0]===v;});").unwrap();
