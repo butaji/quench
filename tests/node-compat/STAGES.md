@@ -162,3 +162,4 @@ these small fixtures isolate the currently implemented contract.
 |   152 | synchronous and callback `fs.access` validation           | `tools/run-node-tests.sh --stage 152` |
 |   153 | promise `fs.chmod` permission changes                     | `tools/run-node-tests.sh --stage 153` |
 |   154 | promise copy, rename, and unlink mutations                | `tools/run-node-tests.sh --stage 154` |
+|   155 | promise directory removal                                 | `tools/run-node-tests.sh --stage 155` |
