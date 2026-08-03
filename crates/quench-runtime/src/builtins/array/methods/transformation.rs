@@ -115,14 +115,31 @@ pub fn proto_map(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.filter(callback, thisArg?)
 pub fn proto_filter(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = match crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?
+    {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
+    let length = array_like_length(&receiver)?;
 
     let mut result = Vec::new();
-    for (i, elem) in elements.iter().enumerate() {
-        let keep = to_bool(&call_callback(&callback, elem, i, &elements)?);
+    for i in 0..length {
+        let Some(elem) = array_like_value(&receiver, i)? else {
+            continue;
+        };
+        let callback_args = vec![elem.clone(), Value::Number(i as f64), receiver.clone()];
+        let callback_result = match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+            }
+            Value::NativeFunction(native) => native.call(Value::Undefined, callback_args)?,
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        };
+        let keep = to_bool(&callback_result);
         if keep {
-            result.push(elem.clone());
+            result.push(elem);
         }
     }
     Ok(make_array(result))
@@ -504,6 +521,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var accessed=false; Boolean.prototype[0]=1; Boolean.prototype.length=1; Array.prototype.every.call(false,function(v,i,obj){accessed=obj instanceof Boolean;return accessed;}); accessed"),
             Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_filter_boxes_boolean_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Boolean.prototype[0]=true; Boolean.prototype.length=1; Array.prototype.filter.call(false,function(v,i,obj){return obj instanceof Boolean;}).length"),
+            Ok(Value::Number(1.0))
         );
     }
 }
