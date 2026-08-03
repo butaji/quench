@@ -51,11 +51,28 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     };
 
     setup_transformation_methods(&m);
+    set_method_length(proto, "every", 1.0);
     setup_mutation_methods(&m);
     setup_rearrange_methods(&m);
     setup_accessor_methods(proto, &m);
     setup_search_methods(&m);
     setup_grouping_methods(&m);
+}
+
+fn set_method_length(proto: &std::cell::RefCell<crate::value::Object>, name: &str, length: f64) {
+    use crate::value::{PropertyFlags, Value};
+    if let Some(Value::NativeFunction(function)) = proto.borrow().get(name) {
+        function.define_property(
+            "length",
+            Value::Number(length),
+            PropertyFlags {
+                value: Some(Value::Number(length)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
 }
 
 fn setup_transformation_methods(

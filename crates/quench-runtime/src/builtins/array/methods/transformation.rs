@@ -425,6 +425,15 @@ mod tests {
     }
 
     #[test]
+    fn every_has_standard_length_descriptor() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.every,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
+            Ok(Value::String("1|false|false|true".to_string()))
+        );
+    }
+
+    #[test]
     fn array_copy_within_and_fill_are_registered() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
