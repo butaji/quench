@@ -96,8 +96,8 @@ self-hosted JavaScript layer.
   `padStart`, `padEnd`, all trim variants, the public UTF-16 accessors
   (`charAt`, `charCodeAt`, `codePointAt`, `at`), `raw`, `isWellFormed`, and
   `toWellFormed` are now authored in `builtins/String.js`; Rust retains string
-  storage, iteration, UTF-16 primitives, and RegExp execution. Remaining
-  String methods are pending migration.
+  storage, iteration, UTF-16 primitives, RegExp execution, and the remaining
+  direct conversion/search primitives.
 - [~] `String.raw` now uses a JS-owned `ToLength` coercion instead of a
   bitwise length conversion; its UTF-16/string primitives remain Rust-backed.
 - [~] `String.prototype.concat` now performs its coercion and argument
