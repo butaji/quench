@@ -239,3 +239,5 @@ host-provided process directories and a stable identity object shape.
 Stage 548 adds `process.uptime`, `memoryUsage`, and `cpuUsage` with stable
 Node-compatible result shapes while the deeper host accounting remains a
 separate optimization slice.
+Stage 549 adds a frozen `fs.constants` object for open and copy flags,
+reusing the numeric contract already exposed by the general constants module.

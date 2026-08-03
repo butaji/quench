@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchOriginalRequireWithFsConstants = globalThis.require;\nconst __quenchFsConstants = Object.freeze({ O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024, COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4 });\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "fs") return Object.assign({}, __quenchOriginalRequireWithFsConstants(specifier), { constants: __quenchFsConstants });\n  return __quenchOriginalRequireWithFsConstants(specifier);\n};\n'
+);
