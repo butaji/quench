@@ -22,6 +22,16 @@ var _search = String.prototype.__search;
 var _replace = String.prototype.__replace;
 var _regexSplit = String.prototype.__regexSplit;
 var _replaceAll = String.prototype.__replaceAll;
+var _fromCharCode = String.__fromCharCode;
+var _fromCodePoint = String.__fromCodePoint;
+
+String.fromCharCode = function StringFromCharCode() {
+  return _fromCharCode.apply(this, arguments);
+};
+
+String.fromCodePoint = function StringFromCodePoint() {
+  return _fromCodePoint.apply(this, arguments);
+};
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);

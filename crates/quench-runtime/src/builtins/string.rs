@@ -80,7 +80,7 @@ fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
         },
     );
     string_obj.borrow_mut().set(
-        "fromCharCode",
+        "__fromCharCode",
         Value::NativeFunction(Rc::new(from_char_code)),
     );
 
@@ -104,7 +104,7 @@ fn register_string_static_methods(string_obj: &Rc<RefCell<Object>>) {
         },
     );
     string_obj.borrow_mut().set(
-        "fromCodePoint",
+        "__fromCodePoint",
         Value::NativeFunction(Rc::new(from_code_point)),
     );
 }
