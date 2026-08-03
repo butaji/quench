@@ -89,6 +89,10 @@ descriptor and lifecycle contracts.
 - `__quench_tty_get_winsize` — fd → rows, cols. `ioctl(TIOCGWINSZ)`.
 - `__quench_tty_set_raw` — fd → mode flags. `ioctl(TCSETS)`.
 
+Stage 521 covers the JS surface and confirms the simulator reports ordinary
+file descriptors as non-TTYs. The host callbacks remain required for real
+terminal detection, window sizing, and raw-mode transitions.
+
 ### Misc
 
 - `__quench_signal_listen` — signal → callback. Use `signal_hook`.

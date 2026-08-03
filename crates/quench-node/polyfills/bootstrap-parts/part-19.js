@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchOriginalRequireWithTty = globalThis.require;\nclass __quenchWriteStream {\n  constructor(fd) {\n    this.fd = fd;\n    this.isTTY = false;\n    this.columns = undefined;\n    this.rows = undefined;\n  }\n  getColorDepth() { return 1; }\n  hasColors() { return false; }\n  getWindowSize() { return [this.columns || 0, this.rows || 0]; }\n}\nclass __quenchReadStream extends __quenchWriteStream {}\nconst __quenchTtyModule = {\n  isatty: () => false,\n  ReadStream: __quenchReadStream,\n  WriteStream: __quenchWriteStream,\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "tty") return __quenchTtyModule;\n  return __quenchOriginalRequireWithTty(specifier);\n};\n'
+);

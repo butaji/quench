@@ -117,8 +117,9 @@ fixture cluster, and the next concrete slice.
   `ERR_TLS_NOT_SUPPORTED` error for network operations until the planned host
   OpenSSL/rustls boundary is available.
 - `trace_events` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
-- `tty` — TODO. Stage-521: `tty.WriteStream`, `tty.ReadStream`,
-  `tty.isatty`, real termios via host.
+- `tty` — stage 521 registers `ReadStream`, `WriteStream`, `isatty`, color,
+  and window-size APIs; non-TTY behavior is explicit until the termios host
+  boundary is implemented.
 - `url` / `URL` / `URLSearchParams` — done. Need: `URL.canParse`,
   `URL.parse`, `url.fileURLToPath` (real), `url.pathToFileURL` (real).
 - `util` — partial. Need: `util.promisify`, `util.types.*`,
