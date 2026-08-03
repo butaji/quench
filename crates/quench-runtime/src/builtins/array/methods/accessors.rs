@@ -127,7 +127,7 @@ pub fn proto_concat(args: Vec<Value>) -> Result<Value, JsError> {
             Value::Object(o) => {
                 // Check Symbol.isConcatSpreadable
                 if is_concat_spreadable(&arg) {
-                    elements.extend(o.borrow().elements.clone());
+                    elements.extend(concat_spread_elements(o)?);
                 } else {
                     elements.push(arg);
                 }
@@ -136,6 +136,21 @@ pub fn proto_concat(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
     Ok(make_array(elements))
+}
+
+fn concat_spread_elements(object: &Rc<RefCell<Object>>) -> Result<Vec<Value>, JsError> {
+    let length = crate::eval::member::eval_object_member_value(
+        object,
+        &Value::String("length".to_string()),
+        None,
+    )?;
+    let length = crate::value::try_to_number(&length)?.max(0.0) as usize;
+    (0..length)
+        .map(|index| {
+            let key = index.to_string();
+            Ok(object.borrow().get(&key).unwrap_or(Value::Undefined))
+        })
+        .collect()
 }
 
 /// Check if an object should be spread in concat based on Symbol.isConcatSpreadable
@@ -153,6 +168,11 @@ fn is_concat_spreadable(val: &Value) -> bool {
 fn get_object_symbol_property(val: &Value, symbol: &Value) -> Option<Value> {
     if let Value::Object(obj) = val {
         let obj = obj.borrow();
+        if let Value::Symbol(sym_desc) = symbol {
+            if let Some(value) = obj.get(&sym_desc.property_key()) {
+                return Some(value);
+            }
+        }
         for (key, v) in &obj.properties {
             // Symbol-keyed properties have keys starting with "Symbol("
             if key.starts_with("Symbol(") {
@@ -345,6 +365,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.concat,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
             Ok(Value::String("1|false|false|true".to_string()))
+        );
+    }
+
+    #[test]
+    fn concat_spreads_typed_array_using_overridden_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var ta=new Uint8Array(1); Object.defineProperty(ta,'length',{value:3}); ta[Symbol.isConcatSpreadable]=true; var r=[].concat(ta); [r.length,r[0],r[1]===undefined,r[2]===undefined].join('|')"),
+            Ok(Value::String("3|0|true|true".to_string()))
         );
     }
 }
