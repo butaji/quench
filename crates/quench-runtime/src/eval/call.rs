@@ -359,6 +359,8 @@ pub(crate) fn eval_super_member(
     // resolution like instance methods.
     let is_static = if crate::eval::class::helpers::constructing_class_for_super().is_some() {
         false
+    } else if !matches!(crate::interpreter::get_this_binding(env), Value::Class(_)) {
+        false
     } else {
         let mut current: Option<Rc<RefCell<Environment>>> = Some(env.clone());
         let mut found = false;

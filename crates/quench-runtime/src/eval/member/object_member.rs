@@ -350,6 +350,20 @@ mod tests {
     }
 
     #[test]
+    fn private_method_preserves_home_object_for_super_access() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class A { method() { return 'Test262'; } } \
+                 class C extends A { #m() { return super.method(); } \
+                 access(o) { return this.#m.call(o); } } \
+                 let c = new C(); [c.access(c), c.access({})];",
+            )
+            .unwrap();
+        assert_eq!(result.to_string(), "[Test262,Test262]");
+    }
+
+    #[test]
     fn static_private_setter_only_get_throws_type_error() {
         let mut ctx = Context::new().unwrap();
         let err = ctx
