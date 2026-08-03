@@ -124,6 +124,11 @@ mod tests {
     fn regexp_escape_uses_lowercase_hex_digits() {
         assert_eq!(regexp_escape("jjj"), r#"\x6ajj"#);
     }
+
+    #[test]
+    fn regexp_escape_preserves_underscore() {
+        assert_eq!(regexp_escape("_hello"), "_hello");
+    }
 }
 
 use std::cell::RefCell;
@@ -349,7 +354,7 @@ fn regexp_escape(input: &str) -> String {
         } else if "^$\\.*+?()[]{}|/".contains(ch) {
             escaped.push('\\');
             escaped.push(ch);
-        } else if ch.is_ascii_punctuation() {
+        } else if ch.is_ascii_punctuation() && ch != '_' {
             escaped.push_str(&format!(r#"\x{:02x}"#, ch as u32));
         } else if ch == '\n' {
             escaped.push_str(r#"\n"#);
