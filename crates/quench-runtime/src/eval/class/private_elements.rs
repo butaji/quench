@@ -40,17 +40,19 @@ fn ensure_private_add(
     }
     let o = obj.borrow();
     if private_element_conflicts(&o, key, kind) {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
             "Private method or accessor already defined",
             "TypeError",
         );
+        crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
     if !o.extensible {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
             "Cannot add private field to non-extensible object",
             "TypeError",
         );
+        crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
     Ok(())
@@ -450,6 +452,53 @@ mod tests {
 
     fn is_syntax_error(err: &JsError) -> bool {
         err.0.contains("SyntaxError")
+    }
+
+    #[test]
+    fn private_fields_remain_on_receiver_after_extensible_super_call() {
+        let result = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } class C extends Base { #value; constructor(seal) { super(seal); this.#value = 42; } value() { return this.#value; } } new C(false).value();",
+        )
+        .unwrap();
+        assert_eq!(result.to_string(), "42");
+    }
+
+    #[test]
+    fn private_field_addition_on_nonextensible_receiver_throws_type_error() {
+        let result = eval(
+            "class Base { constructor(seal) { if (seal) Object.preventExtensions(this); } } class C extends Base { #value; constructor(seal) { super(seal); this.#value = 42; } value() { return this.#value; } } new C(false).value(); let error; try { new C(true); } catch (e) { error = [e.name, e.message]; } error;",
+        )
+        .unwrap();
+        assert_eq!(
+            result.to_string(),
+            "[TypeError,Cannot add private field to non-extensible object]"
+        );
+    }
+
+    #[test]
+    fn private_methods_and_accessors_are_installed_on_extensible_receiver() {
+        let result = eval(
+            "class Base {} class C extends Base { #method() { return 42; } get #accessor() { return 43; } method() { return this.#method(); } accessor() { return this.#accessor; } } let c = new C(); [c.method(), c.accessor()];",
+        )
+        .unwrap();
+        assert_eq!(result.to_string(), "[42,43]");
+    }
+
+    #[test]
+    fn private_field_add_replaces_stale_thrown_value() {
+        let object = Rc::new(RefCell::new(Object::new(
+            crate::value::ObjectKind::Ordinary,
+        )));
+        object.borrow_mut().extensible = false;
+        crate::value::set_thrown_value(Value::String("stale".to_string()));
+        let key = crate::value::private_name_key("#value");
+        let error = private_field_add(&object, &key, Value::Number(1.0));
+        assert!(error.is_err());
+        let thrown = crate::value::get_thrown_value().unwrap();
+        assert_eq!(
+            crate::value::to_js_string(&thrown),
+            "TypeError: Cannot add private field to non-extensible object"
+        );
     }
 
     #[test]

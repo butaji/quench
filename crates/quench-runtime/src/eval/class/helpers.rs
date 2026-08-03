@@ -219,24 +219,27 @@ pub fn private_field_add(
     if crate::value::is_private_name_key(key) {
         let o = obj.borrow();
         if o.properties.contains_key(key) {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
                 "Private field already defined",
                 "TypeError",
             );
+            crate::value::set_thrown_value(err_val);
             return Err(js_err);
         }
         if !o.extensible {
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
+            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
                 "Cannot add private field to non-extensible object",
                 "TypeError",
             );
+            crate::value::set_thrown_value(err_val);
             return Err(js_err);
         }
     } else if !obj.borrow().extensible {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
+        let (err_val, js_err) = crate::value::error::create_js_error_with_type(
             "Cannot add property to non-extensible object",
             "TypeError",
         );
+        crate::value::set_thrown_value(err_val);
         return Err(js_err);
     }
     obj.borrow_mut().set(key, value);
