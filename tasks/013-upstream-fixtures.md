@@ -252,3 +252,6 @@ confirming special mode bits do not leak into the public permission mask.
 
 Stage 105 expanded promise-based `readdir` `Dirent` coverage to file and
 directory predicates, parent paths, and cleanup of the temporary tree.
+
+Stage 106 expanded directory-handle coverage to synchronous, callback, and
+promise `opendir` reads and closes, including end-of-directory behavior.
