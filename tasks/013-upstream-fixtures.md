@@ -828,3 +828,6 @@ for invalid values passed to common Windows path operations.
 
 Stage 301 formalized path `basename` suffix handling, asserting invalid suffix
 validation and suffix removal for POSIX and Win32 namespaces.
+
+Stage 302 formalized path namespace separators and delimiters, asserting the
+platform-specific values exposed by POSIX and Win32 paths.
