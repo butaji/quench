@@ -524,3 +524,6 @@ argument-type and range errors for invalid byte lengths.
 
 Stage 195 formalized Buffer signed integer operations, asserting fixed-width
 big/little-endian round trips and a variable-width signed round trip.
+
+Stage 196 formalized Buffer single-precision float operations, asserting
+big/little-endian round trips and write return offsets.
