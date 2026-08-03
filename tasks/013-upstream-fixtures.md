@@ -477,3 +477,7 @@ POSIX/Win32 exports and invalid argument diagnostics.
 
 Stage 180 formalized Win32 path parsing, formatting, and basename behavior,
 asserting Windows roots, separators, extensions, and trailing separators.
+
+Stage 181 formalized `util.format` primitives and placeholders, asserting
+numeric conversions, missing/extra arguments, symbols, JSON fallback, and
+negative zero.
