@@ -14,6 +14,7 @@ var _concat = String.prototype.__concat;
 var _repeat = String.prototype.__repeat;
 var _substring = String.prototype.__substring;
 var _slice = String.prototype.__slice;
+var _split = String.prototype.__split;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -72,6 +73,10 @@ String.prototype.substring = function StringSubstring(start, end) {
 
 String.prototype.slice = function StringSlice(start, end) {
   return _slice.call(this, start, end);
+};
+
+String.prototype.split = function StringSplit(separator, limit) {
+  return _split.call(this, separator, limit);
 };
 
 String.prototype.repeat = function StringRepeat(count) {

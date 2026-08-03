@@ -8,7 +8,7 @@ use crate::value::{to_js_string, to_number, NativeFunction, Object, Value};
 pub fn install_split_concat_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "split",
+        "__split",
         Value::NativeFunction(Rc::new(NativeFunction::new(string_split_impl))),
     );
     proto_clone.borrow_mut().set(
