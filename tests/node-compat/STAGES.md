@@ -371,3 +371,4 @@ these small fixtures isolate the currently implemented contract.
 |   372 | stream Transform chunk processing                                | `tools/run-node-tests.sh --stage 372` |
 |   373 | stream pipe backpressure handling                                | `tools/run-node-tests.sh --stage 373` |
 |   374 | crypto hash Buffer input and hex digest                          | `tools/run-node-tests.sh --stage 374` |
+|   375 | crypto random byte generation and filling                       | `tools/run-node-tests.sh --stage 375` |

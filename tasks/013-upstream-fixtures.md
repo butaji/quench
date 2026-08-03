@@ -1046,6 +1046,9 @@ delivery of subsequent chunks.
 Stage 374 formalized SHA-256 hashing of Buffer input and hexadecimal digest
 output.
 
+Stage 375 formalized cryptographic random byte generation and offset filling
+with in-place Buffer return semantics.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
