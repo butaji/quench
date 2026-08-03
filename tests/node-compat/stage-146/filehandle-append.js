@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-146-${process.pid}`;
@@ -6,6 +7,6 @@ const fs = require("fs");
   const handle = await fs.promises.open(path, "a");
   await handle.appendFile("b");
   await handle.close();
-  if (fs.readFileSync(path, "utf8") !== "ab")
-    throw new Error("filehandle append mismatch");
+  assert.strictEqual(fs.readFileSync(path, "utf8"), "ab");
+  fs.rmSync(path);
 })().then(() => undefined);
