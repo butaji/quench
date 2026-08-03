@@ -37,7 +37,8 @@ self-hosted JavaScript layer.
   `fromEntries`, prototype operations, freeze/seal queries) are JS-owned;
   Rust retains descriptor mutation primitives.
 - [~] `Object.groupBy` is implemented in the self-hosted JS layer over
-  iterator and object primitives.
+  iterator and object primitives, including JS-side iterable and callback
+  validation.
 - [~] Object own-property descriptor/name queries are JS-owned; symbol-key
   enumeration remains Rust-backed until its canonical JS bridge is complete.
 - [~] `Object.assign` is JS-owned over canonical key enumeration and core

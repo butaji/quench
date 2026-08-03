@@ -2,6 +2,7 @@
 var ops = __ops__;
 var SameValue = ops.SameValue;
 var ThrowTypeError = ops.ThrowTypeError;
+var IsCallable = ops.IsCallable;
 var EnumerableOwnKeys = ops.EnumerableOwnKeys;
 var ToObject = ops.ToObject;
 var IsExtensible = ops.IsExtensible;
@@ -196,9 +197,12 @@ Object.create = function ObjectCreate(proto, properties) {
 };
 
 Object.groupBy = function ObjectGroupBy(items, callbackfn) {
-  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  if (items === null || items === undefined) throw ThrowTypeError("Object.groupBy requires an iterable");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var groups = Object.create(null);
-  var iterator = items[Symbol.iterator]();
+  var iteratorMethod = items[Symbol.iterator];
+  if (!IsCallable(iteratorMethod)) throw ThrowTypeError("Object.groupBy requires an iterable");
+  var iterator = iteratorMethod.call(items);
   var index = 0;
   var step;
   while (!(step = iterator.next()).done) {
