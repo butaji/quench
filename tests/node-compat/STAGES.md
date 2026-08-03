@@ -221,3 +221,6 @@ these small fixtures isolate the currently implemented contract.
 |   211 | Buffer `isEncoding` validation                                | `tools/run-node-tests.sh --stage 211` |
 |   212 | Buffer `copyBytesFrom` typed-array copies                     | `tools/run-node-tests.sh --stage 212` |
 |   213 | `vm.runInNewContext` evaluation shim                          | `tools/run-node-tests.sh --stage 213` |
+|   214 | Buffer `from` string coercion                                 | `tools/run-node-tests.sh --stage 214` |
+|   215 | Buffer `from` argument validation                             | `tools/run-node-tests.sh --stage 215` |
+|   216 | Buffer constants and `kMaxLength`                            | `tools/run-node-tests.sh --stage 216` |
