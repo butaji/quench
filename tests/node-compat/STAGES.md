@@ -245,3 +245,6 @@ these small fixtures isolate the currently implemented contract.
 |   235 | Buffer `fill` invalid hex validation                           | `tools/run-node-tests.sh --stage 235` |
 |   236 | Buffer `fill` null coercion                                    | `tools/run-node-tests.sh --stage 236` |
 |   237 | Buffer `fill` range argument validation                        | `tools/run-node-tests.sh --stage 237` |
+|   238 | internal `arrayBufferViewHasBuffer` marker                     | `tools/run-node-tests.sh --stage 238` |
+|   239 | internal lazy arrayBuffer backing state                        | `tools/run-node-tests.sh --stage 239` |
+|   240 | Buffer `allocUnsafeSlow` argument validation                   | `tools/run-node-tests.sh --stage 240` |

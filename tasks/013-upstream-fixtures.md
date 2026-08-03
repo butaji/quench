@@ -651,3 +651,13 @@ with zero bytes.
 
 Stage 237 formalized Buffer `fill` range argument validation, asserting
 `ERR_INVALID_ARG_TYPE` for non-numeric offset/length.
+
+Stage 238 formalized the internal `arrayBufferViewHasBuffer` marker, asserting
+small views are not backed while large views are.
+
+Stage 239 formalized internal lazy arrayBuffer backing state, asserting
+stable marker results across repeated checks.
+
+Stage 240 formalized Buffer `allocUnsafeSlow` argument validation, asserting
+`ERR_INVALID_ARG_TYPE` for non-numeric sizes and `ERR_OUT_OF_RANGE` for
+negative sizes.
