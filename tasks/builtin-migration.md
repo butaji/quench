@@ -91,7 +91,9 @@ self-hosted JavaScript layer.
   JS-owned over hidden Rust arbitrary-precision primitives. Date, JSON, URI,
   DataView, and remaining TypedArray wrappers retain their crate-backed and
   raw-buffer primitives in Rust.
-- [ ] Error, Function, Proxy, and remaining constructors/prototypes.
+- [~] Error, Function, and RegExp public methods are JS-owned where wrappers
+  exist; Rust retains constructors, call mechanics, compiled matching, and
+  error storage. Proxy and remaining constructors/prototypes are pending.
 - [ ] Remove duplicate Rust registrations and dormant JS wrappers.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
