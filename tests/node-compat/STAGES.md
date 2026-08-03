@@ -132,3 +132,4 @@ these small fixtures isolate the currently implemented contract.
 |   122 | options-object callback `fs.write`                        | `tools/run-node-tests.sh --stage 122` |
 |   123 | `util.promisify` callback conversion                      | `tools/run-node-tests.sh --stage 123` |
 |   124 | promise file-handle buffer reads                          | `tools/run-node-tests.sh --stage 124` |
+|   125 | fd-based `fs.writeFileSync`                               | `tools/run-node-tests.sh --stage 125` |

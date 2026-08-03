@@ -309,3 +309,6 @@ behavior.
 
 Stage 124 formalized promise file-handle reads, asserting byte count, buffer
 identity/content, close, and cleanup.
+
+Stage 125 formalized fd-based `fs.writeFileSync`, asserting exact output and
+cleanup after closing the descriptor.
