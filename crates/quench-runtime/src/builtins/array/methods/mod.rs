@@ -25,7 +25,8 @@ pub use grouping::{proto_group_by, proto_group_by_to_map};
 pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
 pub use rearrange::{proto_copy_within, proto_fill, proto_reverse, proto_sort};
 pub use search::{
-    proto_find, proto_find_last, proto_find_last_index, proto_includes, proto_index_of,
+    proto_find, proto_find_index, proto_find_last, proto_find_last_index, proto_includes,
+    proto_index_of,
 };
 pub use transformation::{
     proto_every, proto_filter, proto_flat, proto_flat_map, proto_for_each, proto_map, proto_reduce,
@@ -94,6 +95,7 @@ fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate:
     m("indexOf", proto_index_of);
     m("includes", proto_includes);
     m("find", proto_find);
+    m("findIndex", proto_find_index);
     m("findLast", proto_find_last);
     m("findLastIndex", proto_find_last_index);
 }

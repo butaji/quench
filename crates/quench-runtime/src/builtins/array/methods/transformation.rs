@@ -307,6 +307,24 @@ mod tests {
             Ok(Value::String("2|3|3".to_string()))
         );
     }
+
+    #[test]
+    fn array_find_index_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[10, 20, 30].findIndex(function(value) { return value === 20; })"),
+            Ok(Value::Number(1.0))
+        );
+    }
+
+    #[test]
+    fn array_find_index_reads_each_element_at_call_time() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var a=['x','y']; var r=[]; a.findIndex(function(v) { r.push(v); if (r.length === 1) a.shift(); }); r.join('|')"),
+            Ok(Value::String("x|undefined".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

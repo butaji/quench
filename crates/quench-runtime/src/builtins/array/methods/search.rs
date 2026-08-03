@@ -109,6 +109,36 @@ pub fn proto_find(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Undefined)
 }
 
+pub fn proto_find_index(args: Vec<Value>) -> Result<Value, JsError> {
+    let elements = get_this_array()?;
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = crate::builtins::get_native_this();
+    for i in 0..elements.len() {
+        let elem = match &receiver {
+            Some(Value::Object(object)) if object.borrow().kind == ObjectKind::Array => object
+                .borrow()
+                .elements
+                .get(i)
+                .cloned()
+                .unwrap_or(Value::Undefined),
+            Some(Value::Object(object)) => crate::eval::member::eval_object_member_value(
+                object,
+                &Value::String(i.to_string()),
+                None,
+            )
+            .unwrap_or(Value::Undefined),
+            _ => Value::Undefined,
+        };
+        let result = crate::builtins::array::methods::transformation::call_callback(
+            &callback, &elem, i, &elements,
+        )?;
+        if crate::value::to_bool(&result) {
+            return Ok(Value::Number(i as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+
 /// Array.prototype.findLast(predicate, thisArg?)
 /// Iterates from the end of the array
 pub fn proto_find_last(args: Vec<Value>) -> Result<Value, JsError> {
