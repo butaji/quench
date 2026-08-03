@@ -24,7 +24,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
   (stub), `dgram` (TODO), `tls` (TODO), `dns`, `dns/promises`.
 - I/O: `readline`, `readline/promises` (TODO), `repl` (TODO), `tty` (TODO),
   `console` (via `globalThis.console`), `module` (TODO),
-  `diagnostics_channel` (TODO), `inspector` (return ERR), `wasi` (return
+  `diagnostics_channel`, `inspector` (return ERR), `wasi` (return
   ERR), `domain` (legacy; stub).
 - Internal: `internal/event_target`, `internal/errors`, `internal/buffer`,
   `internal/test/binding`, `internal/fs/utils`, `internal/modules/*`.
@@ -58,8 +58,8 @@ fixture cluster, and the next concrete slice.
   `hashStream`, `secretKeyObject`, `webcrypto` (`crypto.subtle`).
 - `dgram` — TODO. Stage-513: `dgram-createSocket` and `dgram-send`. Host
   work: `__quench_udp_send`, `__quench_udp_close`.
-- `diagnostics_channel` — TODO. Stage-514: `channel.hasSubscribers`,
-  `Channel.runStores`, `TracingChannel`. No host work.
+- `diagnostics_channel` — stage 530 complete: channels, subscriptions,
+  stores, and tracing channels. No host work.
 - `dns` / `dns/promises` — partial (`__nodeDns.resolve*`). Need: real
   `dns.lookup`, real `lookupService`, `Resolver`, `setServers`,
   `getServers`, `setLocalAddress`, `cancel`, `getDefaultResultOrder`.
@@ -194,3 +194,5 @@ keeps the implementation independent of a Rust or external runtime hook.
 Stage 529 reuses the existing global loader for `createRequire`, keeping the
 module registration surface in JavaScript without introducing a second Rust
 module system.
+Stage 530 keeps diagnostics state in a module-level channel map, so repeated
+`channel(name)` calls share subscribers without requiring Rust-side globals.
