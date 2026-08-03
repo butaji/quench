@@ -67,7 +67,7 @@ fn ends_with_impl(args: &[Value], s: &str) -> Value {
 fn install_index_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "indexOf",
+        "__indexOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(index_of_impl(&args, &s)),
@@ -76,7 +76,7 @@ fn install_index_methods(proto: &Rc<RefCell<Object>>) {
         ))),
     );
     proto_clone.borrow_mut().set(
-        "lastIndexOf",
+        "__lastIndexOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(last_index_of_impl(&args, &s)),

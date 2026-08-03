@@ -6,6 +6,8 @@ var _at = String.prototype.__at;
 var _includes = String.prototype.__includes;
 var _startsWith = String.prototype.__startsWith;
 var _endsWith = String.prototype.__endsWith;
+var _indexOf = String.prototype.__indexOf;
+var _lastIndexOf = String.prototype.__lastIndexOf;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -17,6 +19,14 @@ String.prototype.startsWith = function StringStartsWith(searchString, position) 
 
 String.prototype.endsWith = function StringEndsWith(searchString, endPosition) {
   return _endsWith.call(this, searchString, endPosition);
+};
+
+String.prototype.indexOf = function StringIndexOf(searchString, position) {
+  return _indexOf.call(this, searchString, position);
+};
+
+String.prototype.lastIndexOf = function StringLastIndexOf(searchString, position) {
+  return _lastIndexOf.call(this, searchString, position);
 };
 
 String.prototype.charAt = function StringCharAt(position) {
