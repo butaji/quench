@@ -254,6 +254,8 @@ self-hosted JavaScript layer.
   fallback when inherited self-hosted methods would recurse; own coercion
   hooks remain honored. This fixes Array numeric-index conversion without
   adding a Rust builtin.
+- [x] Correct self-hosted Array find-family semantics: callbacks visit every
+  index, including holes, while retaining the initial length snapshot.
 
 ## First increment
 

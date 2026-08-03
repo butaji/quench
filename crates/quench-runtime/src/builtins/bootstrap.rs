@@ -510,6 +510,17 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_find_visits_holes_and_uses_snapshot_length() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var seen = []; var a = [1, , 3]; +                 a.find(function(value, index) { seen.push([value, index]); a.push(4); return false; }); +                 seen.length === 3 && seen[1][0] === undefined && seen[1][1] === 1 && a.length === 6 && +                 a.findIndex(function(value) { return value === undefined; }) === 1",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn self_hosted_array_range_methods_coerce_indices() {
         let mut ctx = new_ctx();
         let r = ctx

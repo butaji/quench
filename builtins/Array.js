@@ -132,10 +132,8 @@ Array.prototype.find = function ArrayFind(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (HasProperty(O, k)) {
-      var kValue = O[k];
-      if (callbackfn.call(thisArg, kValue, k, O)) return kValue;
-    }
+    var kValue = O[k];
+    if (callbackfn.call(thisArg, kValue, k, O)) return kValue;
   }
   return undefined;
 };
@@ -416,7 +414,7 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
-    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
+    if (callbackfn.call(thisArg, O[k], k, O)) return k;
   }
   return -1;
 };
@@ -657,7 +655,7 @@ Array.prototype.findLast = function ArrayFindLast(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
-    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return O[k];
+    if (callbackfn.call(thisArg, O[k], k, O)) return O[k];
   }
   return undefined;
 };
@@ -670,7 +668,7 @@ Array.prototype.findLastIndex = function ArrayFindLastIndex(callbackfn /*, thisA
   var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = len - 1; k >= 0; k--) {
-    if (HasProperty(O, k) && callbackfn.call(thisArg, O[k], k, O)) return k;
+    if (callbackfn.call(thisArg, O[k], k, O)) return k;
   }
   return -1;
 };
