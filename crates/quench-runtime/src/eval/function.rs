@@ -730,6 +730,13 @@ pub(crate) fn create_arguments_object(
     if mappable {
         let mut mapped = std::collections::HashMap::new();
         for (i, param) in f.params.iter().enumerate() {
+            let is_last_binding = f.params[i + 1..]
+                .iter()
+                .all(|candidate| candidate.name != param.name);
+            if !is_last_binding {
+                obj.set(&i.to_string(), args.get(i).cloned().unwrap_or(Value::Undefined));
+                continue;
+            }
             mapped.insert(i as u32, param.name.clone());
             let name = param.name.clone();
             let env = Rc::clone(call_env);
