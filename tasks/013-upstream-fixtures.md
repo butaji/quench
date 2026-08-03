@@ -243,3 +243,6 @@ exclusive, synchronous, and invalid flag forms.
 
 Stage 102 verified numeric and octal-string modes for synchronous and
 callback-based `fs.open` calls.
+
+Stage 103 extended `fs.close` coverage to successful callback closure and
+the `EBADF` result for a descriptor closed twice.
