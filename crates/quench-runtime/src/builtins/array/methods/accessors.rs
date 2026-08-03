@@ -338,4 +338,13 @@ mod tests {
         let result_str = array_to_js_string(&result.unwrap());
         assert_eq!(result_str, "[1,2]");
     }
+
+    #[test]
+    fn concat_has_standard_length_descriptor() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.concat,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
+            Ok(Value::String("1|false|false|true".to_string()))
+        );
+    }
 }

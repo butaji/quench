@@ -115,6 +115,18 @@ fn setup_accessor_methods(
     proto
         .borrow_mut()
         .set_builtin_method("at", Value::NativeFunction(at));
+    if let Some(Value::NativeFunction(concat)) = proto.borrow().get("concat") {
+        concat.define_property(
+            "length",
+            Value::Number(1.0),
+            PropertyFlags {
+                value: Some(Value::Number(1.0)),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
+    }
     m("entries", proto_entries);
     m("keys", proto_keys);
     let values = Value::NativeFunction(Rc::new(NativeFunction::new_with_name(
