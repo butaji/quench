@@ -2,7 +2,7 @@ const { randomFillSync } = require("crypto");
 
 for (const call of [
   () => randomFillSync("not-a-buffer"),
-  () => randomFillSync(Buffer.alloc(2), 1, 2),
+  () => randomFillSync(Buffer.alloc(2), 1, 2)
 ]) {
   let error;
   try {

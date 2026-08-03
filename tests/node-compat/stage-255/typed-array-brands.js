@@ -4,7 +4,7 @@ const buffer = new ArrayBuffer();
 const dataView = new DataView(buffer);
 const stealthyDataView = Object.setPrototypeOf(
   new DataView(buffer),
-  Uint8Array.prototype,
+  Uint8Array.prototype
 );
 const typedArray = new Uint8Array(buffer);
 

@@ -1,5 +1,5 @@
-const assert = require('assert');
-const common = require('../common');
+const assert = require("assert");
+const common = require("../common");
 const callback = common.mustCall((value) => value + 1, 1);
 assert.strictEqual(callback.calls, 0);
 assert.strictEqual(callback(41), 42);

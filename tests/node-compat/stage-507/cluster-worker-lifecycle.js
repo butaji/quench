@@ -14,12 +14,17 @@ if (cluster.isWorker) {
 
   cluster.on("fork", (w) => clusterForked.push({ id: w.id, state: w.state }));
   cluster.on("online", (w) => clusterOnline.push({ id: w.id, state: w.state }));
-  cluster.on("listening", (w) => clusterListening.push({ id: w.id, state: w.state }));
+  cluster.on("listening", (w) =>
+    clusterListening.push({ id: w.id, state: w.state })
+  );
   cluster.on("exit", (w) => clusterExit.push({ id: w.id, state: w.state }));
 
   const worker = cluster.fork();
   assert.strictEqual(worker.id, 1);
-  assert.ok(worker instanceof cluster.Worker, "worker must be a cluster.Worker");
+  assert.ok(
+    worker instanceof cluster.Worker,
+    "worker must be a cluster.Worker"
+  );
   assert.strictEqual(typeof worker.send, "function");
   assert.strictEqual(typeof worker.kill, "function");
   assert.strictEqual(typeof worker.disconnect, "function");

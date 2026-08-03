@@ -8,7 +8,7 @@ if (
     slashes: true,
     host: "example.com",
     pathname: "/",
-    search: "?x=1",
+    search: "?x=1"
   }) !== "http://example.com/?x=1"
 )
   throw new Error("legacy URL object formatting failed");

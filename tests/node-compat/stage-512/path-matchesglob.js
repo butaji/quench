@@ -10,6 +10,9 @@ assert.strictEqual(path.matchesGlob("/foo/a/b/bar", "/foo/**/bar"), true);
 assert.strictEqual(path.matchesGlob("/foo/bar", "/foo/{a,b}/bar"), false);
 assert.strictEqual(path.matchesGlob("/foo/a/bar", "/foo/{a,b}/bar"), true);
 assert.strictEqual(path.matchesGlob("/foo/bar", "**"), true);
-assert.strictEqual(path.matchesGlob("C:\\path\\to\\file", "C:/path/*/file"), true);
+assert.strictEqual(
+  path.matchesGlob("C:\\path\\to\\file", "C:/path/*/file"),
+  true
+);
 
 console.log("path matchesGlob passed");

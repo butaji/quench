@@ -2,7 +2,7 @@ const { createHash, createHmac } = require("crypto");
 
 for (const context of [
   createHash("sha256").update("data"),
-  createHmac("sha256", "key").update("data"),
+  createHmac("sha256", "key").update("data")
 ]) {
   context.digest();
   let error;

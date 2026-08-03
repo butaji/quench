@@ -1,0 +1,6 @@
+# Vendored Node.js source — never touch
+tests/node/test/**
+tests/node/deps/**
+
+# Build artifacts
+target/**
