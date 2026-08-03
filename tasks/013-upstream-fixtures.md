@@ -689,3 +689,12 @@ Stage 248 formalized `util.inspect` Buffer rendering, asserting the canonical
 
 Stage 249 formalized Buffer `INSPECT_MAX_BYTES` live limit, asserting the
 truncated `<Buffer ... ... N more byte>` rendering.
+
+Stage 250 formalized Buffer inspect own-property rendering, asserting
+user-defined properties appear alongside the hex dump.
+
+Stage 251 formalized `util.format` symbol numeric conversions, asserting a
+symbol coerced to a numeric placeholder yields `NaN`.
+
+Stage 252 formalized the internal `JSStream` binding shim, asserting an
+instantiable stream with an `_externalStream` handle.
