@@ -17,7 +17,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
   `path/posix`, `path/win32`, `querystring`, `stream`, `stream/iter`,
   `stream/promises` (TODO), `stream/web` (TODO), `stream/consumers` (TODO),
   `string_decoder` (TODO), `timers`, `timers/promises`, `url`, `util`,
-  `util/types` (TODO), `v8`, `vm`, `zlib`, `zlib/iter` (stub).
+  `util/types`, `v8`, `vm`, `zlib`, `zlib/iter`.
 - Async: `async_hooks`, `perf_hooks`.
 - Process: `process` (via `globalThis.process`), `worker_threads` (stub).
 - Networking: `http` (in-process), `https` (TODO), `http2` (TODO), `net`
@@ -124,7 +124,8 @@ fixture cluster, and the next concrete slice.
   `URL.parse`, `url.fileURLToPath` (real), `url.pathToFileURL` (real).
 - `util` — partial. Need: `util.promisify`, `util.types.*`,
   `util.styleText`, `util.parseArgs`, `util.transferableAbortSignal`.
-- `util/types` — register the type predicates.
+- `util/types` — stage 524 complete: register the standard ArrayBuffer,
+  typed-array, collection, promise, RegExp, and Date predicates.
 - `v8` — done. Need: `v8.writeHeapSnapshot`, `v8.getHeapStatistics`,
   `v8.stopCoverage`, `v8.takeCoverage`.
 - `vm` — partial. Need: `vm.SourceTextModule` (ESM), `vm.SyntheticModule`,
@@ -174,3 +175,5 @@ small evented adapter, avoiding another Rust callback while preserving stream
 Stage 523 applies the same reuse strategy to async iterables; the focused
 round-trip test confirms chunk boundaries are preserved as iterable values
 without adding a host callback.
+Stage 524 confirms `util/types` can be implemented entirely from JavaScript
+intrinsics, with no host callback or Rust surface expansion.
