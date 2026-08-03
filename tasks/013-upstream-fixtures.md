@@ -509,3 +509,6 @@ Stage 189 formalized Buffer `includes` validation, asserting
 
 Stage 190 formalized Buffer double-precision read/write operations, asserting
 big- and little-endian round trips, byte order, and Infinity handling.
+
+Stage 191 formalized Buffer unsigned integer read/write operations, asserting
+endianness, round trips, and `ERR_BUFFER_OUT_OF_BOUNDS` diagnostics.
