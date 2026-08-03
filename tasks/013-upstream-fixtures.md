@@ -587,3 +587,12 @@ Stage 215 formalized Buffer `from` argument validation, asserting
 
 Stage 216 formalized Buffer constants, asserting `kMaxLength` equals
 `constants.MAX_LENGTH` and `MAX_STRING_LENGTH` presence.
+
+Stage 217 formalized Buffer backing metadata, asserting `parent`/`buffer`
+ArrayBuffer references, zero offset, and `poolSize` presence.
+
+Stage 218 formalized Buffer `toString` encoding case-insensitivity, asserting
+`BASE64URL` and `HEX` encodings.
+
+Stage 219 formalized Buffer `write` encoding validation, asserting
+`ERR_UNKNOWN_ENCODING` for unsupported encodings.
