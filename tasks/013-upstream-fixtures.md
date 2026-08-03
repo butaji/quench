@@ -533,3 +533,6 @@ asserting negative bounds, callable `Buffer`, and `Buffer.compare` behavior.
 
 Stage 198 formalized Buffer copy ranges and overlap semantics, asserting copied
 counts, selected source ranges, and safe self-overlapping copies.
+
+Stage 199 formalized Buffer concatenation, asserting Uint8Array inputs,
+explicit truncation limits, and zero-filled output when the input list is empty.
