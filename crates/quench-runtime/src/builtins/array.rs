@@ -105,10 +105,14 @@ pub fn register_array(ctx: &mut Context) {
     );
     array_constructor.set_static_method(
         "of",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let arr = Object::new_array_from(args.to_vec());
-            Ok(Value::Object(Rc::new(RefCell::new(arr))))
-        }))),
+        Value::NativeFunction(Rc::new({
+            let mut array_of = NativeFunction::new(|args| {
+                let arr = Object::new_array_from(args.to_vec());
+                Ok(Value::Object(Rc::new(RefCell::new(arr))))
+            });
+            define_method_length(&mut array_of, 0.0);
+            array_of
+        })),
     );
 
     // Set Array.prototype.constructor = the NativeConstructor (non-enumerable)
@@ -243,11 +247,15 @@ fn array_from_iterable_with_map(items: &Value, map_fn: Value) -> Result<Vec<Valu
 }
 
 fn define_static_method_length(function: &mut NativeFunction) {
+    define_method_length(function, 1.0);
+}
+
+fn define_method_length(function: &mut NativeFunction, length: f64) {
     function.define_property(
         "length",
-        Value::Number(1.0),
+        Value::Number(length),
         PropertyFlags {
-            value: Some(Value::Number(1.0)),
+            value: Some(Value::Number(length)),
             writable: false,
             enumerable: false,
             configurable: true,
@@ -284,6 +292,20 @@ fn make_array_with_new(
     }
     drop(obj);
     Ok(Value::Object(obj_rc))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Context, Value};
+
+    #[test]
+    fn array_of_has_standard_length_descriptor() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var d=Object.getOwnPropertyDescriptor(Array,'of'); [d.value.length,d.value===Array.of,d.writable,d.enumerable,d.configurable].join('|')"),
+            Ok(Value::String("0|true|false|false|true".to_string()))
+        );
+    }
 }
 
 fn make_array_direct(args: &[Value], proto: &Rc<RefCell<Object>>) -> Result<Value, JsError> {

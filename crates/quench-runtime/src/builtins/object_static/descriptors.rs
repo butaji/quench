@@ -1229,7 +1229,7 @@ pub fn get_native_constructor_property_descriptor(
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(value),
-                writable: !immutable,
+                writable: false,
                 enumerable: false,
                 configurable: !immutable,
             },
