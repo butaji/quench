@@ -310,6 +310,15 @@ mod tests {
             .eval("var r = /a/g; Object.defineProperty(r, 'constructor', {get: function() { throw new Test262Error(); }}); r[Symbol.matchAll]('a')")
             .is_err());
     }
+
+    #[test]
+    fn regexp_match_all_uses_default_constructor_for_non_regexp_this() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var calls = []; var o = {get [Symbol.match]() { calls.push('match'); return false; }, get flags() { calls.push('flags'); return {toString: function() { calls.push('flags toString'); return 'g'; }}; }}; RegExp.prototype[Symbol.matchAll].call(o, {toString: function() { calls.push('arg toString'); }}); calls.join('|')"),
+            Ok(Value::String("arg toString|flags|flags toString|match".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -486,6 +495,19 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     )?;
     let flags = regexp_search_string(Some(&flags_value))?;
     let mut matcher_obj = Rc::clone(&regex_obj);
+    if regex_obj.borrow().kind != ObjectKind::RegExp {
+        if let Some(Value::Symbol(match_symbol)) =
+            crate::builtins::symbol::get_well_known_symbol_no_ctx("match")
+        {
+            let is_match = crate::eval::member::eval_object_member_value(
+                &regex_obj,
+                &Value::Symbol(Rc::clone(&match_symbol)),
+                current_regex_env().as_ref(),
+            )?;
+            let _ = is_match;
+        }
+        matcher_obj = Rc::new(RefCell::new(regexp_match_all_matcher(&flags)));
+    }
     let constructor = crate::eval::member::eval_object_member_value(
         &regex_obj,
         &Value::String("constructor".to_string()),
@@ -582,6 +604,26 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         );
     }
     Ok(Value::Object(iterator))
+}
+
+fn regexp_match_all_matcher(flags: &str) -> Object {
+    let mut matcher = Object::new(ObjectKind::RegExp);
+    matcher.internal_regex_source = Some(String::new());
+    matcher.internal_regex_flags = Some(flags.to_string());
+    matcher.internal_regex = Regex::with_flags("", "").ok();
+    matcher.set("flags", Value::String(flags.to_string()));
+    matcher.set("global", Value::Boolean(flags.contains('g')));
+    matcher.define(
+        "lastIndex",
+        Value::Number(0.0),
+        PropertyFlags {
+            value: Some(Value::Number(0.0)),
+            writable: true,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+    matcher
 }
 
 fn regexp_match_all_last_index(value: &Value) -> Result<f64, JsError> {
