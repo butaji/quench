@@ -12,65 +12,6 @@ use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn reflect_has_property(target: &Value, key: &str) -> Result<bool, JsError> {
-    match target {
-        Value::Object(o) => {
-            if crate::eval::object::proxy_handler_and_target(o).is_some() {
-                return crate::eval::object::proxy_has_property(o, key).or(Ok(false));
-            }
-            Ok(o.borrow().has(key))
-        }
-        Value::Function(f) => {
-            if f.get_property(key).is_some() {
-                return Ok(true);
-            }
-            Ok(f.get_prototype().borrow().has(key))
-        }
-        Value::NativeFunction(nf) => {
-            if nf.get_property(key).is_some() {
-                return Ok(true);
-            }
-            if let Some(Value::Object(p)) = nf.get_property("prototype") {
-                return Ok(p.borrow().has(key));
-            }
-            Ok(false)
-        }
-        Value::NativeConstructor(nc) => {
-            if matches!(key, "prototype" | "length" | "name") {
-                return Ok(true);
-            }
-            if nc.get_static_method(key).is_some() || nc.get_accessor(key).is_some() {
-                return Ok(true);
-            }
-            if let Some(fp) = crate::builtins::function::get_function_prototype() {
-                if fp.borrow().has(key) {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        Value::Class(c) => {
-            if c.static_properties_cell.borrow().contains_key(key) {
-                return Ok(true);
-            }
-            if let Some(fp) = crate::builtins::function::get_function_prototype() {
-                if fp.borrow().has(key) {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        _ => {
-            let (err_val, js_err) = crate::value::error::create_js_error_with_type(
-                "Reflect.has called on non-object",
-                "TypeError",
-            );
-            crate::value::set_thrown_value(err_val);
-            Err(js_err)
-        }
-    }
-}
-
 fn reflect_construct(args: Vec<Value>) -> Result<Value, JsError> {
     let target = args
         .first()
@@ -182,21 +123,6 @@ pub fn register_reflect(ctx: &mut Context) {
                         return Err(js_err);
                     }
                 })
-            },
-        ))),
-    );
-    reflect.set(
-        "has",
-        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-            |args: Vec<Value>| {
-                let target = args.first().ok_or_else(|| {
-                    crate::value::JsError::new("Reflect.has requires target argument")
-                })?;
-                let key_val = args.get(1).ok_or_else(|| {
-                    crate::value::JsError::new("Reflect.has requires propertyKey argument")
-                })?;
-                let key = to_property_key(key_val)?;
-                Ok(Value::Boolean(reflect_has_property(target, &key)?))
             },
         ))),
     );
