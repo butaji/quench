@@ -28,7 +28,7 @@ Each row is a slice. The prefix is the file-name prefix in
 
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
-| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563, 564 (setup defaults) |
+| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563, 564, 565 (aliases) |
 | 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503                    |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
@@ -158,3 +158,6 @@ contract while retaining the cumulative merge behavior.
 
 The audit also corrected stage 505’s setup-event assertion to check the full
 Node settings shape instead of the simulator’s former empty-settings shape.
+
+Stage 565 compared the module aliases directly and restored Node’s identity
+relationship between `setupMaster` and `setupPrimary`.
