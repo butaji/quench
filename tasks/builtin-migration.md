@@ -39,6 +39,9 @@ self-hosted JavaScript layer.
   primitive; Rust retains symbol identity and key storage.
 - [~] Reflect own-key, property-presence, descriptor, prototype, and
   extensibility algorithms are JS-owned over `__ops__`.
+- [~] Object prototype public methods (`toString`, `toLocaleString`,
+  `valueOf`, `hasOwnProperty`, `isPrototypeOf`, and
+  `propertyIsEnumerable`) are JS-owned over hidden Rust object primitives.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   the dormant Rust method layer has been removed; Rust retains indexed
@@ -79,6 +82,8 @@ self-hosted JavaScript layer.
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Constructor and combinator algorithms remain
   pending.
+- [~] RegExp `test` and `toString` are JS-owned over hidden Rust regex
+  primitives; compiled matching and `exec` remain Rust-backed.
 - [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
   wrappers; retain their crate-backed and raw-buffer primitives in Rust.
 - [ ] Error, Function, Proxy, and remaining constructors/prototypes.
