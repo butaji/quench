@@ -136,7 +136,8 @@ fixture cluster, and the next concrete slice.
   "unsupported on this target" with `ERR_WORKER_NOT_SUPPORTED`.
 - `zlib` — stage 522 complete: `createGzip`, `createGunzip`,
   `createDeflate`, and `createInflate` provide evented in-process transforms.
-- `zlib/iter` — gated by `--experimental-stream-iter`.
+- `zlib/iter` — stage 523 complete: async iterable gzip and gunzip
+  transforms reuse the zlib synchronous byte primitives.
 
 ## Slicing rules
 
@@ -170,3 +171,6 @@ missing-module error.
 Stage 522 reuses the existing synchronous compression primitives through a
 small evented adapter, avoiding another Rust callback while preserving stream
 `data`/`end` and `pipe` behavior for the focused contract.
+Stage 523 applies the same reuse strategy to async iterables; the focused
+round-trip test confirms chunk boundaries are preserved as iterable values
+without adding a host callback.
