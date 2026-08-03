@@ -20,6 +20,8 @@ self-hosted JavaScript layer.
 - [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
 - [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains
   canonical SameValue and descriptor/constructor primitives.
+- [~] `Object.keys` is JS-owned through the canonical enumerable-key
+  operation; Rust retains the underlying property storage and key traversal.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
