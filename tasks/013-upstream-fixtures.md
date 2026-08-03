@@ -959,3 +959,6 @@ message, preserving the original Error instance when thrown.
 
 Stage 345 formalized `assert.throws` returning the thrown error and matching
 its constructor.
+
+Stage 346 formalized `assert.throws` matching an expected error object’s name
+and message properties.
