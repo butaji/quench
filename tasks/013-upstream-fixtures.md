@@ -968,3 +968,6 @@ and operator metadata for loose inequality failures.
 
 Stage 348 formalized `assert.throws` rejecting a thrown error with the wrong
 constructor and wrapping that mismatch in an `AssertionError`.
+
+Stage 349 formalized generated assertion metadata, including `ERR_ASSERTION`
+and the `generatedMessage` marker.
