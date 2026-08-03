@@ -442,3 +442,39 @@ Upstream fixtures:
 - `test-cluster-setup-primary.js`, `test-cluster-setup-primary-emit.js`,
   `test-cluster-isprimary.js` need `cluster.setupPrimary` arg
   variants and the `process.send` / `cluster.fork` stdio options.
+
+## Status — process as EventEmitter slice (done)
+
+Follow-on slice landed. Changes:
+
+- `globalThis.process` now supports `on`, `addListener`, `once`, `emit`,
+  `removeListener`, `off`, `removeAllListeners`, `listeners`, and
+  `listenerCount` by mixing in `NodeEventEmitter.prototype` methods
+  after `NodeEventEmitter` is defined (at bootstrap line ~2620). The
+  mixin also initialises `process._events = {}` so the methods can
+  be invoked without the `NodeEventEmitter` constructor having been
+  called on `process`.
+- The mixin approach (instead of `class NodeProcess extends
+  globalThis.__nodeEventEmitter`) avoids the bootstrap top-to-bottom
+  evaluation order trap: `NodeEventEmitter` is defined at line ~2580,
+  and the `process` object is created at line ~135. An `extends`
+  clause evaluated at line 135 would have failed because
+  `__nodeEventEmitter` was not yet defined. The mixin runs after
+  `NodeEventEmitter` is defined and copies the prototype methods onto
+  the existing `process` object.
+
+Focused-stage suite: **509/509 pass**.
+
+Upstream fixtures:
+- `test-cluster-fork-env.js`, `test-cluster-disconnect-with-no-workers.js`,
+  `test-cluster-worker-exit.js` continue to pass.
+- `test-cluster-worker-kill.js` is closer to passing: the worker
+  `process.kill('SIGKILL')` path now correctly transitions the worker
+  to `disconnected` → `dead`, fires `disconnect` then `exit(code=null,
+  signal='SIGKILL')`, sets `process.exitCode = null,
+  process.signalCode = 'SIGKILL'`, and `common.isAlive(pid)` returns
+  `false` (the pid was removed from `__quench_node_pids`). The fixture
+  still fails on a `checkResults` `assert.strictEqual` deep in the
+  fixture's `process.on('exit', …)` handler, likely an off-by-one or
+  ordering difference in `common.mustCall` invocations between the
+  primary and the in-process worker. Tracked as the next sub-slice.
