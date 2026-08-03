@@ -363,7 +363,10 @@ impl Object {
             {
                 return Some(self.elements[idx].clone());
             }
-            if self.kind == ObjectKind::Array && idx < self.elements.len() {
+            if self.kind == ObjectKind::Array
+                && idx < self.elements.len()
+                && !self.holes.contains(&idx)
+            {
                 return Some(self.elements[idx].clone());
             }
         }

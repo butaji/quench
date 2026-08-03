@@ -278,6 +278,7 @@ fn make_array_with_new(
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
                 check_array_length(n)?;
                 obj.elements = vec![Value::Undefined; n as usize];
+                obj.holes.extend(0..n as usize);
                 obj.define_array_length(n);
             } else {
                 return Err(JsError("Invalid array length".to_string()));

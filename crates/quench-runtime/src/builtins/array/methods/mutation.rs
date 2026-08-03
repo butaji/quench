@@ -24,6 +24,12 @@ pub fn get_this_array_obj() -> Result<Rc<RefCell<Object>>, JsError> {
 pub fn set_elements(o: &Rc<RefCell<Object>>, new_elements: Vec<Value>) -> Result<Value, JsError> {
     let new_len = new_elements.len();
     let mut obj = o.borrow_mut();
+    if obj
+        .get_descriptor("length")
+        .is_some_and(|flags| !flags.writable)
+    {
+        return Err(JsError::new("TypeError: length is not writable"));
+    }
     obj.elements = new_elements.clone();
     // Sync the "length" property with the actual elements length
     obj.properties
@@ -57,7 +63,18 @@ pub fn proto_push(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_pop(_args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
     let mut elements = o.borrow().elements.clone();
-    let popped = elements.pop();
+    let popped = if elements.is_empty() {
+        None
+    } else {
+        let index = elements.len() - 1;
+        let value = crate::eval::member::eval_object_member_value(
+            &o,
+            &Value::String(index.to_string()),
+            None,
+        )?;
+        elements.pop();
+        Some(value)
+    };
     set_elements(&o, elements)?;
     Ok(popped.unwrap_or(Value::Undefined))
 }
@@ -150,6 +167,12 @@ mod tests {
         let mut ctx = crate::Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
         ctx
+    }
+
+    #[test]
+    fn pop_throws_when_length_becomes_non_writable() {
+        let mut ctx = create_test_context();
+        assert!(ctx.eval("var a=new Array(1); Object.defineProperty(Array.prototype,'0',{get:function(){Object.freeze(a)}}); try { a.pop(); false } catch(e) { a.length===1 }").unwrap() == crate::value::Value::Boolean(true));
     }
 
     #[test]

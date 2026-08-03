@@ -92,6 +92,7 @@ impl Object {
         let mut obj = Object::new(ObjectKind::Array);
         let len = len.min(MAX_ARRAY_ELEMENTS);
         obj.elements = vec![Value::Undefined; len];
+        obj.holes.extend(0..len);
         obj.define_array_length(len as f64);
         if let Some(proto) = crate::builtins::get_array_prototype() {
             obj.prototype = Some(proto);
