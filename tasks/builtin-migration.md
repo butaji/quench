@@ -86,10 +86,11 @@ self-hosted JavaScript layer.
   formatting algorithms remain JS-owned where they add behavior.
 - [~] Boolean public prototype methods are JS-owned; Rust retains Boolean
   construction, boxing, and primitive conversion.
-- [~] Symbol public prototype and registry methods (`toString`, `valueOf`,
-  `description`, `for`, and `keyFor`) are JS-owned over canonical primitives;
-  Rust retains symbol identity, boxing, registry storage, and well-known
-  symbols.
+- [~] Symbol prototype methods (`toString`, `valueOf`, `description`, and
+  `@@toPrimitive`) are JS-owned where they add behavior; registry methods
+  `for` and `keyFor` remain direct Rust bindings because JS would only add
+  pass-through LOC. Rust retains symbol identity, boxing, registry storage,
+  and well-known symbols.
 - [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
   hidden Rust keyed-storage primitives; Rust retains keyed storage and
   iterator state.

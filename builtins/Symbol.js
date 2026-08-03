@@ -3,17 +3,7 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 var SymbolToString = ops.SymbolToString;
 var SymbolValueOf = ops.SymbolValueOf;
-var _symbolFor = Symbol.__for;
-var _symbolKeyFor = Symbol.__keyFor;
 var _symbolDescription = Symbol.prototype.__description;
-
-Symbol.for = function SymbolFor(key) {
-  return _symbolFor.call(this, key);
-};
-
-Symbol.keyFor = function SymbolKeyFor(symbol) {
-  return _symbolKeyFor.call(this, symbol);
-};
 
 // Symbol.prototype.toString (ES2025 §20.4.3.3)
 Symbol.prototype.toString = function SymbolToString() {

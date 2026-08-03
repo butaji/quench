@@ -176,7 +176,7 @@ fn setup_symbol_for_method(symbol_fn: &Rc<NativeFunction>) {
             .unwrap_or_else(|| "undefined".to_string());
         Ok(symbol_for_impl(&key))
     });
-    let _ = symbol_fn.set_property("__for", Value::NativeFunction(Rc::new(symbol_for)));
+    let _ = symbol_fn.set_property("for", Value::NativeFunction(Rc::new(symbol_for)));
 }
 
 /// Set up Symbol.keyFor method
@@ -185,7 +185,7 @@ fn setup_symbol_key_for_method(symbol_fn: &Rc<NativeFunction>) {
         let sym = args.first().cloned().unwrap_or(Value::Undefined);
         symbol_key_for_impl(sym)
     });
-    let _ = symbol_fn.set_property("__keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
+    let _ = symbol_fn.set_property("keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
 }
 
 /// Set up Symbol.prototype with basic methods (toString, valueOf, description)
