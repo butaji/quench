@@ -438,3 +438,6 @@ asserting concatenated contents and cleanup.
 
 Stage 167 formalized invalid value validation for promise file-handle
 `writeFile`, asserting `ERR_INVALID_ARG_TYPE` and cleaning up the file.
+
+Stage 168 formalized encoding options for promise file-handle `writeFile`,
+asserting the decoded Latin-1 round trip and cleanup.

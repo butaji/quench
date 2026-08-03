@@ -175,3 +175,4 @@ these small fixtures isolate the currently implemented contract.
 |   165 | promise file-handle iterable `writeFile`                  | `tools/run-node-tests.sh --stage 165` |
 |   166 | promise file-handle async-iterable `writeFile`            | `tools/run-node-tests.sh --stage 166` |
 |   167 | promise file-handle `writeFile` validation                | `tools/run-node-tests.sh --stage 167` |
+|   168 | promise file-handle `writeFile` encoding                  | `tools/run-node-tests.sh --stage 168` |
