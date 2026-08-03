@@ -108,6 +108,9 @@ self-hosted JavaScript layer.
 - [~] Map and Set `keys`, `values`, `entries`, and `@@iterator` remain Rust
   public bindings because they are direct lazy-iterator entry points; a JS
   proxy would add LOC without moving an ECMAScript algorithm.
+- [~] Array `keys`, `values`, `entries`, and `@@iterator` now use a JS-owned
+  streaming iterator record; Rust remains responsible only for the general
+  iterator protocol and engine execution primitives.
 - [~] `Map.groupBy` is implemented in the self-hosted JS layer over Map
   storage primitives, including JS-side iterable and callback validation.
 - [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage

@@ -360,34 +360,46 @@ Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialVa
 };
 
 // Array.prototype.keys (ES2025 §23.1.3.21)
+function ArrayIteratorNext() {
+  var O = this._array;
+  var index = this._index;
+  var len = ToLength(O.length);
+  if (index >= len) return { value: undefined, done: true };
+  this._index = index + 1;
+  if (this._kind === 0) return { value: index, done: false };
+  var value = O[index];
+  if (this._kind === 1) return { value: value, done: false };
+  return { value: [index, value], done: false };
+}
+
+function ArrayIterator(O, kind) {
+  var iterator = { _array: O, _index: 0, _kind: kind };
+  iterator.next = ArrayIteratorNext;
+  iterator[Symbol.iterator] = function() { return this; };
+  return iterator;
+}
+
 Array.prototype.keys = function ArrayKeys() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.keys called on null or undefined");
   var O = ToObject(this);
-  var len = ToLength(O.length);
-  var keys = new Array(len);
-  for (var i = 0; i < len; i++) keys[i] = i;
-  return keys;
+  return ArrayIterator(O, 0);
 };
 
 // Array.prototype.values (ES2025 §23.1.3.33)
 Array.prototype.values = function ArrayValues() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.values called on null or undefined");
   var O = ToObject(this);
-  var len = ToLength(O.length);
-  var vals = new Array(len);
-  for (var i = 0; i < len; i++) vals[i] = O[i];
-  return vals;
+  return ArrayIterator(O, 1);
 };
 
 // Array.prototype.entries (ES2025 §23.1.3.7)
 Array.prototype.entries = function ArrayEntries() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.entries called on null or undefined");
   var O = ToObject(this);
-  var len = ToLength(O.length);
-  var entries = new Array(len);
-  for (var i = 0; i < len; i++) entries[i] = [i, O[i]];
-  return entries;
+  return ArrayIterator(O, 2);
 };
+
+Array.prototype[Symbol.iterator] = Array.prototype.values;
 
 // Array.prototype.findIndex (ES2025 §23.1.3.15)
 Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
