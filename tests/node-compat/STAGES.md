@@ -158,3 +158,4 @@ these small fixtures isolate the currently implemented contract.
 |   148 | encoded synchronous `fs.realpath` results                 | `tools/run-node-tests.sh --stage 148` |
 |   149 | upstream common fixtures directory                        | `tools/run-node-tests.sh --stage 149` |
 |   150 | promise `fs.realpath` and Buffer encoding                 | `tools/run-node-tests.sh --stage 150` |
+|   151 | promise fd metadata and permission methods                | `tools/run-node-tests.sh --stage 151` |
