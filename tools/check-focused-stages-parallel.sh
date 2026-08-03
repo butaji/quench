@@ -7,6 +7,10 @@ failures=$(mktemp)
 trap 'rm -f "$failures"' EXIT HUP INT TERM
 export root failures
 
+cargo build -q --manifest-path "$root/Cargo.toml" -p quench-node
+runner="$root/target/debug/quench-node"
+export runner
+
 find "$root/tests/node-compat" -mindepth 1 -maxdepth 1 -type d -name 'stage-*' \
   -exec basename {} \; | sed 's/stage-//' | sort -n | while IFS= read -r stage; do
   printf '%s\n' "$stage"
@@ -16,7 +20,7 @@ done | xargs -n 1 -P "$jobs" sh -c '
   if [ "$stage" -ge 169 ] && [ "$stage" -le 174 ]; then
     flags="--experimental-stream-iter"
   fi
-  if ! cargo run -q --manifest-path "$root/Cargo.toml" -p quench-node -- $flags --stage "$stage" >/dev/null 2>&1; then
+  if ! "$runner" $flags --stage "$stage" >/dev/null 2>&1; then
     printf "%s\\n" "$stage" >>"$failures"
   fi
 '
