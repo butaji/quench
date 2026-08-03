@@ -873,10 +873,28 @@ pub(crate) fn assign_to_object(
         drop(obj_ref);
     }
 
-    if prop_name.contains('\0') {
-        o.borrow_mut().set_symbol(prop_name, value.clone());
+    let value_to_set = if prop_name == "length" && o.borrow().kind == ObjectKind::Array {
+        let primitive = crate::value::to_primitive(value, None)?;
+        let number = crate::value::to_number(&primitive);
+        if !number.is_finite()
+            || !(0.0..=4_294_967_295.0).contains(&number)
+            || number.fract() != 0.0
+        {
+            let (_, error) = crate::value::error::create_js_error_with_type(
+                "Invalid array length",
+                "RangeError",
+            );
+            return Err(error);
+        }
+        Value::Number(number)
     } else {
-        o.borrow_mut().set(prop_name, value.clone());
+        value.clone()
+    };
+
+    if prop_name.contains('\0') {
+        o.borrow_mut().set_symbol(prop_name, value_to_set);
+    } else {
+        o.borrow_mut().set(prop_name, value_to_set);
     }
 
     // Mirror writes on globalThis into the global binding.
