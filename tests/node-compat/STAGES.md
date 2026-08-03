@@ -288,3 +288,4 @@ these small fixtures isolate the currently implemented contract.
 |   289 | `querystring.unescape` malformed-escape handling               | `tools/run-node-tests.sh --stage 289` |
 |   290 | `querystring` upstream-complete behavior                       | `tools/run-node-tests.sh --stage 290` |
 |   291 | `util.format` null-prototype object rendering                  | `tools/run-node-tests.sh --stage 291` |
+|   292 | `util.format` class null-prototype rendering                   | `tools/run-node-tests.sh --stage 292` |
