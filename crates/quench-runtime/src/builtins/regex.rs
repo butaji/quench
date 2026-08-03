@@ -154,6 +154,11 @@ mod tests {
             "\\x20\\xa0\\u2028\\u2029\\u202f\\ufeff"
         );
     }
+
+    #[test]
+    fn regexp_escape_decodes_wtf8_surrogates() {
+        assert_eq!(regexp_escape("\u{fffd}d800"), "\\ud800");
+    }
 }
 
 use std::cell::RefCell;
@@ -400,7 +405,34 @@ fn regexp_escape_impl(args: Vec<Value>) -> Result<Value, JsError> {
 
 fn regexp_escape(input: &str) -> String {
     let mut escaped = String::new();
-    for (index, ch) in input.chars().enumerate() {
+    let mut chars = input.chars().peekable();
+    let mut index = 0;
+    while let Some(ch) = chars.next() {
+        if ch == '\u{fffd}' {
+            let mut digits = String::new();
+            for _ in 0..4 {
+                let Some(next) = chars.peek().copied() else {
+                    break;
+                };
+                if !next.is_ascii_hexdigit() {
+                    break;
+                }
+                digits.push(next);
+                chars.next();
+            }
+            if digits.len() == 4 {
+                let code_unit = u16::from_str_radix(&digits, 16).unwrap_or(0);
+                if (0xd800..=0xdfff).contains(&code_unit) {
+                    escaped.push_str(&format!(r#"\u{:04x}"#, code_unit));
+                    index += 1;
+                    continue;
+                }
+                escaped.push(ch);
+                escaped.push_str(&digits);
+                index += 5;
+                continue;
+            }
+        }
         if index == 0 && ch.is_ascii_alphanumeric() {
             escaped.push_str(&format!(r#"\x{:02x}"#, ch as u32));
         } else if "^$\\.*+?()[]{}|/".contains(ch) {
@@ -427,6 +459,7 @@ fn regexp_escape(input: &str) -> String {
         } else {
             escaped.push(ch);
         }
+        index += 1;
     }
     escaped
 }
