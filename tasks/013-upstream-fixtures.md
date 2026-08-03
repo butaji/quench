@@ -965,3 +965,6 @@ and message properties.
 
 Stage 347 formalized assertion message formatting for long strict comparisons
 and operator metadata for loose inequality failures.
+
+Stage 348 formalized `assert.throws` rejecting a thrown error with the wrong
+constructor and wrapping that mismatch in an `AssertionError`.
