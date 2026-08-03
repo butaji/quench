@@ -179,37 +179,43 @@ pub fn proto_filter(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.reduce(callback, initialValue?)
 pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match receiver {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
+    let length = array_like_length(&receiver)?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     let initial = args.get(1).cloned();
 
-    let mut accumulator: Value;
-    let start_idx: usize;
-
-    if let Some(init) = initial {
-        accumulator = init;
-        start_idx = 0;
-    } else if elements.is_empty() {
-        return Err(JsError(
-            "Reduce of empty array with no initial value".to_string(),
-        ));
-    } else {
-        accumulator = elements[0].clone();
-        start_idx = 1;
-    }
-
-    for i in start_idx..elements.len() {
-        let elem = &elements[i];
-        // Reduce calls callback(accumulator, element, index, array) — not
-        // call_callback which passes (element, index, array).
-        let array_copy = Value::Object(Rc::new(RefCell::new(Object::new_array_from(
-            elements.to_vec(),
-        ))));
+    let (mut accumulator, mut index) = match initial {
+        Some(value) => (value, 0),
+        None => {
+            let mut first = None;
+            let mut position = 0;
+            while position < length && first.is_none() {
+                first = array_like_value(&receiver, position)?;
+                position += 1;
+            }
+            (
+                first.ok_or_else(|| {
+                    JsError("Reduce of empty array with no initial value".to_string())
+                })?,
+                position,
+            )
+        }
+    };
+    while index < length {
+        let Some(elem) = array_like_value(&receiver, index)? else {
+            index += 1;
+            continue;
+        };
         let callback_args = vec![
             accumulator.clone(),
-            elem.clone(),
-            Value::Number(i as f64),
-            array_copy,
+            elem,
+            Value::Number(index as f64),
+            receiver.clone(),
         ];
         accumulator = match &callback {
             Value::Function(_) => {
@@ -218,6 +224,7 @@ pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
             Value::NativeFunction(nf) => nf.call(Value::Undefined, callback_args)?,
             _ => return Err(JsError("Callback is not a function".to_string())),
         };
+        index += 1;
     }
     Ok(accumulator)
 }
@@ -687,6 +694,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("var receiver={}; var same=false; [1].forEach(function(){same=this===receiver;},receiver); same"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_reduce_reads_sparse_accessor_elements() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; var a=[,1,2]; Object.defineProperty(a,'0',{get:function(){return 0;}}); a.reduce(function(prev,value,index){if(index===1) seen=prev===0; return value;}); seen"),
             Ok(Value::Boolean(true))
         );
     }
