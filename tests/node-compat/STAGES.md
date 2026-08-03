@@ -278,3 +278,6 @@ these small fixtures isolate the currently implemented contract.
 |   279 | `url.format` string and legacy object output                   | `tools/run-node-tests.sh --stage 279` |
 |   280 | `url.parse` component extraction and validation                | `tools/run-node-tests.sh --stage 280` |
 |   281 | `url.parse` error codes and invalid inputs                     | `tools/run-node-tests.sh --stage 281` |
+|   282 | `url.parse` normalization and backslash handling               | `tools/run-node-tests.sh --stage 282` |
+|   283 | `querystring.parse`/`stringify` core behavior                  | `tools/run-node-tests.sh --stage 283` |
+|   284 | `querystring.stringify` object value coercion                  | `tools/run-node-tests.sh --stage 284` |
