@@ -33,6 +33,19 @@ String.fromCodePoint = function StringFromCodePoint() {
   return _fromCodePoint.apply(this, arguments);
 };
 
+String.raw = function StringRaw(template) {
+  var cooked = Object(template);
+  var raw = Object(cooked.raw);
+  var len = raw.length >>> 0;
+  if (len === 0) return "";
+  var result = "";
+  for (var i = 0; i < len; i++) {
+    result += String(raw[i]);
+    if (i + 1 < len && i + 1 < arguments.length) result += String(arguments[i + 1]);
+  }
+  return result;
+};
+
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
 };
