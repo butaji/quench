@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const target = `/tmp/quench-node-stage-157-target-${process.pid}`;
@@ -6,5 +7,7 @@ const fs = require("fs");
   fs.writeFileSync(target, "x");
   fs.symlinkSync(target, link);
   const stats = await fs.promises.lstat(link);
-  if (!stats.isSymbolicLink()) throw new Error("promise lstat mismatch");
+  assert.strictEqual(stats.isSymbolicLink(), true);
+  fs.unlinkSync(link);
+  fs.rmSync(target);
 })().then(() => undefined);

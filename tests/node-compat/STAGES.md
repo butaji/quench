@@ -164,3 +164,4 @@ these small fixtures isolate the currently implemented contract.
 |   154 | promise copy, rename, and unlink mutations                | `tools/run-node-tests.sh --stage 154` |
 |   155 | promise directory removal                                 | `tools/run-node-tests.sh --stage 155` |
 |   156 | promise temporary-directory creation                      | `tools/run-node-tests.sh --stage 156` |
+|   157 | promise symbolic-link metadata with `lstat`               | `tools/run-node-tests.sh --stage 157` |

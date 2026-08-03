@@ -405,3 +405,6 @@ longer exists after `fs.promises.rmdir`.
 
 Stage 156 formalized promise `mkdtemp`, asserting prefix and directory
 semantics before removing the temporary directory.
+
+Stage 157 formalized promise `lstat` on a symbolic link, asserting link
+metadata rather than target metadata and cleaning up both entries.
