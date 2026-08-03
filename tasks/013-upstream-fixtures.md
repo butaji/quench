@@ -417,3 +417,6 @@ Stage 159 formalized invalid source and target argument validation for
 
 Stage 160 formalized UTF-8 and Buffer encoding options for synchronous
 `fs.readlink`, asserting equivalent link targets and cleaning up both entries.
+
+Stage 161 formalized the upstream symlink-capability helper, asserting that
+the harness environment supports symbolic-link fixtures.
