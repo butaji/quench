@@ -294,8 +294,26 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Value::NativeFunction(nf) = &obj {
-        if let Some(value) = flags.value.clone() {
-            nf.define_property(&prop, value, flags);
+        if let Some(existing) = nf.get_property_flags(&prop) {
+            let value_changed = flags.value.as_ref().is_some_and(|value| {
+                existing
+                    .value
+                    .as_ref()
+                    .is_some_and(|old| !crate::value::same_value(old, value))
+            });
+            if !existing.configurable && (flags.configurable || value_changed) {
+                let (error, js_error) = crate::value::error::create_js_error_with_type(
+                    "Cannot redefine non-configurable property",
+                    "TypeError",
+                );
+                crate::value::error::set_thrown_value(error);
+                return Err(js_error);
+            }
+        }
+        if let Some(value) = flags.value.clone().or_else(|| nf.get_property(&prop)) {
+            let mut updated_flags = flags;
+            updated_flags.value = Some(value.clone());
+            nf.define_property(&prop, value, updated_flags);
         }
         return Ok(obj);
     }
