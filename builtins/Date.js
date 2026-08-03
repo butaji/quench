@@ -5,6 +5,21 @@ var ThrowTypeError = ops.ThrowTypeError;
 // Save native implementations
 var _nativeToString = Date.prototype.__toString;
 var _nativeValueOf = Date.prototype.__valueOf;
+var _nativeNow = Date.__now;
+var _nativeParse = Date.__parse;
+var _nativeUTC = Date.__UTC;
+
+Date.now = function DateNow() {
+  return _nativeNow.call(this);
+};
+
+Date.parse = function DateParse(string) {
+  return _nativeParse.call(this, string);
+};
+
+Date.UTC = function DateUTC() {
+  return _nativeUTC.apply(this, arguments);
+};
 var _nativeToISOString = Date.prototype.toISOString;
 var _nativeToJSON = Date.prototype.toJSON;
 

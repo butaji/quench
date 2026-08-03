@@ -520,13 +520,13 @@ pub fn register_date(ctx: &mut Context) {
         .borrow_mut()
         .set("prototype", Value::Object(Rc::clone(&date_proto_rc)));
     date_wrapper_rc.borrow_mut().set(
-        "now",
+        "__now",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             Ok(Value::Number(chrono_now() as f64))
         }))),
     );
     date_wrapper_rc.borrow_mut().set(
-        "parse",
+        "__parse",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let text = args.first().map(to_js_string).unwrap_or_default();
             let timestamp = chrono::DateTime::parse_from_rfc3339(&text)
@@ -536,7 +536,7 @@ pub fn register_date(ctx: &mut Context) {
         }))),
     );
     date_wrapper_rc.borrow_mut().set(
-        "UTC",
+        "__UTC",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let year = args.first().map(to_number).unwrap_or(f64::NAN) as i32;
             let month = args.get(1).map(to_number).unwrap_or(0.0) as i32;
