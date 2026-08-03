@@ -661,3 +661,13 @@ stable marker results across repeated checks.
 Stage 240 formalized Buffer `allocUnsafeSlow` argument validation, asserting
 `ERR_INVALID_ARG_TYPE` for non-numeric sizes and `ERR_OUT_OF_RANGE` for
 negative sizes.
+
+Stage 241 formalized Buffer `toString` end-range edge clamping, asserting a
+negative end clamps to an empty slice.
+
+Stage 242 formalized Buffer BigInt read/write alias parity, asserting
+`readBigUInt64LE`/`readBigUint64LE` and `writeBigUInt64BE`/`writeBigUint64BE`
+share implementations.
+
+Stage 243 formalized Buffer display hooks, asserting `toLocaleString`
+delegates to `toString` and the inspect custom symbol renders hex.

@@ -248,3 +248,6 @@ these small fixtures isolate the currently implemented contract.
 |   238 | internal `arrayBufferViewHasBuffer` marker                     | `tools/run-node-tests.sh --stage 238` |
 |   239 | internal lazy arrayBuffer backing state                        | `tools/run-node-tests.sh --stage 239` |
 |   240 | Buffer `allocUnsafeSlow` argument validation                   | `tools/run-node-tests.sh --stage 240` |
+|   241 | Buffer `toString` end-range edge clamping                        | `tools/run-node-tests.sh --stage 241` |
+|   242 | Buffer BigInt read/write alias parity                           | `tools/run-node-tests.sh --stage 242` |
+|   243 | Buffer display hooks (`toLocaleString`, inspect symbol)         | `tools/run-node-tests.sh --stage 243` |
