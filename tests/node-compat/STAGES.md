@@ -128,3 +128,4 @@ these small fixtures isolate the currently implemented contract.
 |   118 | Buffer equality after vectored file writes                | `tools/run-node-tests.sh --stage 118` |
 |   119 | `fs.writev` invalid-buffer validation                     | `tools/run-node-tests.sh --stage 119` |
 |   120 | promise-based vectored `fs.readv`                         | `tools/run-node-tests.sh --stage 120` |
+|   121 | promise-based vectored `fs.writev`                        | `tools/run-node-tests.sh --stage 121` |
