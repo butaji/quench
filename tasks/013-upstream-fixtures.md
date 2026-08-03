@@ -816,3 +816,6 @@ asserting Date inspection equivalence and Symbol descriptions.
 
 Stage 297 formalized `%s` Date conversion in `util.format`, asserting the
 canonical ISO timestamp string.
+
+Stage 298 formalized `%o` object-string formatting, asserting quoted strings
+and escaped apostrophes.
