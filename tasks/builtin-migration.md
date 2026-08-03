@@ -49,6 +49,8 @@ self-hosted JavaScript layer.
 - [~] Number formatting wrappers are routed through `builtins/Number.js`;
   Rust retains numeric conversion, radix formatting, and constructor/storage
   primitives until their JS algorithms have equivalent core operations.
+- [~] Number static predicates (`isNaN`, `isFinite`, `isInteger`,
+  `isSafeInteger`) are JS-owned; Rust retains numeric primitives.
 - [~] Boolean prototype `toString` and `valueOf` are JS-owned; Rust retains
   Boolean construction, boxing, and primitive conversion.
 - [~] Symbol prototype `toString` and `valueOf` are JS-owned through canonical

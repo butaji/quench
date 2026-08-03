@@ -7,6 +7,22 @@ var _nativeToFixed = Number.prototype.toFixed;
 var _nativeToExponential = Number.prototype.toExponential;
 var _nativeToPrecision = Number.prototype.toPrecision;
 
+Number.isNaN = function NumberIsNaN(value) {
+  return typeof value === 'number' && value !== value;
+};
+
+Number.isFinite = function NumberIsFinite(value) {
+  return typeof value === 'number' && value !== Infinity && value !== -Infinity && value === value;
+};
+
+Number.isInteger = function NumberIsInteger(value) {
+  return Number.isFinite(value) && Math.floor(value) === value;
+};
+
+Number.isSafeInteger = function NumberIsSafeInteger(value) {
+  return Number.isInteger(value) && Math.abs(value) <= 9007199254740991;
+};
+
 // Number.prototype.toFixed (ES2025 §21.1.3.5)
 Number.prototype.toFixed = function NumberToFixed(digits) {
   if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.toFixed called on null or undefined");

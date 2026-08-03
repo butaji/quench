@@ -346,13 +346,6 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
     );
 
     // Add static methods to number_ctor before it's moved
-    number_ctor.set_static_method("isInteger", number_obj.borrow().get("isInteger").unwrap());
-    number_ctor.set_static_method("isNaN", number_obj.borrow().get("isNaN").unwrap());
-    number_ctor.set_static_method("isFinite", number_obj.borrow().get("isFinite").unwrap());
-    number_ctor.set_static_method(
-        "isSafeInteger",
-        number_obj.borrow().get("isSafeInteger").unwrap(),
-    );
     number_ctor.set_static_method("parseInt", number_obj.borrow().get("parseInt").unwrap());
     number_ctor.set_static_method("parseFloat", number_obj.borrow().get("parseFloat").unwrap());
     number_ctor.set_static_constant("MAX_VALUE", Value::Number(f64::MAX));
