@@ -28,7 +28,7 @@ Each row is a slice. The prefix is the file-name prefix in
 
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
-| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562 (scheduling policy) |
+| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563 (cumulative setup) |
 | 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503                    |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
@@ -147,3 +147,7 @@ missing `isDead()` and `destroy()` methods without changing the host layer.
 
 Stage 562 compared the module-level cluster properties and filled the missing
 default `schedulingPolicy` value with the existing `SCHED_RR` constant.
+
+Stage 563 found repeated `setupPrimary()` calls discarded prior settings. A
+small wrapper now merges new options with the existing settings before using
+the established setup implementation.
