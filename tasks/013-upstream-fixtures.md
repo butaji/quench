@@ -258,3 +258,6 @@ promise `opendir` reads and closes, including end-of-directory behavior.
 
 Stage 107 expanded asynchronous symlink/readlink coverage with explicit file
 type selection, round-trip target verification, and cleanup.
+
+Stage 108 expanded symlink metadata coverage to sync and callback `stat`/
+`lstat` calls, verifying link identity versus followed-target identity.
