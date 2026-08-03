@@ -280,6 +280,8 @@ self-hosted JavaScript layer.
 - [x] Preserve specified self-hosted builtin function lengths (notably
   `Array.prototype.flat.length === 0`) and expose function `name`/`length`
   descriptors through `GetOwnPropDesc`.
+- [x] Normalize static self-hosted methods on native constructors, including
+  `Array.from`'s specified length/name and the absence of a function prototype.
 
 ## First increment
 

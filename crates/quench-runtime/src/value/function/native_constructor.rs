@@ -108,6 +108,19 @@ impl NativeConstructor {
         self.static_methods.borrow().get(name).cloned()
     }
 
+    pub fn normalize_static_method(&self, name: &str) {
+        let Some(Value::Function(function)) = self.static_methods.borrow().get(name).cloned()
+        else {
+            return;
+        };
+        let _ = function.set_property("name", Value::String(name.to_string()));
+        let _ = function.set_property("prototype", Value::Undefined);
+    }
+
+    pub fn static_method_names(&self) -> Vec<String> {
+        self.static_methods.borrow().keys().cloned().collect()
+    }
+
     pub fn is_property_deleted(&self, name: &str) -> bool {
         self.deleted_static_methods.borrow().contains(name)
     }

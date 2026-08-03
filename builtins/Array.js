@@ -42,8 +42,10 @@ Array.of = function ArrayOf() {
   return result;
 };
 
-Array.from = function ArrayFrom(items, mapfn, thisArg) {
+Array.from = function ArrayFrom(items) {
   if (items === null || items === undefined) throw ThrowTypeError("Array.from requires an object");
+  var mapfn = arguments.length > 1 ? arguments[1] : undefined;
+  var thisArg = arguments.length > 2 ? arguments[2] : undefined;
   if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
   var values = [];
   var iteratorMethod = items[Symbol.iterator];

@@ -322,6 +322,9 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
         if let Some(value) = ctx.get_global(name) {
             if let crate::value::Value::NativeConstructor(constructor) = value {
                 normalize_prototype(&constructor.prototype);
+                for method in constructor.static_method_names() {
+                    constructor.normalize_static_method(&method);
+                }
             }
         }
     }
@@ -600,6 +603,13 @@ mod tests {
         let r = ctx
             .eval("Array.prototype.flat.length === 0 && Object.getOwnPropertyDescriptor(Array.prototype.flat, 'length') !== undefined")
             .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_array_from_has_one_function_length() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Array.from.length === 1 && Array.from.name === 'from'").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
