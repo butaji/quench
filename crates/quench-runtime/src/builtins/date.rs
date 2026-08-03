@@ -71,6 +71,7 @@ fn register_type_converters(ctx: &mut Context) {
 
 fn register_string_converter(ctx: &mut Context) {
     let string_proto = create_string_prototype();
+    crate::builtins::string::set_string_prototype(Rc::clone(&string_proto));
     let string_proto_clone = Rc::clone(&string_proto);
     let string_fn = create_string_constructor_fn(string_proto_clone);
 

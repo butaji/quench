@@ -22,6 +22,10 @@ pub fn get_string_prototype() -> Option<Rc<RefCell<Object>>> {
     STRING_PROTOTYPE.with(|sp| sp.borrow().clone())
 }
 
+pub(crate) fn set_string_prototype(proto: Rc<RefCell<Object>>) {
+    STRING_PROTOTYPE.with(|sp| *sp.borrow_mut() = Some(proto));
+}
+
 /// Save the thread-local prototype cache (realm snapshot support)
 pub(crate) fn save_string_prototype() -> Option<Rc<RefCell<Object>>> {
     get_string_prototype()

@@ -671,6 +671,15 @@ mod tests {
             Ok(Value::String("1,3".to_string()))
         );
     }
+
+    #[test]
+    fn array_for_each_boxes_string_with_string_prototype() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var result=false; Array.prototype.forEach.call('a',function(v,i,o){result=o instanceof String;}); result"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
