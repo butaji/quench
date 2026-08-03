@@ -241,3 +241,5 @@ Node-compatible result shapes while the deeper host accounting remains a
 separate optimization slice.
 Stage 549 adds a frozen `fs.constants` object for open and copy flags,
 reusing the numeric contract already exposed by the general constants module.
+Stage 550 adds `stream.PassThrough` with evented data forwarding, end
+handling, and piping while reusing the existing in-process stream model.
