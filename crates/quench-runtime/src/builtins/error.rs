@@ -268,6 +268,10 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
     );
     constructor.set_name("AggregateError");
     let ctor = Value::NativeConstructor(Rc::new(constructor));
-    proto_rc.borrow_mut().set("constructor", ctor.clone());
+    let mut prototype = proto_rc.borrow_mut();
+    prototype.set("constructor", ctor.clone());
+    if let Some(flags) = prototype.descriptors.get_mut("constructor") {
+        flags.enumerable = false;
+    }
     ctx.set_global("AggregateError".to_string(), ctor);
 }
