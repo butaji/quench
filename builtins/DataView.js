@@ -5,16 +5,5 @@
 // .getBigUint64, .setBigInt64, .setBigUint64 — these need native Rust
 // implementations first before they can be wrapped here.
 //
-// Once the native methods exist on DataView.prototype in Rust, add:
-//   var _nativeGetInt8 = DataView.prototype.getInt8;
-//   var _nativeSetInt8 = DataView.prototype.setInt8;
-//   ... etc.
-//
-// Then wrap each:
-//   DataView.prototype.getInt8 = function(byteOffset) {
-//     if (this === null || this === undefined) throw ThrowTypeError("DataView.prototype.getInt8 called on null or undefined");
-//     return _nativeGetInt8.apply(this, arguments);
-//   };
-//
 // Note: DataView constructor is registered in Rust at
 // crates/quench-runtime/src/builtins/data_view.rs.

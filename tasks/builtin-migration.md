@@ -171,6 +171,8 @@ self-hosted JavaScript layer.
   chrono operations, GC/finalizer hooks, and async realm/state machinery.
   These are documented core, performance, engine-integration, or lower-LOC
   exceptions; the next phase is Test262-driven conformance polish.
+- [~] Removed the dormant DataView wrapper sketch; DataView remains an
+  explicit native-memory exception until JS can call real raw-buffer ops.
 - [~] Duplicate public numeric-global registration was removed from `date.rs`;
   the URI module is now the single Rust primitive source for those wrappers.
 - [~] Timer globals remain Rust-owned as host/engine integration points and
