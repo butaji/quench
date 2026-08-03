@@ -31,8 +31,8 @@ fn array_of_uses_called_constructor_and_sets_length() {
 fn array_prototype_has_unscopables_object() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
-        ctx.eval("var u=Array.prototype[Symbol.unscopables]; [Object.getPrototypeOf(u),u.find,u.values].join('|')"),
-        Ok(Value::String("|true|true".to_string()))
+        ctx.eval("var u=Array.prototype[Symbol.unscopables]; [Object.getPrototypeOf(u),u.find,u.values,u.toReversed,u.toSorted,u.toSpliced,u.with].join('|')"),
+        Ok(Value::String("|true|true|true|true|true|true".to_string()))
     );
 }
 
