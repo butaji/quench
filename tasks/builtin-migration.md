@@ -128,6 +128,8 @@ self-hosted JavaScript layer.
   exist; Rust retains constructors, call mechanics, compiled matching, and
   error storage. Proxy and remaining constructors/prototypes are pending.
 - [ ] Remove duplicate Rust registrations and dormant JS wrappers.
+- [~] Duplicate public numeric-global registration was removed from `date.rs`;
+  the URI module is now the single Rust primitive source for those wrappers.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
 

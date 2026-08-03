@@ -8,7 +8,7 @@ use std::rc::Rc;
 pub use helpers::{spec_parse_float, spec_parse_int};
 
 use crate::value::{
-    to_bool, to_js_string, to_number, try_to_number, NativeConstructor, NativeFunction, Object,
+    to_bool, to_js_string, to_number, NativeConstructor, NativeFunction, Object,
     ObjectKind, PropertyFlags, Value,
 };
 use crate::Context;
@@ -19,7 +19,6 @@ use crate::Context;
 
 pub fn register_global_functions(ctx: &mut Context) {
     register_timer_functions(ctx);
-    register_parse_functions(ctx);
     register_type_converters(ctx);
 }
 
@@ -36,32 +35,6 @@ fn register_timer_functions(ctx: &mut Context) {
     });
     ctx.register_native("clearTimeout", |_args| Ok(Value::Undefined));
     ctx.register_native("clearInterval", |_args| Ok(Value::Undefined));
-}
-
-fn register_parse_functions(ctx: &mut Context) {
-    ctx.register_native("parseInt", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
-        let radix = args.get(1).map(|v| to_number(v) as i32).unwrap_or(0);
-        let radix = if radix == 0 { 10 } else { radix };
-        if !(2..=36).contains(&radix) {
-            return Ok(Value::Number(f64::NAN));
-        }
-        let n = spec_parse_int(&s, radix as u32);
-        Ok(Value::Number(n))
-    });
-    ctx.register_native("parseFloat", |args| {
-        let s = args.first().map(to_js_string).unwrap_or_default();
-        let n = spec_parse_float(&s);
-        Ok(Value::Number(n))
-    });
-    ctx.register_native("isNaN", |args| {
-        let n = args.first().map(to_number).unwrap_or(f64::NAN);
-        Ok(Value::Boolean(n.is_nan()))
-    });
-    ctx.register_native("isFinite", |args| {
-        let n = args.first().map(try_to_number).unwrap_or(Ok(f64::NAN))?;
-        Ok(Value::Boolean(n.is_finite()))
-    });
 }
 
 fn register_type_converters(ctx: &mut Context) {
