@@ -554,3 +554,6 @@ UTF-16LE, typed-array, and ArrayBuffer sizing.
 
 Stage 205 formalized Buffer string writes, asserting offsets, byte counts,
 UTF-8 output, and UTF-16LE encoding.
+
+Stage 206 formalized Buffer instance and static comparison, asserting typed
+array compatibility, equality, and lexicographic ordering.
