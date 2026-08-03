@@ -287,3 +287,4 @@ these small fixtures isolate the currently implemented contract.
 |   288 | `querystring` decode fallback and `unescape` override          | `tools/run-node-tests.sh --stage 288` |
 |   289 | `querystring.unescape` malformed-escape handling               | `tools/run-node-tests.sh --stage 289` |
 |   290 | `querystring` upstream-complete behavior                       | `tools/run-node-tests.sh --stage 290` |
+|   291 | `util.format` null-prototype object rendering                  | `tools/run-node-tests.sh --stage 291` |
