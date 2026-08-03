@@ -223,3 +223,5 @@ Stage 540 adds `util.parseArgs` for boolean/string options, negated flags,
 positionals, repeated values, and token reporting without expanding Rust.
 Stage 541 adds `util.styleText` with common ANSI styles, nested style arrays,
 and color-disable options while keeping formatting entirely in JavaScript.
+Stage 542 adds `util.callbackify`, including callback validation, success
+delivery, and synchronous exception delivery through the existing job queue.
