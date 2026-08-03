@@ -63,7 +63,8 @@ self-hosted JavaScript layer.
 - [~] Math public algorithms and wiring are self-hosted in `builtins/Math.js`,
   including `max`, `min`, `abs`, rounding, transcendental, random, and numeric
   utility methods; Rust retains the performance-sensitive numeric primitives.
-  Number/Boolean/Symbol work is pending.
+  Number/Boolean/Symbol public wiring is migrated; remaining work is spec
+  surface completion and conformance polish.
 - [~] Number formatting wrappers are routed through `builtins/Number.js`;
   public `toString` and `valueOf` are also JS-owned; Rust retains numeric
   conversion, radix formatting, and constructor/storage primitives.
@@ -71,8 +72,8 @@ self-hosted JavaScript layer.
   `isSafeInteger`) are JS-owned; Rust retains numeric primitives.
 - [~] `Number.parseInt` and `Number.parseFloat` are JS-owned aliases over
   Rust-backed global parsing primitives.
-- [~] Boolean prototype `toString` and `valueOf` are JS-owned; Rust retains
-  Boolean construction, boxing, and primitive conversion.
+- [~] Boolean public prototype methods are JS-owned; Rust retains Boolean
+  construction, boxing, and primitive conversion.
 - [~] Symbol prototype `toString` and `valueOf` are JS-owned through canonical
   `__ops__` primitives; Rust retains symbol identity, boxing, registry,
   description, and well-known symbols.
