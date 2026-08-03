@@ -103,6 +103,8 @@ self-hosted JavaScript layer.
   formatting algorithms remain JS-owned where they add behavior.
 - [~] Boolean public prototype methods are JS-owned; Rust retains Boolean
   construction, boxing, and primitive conversion.
+- [~] Boolean prototype methods now perform JS-owned primitive/boxed-value
+  unboxing through the wrapper's internal `_value` payload.
 - [~] Symbol prototype methods (`toString`, `valueOf`, `description`, and
   `@@toPrimitive`) are JS-owned where they add behavior; registry methods
   `for` and `keyFor` remain direct Rust bindings because JS would only add
