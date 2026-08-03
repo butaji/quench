@@ -610,6 +610,14 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_copy_within_throws_on_nonconfigurable_delete() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var o={length:43}; Object.defineProperty(o,'42',{configurable:false,writable:true}); Array.prototype.copyWithin.call(o,42,0)")
+            .is_err());
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

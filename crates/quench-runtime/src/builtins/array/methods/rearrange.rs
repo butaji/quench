@@ -94,7 +94,9 @@ pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
                 )?;
                 o.borrow_mut().set(&target_key, value);
             } else {
-                o.borrow_mut().properties.shift_remove(&target_key);
+                if !o.borrow_mut().delete(&target_key) {
+                    return Err(JsError("TypeError: Cannot delete property".to_string()));
+                }
             }
         }
         return Ok(Value::Object(Rc::clone(&o)));
