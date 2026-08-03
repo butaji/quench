@@ -855,3 +855,6 @@ directory, basename, extension, and name fields.
 
 Stage 310 formalized OS uptime and process priority APIs, asserting numeric
 uptime/priority values and priority mutation.
+
+Stage 311 formalized the positive OS uptime contract, asserting a numeric
+value greater than zero.
