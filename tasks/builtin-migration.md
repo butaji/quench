@@ -101,6 +101,8 @@ self-hosted JavaScript layer.
 - [~] Routed Array `at`, `includes`, `indexOf`, and `lastIndexOf` positions
   through `ToIntegerOrInfinity`; `includes` now observes sparse holes as
   `undefined` per the spec.
+- [~] Routed Array `fill` and `copyWithin` range arguments through the same
+  canonical JS integer coercion operation.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`, `padEnd`, all trim variants, the public UTF-16 accessors
   (`charAt`, `charCodeAt`, `codePointAt`, `at`), `raw`, `isWellFormed`, and

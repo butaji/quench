@@ -339,9 +339,9 @@ Array.prototype.fill = function ArrayFill(value /*, start, end */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.fill called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var relativeStart = arguments.length > 1 ? arguments[1] : 0;
+  var relativeStart = arguments.length > 1 ? ToIntegerOrInfinity(arguments[1]) : 0;
   var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
-  var relativeEnd = arguments.length > 2 ? arguments[2] : len;
+  var relativeEnd = arguments.length > 2 ? ToIntegerOrInfinity(arguments[2]) : len;
   var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
   while (k < final) { O[k] = value; k++; }
   return O;
@@ -425,9 +425,12 @@ Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.copyWithin called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var to = target >= 0 ? target : Math.max(len + target, 0);
-  var from = start >= 0 ? start : Math.max(len + start, 0);
-  var final = end === undefined ? len : (end >= 0 ? end : Math.max(len + end, 0));
+  var relativeTarget = ToIntegerOrInfinity(target);
+  var relativeStart = ToIntegerOrInfinity(start);
+  var to = relativeTarget >= 0 ? relativeTarget : Math.max(len + relativeTarget, 0);
+  var from = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
+  var relativeEnd = end === undefined ? len : ToIntegerOrInfinity(end);
+  var final = relativeEnd >= 0 ? relativeEnd : Math.max(len + relativeEnd, 0);
   var count = Math.min(final - from, len - to);
   var direction = 1;
   if (from < to && to < from + count) { from += count - 1; to += count - 1; direction = -1; }

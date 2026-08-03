@@ -503,6 +503,19 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_range_methods_coerce_indices() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var index = { valueOf: function() { return 1; } }; \
+                 [0, 1, 2].fill(9, index, '3')[1] === 9 && \
+                 [0, 1, 2].copyWithin(index, 0, '2')[1] === 0",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx
