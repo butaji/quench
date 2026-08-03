@@ -63,9 +63,10 @@ pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
     let len = o.borrow().elements.len() as i64;
     let target = relative_index(args.first(), len);
     let start = relative_index(args.get(1), len);
-    let end = args
-        .get(2)
-        .map_or(len, |value| relative_index(Some(value), len));
+    let end = match args.get(2) {
+        None | Some(Value::Undefined) => len,
+        Some(value) => relative_index(Some(value), len),
+    };
     let count = (end - start).max(0).min(len - target);
     let mut elements = o.borrow().elements.clone();
     let current_len = o
@@ -102,9 +103,10 @@ pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let mut elements = o.borrow().elements.clone();
     let len = elements.len() as i64;
     let start = relative_index(args.get(1), len);
-    let end = args
-        .get(2)
-        .map_or(len, |value| relative_index(Some(value), len));
+    let end = match args.get(2) {
+        None | Some(Value::Undefined) => len,
+        Some(value) => relative_index(Some(value), len),
+    };
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     for index in start..end.min(len) {
         elements[index as usize] = value.clone();
