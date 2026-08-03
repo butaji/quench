@@ -123,3 +123,4 @@ these small fixtures isolate the currently implemented contract.
 |   113 | Buffer and null-offset `fs.read` options                  | `tools/run-node-tests.sh --stage 113` |
 |   114 | `fs.read` offset and position validation                  | `tools/run-node-tests.sh --stage 114` |
 |   115 | sync, callback, and promise vectored `fs.readv`           | `tools/run-node-tests.sh --stage 115` |
+|   116 | sync write/read and vectored `fs.writev`                  | `tools/run-node-tests.sh --stage 116` |
