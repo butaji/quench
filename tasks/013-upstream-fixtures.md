@@ -864,3 +864,6 @@ network interfaces.
 
 Stage 313 formalized OS user information, asserting identity fields and
 Buffer-encoded username/shell results.
+
+Stage 314 formalized `os.devNull` and `availableParallelism`, asserting the
+null-device path and a positive numeric CPU-parallelism result.
