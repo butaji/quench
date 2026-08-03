@@ -285,6 +285,9 @@ self-hosted JavaScript layer.
 - [x] Apply the shared non-constructable marker to static self-hosted methods;
   static methods such as `Array.from` and `Array.of` now share the same core
   constructor invariant as prototype methods.
+- [x] Use `CreateDataProperty` for immutable self-hosted Array result methods
+  (`toReversed`, `toSpliced`, and `with`) so inherited index setters cannot
+  intercept result creation and holes remain holes.
 
 ## First increment
 

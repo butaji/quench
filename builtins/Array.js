@@ -620,7 +620,7 @@ Array.prototype.toReversed = function ArrayToReversed() {
   var len = ToLength(O.length);
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    if (HasProperty(O, i)) A[len - 1 - i] = O[i];
+    if (HasProperty(O, i)) CreateDataProperty(A, len - 1 - i, O[i]);
   }
   return A;
 };
@@ -637,10 +637,10 @@ Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...it
   var itemCount = Math.max(arguments.length - 2, 0);
   var newLen = len - actualDeleteCount + itemCount;
   var A = new Array(newLen);
-  for (var i = 0; i < actualStart; i++) { if (HasProperty(O, i)) A[i] = O[i]; }
-  for (var i = 0; i < itemCount; i++) A[actualStart + i] = arguments[i + 2];
+  for (var i = 0; i < actualStart; i++) { if (HasProperty(O, i)) CreateDataProperty(A, i, O[i]); }
+  for (var i = 0; i < itemCount; i++) CreateDataProperty(A, actualStart + i, arguments[i + 2]);
   for (var i = actualStart + actualDeleteCount; i < len; i++) {
-    if (HasProperty(O, i)) A[i - actualDeleteCount + itemCount] = O[i];
+    if (HasProperty(O, i)) CreateDataProperty(A, i - actualDeleteCount + itemCount, O[i]);
   }
   return A;
 };
@@ -654,9 +654,9 @@ Array.prototype.with = function ArrayWith(index, value) {
   var actualIndex = relativeIndex >= len ? len - 1 : relativeIndex;
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    if (HasProperty(O, i)) A[i] = O[i];
+    if (HasProperty(O, i)) CreateDataProperty(A, i, O[i]);
   }
-  A[actualIndex] = value;
+  CreateDataProperty(A, actualIndex, value);
   return A;
 };
 
