@@ -1008,6 +1008,9 @@ Buffer and Uint8Array inputs.
 Stage 361 formalized Buffer fill encoding validation and its invalid-argument
 error metadata.
 
+Stage 362 formalized Buffer binary sharing, subarray/slice mutation behavior,
+copy isolation, and concatenation.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
