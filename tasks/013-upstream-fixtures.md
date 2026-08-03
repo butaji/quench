@@ -481,3 +481,6 @@ asserting Windows roots, separators, extensions, and trailing separators.
 Stage 181 formalized `util.format` primitives and placeholders, asserting
 numeric conversions, missing/extra arguments, symbols, JSON fallback, and
 negative zero.
+
+Stage 182 formalized `util.inspect` defaults and `formatWithOptions`, asserting
+the default numeric-separator setting and option-aware formatting.
