@@ -211,3 +211,6 @@ assertion implementation, avoiding duplicated assertion logic and preserving
 strict comparison behavior.
 Stage 536 confirms the legacy `sys` module is best represented as the exact
 `util` object alias, preserving shared formatting and inspection behavior.
+Stage 537 converts the unsupported `trace_events` path into an explicit
+`ERR_UNKNOWN_BUILTIN_MODULE` error, making unsupported-target behavior
+Node-compatible and testable instead of leaking a generic loader exception.
