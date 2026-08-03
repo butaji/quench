@@ -15,12 +15,15 @@ self-hosted JavaScript layer.
 
 ## Family queue
 
-- [ ] Complete the `__ops__` bridge and bootstrap realm lifecycle.
+- [ ] Complete the `__ops__` bridge and bootstrap realm lifecycle. Normal
+  contexts now enter `bootstrap_js_builtins` after native registration.
 - [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
 - [ ] Array algorithms and methods; retain indexed storage and typed-array
   performance operations in Rust.
 - [ ] String algorithms; retain string storage and RegExp execution in Rust.
-- [ ] Number, Boolean, Symbol, and Math algorithms; retain numeric primitives.
+- [~] Math algorithms: `max`, `min`, and `abs` are self-hosted in
+  `builtins/Math.js`; Rust retains numeric primitives and performance-heavy
+  functions. Number/Boolean/Symbol work is pending.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
 - [ ] Promise and iterator algorithms; retain scheduling and suspension.
 - [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
