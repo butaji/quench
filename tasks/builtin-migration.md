@@ -108,8 +108,9 @@ self-hosted JavaScript layer.
 - [~] JSON public `parse` and `stringify` methods are JS-owned wrappers over
   the crate-backed Rust serializer/parser; JSON parsing and serialization stay
   Rust-owned for recursive data conversion and engine integration.
-- [~] URI global methods are JS-owned wrappers over Rust UTF-8 and percent-
-  encoding primitives; malformed Unicode handling remains Rust-owned.
+- [~] URI and numeric global methods (`encodeURI`, `decodeURI`, `parseInt`,
+  `parseFloat`, `isNaN`, and `isFinite`) are JS-owned wrappers over Rust
+  conversion, UTF-8, percent-encoding, and numeric parsing primitives.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and

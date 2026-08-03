@@ -425,7 +425,7 @@ fn to_string_for_spec(arg: &Value) -> Result<String, crate::JsError> {
 
 pub fn register_uri(ctx: &mut Context) {
     // parseInt(string, radix)
-    ctx.register_native("parseInt", |args| {
+    ctx.register_native("__parseInt", |args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         let s = to_string_for_spec(&arg)?;
         let radix_raw = args.get(1).map(to_number).unwrap_or(0.0);
@@ -450,21 +450,21 @@ pub fn register_uri(ctx: &mut Context) {
     });
 
     // parseFloat(string)
-    ctx.register_native("parseFloat", |args| {
+    ctx.register_native("__parseFloat", |args| {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         let s = to_string_for_spec(&arg)?;
         Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
     });
 
     // isNaN(value) — coerces to Number, then checks.
-    ctx.register_native("isNaN", |args| {
+    ctx.register_native("__isNaN", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         let n = try_to_number(&v)?;
         Ok(Value::Boolean(n.is_nan()))
     });
 
     // isFinite(value) — coerces to Number, returns false for NaN / ±Infinity.
-    ctx.register_native("isFinite", |args| {
+    ctx.register_native("__isFinite", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         let n = try_to_number(&v)?;
         Ok(Value::Boolean(n.is_finite()))
