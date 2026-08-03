@@ -342,3 +342,6 @@ Node error code for each invalid type and cleaning up the temporary file.
 
 Stage 135 formalized synchronous `fs.truncate` fractional-length validation,
 asserting `ERR_OUT_OF_RANGE` and cleaning up the temporary file.
+
+Stage 136 formalized hexadecimal and base64 `fs.readFileSync` encodings,
+asserting their exact decoded-string results and cleaning up the temporary file.
