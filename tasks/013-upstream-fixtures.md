@@ -354,3 +354,6 @@ of a missing file, its empty decoded result, and cleanup.
 
 Stage 139 formalized default `fs.writeFileSync` permission bits, comparing the
 created mode with the process umask and cleaning up the temporary file.
+
+Stage 140 formalized promise file-handle writes with a source offset and
+explicit file position, asserting byte count, resulting contents, and cleanup.
