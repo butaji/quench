@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchClusterWorkersRequire = globalThis.require;\nconst __quenchClusterWorkers = __quenchClusterWorkersRequire("cluster");\nif (Array.isArray(__quenchClusterWorkers.workers)) { const workers = {}; for (const worker of __quenchClusterWorkers.workers) workers[worker.id] = worker; Object.defineProperty(workers, "push", { value: (worker) => { workers[worker.id] = worker; worker.once("exit", () => { delete workers[worker.id]; }); }, enumerable: false }); Object.defineProperty(workers, Symbol.iterator, { value: function* () { for (const key of Object.keys(workers)) yield workers[key]; }, enumerable: false }); __quenchClusterWorkers.workers = workers; }\n'
+);
