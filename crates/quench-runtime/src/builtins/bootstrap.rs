@@ -225,6 +225,14 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/DataView.js"
         )),
     ),
+    // Phase 19.75: URI global wrappers over Rust UTF-8/percent primitives.
+    (
+        "URI",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/URI.js"
+        )),
+    ),
     // Phase 20: AsyncFunction — sets @@toStringTag on %AsyncFunctionPrototype%
     (
         "AsyncFunction",

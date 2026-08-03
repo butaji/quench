@@ -471,25 +471,25 @@ pub fn register_uri(ctx: &mut Context) {
     });
 
     // encodeURI(uri) — leaves reserved characters alone.
-    ctx.register_native("encodeURI", |args| {
+    ctx.register_native("__encodeURI", |args| {
         let s = uri_argument(args.first())?;
         Ok(Value::String(encode_uri(&s, true)?))
     });
 
     // encodeURIComponent(str) — escapes reserved characters too.
-    ctx.register_native("encodeURIComponent", |args| {
+    ctx.register_native("__encodeURIComponent", |args| {
         let s = uri_argument(args.first())?;
         Ok(Value::String(encode_uri(&s, false)?))
     });
 
     // decodeURI(uri) — leaves reserved percent-escapes intact.
-    ctx.register_native("decodeURI", |args| {
+    ctx.register_native("__decodeURI", |args| {
         let s = uri_argument(args.first())?;
         decode_uri(&s, true).map(Value::String)
     });
 
     // decodeURIComponent(str) — decodes every percent-escape.
-    ctx.register_native("decodeURIComponent", |args| {
+    ctx.register_native("__decodeURIComponent", |args| {
         let s = uri_argument(args.first())?;
         decode_uri_component(&s).map(Value::String)
     });
