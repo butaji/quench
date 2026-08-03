@@ -332,13 +332,14 @@ fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
         .borrow()
         .descriptors
         .keys()
-        .filter_map(|key| prototype.borrow().get_own(key))
+        .filter_map(|key| prototype.borrow().get_own(key).map(|value| (key.clone(), value)))
         .collect::<Vec<_>>();
     for descriptor in prototype.borrow_mut().descriptors.values_mut() {
         descriptor.enumerable = false;
     }
-    for value in values {
+    for (key, value) in values {
         if let crate::value::Value::Function(function) = value {
+            let _ = function.set_property("name", crate::value::Value::String(key));
             let _ = function.set_property(
                 "\0nonconstructable",
                 crate::value::Value::Boolean(true),
@@ -563,6 +564,15 @@ mod tests {
                  delete Array.prototype[0]; \
                  result[0] === 7 && Object.prototype.hasOwnProperty.call(result, '0')",
             )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_array_methods_have_intrinsic_names() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("Array.prototype.at.name === 'at' && Array.prototype.findLast.name === 'findLast'")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }

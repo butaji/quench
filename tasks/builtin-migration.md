@@ -268,6 +268,9 @@ self-hosted JavaScript layer.
 - [x] Add the shared JS `CreateDataProperty` helper for self-hosted Array
   result creation, and use it where result indices must be own properties
   even when an inherited index setter exists.
+- [x] Normalize self-hosted prototype method `name` properties from their
+  installed property keys during bootstrap, preserving the intrinsic names
+  expected by the language while keeping implementation bodies in JS.
 
 ## First increment
 
