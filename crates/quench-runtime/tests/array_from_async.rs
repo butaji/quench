@@ -13,6 +13,17 @@ fn array_from_async_awaits_mapping_promises() {
 }
 
 #[test]
+fn array_from_async_consumes_async_iterables() {
+    let mut ctx = Context::new().unwrap();
+    quench_runtime::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    ctx.eval(
+        "var result; var i=0; var input={[Symbol.asyncIterator](){return {next(){return Promise.resolve(i<2?{value:i++,done:false}:{done:true});}};}}; Array.fromAsync(input).then(v=>result=v.join(','));",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("0,1".to_string())));
+}
+
+#[test]
 fn array_from_async_awaits_each_mapping_result_before_next_call() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(

@@ -7,6 +7,7 @@ var ThrowTypeError = ops.ThrowTypeError;
 var SameValueZero = ops.SameValueZero;
 var HasProperty = ops.HasProperty;
 
+
 function ToLength(value) {
   var n = Number(value);
   if (n !== n || n <= 0) return 0;
@@ -70,6 +71,29 @@ Array.from = function ArrayFrom(items) {
   }
   var result = Reflect.construct(Array, [values.length], this);
   for (var i = 0; i < values.length; i++) CreateDataProperty(result, i, mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i));
+  return result;
+};
+
+Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
+  if (items === null || items === undefined) throw ThrowTypeError("Array.fromAsync requires an object");
+  if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
+  var values = [];
+  var index = 0;
+  if (items[Symbol.asyncIterator] !== undefined || items[Symbol.iterator] !== undefined) {
+    for await (var value of items) {
+      values.push(mapfn === undefined ? value : await mapfn.call(thisArg, value, index, items));
+      index++;
+    }
+  } else {
+    var length = ToLength(items.length);
+    for (var i = 0; i < length; i++) {
+      var element = await items[i];
+      values.push(mapfn === undefined ? element : await mapfn.call(thisArg, element, i, items));
+    }
+  }
+  var result = new this(values.length);
+  for (var j = 0; j < values.length; j++) CreateDataProperty(result, j, values[j]);
+  result.length = values.length;
   return result;
 };
 
