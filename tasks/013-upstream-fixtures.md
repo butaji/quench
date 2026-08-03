@@ -999,6 +999,9 @@ big-endian encodings.
 Stage 358 formalized Buffer write range validation and `ERR_OUT_OF_RANGE`
 metadata for negative offsets.
 
+Stage 359 formalized Buffer UTF-8 and UCS-2 write encodings with corresponding
+round-trip and byte-layout checks.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
