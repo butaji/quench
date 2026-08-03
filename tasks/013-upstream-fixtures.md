@@ -614,3 +614,12 @@ invalid padding yields an empty Buffer.
 
 Stage 225 formalized Buffer `inspect`, asserting the canonical `<Buffer ...>`
 hex-hex rendering.
+
+Stage 226 formalized Buffer `write` UTF-8 partial-character handling,
+asserting multi-byte characters spanning the buffer boundary are truncated.
+
+Stage 227 formalized Buffer lone-surrogate UTF-8 replacement, asserting
+unpaired surrogates encode as the U+FFFD replacement character.
+
+Stage 228 formalized Buffer `alloc` encoded fill values, asserting hex-string
+fills repeat across the buffer and truncate at the end.
