@@ -233,3 +233,6 @@ these small fixtures isolate the currently implemented contract.
 |   223 | Buffer base64 whitespace tolerance                             | `tools/run-node-tests.sh --stage 223` |
 |   224 | Buffer base64 invalid-input handling                           | `tools/run-node-tests.sh --stage 224` |
 |   225 | Buffer `inspect` hex rendering                                 | `tools/run-node-tests.sh --stage 225` |
+|   226 | Buffer `write` UTF-8 partial-char handling                     | `tools/run-node-tests.sh --stage 226` |
+|   227 | Buffer lone-surrogate UTF-8 replacement                       | `tools/run-node-tests.sh --stage 227` |
+|   228 | Buffer `alloc` encoded fill values                             | `tools/run-node-tests.sh --stage 228` |
