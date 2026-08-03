@@ -353,3 +353,4 @@ these small fixtures isolate the currently implemented contract.
 |   354 | assert missing expected exception handling                        | `tools/run-node-tests.sh --stage 354` |
 |   355 | assert Error object reference mismatch                            | `tools/run-node-tests.sh --stage 355` |
 |   356 | assert.throws custom message formatting                           | `tools/run-node-tests.sh --stage 356` |
+|   357 | Buffer numeric read methods                                       | `tools/run-node-tests.sh --stage 357` |
