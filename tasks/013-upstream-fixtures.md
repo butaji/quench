@@ -408,3 +408,6 @@ semantics before removing the temporary directory.
 
 Stage 157 formalized promise `lstat` on a symbolic link, asserting link
 metadata rather than target metadata and cleaning up both entries.
+
+Stage 158 formalized synchronous, callback, and promise hard-link creation,
+asserting shared contents and cleaning up both links and the source.
