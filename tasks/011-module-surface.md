@@ -253,3 +253,6 @@ remains a subsequent host-boundary slice.
 Stage 554 registers the `dgram` UDP socket shape with bind/send/close events
 and address reporting; actual datagram I/O remains tracked for the Rust socket
 boundary.
+Stage 555 registers `https` with explicit TLS-unsupported errors for request,
+get, and server operations until the planned OpenSSL/rustls host boundary is
+implemented.
