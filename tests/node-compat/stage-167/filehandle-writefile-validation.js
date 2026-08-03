@@ -1,15 +1,15 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
-  const handle = await fs.promises.open(
-    `/tmp/quench-node-stage-167-${process.pid}`,
-    "w+"
-  );
+  const path = `/tmp/quench-node-stage-167-${process.pid}`;
+  const handle = await fs.promises.open(path, "w+");
   try {
     await handle.writeFile(42);
-    throw new Error("accepted invalid writeFile value");
+    assert.fail("accepted invalid writeFile value");
   } catch (error) {
-    if (error.code !== "ERR_INVALID_ARG_TYPE") throw error;
+    assert.strictEqual(error.code, "ERR_INVALID_ARG_TYPE");
   }
   await handle.close();
+  fs.rmSync(path);
 })();
