@@ -942,3 +942,6 @@ and message in the single-argument representation.
 
 Stage 339 formalized `util.formatWithOptions` option validation, preserving
 `ERR_INVALID_ARG_TYPE` for non-object option values.
+
+Stage 340 formalized a non-debug common fixture regression check for
+`util.types.isDate`.
