@@ -813,3 +813,6 @@ the string hint for `%s` and default coercion in concatenation.
 
 Stage 296 formalized `util.format` rendering for Date and Symbol built-ins,
 asserting Date inspection equivalence and Symbol descriptions.
+
+Stage 297 formalized `%s` Date conversion in `util.format`, asserting the
+canonical ISO timestamp string.
