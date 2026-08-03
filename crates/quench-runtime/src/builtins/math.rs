@@ -224,7 +224,7 @@ fn register_reduce_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math.borrow_mut().set(
-        "__random",
+        "random",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             Ok(Value::Number(rand_simple()))
         }))),

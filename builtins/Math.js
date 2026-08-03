@@ -98,4 +98,3 @@ Math.imul = function(x, y) { return Math.__imul(Number(x), Number(y)); };
 Math.fround = function(x) { return Math.__fround(Number(x)); };
 Math.clz32 = function(x) { return Math.__clz32(Number(x)); };
 Math.hypot = function() { return Math.__hypot.apply(Math, arguments); };
-Math.random = function() { return Math.__random(); };

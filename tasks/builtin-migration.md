@@ -70,9 +70,10 @@ self-hosted JavaScript layer.
   `toWellFormed` are now authored in `builtins/String.js`; Rust retains string
   storage, iteration, UTF-16 primitives, and RegExp execution. Remaining
   String methods are pending migration.
-- [~] Math public algorithms and wiring are self-hosted in `builtins/Math.js`,
-  including `max`, `min`, `abs`, rounding, transcendental, random, and numeric
-  utility methods; Rust retains the performance-sensitive numeric primitives.
+- [~] Math public algorithms and coercion-sensitive methods are self-hosted in
+  `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
+  and numeric utility methods; the pure `random` entry point remains Rust-owned
+  because a JS proxy would add LOC. Rust retains numeric primitives.
   Number/Boolean/Symbol public wiring is migrated; remaining work is spec
   surface completion and conformance polish.
 - [~] Number formatting wrappers are routed through `builtins/Number.js`;
