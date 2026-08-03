@@ -195,9 +195,9 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
     }
     {
         let mut p = weakset_proto.borrow_mut();
-        p.set("add", native_fn(weakset_add_impl));
-        p.set("delete", native_fn(weakset_delete_impl));
-        p.set("has", native_fn(weakset_has_impl));
+        p.set("__add", native_fn(weakset_add_impl));
+        p.set("__delete", native_fn(weakset_delete_impl));
+        p.set("__has", native_fn(weakset_has_impl));
     }
     let weakset_proto_for_ctor = Rc::clone(&weakset_proto);
     let weakset_constructor = native_fn(move |args| {
@@ -280,10 +280,10 @@ pub fn register_weak_collections(ctx: &mut crate::Context) {
     }
     {
         let mut p = weakmap_proto.borrow_mut();
-        p.set("set", native_fn(weakmap_set_impl));
-        p.set("get", native_fn(weakmap_get_impl));
-        p.set("delete", native_fn(weakmap_delete_impl));
-        p.set("has", native_fn(weakmap_has_impl));
+        p.set("__set", native_fn(weakmap_set_impl));
+        p.set("__get", native_fn(weakmap_get_impl));
+        p.set("__delete", native_fn(weakmap_delete_impl));
+        p.set("__has", native_fn(weakmap_has_impl));
     }
     let weakmap_proto_for_ctor = Rc::clone(&weakmap_proto);
     let weakmap_constructor = native_fn(move |args| {

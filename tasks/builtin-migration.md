@@ -40,6 +40,8 @@ self-hosted JavaScript layer.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
 - [~] Map and Set `forEach` algorithms are now self-hosted over Rust-backed
   iterators; Rust retains keyed storage and iterator state.
+- [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage
+  primitives; Rust retains weak-key storage and identity operations.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Constructor and combinator algorithms remain

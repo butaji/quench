@@ -2,10 +2,10 @@
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
-var _nativeGet = WeakMap.prototype.get;
-var _nativeSet = WeakMap.prototype.set;
-var _nativeHas = WeakMap.prototype.has;
-var _nativeDelete = WeakMap.prototype.delete;
+var _nativeGet = WeakMap.prototype.__get;
+var _nativeSet = WeakMap.prototype.__set;
+var _nativeHas = WeakMap.prototype.__has;
+var _nativeDelete = WeakMap.prototype.__delete;
 
 WeakMap.prototype.get = function WeakMapGet(key) {
   if (this === null || this === undefined) throw ThrowTypeError("WeakMap.prototype.get called on null or undefined");

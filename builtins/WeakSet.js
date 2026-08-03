@@ -2,9 +2,9 @@
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
-var _nativeAdd = WeakSet.prototype.add;
-var _nativeHas = WeakSet.prototype.has;
-var _nativeDelete = WeakSet.prototype.delete;
+var _nativeAdd = WeakSet.prototype.__add;
+var _nativeHas = WeakSet.prototype.__has;
+var _nativeDelete = WeakSet.prototype.__delete;
 
 WeakSet.prototype.add = function WeakSetAdd(value) {
   if (this === null || this === undefined) throw ThrowTypeError("WeakSet.prototype.add called on null or undefined");
