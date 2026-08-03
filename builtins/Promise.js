@@ -5,6 +5,8 @@ var ThrowTypeError = ops.ThrowTypeError;
 var _nativeThen = Promise.prototype.then;
 var _nativeResolve = Promise.__resolve;
 var _nativeReject = Promise.__reject;
+var _nativeAll = Promise.__all;
+var _nativeRace = Promise.__race;
 
 Promise.resolve = function PromiseResolve(value) {
   return _nativeResolve.call(this, value);
@@ -12,6 +14,14 @@ Promise.resolve = function PromiseResolve(value) {
 
 Promise.reject = function PromiseReject(reason) {
   return _nativeReject.call(this, reason);
+};
+
+Promise.all = function PromiseAll(iterable) {
+  return _nativeAll.call(this, iterable);
+};
+
+Promise.race = function PromiseRace(iterable) {
+  return _nativeRace.call(this, iterable);
 };
 
 // Promise.prototype.then (ES2025 §27.2.5.4)

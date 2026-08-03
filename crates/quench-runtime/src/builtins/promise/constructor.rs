@@ -118,7 +118,7 @@ pub fn create_promise_constructor(
 
     let proto_for_static_clone3 = Rc::clone(&proto_for_static);
     constructor.set_static_method(
-        "all",
+        "__all",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
             promise_all_impl(args, Rc::clone(&proto_for_static_clone3))
         }))),
@@ -126,7 +126,7 @@ pub fn create_promise_constructor(
 
     let proto_for_static_clone4 = Rc::clone(&proto_for_static);
     constructor.set_static_method(
-        "race",
+        "__race",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
             let this_val = crate::interpreter::get_native_this().unwrap_or(Value::Undefined);
             promise_race_impl(args, this_val, Rc::clone(&proto_for_static_clone4))
