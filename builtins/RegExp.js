@@ -3,8 +3,8 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeTest = RegExp.prototype.test;
-var _nativeToString = RegExp.prototype.toString;
+var _nativeTest = RegExp.prototype.__test;
+var _nativeToString = RegExp.prototype.__toString;
 
 // RegExp.prototype.test (ES2025 §22.2.5.15)
 RegExp.prototype.test = function RegExpTest(S) {

@@ -412,7 +412,7 @@ fn create_regexp_prototype() -> Rc<RefCell<Object>> {
 /// Setup RegExp prototype methods
 fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
     proto.borrow_mut().set(
-        "test",
+        "__test",
         Value::NativeFunction(Rc::new(NativeFunction::new(regexp_test_impl))),
     );
 
@@ -422,7 +422,7 @@ fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
     );
 
     proto.borrow_mut().set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             regexp_to_string_impl(args)
         }))),
