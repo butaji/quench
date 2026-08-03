@@ -453,3 +453,6 @@ errors, asserting `ERR_INVALID_STATE` and cleanup.
 
 Stage 172 formalized pull transforms and pre-aborted signals, asserting
 transformed text, `AbortError`, and cleanup.
+
+Stage 173 formalized invalid file-handle pull options, asserting Node's
+argument-type/range diagnostics and cleanup.
