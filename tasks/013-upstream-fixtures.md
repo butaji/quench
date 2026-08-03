@@ -321,3 +321,6 @@ contents and cleanup.
 
 Stage 128 formalized the upstream common `getArrayBufferViews` helper,
 asserting multiple views with matching byte lengths.
+
+Stage 129 formalized `fs.writeFileSync` encoding and append-flag options,
+asserting append and overwrite results with cleanup.
