@@ -316,3 +316,4 @@ these small fixtures isolate the currently implemented contract.
 |   317 | common.mustCallAtLeast callback counting                         | `tools/run-node-tests.sh --stage 317` |
 |   318 | OS tmpdir environment precedence and normalization               | `tools/run-node-tests.sh --stage 318` |
 |   319 | POSIX os.tmpdir slash preservation                                | `tools/run-node-tests.sh --stage 319` |
+|   320 | OS string-returning function coercion                             | `tools/run-node-tests.sh --stage 320` |
