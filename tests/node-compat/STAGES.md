@@ -147,3 +147,4 @@ these small fixtures isolate the currently implemented contract.
 |   137 | buffer option on synchronous `fs.readFileSync`            | `tools/run-node-tests.sh --stage 137` |
 |   138 | create behavior of `fs.readFileSync` append mode          | `tools/run-node-tests.sh --stage 138` |
 |   139 | default permission mode for `fs.writeFileSync`            | `tools/run-node-tests.sh --stage 139` |
+|   140 | promise file-handle offset writes                         | `tools/run-node-tests.sh --stage 140` |
