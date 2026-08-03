@@ -364,3 +364,4 @@ these small fixtures isolate the currently implemented contract.
 |   365 | fs append Buffer bytes                                           | `tools/run-node-tests.sh --stage 365` |
 |   366 | timer timeout scheduling and cancellation                        | `tools/run-node-tests.sh --stage 366` |
 |   367 | timer interval repetition and cancellation                       | `tools/run-node-tests.sh --stage 367` |
+|   368 | timer callback arguments and immediate handles                    | `tools/run-node-tests.sh --stage 368` |
