@@ -468,3 +468,6 @@ contents and the `AbortError` from an already-aborted signal.
 
 Stage 177 formalized promise file-handle `write`, asserting string writes and
 `ERR_INVALID_ARG_TYPE` for invalid data values.
+
+Stage 178 formalized callback `realpath`, asserting default and null options,
+successful results, and the error callback contract for missing paths.
