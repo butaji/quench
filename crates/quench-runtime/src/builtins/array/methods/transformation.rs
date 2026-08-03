@@ -38,10 +38,8 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                     None,
                 )
                 .ok()
-                .and_then(|value| match value {
-                    Value::Number(length) => Some(length.max(0.0) as u32),
-                    _ => None,
-                });
+                .and_then(|value| crate::value::try_to_number(&value).ok())
+                .map(|length| length.max(0.0) as u32);
                 while length.is_none_or(|limit| i < limit) {
                     let val = arr.properties.get(&i.to_string()).or_else(|| {
                         let idx = i as usize;
@@ -378,6 +376,15 @@ mod tests {
         assert_eq!(
             ctx.eval("[1, 2, 3].reduceRight(function(a, b) { return a - b; })"),
             Ok(Value::Number(0.0))
+        );
+    }
+
+    #[test]
+    fn array_every_coerces_array_like_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var accessed=false; var o={0:1,1:1}; Object.defineProperty(o,'length',{get:function(){return {toString:function(){accessed=true;return '2';}}}}); Array.prototype.every.call(o,function(v){return v===1;}); accessed"),
+            Ok(Value::Boolean(true))
         );
     }
 }
