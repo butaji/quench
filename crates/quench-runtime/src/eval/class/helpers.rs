@@ -2164,6 +2164,15 @@ mod tests {
     }
 
     #[test]
+    fn derived_rest_constructor_arguments_match_rest_parameter() {
+        let r = eval(
+            "class Base { constructor(...a) { this.base = arguments.length + ':' + a.length; } } class Child extends Base { constructor(...b) { super(1, 2, 3); this.child = arguments.length + ':' + b.length; } } var c = new Child(1, 2, 3); c.base + ',' + c.child",
+        )
+        .unwrap();
+        assert_eq!(r, Value::String("3:3,3:3".into()));
+    }
+
+    #[test]
     fn arguments_object_callee() {
         let r = eval("function f() { return arguments.callee === f; } f()").unwrap();
         assert_eq!(r, Value::Boolean(true));

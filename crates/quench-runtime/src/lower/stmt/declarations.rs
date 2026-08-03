@@ -302,19 +302,8 @@ fn lower_class_member_stmt(member: &ast::ClassElement) -> Option<ClassMember> {
 }
 
 fn lower_constructor_stmt(method: &ast::MethodDefinition) -> Option<ClassMember> {
-    let mut ps = lower_formal_params(&method.value.params);
-    let mut has_rest = false;
-    if let Some(rest) = &method.value.params.rest {
-        if let ast::BindingPattern::BindingIdentifier(ident) = &rest.rest.argument {
-            ps.push(Param {
-                name: ident.name.as_str().to_string(),
-                default: None,
-                pattern: None,
-                rest: true,
-            });
-            has_rest = true;
-        }
-    }
+    let ps = lower_formal_params(&method.value.params);
+    let has_rest = method.value.params.rest.is_some();
     let body = method
         .value
         .body
