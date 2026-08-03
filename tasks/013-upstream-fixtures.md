@@ -840,3 +840,6 @@ asserting escaped separators and suffix removal.
 
 Stage 305 formalized Win32 parsing of slash-rooted paths, asserting the root,
 directory, basename, extension, and name fields.
+
+Stage 306 formalized POSIX parsing of trailing separators and `./`, asserting
+the normalized root, directory, basename, extension, and name fields.
