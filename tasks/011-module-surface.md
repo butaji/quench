@@ -216,3 +216,6 @@ Stage 537 converts the unsupported `trace_events` path into an explicit
 Node-compatible and testable instead of leaking a generic loader exception.
 Stage 538 applies the same explicit unsupported-module contract to `wasi`;
 WASI runtime integration remains outside the in-process rquickjs target.
+Stage 539 extends the explicit unsupported boundary to both inspector module
+variants, preventing debugger APIs from falling through to a generic loader
+error on this target.
