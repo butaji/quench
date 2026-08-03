@@ -28,7 +28,7 @@ Each row is a slice. The prefix is the file-name prefix in
 
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
-| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560 (worker connection state) |
+| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561 (worker state methods) |
 | 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503                    |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
@@ -141,3 +141,6 @@ representative upstream fixtures before adding more API surface.
 
 Stage 560 extends that probe to the worker connection predicate exposed by
 the upstream cluster fixtures.
+
+Stage 561 compared the actual `Worker` prototype with Node and filled the
+missing `isDead()` and `destroy()` methods without changing the host layer.

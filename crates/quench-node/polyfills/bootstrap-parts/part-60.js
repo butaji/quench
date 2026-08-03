@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchClusterWorkerRequire = globalThis.require;\nconst __quenchClusterWorkerModule = __quenchClusterWorkerRequire("cluster");\nconst __quenchWorkerPrototype = __quenchClusterWorkerModule.Worker?.prototype;\nif (__quenchWorkerPrototype && typeof __quenchWorkerPrototype.isDead !== "function") __quenchWorkerPrototype.isDead = function () { return this.state === "dead" || this.process?.exitCode != null || this.process?.signalCode != null; };\nif (__quenchWorkerPrototype && typeof __quenchWorkerPrototype.destroy !== "function") __quenchWorkerPrototype.destroy = function (signal) { return this.kill(signal); };\n'
+);
