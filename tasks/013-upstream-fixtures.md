@@ -324,3 +324,6 @@ asserting multiple views with matching byte lengths.
 
 Stage 129 formalized `fs.writeFileSync` encoding and append-flag options,
 asserting append and overwrite results with cleanup.
+
+Stage 130 formalized `fs.writeFileSync` flush validation and successful flush
+writing, asserting invalid types, output, and cleanup.
