@@ -1,8 +1,8 @@
-const assert = require('assert');
-const fs = require('fs');
-const folder = fs.mkdtempSync('/tmp/quench-node-');
+const assert = require("assert");
+const fs = require("fs");
+const folder = fs.mkdtempSync("/tmp/quench-node-");
 const file = `${folder}/file`;
-fs.writeFileSync(file, 'x');
+fs.writeFileSync(file, "x");
 assert.strictEqual(fs.statSync(file).isFile(), true);
 assert.strictEqual(fs.statSync(file).isDirectory(), false);
 assert.strictEqual(fs.statSync(folder).isDirectory(), true);

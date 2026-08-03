@@ -2,13 +2,13 @@ const crypto = require("crypto");
 
 for (const create of [
   () => crypto.createHash("sha256"),
-  () => crypto.createHmac("sha256", "key"),
+  () => crypto.createHmac("sha256", "key")
 ]) {
   const digest = create().update("value");
   digest.digest();
   for (const operation of [
     () => digest.update("again"),
-    () => digest.digest(),
+    () => digest.digest()
   ]) {
     let error;
     try {
