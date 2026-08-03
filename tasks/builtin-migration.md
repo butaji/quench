@@ -81,8 +81,9 @@ self-hosted JavaScript layer.
   conversion, radix formatting, and constructor/storage primitives.
 - [~] Number static predicates (`isNaN`, `isFinite`, `isInteger`,
   `isSafeInteger`) are JS-owned; Rust retains numeric primitives.
-- [~] `Number.parseInt` and `Number.parseFloat` are JS-owned aliases over
-  Rust-backed global parsing primitives.
+- [~] `Number.parseInt` and `Number.parseFloat` remain direct Rust aliases
+  because JS wrappers would only add pass-through LOC; numeric predicates and
+  formatting algorithms remain JS-owned where they add behavior.
 - [~] Boolean public prototype methods are JS-owned; Rust retains Boolean
   construction, boxing, and primitive conversion.
 - [~] Symbol public prototype and registry methods (`toString`, `valueOf`,

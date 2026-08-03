@@ -321,7 +321,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "__parseInt",
+        "parseInt",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
             let radix = args.get(1).map(|v| to_number(v) as i32).unwrap_or(0);
@@ -337,7 +337,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "__parseFloat",
+        "parseFloat",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
             Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))

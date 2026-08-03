@@ -25,14 +25,6 @@ Number.isSafeInteger = function NumberIsSafeInteger(value) {
   return Number.isInteger(value) && Math.abs(value) <= 9007199254740991;
 };
 
-Number.parseInt = function NumberParseInt(string, radix) {
-  return parseInt(string, radix);
-};
-
-Number.parseFloat = function NumberParseFloat(string) {
-  return parseFloat(string);
-};
-
 // Number.prototype.toFixed (ES2025 §21.1.3.5)
 Number.prototype.toFixed = function NumberToFixed(digits) {
   if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.toFixed called on null or undefined");
