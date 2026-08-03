@@ -1132,6 +1132,33 @@ fn class_static_block_rejects_await_expression() {
 }
 
 #[test]
+fn class_static_block_rejects_yield_and_duplicate_labels() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for relative in [
+        "tests/test262/test/language/statements/class/static-init-invalid-yield.js",
+        "tests/test262/test/language/statements/class/static-init-invalid-label-dup.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join(relative);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
+fn class_heritage_expression_is_strict() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/class/strict-mode/with.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn generator_class_method_rejects_yield_parameter_binding() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

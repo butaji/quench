@@ -152,6 +152,43 @@ struct ClassNameChecker {
     error: Option<JsError>,
 }
 
+struct DuplicateLabelChecker {
+    labels: HashSet<String>,
+    duplicate: bool,
+}
+
+struct StrictHeritageChecker(Option<JsError>);
+
+impl<'a> Visit<'a> for StrictHeritageChecker {
+    fn visit_function(
+        &mut self,
+        function: &ast::Function<'a>,
+        _flags: oxc::syntax::scope::ScopeFlags,
+    ) {
+        if self.0.is_some() {
+            return;
+        }
+        if let Some(body) = &function.body {
+            for statement in &body.statements {
+                if let Err(error) = check_stmt(statement, true) {
+                    self.0 = Some(error);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Visit<'a> for DuplicateLabelChecker {
+    fn visit_labeled_statement(&mut self, statement: &ast::LabeledStatement<'a>) {
+        if !self.labels.insert(statement.label.name.to_string()) {
+            self.duplicate = true;
+            return;
+        }
+        self.visit_statement(&statement.body);
+    }
+}
+
 struct StrictFunctionNameChecker(bool);
 
 impl<'a> Visit<'a> for StrictFunctionNameChecker {
@@ -336,6 +373,11 @@ impl<'a> Visit<'a> for ClassNameChecker {
         let mut await_finder = AwaitFinder(false);
         let mut yield_finder = YieldFinder(false);
         let mut super_call = SuperCallFinder(false);
+        let mut yield_name = StrictYieldNameFinder(false);
+        let mut labels = DuplicateLabelChecker {
+            labels: HashSet::new(),
+            duplicate: false,
+        };
         for statement in &block.body {
             if let Err(error) = check_stmt(statement, true) {
                 self.error = Some(error);
@@ -345,6 +387,8 @@ impl<'a> Visit<'a> for ClassNameChecker {
             await_finder.visit_statement(statement);
             yield_finder.visit_statement(statement);
             super_call.visit_statement(statement);
+            yield_name.visit_statement(statement);
+            labels.visit_statement(statement);
         }
         if arguments.0 {
             self.error = Some(JsError(
@@ -358,9 +402,15 @@ impl<'a> Visit<'a> for ClassNameChecker {
             ));
             return;
         }
-        if yield_finder.0 {
+        if yield_finder.0 || yield_name.0 {
             self.error = Some(JsError(
                 "SyntaxError: yield is not allowed in a class static block".into(),
+            ));
+            return;
+        }
+        if labels.duplicate {
+            self.error = Some(JsError(
+                "SyntaxError: duplicate labels in a class static block".into(),
             ));
             return;
         }
@@ -396,6 +446,16 @@ impl<'a> Visit<'a> for ClassNameChecker {
             return;
         }
         let mut constructors = 0;
+        if let Some(super_class) = &class.super_class {
+            let mut heritage = StrictHeritageChecker(None);
+            heritage.visit_expression(super_class);
+            if self.error.is_none() {
+                self.error = heritage.0;
+            }
+            if self.error.is_some() {
+                return;
+            }
+        }
         for element in &class.body.body {
             if matches!(
                 element,
