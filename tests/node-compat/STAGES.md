@@ -141,3 +141,4 @@ these small fixtures isolate the currently implemented contract.
 |   131 | fd-based callback `fs.appendFile`                         | `tools/run-node-tests.sh --stage 131` |
 |   132 | fd-based promise `fs.appendFile`                          | `tools/run-node-tests.sh --stage 132` |
 |   133 | sync `fs.ftruncate` size changes                          | `tools/run-node-tests.sh --stage 133` |
+|   134 | invalid callback `fs.truncate` lengths                    | `tools/run-node-tests.sh --stage 134` |

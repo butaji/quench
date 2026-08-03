@@ -336,3 +336,6 @@ same observable result and cleaning up the temporary file.
 
 Stage 133 formalized synchronous `fs.ftruncate`, asserting successive size
 changes through an open descriptor and cleaning up the temporary file.
+
+Stage 134 formalized callback `fs.truncate` length validation, asserting the
+Node error code for each invalid type and cleaning up the temporary file.
