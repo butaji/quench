@@ -308,3 +308,4 @@ these small fixtures isolate the currently implemented contract.
 |   309 | Win32 UNC path parsing                                          | `tools/run-node-tests.sh --stage 309` |
 |   310 | OS uptime and process priority APIs                              | `tools/run-node-tests.sh --stage 310` |
 |   311 | OS positive uptime contract                                      | `tools/run-node-tests.sh --stage 311` |
+|   312 | OS host information and loopback interfaces                      | `tools/run-node-tests.sh --stage 312` |

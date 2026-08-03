@@ -858,3 +858,6 @@ uptime/priority values and priority mutation.
 
 Stage 311 formalized the positive OS uptime contract, asserting a numeric
 value greater than zero.
+
+Stage 312 formalized OS host information, memory/load metrics, and loopback
+network interfaces.
