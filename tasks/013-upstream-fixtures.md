@@ -366,3 +366,6 @@ contents after shrinking an open file and cleaning up the temporary file.
 
 Stage 143 formalized file-handle metadata, `sync`, and `datasync`, asserting
 file size/type metadata and cleanup after closing the handle.
+
+Stage 144 formalized file-handle chmod and closed-handle behavior, asserting
+permission bits, `EBADF`, and cleanup.

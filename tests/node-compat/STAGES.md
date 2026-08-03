@@ -151,3 +151,4 @@ these small fixtures isolate the currently implemented contract.
 |   141 | promise file-handle vectored read/write                   | `tools/run-node-tests.sh --stage 141` |
 |   142 | promise file-handle truncation                            | `tools/run-node-tests.sh --stage 142` |
 |   143 | promise file-handle metadata and sync methods             | `tools/run-node-tests.sh --stage 143` |
+|   144 | file-handle chmod and closed-handle errors                | `tools/run-node-tests.sh --stage 144` |
