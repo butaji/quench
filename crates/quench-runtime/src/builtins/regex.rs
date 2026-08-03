@@ -284,6 +284,15 @@ mod tests {
             .eval("var r = /./; r.lastIndex = {valueOf: function() { throw new Test262Error(); }}; r[Symbol.matchAll]('')")
             .is_err());
     }
+
+    #[test]
+    fn regexp_match_all_uses_species_matcher() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var r = /\\d/u; r.constructor = {[Symbol.species]: function() { return /\\w/g; }}; r[Symbol.matchAll]('a*b').next().value[0]"),
+            Ok(Value::String("a".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -459,12 +468,41 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         current_regex_env().as_ref(),
     )?;
     let flags = regexp_search_string(Some(&flags_value))?;
-    if !flags.contains('g') {
+    let mut matcher_obj = Rc::clone(&regex_obj);
+    if let Some(Value::Object(constructor)) = regex_obj.borrow().get("constructor") {
+        if let Some(Value::Symbol(species)) =
+            crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+        {
+            if let Some(species_fn) = constructor.borrow().get(&species.property_key()) {
+                let matcher = crate::eval::function::call_value_with_this(
+                    species_fn,
+                    vec![
+                        Value::Object(Rc::clone(&regex_obj)),
+                        Value::String(flags.clone()),
+                    ],
+                    Value::Undefined,
+                )?;
+                if let Value::Object(matcher) = matcher {
+                    matcher_obj = matcher;
+                }
+            }
+        }
+    }
+    let matcher_flags = if Rc::ptr_eq(&matcher_obj, &regex_obj) {
+        flags.clone()
+    } else {
+        matcher_obj
+            .borrow()
+            .internal_regex_flags
+            .clone()
+            .unwrap_or(flags)
+    };
+    if !matcher_flags.contains('g') {
         return Err(JsError::new(
             "TypeError: matchAll requires global RegExp".to_string(),
         ));
     }
-    let source = regex_obj
+    let source = matcher_obj
         .borrow()
         .internal_regex_source
         .clone()
@@ -472,7 +510,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let regex =
         Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
     let last_index = crate::eval::member::eval_object_member_value(
-        &regex_obj,
+        &matcher_obj,
         &Value::String("lastIndex".to_string()),
         current_regex_env().as_ref(),
     )?;
