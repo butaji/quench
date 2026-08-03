@@ -246,3 +246,6 @@ callback-based `fs.open` calls.
 
 Stage 103 extended `fs.close` coverage to successful callback closure and
 the `EBADF` result for a descriptor closed twice.
+
+Stage 104 retained descriptor mode-mask coverage for `open` and `fchmod`,
+confirming special mode bits do not leak into the public permission mask.
