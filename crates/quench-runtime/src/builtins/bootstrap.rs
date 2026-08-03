@@ -547,6 +547,13 @@ mod tests {
     }
 
     #[test]
+    fn boxed_number_converts_to_its_primitive_value() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Number(new Number(0)) === 0").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx
