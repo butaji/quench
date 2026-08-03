@@ -69,6 +69,15 @@ Object.assign = function ObjectAssign(target) {
   return to;
 };
 
+Object.defineProperties = function ObjectDefineProperties(O, Properties) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  var object = ToObject(O);
+  var descriptors = ToObject(Properties);
+  var keys = EnumerableOwnKeys(descriptors);
+  for (var i = 0; i < keys.length; i++) Object.defineProperty(object, keys[i], descriptors[keys[i]]);
+  return object;
+};
+
 // Object.hasOwn (ES2025 §20.1.2.14)
 Object.hasOwn = function ObjectHasOwn(O, P) {
   return HasOwnProperty(ToObject(O), P);

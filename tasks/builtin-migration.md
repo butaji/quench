@@ -31,6 +31,8 @@ self-hosted JavaScript layer.
   enumeration remains Rust-backed until its canonical JS bridge is complete.
 - [~] `Object.assign` is JS-owned over canonical key enumeration and core
   property writes.
+- [~] `Object.defineProperties` is JS-owned over the Rust descriptor
+  primitive.
 - [~] `Object.create` is JS-owned over the core object-allocation and
   prototype primitive.
 - [~] `Object.getOwnPropertySymbols` is JS-owned over the canonical own-key

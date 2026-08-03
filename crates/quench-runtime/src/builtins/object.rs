@@ -9,9 +9,7 @@ pub mod prototype_methods;
 #[cfg(test)]
 mod tests;
 
-use crate::builtins::object_static::{
-    object_define_properties, object_define_property,
-};
+use crate::builtins::object_static::object_define_property;
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
 
@@ -60,13 +58,6 @@ pub fn register_object(ctx: &mut Context) {
     constructor.set_static_method(
         "defineProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_define_property))),
-    );
-    constructor.set_static_method(
-        "defineProperties",
-        Value::NativeFunction(Rc::new(NativeFunction::new_named(
-            "defineProperties",
-            object_define_properties,
-        ))),
     );
 
     constructor.set_name("Object");
