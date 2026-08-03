@@ -276,3 +276,6 @@ sync and callback byte results and cleaning up its descriptor and file.
 
 Stage 113 formalized the Buffer/options callback form of `fs.read`, including
 the Node-compatible `offset: null` default and identity of the result buffer.
+
+Stage 114 formalized `fs.read` range and position validation, asserting
+`ERR_OUT_OF_RANGE` and `ERR_INVALID_ARG_TYPE` results with cleanup.
