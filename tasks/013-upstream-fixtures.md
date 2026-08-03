@@ -255,3 +255,6 @@ directory predicates, parent paths, and cleanup of the temporary tree.
 
 Stage 106 expanded directory-handle coverage to synchronous, callback, and
 promise `opendir` reads and closes, including end-of-directory behavior.
+
+Stage 107 expanded asynchronous symlink/readlink coverage with explicit file
+type selection, round-trip target verification, and cleanup.

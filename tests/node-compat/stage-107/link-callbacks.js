@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 const common = require("../common");
 
 const target = "/tmp/quench-node-stage-107-target";
@@ -10,11 +11,14 @@ fs.writeFileSync(target, "link");
 fs.symlink(
   target,
   link,
+  "file",
   common.mustSucceed(() => {
     fs.readlink(
       link,
       common.mustSucceed((value) => {
-        if (value !== target) throw new Error("readlink mismatch");
+        assert.strictEqual(value, target);
+        fs.unlinkSync(link);
+        fs.rmSync(target);
       })
     );
   })
