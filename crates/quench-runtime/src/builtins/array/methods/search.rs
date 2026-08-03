@@ -26,6 +26,14 @@ fn call_find_callback(
     }
 }
 
+fn ensure_callable(callback: &Value) -> Result<(), JsError> {
+    if matches!(callback, Value::Function(_) | Value::NativeFunction(_)) {
+        Ok(())
+    } else {
+        Err(JsError::new("TypeError: predicate is not callable"))
+    }
+}
+
 // ============================================================================
 // Search method implementations
 // ============================================================================
@@ -142,8 +150,9 @@ pub fn proto_includes(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.find(predicate, thisArg?)
 pub fn proto_find(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
+    let elements = get_this_array()?;
 
     for (i, elem) in elements.iter().enumerate() {
         let result = crate::builtins::array::methods::transformation::call_callback(
@@ -159,6 +168,7 @@ pub fn proto_find(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_find_index(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let receiver = crate::builtins::get_native_this();
     for i in 0..elements.len() {
         let elem = match &receiver {
@@ -191,6 +201,7 @@ pub fn proto_find_index(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_find_last(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let len = elements.len();
 
     for i in (0..len).rev() {
@@ -207,6 +218,7 @@ pub fn proto_find_last(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_find_last_index(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    ensure_callable(&callback)?;
     let len = elements.len();
 
     for i in (0..len).rev() {
@@ -232,6 +244,15 @@ mod tests {
         let mut ctx = create_test_context();
         let result = ctx.eval("[NaN].includes(NaN)");
         assert_eq!(result.unwrap(), crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn find_rejects_non_callable_predicate_on_empty_array() {
+        let mut ctx = create_test_context();
+        assert!(ctx.eval("[].find({})").is_err());
+        assert!(ctx.eval("[].findIndex({})").is_err());
+        assert!(ctx.eval("[].findLast({})").is_err());
+        assert!(ctx.eval("[].findLastIndex({})").is_err());
     }
 
     #[test]
