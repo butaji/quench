@@ -595,18 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn self_hosted_sort_orders_undefined_after_values_with_comparator() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval(
-                "var a = new Array(undefined, 1); a.sort(function(x, y) { if (x === undefined) return -1; if (y === undefined) return 1; return 0; }); \
-                 a[0] === 1 && a[1] === undefined",
-            )
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

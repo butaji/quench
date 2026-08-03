@@ -277,8 +277,6 @@ self-hosted JavaScript layer.
 - [x] Normalize self-hosted prototype methods with `prototype: undefined`,
   preventing ordinary function prototype objects from leaking onto builtins
   such as `Array.prototype.join`.
-- [x] Correct the self-hosted Array sort insertion condition for comparator
-  results, including the legacy Test262 undefined-order cases.
 
 ## First increment
 
