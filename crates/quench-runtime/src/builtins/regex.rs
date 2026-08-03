@@ -223,6 +223,15 @@ mod tests {
             .eval("var o = {toString: function() { throw new Test262Error(); }}; /./[Symbol.search](o)")
             .is_err());
     }
+
+    #[test]
+    fn regexp_symbol_search_distinguishes_negative_zero_last_index() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen; var r = /(?:)/; r.lastIndex = -0; r.exec = function() { seen = r.lastIndex; return null; }; r[Symbol.search](''); [seen, 1 / r.lastIndex].join('|')"),
+            Ok(Value::String("0|-Infinity".to_string()))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -358,7 +367,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         &Value::String("lastIndex".to_string()),
         None,
     )?;
-    if !matches!(last_index, Value::Number(value) if value == 0.0) {
+    if !same_value_search(&last_index, &Value::Number(0.0)) {
         set_search_last_index(obj, &this_val, Value::Number(0.0))?;
     }
     let result = crate::eval::function::call_value_with_this(
@@ -371,7 +380,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         &Value::String("lastIndex".to_string()),
         None,
     )?;
-    if current_last_index != last_index {
+    if !same_value_search(&current_last_index, &last_index) {
         set_search_last_index(obj, &this_val, last_index)?;
     }
     match result {
@@ -382,6 +391,14 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
             None,
         ),
         _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
+    }
+}
+
+fn same_value_search(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) if a.is_nan() && b.is_nan() => true,
+        (Value::Number(a), Value::Number(b)) => a.to_bits() == b.to_bits(),
+        _ => left == right,
     }
 }
 
