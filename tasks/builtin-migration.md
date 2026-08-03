@@ -99,6 +99,9 @@ self-hosted JavaScript layer.
   primitive; FinalizationRegistry remains GC/finalizer-backed.
 - [~] Iterator public static and prototype methods are JS-owned over hidden
   Rust streaming/state-machine primitives.
+- [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
+  hidden Rust state-machine primitives; Rust retains suspension, resumption,
+  completion, and async promise scheduling as interpreter execution logic.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and

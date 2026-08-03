@@ -282,7 +282,7 @@ pub fn register_function(ctx: &mut Context) {
     }
     // Set %GeneratorPrototype%.next — native, delegates to GeneratorObject::next
     generator_proto_rc.borrow_mut().set(
-        "next",
+        "__next",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError("Generator.prototype.next called on incompatible receiver".to_string())
@@ -302,7 +302,7 @@ pub fn register_function(ctx: &mut Context) {
     );
     // Set %GeneratorPrototype%.return — native, delegates to GeneratorObject::return logic
     generator_proto_rc.borrow_mut().set(
-        "return",
+        "__return",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError("Generator.prototype.return called on incompatible receiver".to_string())
@@ -355,7 +355,7 @@ pub fn register_function(ctx: &mut Context) {
     );
     // Set %GeneratorPrototype%.throw — native, delegates to GeneratorObject::throw logic
     generator_proto_rc.borrow_mut().set(
-        "throw",
+        "__throw",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError("Generator.prototype.throw called on incompatible receiver".to_string())
@@ -485,7 +485,7 @@ pub fn register_function(ctx: &mut Context) {
 
     // Set %AsyncGeneratorPrototype%.next — returns a Promise resolved with the step result
     async_generator_proto_rc.borrow_mut().set(
-        "next",
+        "__next",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError("AsyncGenerator.prototype.next called on incompatible receiver".to_string())
@@ -515,7 +515,7 @@ pub fn register_function(ctx: &mut Context) {
     );
     // Set %AsyncGeneratorPrototype%.return — completes the generator and returns a resolved Promise
     async_generator_proto_rc.borrow_mut().set(
-        "return",
+        "__return",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError(
@@ -537,7 +537,7 @@ pub fn register_function(ctx: &mut Context) {
     );
     // Set %AsyncGeneratorPrototype%.throw — completes the generator and returns a rejected Promise
     async_generator_proto_rc.borrow_mut().set(
-        "throw",
+        "__throw",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let this_val = crate::builtins::get_native_this().ok_or_else(|| {
                 JsError(

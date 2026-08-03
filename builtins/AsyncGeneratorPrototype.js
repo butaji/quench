@@ -6,9 +6,9 @@ var ThrowTypeError = ops.ThrowTypeError;
 var AsyncGeneratorProto = AsyncGeneratorFunction.prototype.prototype;
 
 // Save native implementations
-var _nativeNext = AsyncGeneratorProto.next;
-var _nativeReturn = AsyncGeneratorProto.return;
-var _nativeThrow = AsyncGeneratorProto.throw;
+var _nativeNext = AsyncGeneratorProto.__next;
+var _nativeReturn = AsyncGeneratorProto.__return;
+var _nativeThrow = AsyncGeneratorProto.__throw;
 
 // AsyncGeneratorPrototype.next (ES2025 §27.6.1.2.1)
 AsyncGeneratorProto.next = function AsyncGeneratorNext(value) {

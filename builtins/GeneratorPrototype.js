@@ -5,9 +5,9 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeNext = GeneratorPrototype.next;
-var _nativeReturn = GeneratorPrototype.return;
-var _nativeThrow = GeneratorPrototype.throw;
+var _nativeNext = GeneratorPrototype.__next;
+var _nativeReturn = GeneratorPrototype.__return;
+var _nativeThrow = GeneratorPrototype.__throw;
 var _nativeIterator = GeneratorPrototype[Symbol.iterator];
 
 // GeneratorPrototype.next (ES2025 §27.4.1.2)
