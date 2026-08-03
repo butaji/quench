@@ -115,11 +115,11 @@ pub fn register_map_and_set(ctx: &mut Context) {
     }
     {
         let mut p = map_proto.borrow_mut();
-        p.set("set", native_fn(map_set_impl));
-        p.set("get", native_fn(map_get_impl));
-        p.set("has", native_fn(map_has_impl));
-        p.set("delete", native_fn(map_delete_impl));
-        p.set("clear", native_fn(map_clear_impl));
+        p.set("__set", native_fn(map_set_impl));
+        p.set("__get", native_fn(map_get_impl));
+        p.set("__has", native_fn(map_has_impl));
+        p.set("__delete", native_fn(map_delete_impl));
+        p.set("__clear", native_fn(map_clear_impl));
         p.set("keys", native_fn(map_keys_impl));
         p.set("values", native_fn(map_values_impl));
         p.set("entries", native_fn(map_iterator_impl));

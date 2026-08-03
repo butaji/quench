@@ -3,11 +3,11 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeGet = Map.prototype.get;
-var _nativeSet = Map.prototype.set;
-var _nativeHas = Map.prototype.has;
-var _nativeDelete = Map.prototype.delete;
-var _nativeClear = Map.prototype.clear;
+var _nativeGet = Map.prototype.__get;
+var _nativeSet = Map.prototype.__set;
+var _nativeHas = Map.prototype.__has;
+var _nativeDelete = Map.prototype.__delete;
+var _nativeClear = Map.prototype.__clear;
 
 Map.prototype.forEach = function MapForEach(callbackfn, thisArg) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.forEach called on null or undefined");

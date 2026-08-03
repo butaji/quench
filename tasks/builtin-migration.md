@@ -37,9 +37,9 @@ self-hosted JavaScript layer.
 - [~] Symbol prototype `toString` and `valueOf` are JS-owned through canonical
   `__ops__` primitives; Rust retains symbol identity, boxing, registry,
   description, and well-known symbols.
-- [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
-- [~] Map and Set `forEach` algorithms are now self-hosted over Rust-backed
-  iterators; Rust retains keyed storage and iterator state.
+- [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
+  hidden Rust keyed-storage primitives; Rust retains keyed storage and
+  iterator state.
 - [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage
   primitives; Rust retains weak-key storage and identity operations.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are

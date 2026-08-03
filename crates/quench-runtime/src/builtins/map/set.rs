@@ -75,10 +75,10 @@ fn set_iterator_impl(_args: Vec<Value>) -> Result<Value, JsError> {
 pub fn register_set(ctx: &mut Context, set_proto: Rc<RefCell<Object>>) {
     {
         let mut p = set_proto.borrow_mut();
-        p.set("add", native_fn(set_add_impl));
-        p.set("has", native_fn(set_has_impl));
-        p.set("delete", native_fn(set_delete_impl));
-        p.set("clear", native_fn(set_clear_impl));
+        p.set("__add", native_fn(set_add_impl));
+        p.set("__has", native_fn(set_has_impl));
+        p.set("__delete", native_fn(set_delete_impl));
+        p.set("__clear", native_fn(set_clear_impl));
         if let Some(key) = iterator_prop_key() {
             p.set(&key, native_fn(set_iterator_impl));
         }

@@ -3,10 +3,10 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeAdd = Set.prototype.add;
-var _nativeHas = Set.prototype.has;
-var _nativeDelete = Set.prototype.delete;
-var _nativeClear = Set.prototype.clear;
+var _nativeAdd = Set.prototype.__add;
+var _nativeHas = Set.prototype.__has;
+var _nativeDelete = Set.prototype.__delete;
+var _nativeClear = Set.prototype.__clear;
 
 Set.prototype.forEach = function SetForEach(callbackfn, thisArg) {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.forEach called on null or undefined");
