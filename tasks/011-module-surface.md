@@ -234,3 +234,5 @@ Stage 545 adds `URL.canParse` and `URL.parse`, including relative URL bases
 and null-returning invalid input behavior where rquickjs lacks the statics.
 Stage 546 adds V8 heap-statistics and coverage controls with stable numeric
 shapes; heap snapshots return an explicit unsupported-target error.
+Stage 547 adds `os.homedir`, `os.tmpdir`, and `os.userInfo` using the existing
+host-provided process directories and a stable identity object shape.
