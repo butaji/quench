@@ -218,3 +218,18 @@ Object.create = function ObjectCreate(proto, properties) {
   if (properties !== undefined) Object.defineProperties(obj, properties);
   return obj;
 };
+
+Object.groupBy = function ObjectGroupBy(items, callbackfn) {
+  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  var groups = Object.create(null);
+  var iterator = items[Symbol.iterator]();
+  var index = 0;
+  var step;
+  while (!(step = iterator.next()).done) {
+    var value = step.value;
+    var key = String(callbackfn(value, index++));
+    if (groups[key] === undefined) groups[key] = [];
+    groups[key].push(value);
+  }
+  return groups;
+};

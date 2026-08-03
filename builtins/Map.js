@@ -51,3 +51,19 @@ Map.prototype.clear = function MapClear() {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.clear called on null or undefined");
   return _nativeClear.call(this);
 };
+
+Map.groupBy = function MapGroupBy(items, callbackfn) {
+  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  var map = new Map();
+  var iterator = items[Symbol.iterator]();
+  var index = 0;
+  var step;
+  while (!(step = iterator.next()).done) {
+    var value = step.value;
+    var key = callbackfn(value, index++);
+    var group = map.get(key);
+    if (group === undefined) { group = []; map.set(key, group); }
+    group.push(value);
+  }
+  return map;
+};
