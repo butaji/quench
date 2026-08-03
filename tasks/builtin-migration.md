@@ -88,7 +88,8 @@ self-hosted JavaScript layer.
 - [~] `Array.fromAsync` remains Rust-owned until async-iterator acquisition,
   await/resumption, iterator closing, and Promise scheduling are exposed as
   canonical self-hosting operations; its current implementation is an
-  async-engine boundary rather than a one-line JS proxy.
+  async-engine boundary rather than a one-line JS proxy. Mapped Promise
+  results are aggregated through the existing native `Promise.all` path.
 - [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
   locale argument forwarding, and element-call validation; locale formatting
   primitives remain owned by the relevant value types.

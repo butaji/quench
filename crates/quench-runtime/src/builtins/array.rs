@@ -74,20 +74,21 @@ pub fn register_array(ctx: &mut Context) {
     array_constructor.set_name("Array");
 
     // Set static methods on the constructor
-    let mut array_from_async = NativeFunction::new(|args| {
-        match array_from_impl(args) {
-            Ok(array) => crate::builtins::promise::promise_resolve_impl_static(
-                vec![array],
+    let mut array_from_async = NativeFunction::new(|args| match array_from_impl(args) {
+        Ok(array) if array_contains_promise(&array) => crate::builtins::promise::promise_all_impl(
+            vec![array],
+            crate::builtins::promise::get_promise_proto(),
+        ),
+        Ok(array) => crate::builtins::promise::promise_resolve_impl_static(
+            vec![array],
+            crate::builtins::promise::get_promise_proto(),
+        ),
+        Err(error) => {
+            let reason = crate::value::get_thrown_value().unwrap_or_else(|| Value::String(error.0));
+            crate::builtins::promise::promise_reject_impl_static(
+                vec![reason],
                 crate::builtins::promise::get_promise_proto(),
-            ),
-            Err(error) => {
-                let reason = crate::value::get_thrown_value()
-                    .unwrap_or_else(|| Value::String(error.0));
-                crate::builtins::promise::promise_reject_impl_static(
-                    vec![reason],
-                    crate::builtins::promise::get_promise_proto(),
-                )
-            }
+            )
         }
     });
     define_static_method_length(&mut array_from_async);
@@ -108,6 +109,15 @@ pub fn register_array(ctx: &mut Context) {
         "Array".to_string(),
         Value::NativeConstructor(array_constructor_rc),
     );
+}
+
+fn array_contains_promise(array: &Value) -> bool {
+    let Value::Object(array) = array else {
+        return false;
+    };
+    array.borrow().elements.iter().any(
+        |value| matches!(value, Value::Object(object) if object.borrow().promise_data.is_some()),
+    )
 }
 
 fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
