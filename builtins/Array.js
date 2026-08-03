@@ -460,7 +460,7 @@ Array.prototype.sort = function ArraySort(comparefn) {
     var value = values[i];
     var j = i - 1;
     while (j >= 0) {
-      var order = comparefn === undefined ? String(values[j]) > String(value) : comparefn(values[j], value) > 0;
+      var order = comparefn === undefined ? String(values[j]) > String(value) : comparefn(values[j], value) < 0;
       if (!order) break;
       values[j + 1] = values[j]; j--;
     }
