@@ -11,7 +11,6 @@ var _lastIndexOf = String.prototype.__lastIndexOf;
 var _toUpperCase = String.prototype.__toUpperCase;
 var _toLowerCase = String.prototype.__toLowerCase;
 var _repeat = String.prototype.__repeat;
-var _split = String.prototype.__split;
 var _toString = String.prototype.__toString;
 var _valueOf = String.prototype.__valueOf;
 var _match = String.prototype.__match;
