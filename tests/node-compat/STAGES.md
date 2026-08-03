@@ -126,3 +126,4 @@ these small fixtures isolate the currently implemented contract.
 |   116 | sync write/read and vectored `fs.writev`                  | `tools/run-node-tests.sh --stage 116` |
 |   117 | `fs.open` write-mode truncation                           | `tools/run-node-tests.sh --stage 117` |
 |   118 | Buffer equality after vectored file writes                | `tools/run-node-tests.sh --stage 118` |
+|   119 | `fs.writev` invalid-buffer validation                     | `tools/run-node-tests.sh --stage 119` |
