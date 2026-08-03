@@ -5,7 +5,7 @@
 //! API are still skipped via the `Reflect`/`Proxy` feature gates.
 
 use crate::builtins::object_static::{
-    object_define_property, object_is_extensible, object_prevent_extensions, to_property_key,
+    object_define_property, to_property_key,
 };
 use crate::context::Context;
 use crate::value::{to_object, JsError, ObjData, Object, ObjectKind, Value};
@@ -241,18 +241,6 @@ pub fn register_reflect(ctx: &mut Context) {
                     Ok(Value::Boolean(false))
                 }
             },
-        ))),
-    );
-    reflect.set(
-        "preventExtensions",
-        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-            |args: Vec<Value>| object_prevent_extensions(args).map(|_| Value::Boolean(true)),
-        ))),
-    );
-    reflect.set(
-        "isExtensible",
-        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-            object_is_extensible,
         ))),
     );
     ctx.set_global(
