@@ -236,3 +236,6 @@ these small fixtures isolate the currently implemented contract.
 |   226 | Buffer `write` UTF-8 partial-char handling                     | `tools/run-node-tests.sh --stage 226` |
 |   227 | Buffer lone-surrogate UTF-8 replacement                       | `tools/run-node-tests.sh --stage 227` |
 |   228 | Buffer `alloc` encoded fill values                             | `tools/run-node-tests.sh --stage 228` |
+|   229 | Buffer `from` unknown-encoding validation                      | `tools/run-node-tests.sh --stage 229` |
+|   230 | Buffer prototype metadata and alloc edge cases                 | `tools/run-node-tests.sh --stage 230` |
+|   231 | `crypto.randomBytes` and `randomFillSync`                      | `tools/run-node-tests.sh --stage 231` |
