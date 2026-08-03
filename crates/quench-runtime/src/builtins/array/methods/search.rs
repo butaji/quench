@@ -60,13 +60,13 @@ fn same_value_zero(a: &Value, b: &Value) -> bool {
 /// Array.prototype.indexOf(searchElement, fromIndex?)
 pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
     let search = args.first().cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::get_native_this()
-        .ok_or_else(|| JsError::new("Array.prototype method called on non-object"))?;
+    let receiver = crate::builtins::get_native_this();
     let (length, array) = match receiver {
-        Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
+        Some(Value::Object(object)) if object.borrow().kind == ObjectKind::Array => {
             let length = object.borrow().elements.len();
             (length, Some(object))
         }
+        Some(Value::Object(object)) => (get_this_array()?.len(), Some(object)),
         _ => (get_this_array()?.len(), None),
     };
     let from_idx = resolve_from_index(args.get(1), length)?;
@@ -278,6 +278,25 @@ mod tests {
             .eval("var accessed=false; var a=[]; Object.defineProperty(a,'0',{get:function(){throw new TypeError},configurable:true}); Object.defineProperty(a,'1',{get:function(){accessed=true;return true},configurable:true}); try { a.indexOf(true); false } catch(e) { !accessed }")
             .unwrap()
             == crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn index_of_accepts_array_like_objects() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("Array.prototype.indexOf.call({1:true,length:2}, true)")
+                .unwrap(),
+            crate::value::Value::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn index_of_reads_array_like_properties_added_during_iteration() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("var a={length:2}; Object.defineProperty(a,'0',{get:function(){Object.defineProperty(a,'1',{value:1,configurable:true,writable:true});return 0},configurable:true}); Array.prototype.indexOf.call(a,0)===0 && Array.prototype.indexOf.call(a,1)===1").unwrap(),
+            crate::value::Value::Boolean(true)
+        );
     }
 
     #[test]
