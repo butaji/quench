@@ -17,10 +17,14 @@ Symbol.prototype.valueOf = function SymbolValueOf() {
   return _symbolValueOf(this);
 };
 
-Symbol.prototype.description = function SymbolDescription() {
-  if (this === null || this === undefined) throw ThrowTypeError("Symbol.prototype.description called on null or undefined");
-  return _symbolDescription.call(this);
-};
+Object.defineProperty(Symbol.prototype, "description", {
+  get: function SymbolDescription() {
+    if (this === null || this === undefined) throw ThrowTypeError("Symbol.prototype.description called on null or undefined");
+    return _symbolDescription.call(this);
+  },
+  enumerable: false,
+  configurable: true
+});
 
 // Symbol.prototype[Symbol.toPrimitive] (ES2025 §20.4.3.2)
 Symbol.prototype[Symbol.toPrimitive] = function SymbolToPrimitive(hint) {

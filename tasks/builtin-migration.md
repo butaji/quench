@@ -110,6 +110,8 @@ self-hosted JavaScript layer.
   and well-known symbols.
 - [~] Corrected Symbol self-hosted wrappers so native `toString`/`valueOf`
   aliases are not shadowed by the JS method names.
+- [~] `Symbol.prototype.description` is now installed as its JS-owned
+  accessor descriptor instead of an enumerable data method.
 - [~] Map and Set public mutators/lookups and `forEach` are JS-owned over
   hidden Rust keyed-storage primitives; Rust retains keyed storage and
   iterator state.
