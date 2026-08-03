@@ -103,6 +103,8 @@ self-hosted JavaScript layer.
 - [~] `Array.prototype.concat` now advances the result index across missing
   spread positions and sets the final result length, preserving holes for
   array-like and typed-array spreadables.
+- [~] `Array.prototype.concat` observes the receiver's `constructor` before
+  reading `Symbol.isConcatSpreadable`, matching the ArraySpeciesCreate order.
 - [~] Array-like length coercion now routes through the JS-owned `ToLength`
   helper throughout `builtins/Array.js`. This is an ECMAScript algorithm, not
   a Rust storage primitive; depth/index/delete-count coercions remain their

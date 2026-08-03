@@ -15,3 +15,15 @@ fn concat_preserves_spread_positions_for_missing_elements() {
         Ok(Value::String("4|0|false|false".to_string()))
     );
 }
+
+#[test]
+fn concat_reads_array_constructor_before_spreadability() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval(
+            "var calls=[]; var a=[]; Object.defineProperty(a,'constructor',{get(){calls.push('constructor');return Array;}}); \
+             Object.defineProperty(a,Symbol.isConcatSpreadable,{get(){calls.push('spread');}}); a.concat(1); calls.join(',')"
+        ),
+        Ok(Value::String("constructor,spread".to_string()))
+    );
+}
