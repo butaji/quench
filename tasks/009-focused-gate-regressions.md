@@ -505,3 +505,23 @@ Follow-on slice landed. Changes:
   the Node contract for the `test-cluster-setup-primary.js` fixture.
 
 Focused-stage suite: **509/509 pass**.
+
+## Status — net.isIP / net.isIPv4 / net.isIPv6 slice (done)
+
+Follow-on slice landed. Changes:
+
+- `net.isIP(input)`, `net.isIPv4(input)`, and `net.isIPv6(input)` are
+  now implemented in the polyfill. `isIPv4` validates the four-octet
+  dotted-decimal form (no leading zeros, octets 0-255). `isIPv6`
+  validates the canonical and compressed (with `::`) forms, supports
+  embedded IPv4 (e.g. `::ffff:192.168.1.1`), uppercase/lowercase hex,
+  and zone identifiers (e.g. `fe80::1%eth0`). `isIP` returns 4, 6, or
+  0.
+- Focused stage `tests/node-compat/stage-511/net-isip.js` exercises
+  the basic `isIPv4` and `isIP` contracts.
+- Upstream `test-net-isipv4.js` now passes.
+
+Upstream `test-net-isip.js` and `test-net-isipv6.js` still fail on
+a small set of edge cases (zone identifiers containing `@`, and a few
+multi-`::` addresses). Tracked as the next sub-slice if the
+remaining cases can be tightened cheaply.
