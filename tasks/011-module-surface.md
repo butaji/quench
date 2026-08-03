@@ -15,7 +15,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
 - Core: `assert`, `assert/strict` (via `__nodeAssert`), `buffer`, `cluster`,
   `child_process`, `crypto`, `events`, `fs`, `fs/promises`, `os`, `path`,
   `path/posix`, `path/win32`, `querystring`, `stream`, `stream/iter`,
-  `stream/promises` (TODO), `stream/web` (TODO), `stream/consumers` (TODO),
+  `stream/promises`, `stream/web`, `stream/consumers`,
   `string_decoder` (TODO), `timers`, `timers/promises`, `url`, `util`,
   `util/types`, `v8`, `vm`, `zlib`, `zlib/iter`.
 - Async: `async_hooks`, `perf_hooks`.
@@ -108,6 +108,8 @@ fixture cluster, and the next concrete slice.
 - `stream/iter` — gated by `--experimental-stream-iter`. Done.
 - `stream/promises` — stage 525 complete: promise-based `pipeline` and
   `finished` reuse the existing evented stream contracts.
+- `stream/consumers` — stage 527 provides promise consumers for buffered
+  bytes, text, JSON, ArrayBuffer, and Blob values.
 - `stream/web` — stage 526 registers minimal WHATWG
   `ReadableStream`/`WritableStream`/`TransformStream` primitives.
 - `string_decoder` — stage 519 complete: UTF-8 `StringDecoder.write()` and
@@ -184,3 +186,5 @@ events without expanding the Rust host.
 Stage 526 found rquickjs does not provide WHATWG stream globals, so the
 focused module uses a small queue/controller implementation in JavaScript;
 no Rust host state is required for the initial contract.
+Stage 527 reuses the same reader contract and centralizes collection in one
+helper, keeping byte conversion behavior consistent across all consumers.
