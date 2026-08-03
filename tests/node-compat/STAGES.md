@@ -296,3 +296,4 @@ these small fixtures isolate the currently implemented contract.
 |   297 | `util.format` Date string conversion                           | `tools/run-node-tests.sh --stage 297` |
 |   298 | `util.format` object string inspection and escaping             | `tools/run-node-tests.sh --stage 298` |
 |   299 | POSIX path invalid argument validation                         | `tools/run-node-tests.sh --stage 299` |
+|   300 | Win32 path invalid argument validation                         | `tools/run-node-tests.sh --stage 300` |
