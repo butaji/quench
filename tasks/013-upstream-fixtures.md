@@ -807,3 +807,6 @@ asserting the class name and enumerable instance properties.
 
 Stage 294 formalized `util.format` rendering for Array subclasses, asserting
 the subclass name, sparse length, and enumerable properties.
+
+Stage 295 formalized `util.format` Symbol.toPrimitive conversion, asserting
+the string hint for `%s` and default coercion in concatenation.
