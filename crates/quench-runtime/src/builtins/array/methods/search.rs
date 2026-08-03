@@ -1,6 +1,6 @@
 //! Array search methods (indexOf, includes, find, findLast, findLastIndex)
 
-use crate::value::{to_number, JsError, ObjectKind, Value};
+use crate::value::{JsError, ObjectKind, Value};
 
 /// Get the array elements from 'this'
 fn get_this_array() -> Result<Vec<Value>, JsError> {
@@ -117,7 +117,10 @@ pub fn proto_last_index_of(args: Vec<Value>) -> Result<Value, JsError> {
     if length == 0 {
         return Ok(Value::Number(-1.0));
     }
-    let from = args.get(1).map(to_number).unwrap_or((length - 1) as f64);
+    let from = match args.get(1) {
+        Some(value) => crate::value::try_to_number(value)?,
+        None => (length - 1) as f64,
+    };
     if from.is_nan() {
         return Ok(Value::Number(-1.0));
     }
@@ -275,6 +278,12 @@ mod tests {
             .eval("var accessed=false; var a=[]; Object.defineProperty(a,'0',{get:function(){throw new TypeError},configurable:true}); Object.defineProperty(a,'1',{get:function(){accessed=true;return true},configurable:true}); try { a.indexOf(true); false } catch(e) { !accessed }")
             .unwrap()
             == crate::value::Value::Boolean(true));
+    }
+
+    #[test]
+    fn last_index_of_propagates_from_index_conversion_error() {
+        let mut ctx = create_test_context();
+        assert!(ctx.eval("[0,null].lastIndexOf(null,{toString:function(){return {}},valueOf:function(){return {}}})").is_err());
     }
 
     #[test]
