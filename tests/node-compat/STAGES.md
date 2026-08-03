@@ -357,3 +357,4 @@ these small fixtures isolate the currently implemented contract.
 |   358 | Buffer write range validation                                     | `tools/run-node-tests.sh --stage 358` |
 |   359 | Buffer write encoding support                                    | `tools/run-node-tests.sh --stage 359` |
 |   360 | Buffer comparison methods                                        | `tools/run-node-tests.sh --stage 360` |
+|   361 | Buffer fill encoding validation                                  | `tools/run-node-tests.sh --stage 361` |
