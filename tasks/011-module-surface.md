@@ -25,7 +25,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
 - I/O: `readline`, `readline/promises` (TODO), `repl` (TODO), `tty` (TODO),
   `console` (via `globalThis.console`), `module` (TODO),
   `diagnostics_channel`, `inspector` (return ERR), `wasi` (return
-  ERR), `domain` (legacy; stub).
+  ERR), `domain` (legacy).
 - Internal: `internal/event_target`, `internal/errors`, `internal/buffer`,
   `internal/test/binding`, `internal/fs/utils`, `internal/modules/*`.
 
@@ -64,9 +64,8 @@ fixture cluster, and the next concrete slice.
   `dns.lookup`, real `lookupService`, `Resolver`, `setServers`,
   `getServers`, `setLocalAddress`, `cancel`, `getDefaultResultOrder`.
   Host: real `__quench_dns_lookup`.
-- `domain` — legacy; register a `Domain` class with the same
-  `enter`/`exit`/`run`/`add`/`remove`/`bind`/`intercept` API and
-  `error`/`dispose` events.
+- `domain` — stage 531 provides the legacy `Domain` lifecycle and member
+  management API; error-event integration remains target-specific.
 - `events` — done (EventEmitter).
 - `fs` / `fs/promises` — partial. Need: `fs.opendir`, `fs.cp`,
   `fs.statfs`, `fs.lutimes`, `fs.lchmod`, `fs.lchown`, `fs.copyFile`
@@ -196,3 +195,6 @@ module registration surface in JavaScript without introducing a second Rust
 module system.
 Stage 530 keeps diagnostics state in a module-level channel map, so repeated
 `channel(name)` calls share subscribers without requiring Rust-side globals.
+Stage 531 keeps the legacy domain implementation deliberately small and
+state-based; it adds no host exception machinery while preserving lifecycle
+and callback binding contracts.
