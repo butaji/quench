@@ -21,13 +21,13 @@ fn string_value_impl(_args: &[Value]) -> Value {
 pub fn install_to_string_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
             Ok(string_value_impl(&args))
         }))),
     );
     proto_clone.borrow_mut().set(
-        "valueOf",
+        "__valueOf",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |args| {
             Ok(string_value_impl(&args))
         }))),

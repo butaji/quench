@@ -15,6 +15,8 @@ var _repeat = String.prototype.__repeat;
 var _substring = String.prototype.__substring;
 var _slice = String.prototype.__slice;
 var _split = String.prototype.__split;
+var _toString = String.prototype.__toString;
+var _valueOf = String.prototype.__valueOf;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -77,6 +79,14 @@ String.prototype.slice = function StringSlice(start, end) {
 
 String.prototype.split = function StringSplit(separator, limit) {
   return _split.call(this, separator, limit);
+};
+
+String.prototype.toString = function StringToString() {
+  return _toString.call(this);
+};
+
+String.prototype.valueOf = function StringValueOf() {
+  return _valueOf.call(this);
 };
 
 String.prototype.repeat = function StringRepeat(count) {
