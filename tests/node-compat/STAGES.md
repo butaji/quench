@@ -321,3 +321,4 @@ these small fixtures isolate the currently implemented contract.
 |   322 | OS upstream-complete core contract                                | `tools/run-node-tests.sh --stage 322` |
 |   323 | util core compatibility helpers                                   | `tools/run-node-tests.sh --stage 323` |
 |   324 | util error and native error validation                            | `tools/run-node-tests.sh --stage 324` |
+|   325 | internal IPC error code compatibility                             | `tools/run-node-tests.sh --stage 325` |
