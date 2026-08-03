@@ -6780,15 +6780,29 @@ globalThis.require = (specifier) => {
     };
   }
   if (name === "http") {
+    if (globalThis.__nodeHttp) return globalThis.__nodeHttp;
     const servers = new Map();
     const makeResponse = () => {
       const response = new globalThis.__nodeEventEmitter();
       response.headers = Object.create(null);
+      response.statusCode = 200;
       response.setHeader = (key, value) => {
         response.headers[String(key).toLowerCase()] = String(value);
         return response;
       };
+      response.getHeader = (key) => response.headers[String(key).toLowerCase()];
+      response.removeHeader = (key) => {
+        delete response.headers[String(key).toLowerCase()];
+        return response;
+      };
       response.setEncoding = () => response;
+      response.write = (chunk = "") => {
+        const value = chunk instanceof NodeBuffer ? chunk : String(chunk);
+        queueMicrotask(() => {
+          if (value.length) response.emit("data", value);
+        });
+        return true;
+      };
       response.end = (body = "") => {
         const value = body instanceof NodeBuffer ? body : String(body);
         queueMicrotask(() => {
@@ -6815,40 +6829,51 @@ globalThis.require = (specifier) => {
       });
       return { unref: () => {}, end: () => {} };
     };
-    return {
-      createServer: (handler) => {
-        const server = new globalThis.__nodeEventEmitter();
-        server.listen = (port, host, callback) => {
-          if (typeof host === "function") {
-            callback = host;
-            host = "127.0.0.1";
-          }
-          const numericPort =
-            typeof port === "number" && port !== 0
-              ? port
-              : 40000 + Math.floor(Math.random() * 5000);
-          server._port = numericPort;
-          server._address = host;
-          servers.set(String(server._port), server);
-          if (typeof callback === "function") callback();
-          server.emit("listening");
-          globalThis.__nodeClusterListening?.({
-            address: String(host || "127.0.0.1"),
-            addressType: 4,
-            fd: undefined,
-            port: numericPort,
-          });
-          return server;
-        };
-        server.address = () => ({ port: server._port || 40123 });
-        server.unref = () => server;
-        server.close = (callback) => {
-          if (typeof callback === "function") queueMicrotask(callback);
-          return server;
-        };
-        server._handler = handler;
-        return server;
-      },
+    class NodeHttpServer extends globalThis.__nodeEventEmitter {
+      constructor(handler) {
+        super();
+        this._handler = handler;
+        this._port = undefined;
+        this._address = undefined;
+      }
+      listen(port, host, callback) {
+        if (typeof host === "function") {
+          callback = host;
+          host = "127.0.0.1";
+        }
+        const numericPort =
+          typeof port === "number" && port !== 0
+            ? port
+            : 40000 + Math.floor(Math.random() * 5000);
+        this._port = numericPort;
+        this._address = host;
+        servers.set(String(this._port), this);
+        if (typeof callback === "function") callback();
+        this.emit("listening");
+        globalThis.__nodeClusterListening?.({
+          address: String(host || "127.0.0.1"),
+          addressType: 4,
+          fd: undefined,
+          port: numericPort,
+        });
+        return this;
+      }
+      address() {
+        return { port: this._port || 40123, address: this._address || "127.0.0.1" };
+      }
+      unref() {
+        return this;
+      }
+      close(callback) {
+        if (this._port !== undefined) servers.delete(String(this._port));
+        if (typeof callback === "function") callback();
+        this.emit("close");
+        return this;
+      }
+    }
+    const http = {
+      Server: NodeHttpServer,
+      createServer: (handler) => new NodeHttpServer(handler),
       get: (target, callback) => {
         const url = typeof target === "string" ? new URL(target) : target;
         const server = servers.get(url.port || "80");
@@ -6858,7 +6883,11 @@ globalThis.require = (specifier) => {
           callback,
         );
       },
+      request: (target, options, callback) =>
+        http.get(target, typeof options === "function" ? options : callback),
     };
+    globalThis.__nodeHttp = http;
+    return http;
   }
   if (name === "child_process") {
     globalThis.__nodeCompileCacheRuns ||= 0;
@@ -6957,10 +6986,10 @@ globalThis.require = (specifier) => {
           });
         return result;
       }
-      kill() {
+      kill(signal) {
         if (this.state === "dead") return this;
         this.process.exitCode = null;
-        this.process.signalCode = "SIGTERM";
+        this.process.signalCode = String(signal || "SIGTERM");
         this.state = "dead";
         queueMicrotask(() => {
           cluster.emit("exit", this, this.process.exitCode, this.process.signalCode);
@@ -6970,6 +6999,19 @@ globalThis.require = (specifier) => {
       }
       disconnect() {
         this.exitedAfterDisconnect = true;
+        const previousState = this.state;
+        if (previousState === "dead") return this;
+        queueMicrotask(() => {
+          cluster.emit("disconnect", this);
+          this.emit("disconnect");
+          if (previousState === "online" || previousState === "listening") {
+            this.process.exitCode = 0;
+            this.process.signalCode = null;
+            this.state = "dead";
+            cluster.emit("exit", this, 0, null);
+            this.emit("exit", 0, null);
+          }
+        });
         return this;
       }
     }
@@ -6990,6 +7032,7 @@ globalThis.require = (specifier) => {
       const worker = new NodeClusterWorker(++forks);
       cluster.workers.push(worker);
       worker._env = env;
+      const reentry = globalThis.__quench_in_cluster_worker;
       queueMicrotask(() => {
         cluster.emit("fork", worker);
         if (worker.state !== "none") return;
@@ -6997,6 +7040,7 @@ globalThis.require = (specifier) => {
         worker.emit("online");
         cluster.emit("online", worker);
         if (typeof globalThis.__quench_script_source !== "string") return;
+        if (reentry) return;
         const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
         const previousIsWorker = cluster.isWorker;
         for (const [key, value] of Object.entries(env)) {
@@ -7005,6 +7049,7 @@ globalThis.require = (specifier) => {
         }
         cluster.isWorker = true;
         cluster.worker = worker;
+        globalThis.__quench_in_cluster_worker = true;
         globalThis.__nodeCurrentAsyncResource = { id: worker.id };
         try {
           (0, globalThis.eval)(globalThis.__quench_script_source);
@@ -7020,6 +7065,7 @@ globalThis.require = (specifier) => {
       return worker;
     };
     cluster.disconnect = (callback) => {
+      for (const worker of cluster.workers) worker.disconnect();
       if (typeof callback === "function") queueMicrotask(callback);
       return cluster;
     };
