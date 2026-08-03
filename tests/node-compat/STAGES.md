@@ -310,3 +310,4 @@ these small fixtures isolate the currently implemented contract.
 |   311 | OS positive uptime contract                                      | `tools/run-node-tests.sh --stage 311` |
 |   312 | OS host information and loopback interfaces                      | `tools/run-node-tests.sh --stage 312` |
 |   313 | OS user information and Buffer encoding                          | `tools/run-node-tests.sh --stage 313` |
+|   314 | OS devNull and available parallelism APIs                          | `tools/run-node-tests.sh --stage 314` |
