@@ -894,3 +894,6 @@ combined tmpdir, CPU, parallelism, memory, user information, and devNull APIs.
 
 Stage 323 formalized core `util` compatibility helpers, covering legacy array
 and object extension checks plus USV conversion and VT control stripping.
+
+Stage 324 formalized `util` validation behavior, distinguishing native errors
+from forged prototypes and preserving invalid-argument error metadata.
