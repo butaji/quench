@@ -566,3 +566,6 @@ Stage 208 formalized Buffer endian swap operations, asserting `swap16`,
 
 Stage 209 formalized Buffer BigInt read/write operations, asserting signed
 and unsigned 64-bit values in both byte orders.
+
+Stage 210 formalized Buffer ArrayBuffer views, asserting offset/length
+construction and shared mutable memory with the backing buffer.
