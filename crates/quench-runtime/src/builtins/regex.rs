@@ -14,6 +14,11 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    fn eval(src: &str) -> Value {
+        let mut ctx = crate::Context::new().unwrap();
+        ctx.eval(src).unwrap()
+    }
+
     // ------------------------------------------------------------------------
     // validate_unicode_backreferences
     // ------------------------------------------------------------------------
@@ -129,6 +134,14 @@ mod tests {
     fn regexp_escape_preserves_underscore() {
         assert_eq!(regexp_escape("_hello"), "_hello");
     }
+
+    #[test]
+    fn regexp_escape_has_builtin_function_metadata() {
+        assert_eq!(
+            eval("[RegExp.escape.name, RegExp.escape.length].join('|')"),
+            Value::String("escape|1".to_string())
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -243,10 +256,30 @@ pub fn register_regexp(ctx: &mut Context) {
     regexp_obj_rc
         .borrow_mut()
         .set("lastIndex", Value::Number(0.0));
-    regexp_obj_rc.borrow_mut().set(
-        "escape",
-        Value::NativeFunction(Rc::new(NativeFunction::new(regexp_escape_impl))),
+    let escape_fn = NativeFunction::new(regexp_escape_impl);
+    escape_fn.define_property(
+        "name",
+        Value::String("escape".to_string()),
+        PropertyFlags {
+            value: Some(Value::String("escape".to_string())),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
     );
+    escape_fn.define_property(
+        "length",
+        Value::Number(1.0),
+        PropertyFlags {
+            value: Some(Value::Number(1.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    regexp_obj_rc
+        .borrow_mut()
+        .set("escape", Value::NativeFunction(Rc::new(escape_fn)));
 
     // Set up prototype chain
     regexp_proto.borrow_mut().set("constructor", regexp_fn);
