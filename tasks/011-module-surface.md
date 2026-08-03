@@ -206,3 +206,6 @@ Stage 533 keeps REPL evaluation inside the JS runtime and exposes the server
 callback contract without adding a separate Rust evaluator or terminal loop.
 Stage 534 centralizes the common file, signal, and copy constants in a frozen
 JavaScript object, matching the existing host/polyfill numeric contracts.
+Stage 535 confirms `assert/strict` can be an exact alias of the existing
+assertion implementation, avoiding duplicated assertion logic and preserving
+strict comparison behavior.
