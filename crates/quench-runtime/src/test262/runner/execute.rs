@@ -438,6 +438,8 @@ fn execute_script(
 fn run_sync_script_with_path(source: &str, is_module: bool, path: &Path) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|error| format!("{error:?}"))?;
     crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
+        .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
     let strict = source.trim_start().starts_with("\"use strict\";")
         || source.trim_start().starts_with("'use strict';");
     crate::test262::harness::try_inject_harness(&mut ctx)
@@ -478,6 +480,8 @@ fn run_async_script_with_path(
 ) -> Result<(), String> {
     let mut ctx = crate::Context::new().map_err(|e| format!("{:?}", e))?;
     crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
+        .map_err(|error| format!("builtin bootstrap failure: {error}"))?;
     let strict = source.trim_start().starts_with("\"use strict\";")
         || source.trim_start().starts_with("'use strict';");
     crate::interpreter::set_strict_mode(strict);

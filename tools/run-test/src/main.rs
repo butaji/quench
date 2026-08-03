@@ -174,6 +174,10 @@ fn main() -> ExitCode {
             }
         };
         builtins::register_builtins(&mut ctx);
+        if let Err(e) = builtins::bootstrap::bootstrap_js_builtins(&mut ctx) {
+            eprintln!("{}: builtin bootstrap failed: {}", label, e);
+            return 4;
+        }
         if !is_raw {
             quench_runtime::interpreter::reset_interpreter_state();
             if let Err(e) = try_inject_harness(&mut ctx) {
@@ -218,7 +222,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: legacy octal literal in strict mode".to_string())),
+                Err(JsError(
+                    "SyntaxError: legacy octal literal in strict mode".to_string(),
+                )),
             );
         }
         if (code.trim_start().starts_with("\"use strict\";")
@@ -235,7 +241,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: legacy octal escape in strict mode".to_string())),
+                Err(JsError(
+                    "SyntaxError: legacy octal escape in strict mode".to_string(),
+                )),
             );
         }
         if meta
@@ -254,7 +262,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid strict numeric literal".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid strict numeric literal".to_string(),
+                )),
             );
         }
         if meta
@@ -273,7 +283,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: legacy octal escape in strict mode".to_string())),
+                Err(JsError(
+                    "SyntaxError: legacy octal escape in strict mode".to_string(),
+                )),
             );
         }
         if meta
@@ -311,7 +323,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid unicode identity escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid unicode identity escape".to_string(),
+                )),
             );
         }
         if meta
@@ -330,7 +344,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid unicode code point escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid unicode code point escape".to_string(),
+                )),
             );
         }
         if meta
@@ -349,7 +365,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: numeric separator in unicode escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: numeric separator in unicode escape".to_string(),
+                )),
             );
         }
         if meta
@@ -368,7 +386,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: legacy octal regexp escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: legacy octal regexp escape".to_string(),
+                )),
             );
         }
         if meta
@@ -387,7 +407,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: out-of-bounds decimal escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: out-of-bounds decimal escape".to_string(),
+                )),
             );
         }
         if meta
@@ -406,7 +428,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: optional assertion in unicode regexp".to_string())),
+                Err(JsError(
+                    "SyntaxError: optional assertion in unicode regexp".to_string(),
+                )),
             );
         }
         if meta
@@ -425,7 +449,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: assertion range in unicode regexp".to_string())),
+                Err(JsError(
+                    "SyntaxError: assertion range in unicode regexp".to_string(),
+                )),
             );
         }
         if meta
@@ -444,7 +470,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid unicode class control escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid unicode class control escape".to_string(),
+                )),
             );
         }
         if meta
@@ -463,7 +491,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid unicode class range escape".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid unicode class range escape".to_string(),
+                )),
             );
         }
         if meta
@@ -482,7 +512,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: overlapping regexp modifiers".to_string())),
+                Err(JsError(
+                    "SyntaxError: overlapping regexp modifiers".to_string(),
+                )),
             );
         }
         if meta
@@ -501,7 +533,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid braced quantifier".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid braced quantifier".to_string(),
+                )),
             );
         }
         if meta
@@ -539,7 +573,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: dangling named backreference".to_string())),
+                Err(JsError(
+                    "SyntaxError: dangling named backreference".to_string(),
+                )),
             );
         }
         if meta
@@ -635,7 +671,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: malformed named backreference".to_string())),
+                Err(JsError(
+                    "SyntaxError: malformed named backreference".to_string(),
+                )),
             );
         }
         if meta
@@ -654,7 +692,9 @@ fn main() -> ExitCode {
                     label,
                     test_path: &path,
                 },
-                Err(JsError("SyntaxError: invalid named group identifier".to_string())),
+                Err(JsError(
+                    "SyntaxError: invalid named group identifier".to_string(),
+                )),
             );
         }
         let run_result = if module || is_module_meta {

@@ -296,6 +296,8 @@ impl Test262Host for QuenchHost {
         crate::interpreter::reset_interpreter_state();
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
+            .map_err(|e| format!("builtin bootstrap failure: {}", e))?;
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
@@ -314,6 +316,8 @@ impl Test262Host for QuenchHost {
         crate::interpreter::reset_interpreter_state();
         let mut ctx = Context::new().map_err(|e| format!("{:?}", e))?;
         crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx)
+            .map_err(|e| format!("builtin bootstrap failure: {}", e))?;
         let prev_strict = crate::interpreter::is_strict_mode();
         crate::interpreter::set_strict_mode(false);
         try_inject_harness(&mut ctx).map_err(|e| format!("harness load failure: {}", e))?;
