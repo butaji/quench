@@ -1017,6 +1017,9 @@ write and read APIs.
 Stage 364 formalized positioned synchronous filesystem reads and writes using
 Buffer arguments and offsets.
 
+Stage 365 formalized appending binary Buffer data with synchronous filesystem
+write options.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
