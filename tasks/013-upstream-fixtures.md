@@ -1037,6 +1037,9 @@ and asynchronous drain notification.
 Stage 371 formalized readable stream pause/resume flow control and deferred
 delivery of remaining values.
 
+Stage 372 formalized Transform stream chunk processing, output emission, and
+write-callback ordering.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
