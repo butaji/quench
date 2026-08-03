@@ -31,6 +31,8 @@ self-hosted JavaScript layer.
   enumeration remains Rust-backed until its canonical JS bridge is complete.
 - [~] `Object.assign` is JS-owned over canonical key enumeration and core
   property writes.
+- [~] `Object.create` is JS-owned over the core object-allocation and
+  prototype primitive.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the

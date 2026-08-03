@@ -10,7 +10,7 @@ pub mod prototype_methods;
 mod tests;
 
 use crate::builtins::object_static::{
-    object_create, object_define_properties, object_define_property,
+    object_define_properties, object_define_property,
     object_get_own_property_symbols,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
@@ -58,10 +58,6 @@ pub fn register_object(ctx: &mut Context) {
 
     // Register static methods on Object constructor
     let constructor = object_constructor;
-    constructor.set_static_method(
-        "create",
-        Value::NativeFunction(Rc::new(NativeFunction::new_named("create", object_create))),
-    );
     constructor.set_static_method(
         "defineProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_define_property))),
