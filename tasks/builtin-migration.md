@@ -92,6 +92,8 @@ self-hosted JavaScript layer.
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned
   because a JS proxy would add LOC. Rust retains numeric primitives.
+- [~] Removed an unused Math `__ops__` binding left from the migration
+  scaffolding; Math’s remaining native aliases are all called by JS methods.
   Number/Boolean/Symbol public wiring is migrated; remaining work is spec
   surface completion and conformance polish.
 - [~] Number formatting wrappers are routed through `builtins/Number.js`;

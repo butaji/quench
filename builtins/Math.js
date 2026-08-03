@@ -1,7 +1,4 @@
 // Self-hosted Math builtins on top of __ops__
-var ops = __ops__;
-var ThrowTypeError = ops.ThrowTypeError;
-
 // Save native implementations before overriding
 var _nativeFloor = Math.__floor;
 var _nativeCeil = Math.__ceil;
