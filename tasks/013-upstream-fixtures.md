@@ -870,3 +870,6 @@ null-device path and a positive numeric CPU-parallelism result.
 
 Stage 315 formalized numeric coercion of OS metric functions, asserting their
 callable results convert to non-NaN numbers.
+
+Stage 316 formalized the upstream-complete OS core metrics contract, asserting
+numeric identity, uptime, memory, priority, and parallelism results.

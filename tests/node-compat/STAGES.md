@@ -312,3 +312,4 @@ these small fixtures isolate the currently implemented contract.
 |   313 | OS user information and Buffer encoding                          | `tools/run-node-tests.sh --stage 313` |
 |   314 | OS devNull and available parallelism APIs                          | `tools/run-node-tests.sh --stage 314` |
 |   315 | OS function numeric coercion                                        | `tools/run-node-tests.sh --stage 315` |
+|   316 | OS core metrics upstream-complete contract                        | `tools/run-node-tests.sh --stage 316` |
