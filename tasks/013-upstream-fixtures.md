@@ -909,3 +909,6 @@ inspection behavior.
 
 Stage 328 formalized detailed `%o` object inspection, including function
 metadata, circular references, and multiline formatting.
+
+Stage 329 formalized `%O` shallow object inspection, including unquoted string
+values and function rendering.
