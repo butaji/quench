@@ -230,28 +230,39 @@ pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
 }
 
 pub fn proto_reduce_right(args: Vec<Value>) -> Result<Value, JsError> {
-    let elements = get_this_array()?;
-    let receiver =
-        crate::builtins::get_native_this().unwrap_or_else(|| make_array(elements.clone()));
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match receiver {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
+    let length = array_like_length(&receiver)?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut index = elements.len();
-    let mut accumulator = match args.get(1).cloned() {
-        Some(initial) => initial,
-        None if elements.is_empty() => {
-            return Err(JsError(
-                "Reduce of empty array with no initial value".to_string(),
-            ))
-        }
+    let (mut accumulator, mut index) = match args.get(1).cloned() {
+        Some(initial) => (initial, length),
         None => {
-            index -= 1;
-            elements[index].clone()
+            let mut position = length;
+            let mut last = None;
+            while position > 0 && last.is_none() {
+                position -= 1;
+                last = array_like_value(&receiver, position)?;
+            }
+            (
+                last.ok_or_else(|| {
+                    JsError("Reduce of empty array with no initial value".to_string())
+                })?,
+                position,
+            )
         }
     };
     while index > 0 {
         index -= 1;
+        let Some(elem) = array_like_value(&receiver, index)? else {
+            continue;
+        };
         let callback_args = vec![
             accumulator,
-            elements[index].clone(),
+            elem,
             Value::Number(index as f64),
             receiver.clone(),
         ];
@@ -712,6 +723,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("var seen=false; var value=new String('012'); Array.prototype.reduce.call(value,function(prev,current,index){if(index===1) seen=prev==='0'; return current;}); seen"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_reduce_right_reads_sparse_accessor_elements() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; var a=[0,1,,3]; Object.defineProperty(a,'2',{get:function(){return 2;}}); a.reduceRight(function(prev,value,index){if(index===2) seen=value===2; return value;}); seen"),
             Ok(Value::Boolean(true))
         );
     }
