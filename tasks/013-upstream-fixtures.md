@@ -945,3 +945,6 @@ Stage 339 formalized `util.formatWithOptions` option validation, preserving
 
 Stage 340 formalized a non-debug common fixture regression check for
 `util.types.isDate`.
+
+Stage 341 formalized non-TTY process stream flags, ensuring stdout and stderr
+report `isTTY === false` in the harness.
