@@ -102,6 +102,9 @@ self-hosted JavaScript layer.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
+- [~] TypedArray public `fill`, `values`, and `keys` methods are JS-owned over
+  hidden Rust raw-buffer and lazy-iterator primitives; constructors, indexed
+  storage, element coercion, and iterator state remain Rust core.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and

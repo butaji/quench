@@ -9,6 +9,19 @@ var _nativeForEach = TypedArray.prototype.forEach;
 var _nativeReduce = TypedArray.prototype.reduce;
 var _nativeSlice = TypedArray.prototype.slice;
 var _nativeSubarray = TypedArray.prototype.subarray;
+var _nativeFill = TypedArray.prototype.__fill;
+var _nativeValues = TypedArray.prototype.__values;
+var _nativeKeys = TypedArray.prototype.__keys;
+
+TypedArray.prototype.fill = function(value, start, end) {
+  return _nativeFill.call(this, value, start, end);
+};
+TypedArray.prototype.values = function() {
+  return _nativeValues.call(this);
+};
+TypedArray.prototype.keys = function() {
+  return _nativeKeys.call(this);
+};
 
 TypedArray.prototype.filter = function(callbackfn, thisArg) {
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
