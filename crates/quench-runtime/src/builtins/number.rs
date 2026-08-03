@@ -55,7 +55,7 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
 
     proto.borrow_mut().set(
         "toString",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec, Number.prototype.toString unwraps the boxed number and
             // returns its ToString representation. This must take precedence
             // over Object.prototype.toString (which yields "[object Number]").
@@ -66,7 +66,10 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
             // Reuse the same number→string rules as to_js_string (NaN, ±Infinity,
             // integer-only, and general float formatting). -0 must stringify
             // as "0" per spec.
-            let s = if n.is_nan() {
+            let radix = args.first().map(to_number).unwrap_or(10.0) as u32;
+            let s = if (2..=36).contains(&radix) && radix != 10 && n.fract() == 0.0 {
+                integer_to_radix(n, radix)
+            } else if n.is_nan() {
                 "NaN".to_string()
             } else if n == f64::INFINITY {
                 "Infinity".to_string()
@@ -100,6 +103,24 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
             flags.enumerable = false;
         }
     }
+}
+
+fn integer_to_radix(number: f64, radix: u32) -> String {
+    let negative = number.is_sign_negative();
+    let mut value = number.abs() as u64;
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut result = Vec::new();
+    loop {
+        result.push(digits[(value % radix as u64) as usize] as char);
+        value /= radix as u64;
+        if value == 0 {
+            break;
+        }
+    }
+    if negative {
+        result.push('-');
+    }
+    result.iter().rev().collect()
 }
 
 fn proto_to_fixed_impl(args: Vec<Value>) -> Result<Value, crate::JsError> {
@@ -648,6 +669,11 @@ mod tests {
         assert!(eval_num("parseFloat(new Number(Infinity))").is_infinite());
         assert!(eval_num("parseFloat(new Number(-Infinity))").is_infinite());
         assert!(eval_num("parseFloat(new Number(-Infinity))").is_sign_negative());
+    }
+
+    #[test]
+    fn number_to_string_uses_radix() {
+        assert_eq!(eval("(255).toString(16)"), Value::String("ff".to_string()));
     }
 
     #[test]

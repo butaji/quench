@@ -34,6 +34,25 @@ fn char_code_at_impl(args: &[Value], s: &str) -> Value {
     )
 }
 
+fn code_point_at_impl(args: &[Value], s: &str) -> Value {
+    let idx = args.first().map(to_number).unwrap_or(0.0) as usize;
+    let utf16: Vec<u16> = s.encode_utf16().collect();
+    let Some(&first) = utf16.get(idx) else {
+        return Value::Undefined;
+    };
+    let code_point = if (0xd800..=0xdbff).contains(&first) {
+        match utf16.get(idx + 1) {
+            Some(&second) if (0xdc00..=0xdfff).contains(&second) => {
+                0x10000 + ((first as u32 - 0xd800) << 10) + second as u32 - 0xdc00
+            }
+            _ => first as u32,
+        }
+    } else {
+        first as u32
+    };
+    Value::Number(code_point as f64)
+}
+
 /// Install basic string methods (charAt, charCodeAt)
 pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
@@ -55,4 +74,27 @@ pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
             },
         ))),
     );
+    proto_clone.borrow_mut().set(
+        "codePointAt",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(code_point_at_impl(&args, &s)),
+                _ => Ok(Value::Undefined),
+            },
+        ))),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_point_at_returns_supplementary_code_point() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("'😀'.codePointAt(0)"),
+            Ok(Value::Number(0x1f600 as f64))
+        );
+    }
 }
