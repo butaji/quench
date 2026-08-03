@@ -16,7 +16,9 @@ self-hosted JavaScript layer.
   descriptor that can be authored in `builtins/*.js` must live there. Rust
   may retain only interpreter/core operations and implementations requiring
   Rust for performance, native memory, crate-backed functionality, or engine
-  integration.
+  integration. A Rust implementation may also remain when an equivalent JS
+  builtin would materially increase total maintained LOC; record that reason
+  in the family entry.
 
 ## Family queue
 
