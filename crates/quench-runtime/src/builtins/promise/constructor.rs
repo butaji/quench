@@ -223,42 +223,6 @@ fn create_callback_promise(
     super::helpers::create_callback_promise(on_fulfilled, on_rejected, target_promise)
 }
 
-pub fn promise_catch_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let on_rejected = args.first().cloned().unwrap_or(Value::Undefined);
-    promise_then_impl(vec![Value::Undefined, on_rejected])
-}
-
-pub fn promise_finally_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    use crate::eval::call_value_with_this;
-    use std::rc::Rc;
-    let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
-
-    if !matches!(on_finally, Value::Function(_) | Value::NativeFunction(_)) {
-        return promise_then_impl(vec![Value::Undefined, Value::Undefined]);
-    }
-
-    let on_finally_f = Rc::new(RefCell::new(on_finally.clone()));
-    let on_finally_r = Rc::new(RefCell::new(on_finally));
-
-    let on_fulfilled =
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-            let value = args.first().cloned().unwrap_or(Value::Undefined);
-            let cb = on_finally_f.borrow().clone();
-            call_value_with_this(cb, vec![], Value::Undefined)?;
-            Ok(value)
-        })));
-    let on_rejected =
-        Value::NativeFunction(Rc::new(NativeFunction::new(move |args: Vec<Value>| {
-            let reason = args.first().cloned().unwrap_or(Value::Undefined);
-            let cb = on_finally_r.borrow().clone();
-            call_value_with_this(cb, vec![], Value::Undefined)?;
-            crate::value::set_thrown_value(reason.clone());
-            Err(JsError(crate::value::to_js_string(&reason)))
-        })));
-
-    promise_then_impl(vec![on_fulfilled, on_rejected])
-}
-
 fn queue_microtask(args: Vec<Value>) -> Result<Value, JsError> {
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     Ok(super::microtask::queue_microtask_impl(callback))

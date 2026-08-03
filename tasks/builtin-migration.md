@@ -175,7 +175,7 @@ self-hosted JavaScript layer.
 - [~] Error, Function, and RegExp public methods are JS-owned where wrappers
   exist; Rust retains constructors, call mechanics, compiled matching, and
   error storage. Proxy and remaining constructors/prototypes are pending.
-- [ ] Remove duplicate Rust registrations and dormant JS wrappers.
+- [x] Remove duplicate Rust registrations and dormant JS wrappers.
 - [~] Migration-pass audit: remaining public Rust bindings are limited to
   host timers, URI/numeric conversion primitives, crate-backed JSON, raw
   DataView/TypedArray memory, lazy keyed iterators, regex execution, date
