@@ -953,3 +953,6 @@ Stage 342 formalized `assert.AssertionError` inheritance and assertion throwing
 behavior.
 
 Stage 343 formalized basic `vm` context creation and expression evaluation.
+
+Stage 344 formalized `assert` handling of an Error object as the assertion
+message, preserving the original Error instance when thrown.
