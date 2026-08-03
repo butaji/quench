@@ -20,6 +20,23 @@ self-hosted JavaScript layer.
   builtin would materially increase total maintained LOC; record that reason
   in the family entry.
 
+Migration decisions are made per public operation, not per Rust module. Each
+operation is assigned one owner:
+
+1. **JS** — the operation owns ECMAScript algorithm, coercion, ordering,
+   validation, or descriptor behavior in `builtins/*.js`.
+2. **Rust core** — the operation is an interpreter, storage, GC, scheduling,
+   native-memory, crate-backed, or performance-sensitive primitive.
+3. **Rust direct binding** — the operation stays Rust-owned because a JS
+   wrapper would be only a one-line forwarding proxy or would increase total
+   maintained LOC without moving an algorithm.
+
+An operation is not marked migrated merely because a JS file forwards to Rust.
+Before removing Rust registration, verify that JS owns observable algorithmic
+behavior and uses canonical `__ops__`. Before adding a wrapper, compare total
+maintained LOC and record the Rust-direct-binding exception in the family
+entry when the wrapper would be larger than the retained binding.
+
 ## Family queue
 
 - [~] The `__ops__` bridge is active and normal contexts enter
