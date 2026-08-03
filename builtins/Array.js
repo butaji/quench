@@ -333,8 +333,8 @@ Array.prototype.reverse = function ArrayReverse() {
   while (lower !== middle) {
     var upper = len - lower - 1;
     var lowerExists = HasProperty(O, lower);
-    var upperExists = HasProperty(O, upper);
     var lowerValue = lowerExists ? O[lower] : undefined;
+    var upperExists = HasProperty(O, upper);
     var upperValue = upperExists ? O[upper] : undefined;
     if (lowerExists && upperExists) {
       O[lower] = upperValue;
