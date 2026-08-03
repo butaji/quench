@@ -100,6 +100,8 @@ self-hosted JavaScript layer.
   concatenation algorithm in JS; Rust retains only the hidden string primitive.
 - [~] `String.prototype.substring` now performs JS coercion, clamping, and
   argument ordering over the hidden UTF-16 slice primitive.
+- [~] `String.prototype.slice` now performs JS negative-index and infinity
+  clamping in JS over the hidden UTF-16 slice primitive.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned

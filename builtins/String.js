@@ -122,7 +122,14 @@ String.prototype.substring = function StringSubstring(start, end) {
 };
 
 String.prototype.slice = function StringSlice(start, end) {
-  return _slice.call(this, start, end);
+  var string = this + '';
+  var length = string.length;
+  var first = Number(start);
+  var from = first !== first || first === 0 ? 0 : first === Infinity ? length : first === -Infinity ? 0 : first < 0 ? Math.max(length + Math.ceil(first), 0) : Math.min(Math.floor(first), length);
+  var last = end === undefined ? length : Number(end);
+  var to = last !== last || last === 0 ? 0 : last === Infinity ? length : last === -Infinity ? 0 : last < 0 ? Math.max(length + Math.ceil(last), 0) : Math.min(Math.floor(last), length);
+  if (to < from) return '';
+  return string.slice(from, to);
 };
 
 String.prototype.split = function StringSplit(separator, limit) {
