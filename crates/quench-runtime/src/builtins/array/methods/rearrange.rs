@@ -4,25 +4,24 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, JsError, Object, ObjectKind, Value};
+use crate::value::{to_js_string, to_number, JsError, Object, Value};
 
 /// Get the array object from 'this'
 pub fn get_this_array_obj() -> Result<Rc<RefCell<Object>>, JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::Object(o)) => {
-            let is_array = o.borrow().kind == ObjectKind::Array;
-            if is_array {
-                Ok(o)
-            } else {
-                Err(JsError(
-                    "Array.prototype method called on non-array".to_string(),
+    let value = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let object = match value {
+        Value::Object(object) => object,
+        primitive => match crate::value::to_object(&primitive)? {
+            Value::Object(object) => object,
+            _ => {
+                return Err(JsError(
+                    "Array.prototype method called on non-object".to_string(),
                 ))
             }
-        }
-        _ => Err(JsError(
-            "Array.prototype method called on non-object".to_string(),
-        )),
-    }
+        },
+    };
+    Ok(object)
 }
 
 /// Set the array's elements directly on the object
@@ -52,6 +51,51 @@ pub fn proto_reverse(_args: Vec<Value>) -> Result<Value, JsError> {
     elements.reverse();
     set_elements(&o, elements)?;
     Ok(Value::Object(Rc::clone(&o)))
+}
+
+pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
+    let o = get_this_array_obj()?;
+    let mut elements = o.borrow().elements.clone();
+    let len = elements.len() as i64;
+    let target = relative_index(args.first(), len);
+    let start = relative_index(args.get(1), len);
+    let end = args
+        .get(2)
+        .map_or(len, |value| relative_index(Some(value), len));
+    let count = (end - start).max(0).min(len - target);
+    let source = elements.clone();
+    for offset in 0..count {
+        elements[(target + offset) as usize] = source[(start + offset) as usize].clone();
+    }
+    set_elements(&o, elements)?;
+    Ok(Value::Object(Rc::clone(&o)))
+}
+
+pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
+    let o = get_this_array_obj()?;
+    let mut elements = o.borrow().elements.clone();
+    let len = elements.len() as i64;
+    let start = relative_index(args.get(1), len);
+    let end = args
+        .get(2)
+        .map_or(len, |value| relative_index(Some(value), len));
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    for index in start..end.min(len) {
+        elements[index as usize] = value.clone();
+    }
+    set_elements(&o, elements)?;
+    Ok(Value::Object(Rc::clone(&o)))
+}
+
+fn relative_index(value: Option<&Value>, len: i64) -> i64 {
+    let number = value.map_or(0.0, to_number);
+    if number.is_nan() || number <= 0.0 {
+        0
+    } else if number >= len as f64 {
+        len
+    } else {
+        number as i64
+    }
 }
 
 /// Call a user-provided sort comparator with (a, b)

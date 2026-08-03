@@ -244,6 +244,15 @@ mod tests {
             Ok(Value::Number(3.0))
         );
     }
+
+    #[test]
+    fn array_copy_within_and_fill_are_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var a = [1, 2, 3]; a.copyWithin(1, 0); var b = [1, 2, 3]; b.fill(4, 1); [a.join(','), b.join(',')].join('|')"),
+            Ok(Value::String("1,1,2|1,4,4".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
