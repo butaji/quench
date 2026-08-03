@@ -314,3 +314,4 @@ these small fixtures isolate the currently implemented contract.
 |   315 | OS function numeric coercion                                        | `tools/run-node-tests.sh --stage 315` |
 |   316 | OS core metrics upstream-complete contract                        | `tools/run-node-tests.sh --stage 316` |
 |   317 | common.mustCallAtLeast callback counting                         | `tools/run-node-tests.sh --stage 317` |
+|   318 | OS tmpdir environment precedence and normalization               | `tools/run-node-tests.sh --stage 318` |
