@@ -76,7 +76,9 @@ if [[ "${SSOT_BUILD_RUN_TEST:-0}" == "1" ]]; then
   export TEST262_TEST_RUN_BUILD=1
 fi
 
-case "${TEST262_QUICK:-1}" in
+# Canonical SSOT runs every test. Set TEST262_QUICK=1 explicitly only for
+# diagnostic triage; quick output is never a conformance/progress result.
+case "${TEST262_QUICK:-0}" in
   0|false|False|FALSE|no|No|NO|off|Off|OFF)
     EXTRA_ENV_ARGS=(TEST262_DIGEST=1)
     ;;
