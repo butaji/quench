@@ -199,6 +199,14 @@ mod tests {
             Value::String("0|34".to_string())
         );
     }
+
+    #[test]
+    fn regexp_symbol_search_propagates_index_getter_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var o = {exec: function() { return {get index() { throw new Test262Error(); }}; }}; RegExp.prototype[Symbol.search].call(o)")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -341,7 +349,11 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     obj.borrow_mut().set("lastIndex", last_index);
     match result {
         Value::Null => Ok(Value::Number(-1.0)),
-        Value::Object(result) => Ok(result.borrow().get("index").unwrap_or(Value::Undefined)),
+        Value::Object(result) => crate::eval::member::eval_object_member_value(
+            &result,
+            &Value::String("index".to_string()),
+            None,
+        ),
         _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
     }
 }
