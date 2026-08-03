@@ -85,8 +85,9 @@ self-hosted JavaScript layer.
   combinator algorithms remain Rust-backed.
 - [~] RegExp `test` and `toString` are JS-owned over hidden Rust regex
   primitives; compiled matching and `exec` remain Rust-backed.
-- [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
-  wrappers; retain their crate-backed and raw-buffer primitives in Rust.
+- [~] ArrayBuffer public `slice` is JS-owned over a hidden Rust raw-buffer
+  primitive. Date, JSON, URI, BigInt, DataView, and remaining TypedArray
+  wrappers retain their crate-backed and raw-buffer primitives in Rust.
 - [ ] Error, Function, Proxy, and remaining constructors/prototypes.
 - [ ] Remove duplicate Rust registrations and dormant JS wrappers.
 - [x] Route normal context initialization through the self-hosted bootstrap
