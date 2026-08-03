@@ -294,3 +294,6 @@ both equal and unequal byte sequences with cleanup.
 
 Stage 119 formalized invalid-buffer validation for sync and callback
 `fs.writev`, including descriptor and path cleanup.
+
+Stage 120 formalized promise-based vectored `fs.readv`, asserting byte count,
+returned-buffer identity, contents, and cleanup.
