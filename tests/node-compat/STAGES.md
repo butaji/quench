@@ -284,3 +284,6 @@ these small fixtures isolate the currently implemented contract.
 |   285 | `querystring` encoder options and URI errors                   | `tools/run-node-tests.sh --stage 285` |
 |   286 | `querystring` numeric coercion and `maxKeys`                   | `tools/run-node-tests.sh --stage 286` |
 |   287 | `querystring` decoding, `unescapeBuffer`, and options          | `tools/run-node-tests.sh --stage 287` |
+|   288 | `querystring` decode fallback and `unescape` override          | `tools/run-node-tests.sh --stage 288` |
+|   289 | `querystring.unescape` malformed-escape handling               | `tools/run-node-tests.sh --stage 289` |
+|   290 | `querystring` upstream-complete behavior                       | `tools/run-node-tests.sh --stage 290` |
