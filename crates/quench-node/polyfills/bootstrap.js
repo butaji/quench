@@ -2394,6 +2394,66 @@ globalThis.__nodePath = {
     if (dir === "/") return `/${base}`;
     return `${dir}/${base}`;
   },
+  matchesGlob(path, pattern) {
+    if (typeof path !== "string" || typeof pattern !== "string") return false;
+    const norm = (s) => s.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "") || ".";
+    const p = norm(path).split("/");
+    const g = norm(pattern).split("/");
+    const matchSeg = (s, pat) => {
+      // Brace expansion
+      if (pat.includes("{") && pat.includes("}")) {
+        const open = pat.indexOf("{");
+        const close = pat.indexOf("}", open);
+        const head = pat.slice(0, open);
+        const tail = pat.slice(close + 1);
+        const alts = pat.slice(open + 1, close).split(",");
+        for (const alt of alts) {
+          if (matchSeg(s, head + alt + tail)) return true;
+        }
+        return false;
+      }
+      // Char class
+      const classMatch = (re) => {
+        const m = pat.match(/\[([^\]]+)\]/);
+        if (m) {
+          const re_ = new RegExp("^" + re + "$");
+          return re_.test(s);
+        }
+        return re.test(s);
+      };
+      const re = pat
+        .replace(/[.+^$()|\\]/g, "\\$&")
+        .replace(/\{[^}]*\}/g, (m) => m)
+        .replace(/\*\*/g, "::DOUBLESTAR::")
+        .replace(/\*/g, "[^/]*")
+        .replace(/::DOUBLESTAR::/g, ".*")
+        .replace(/\?/g, "[^/]")
+        .replace(/\[([^\]]+)\]/g, "[$1]");
+      try {
+        return new RegExp("^" + re + "$").test(s);
+      } catch {
+        return false;
+      }
+    };
+    let pi = 0;
+    let gi = 0;
+    while (gi < g.length) {
+      const pat = g[gi];
+      if (pat === "**") {
+        if (gi === g.length - 1) return true;
+        gi++;
+        for (let k = pi; k <= p.length; k++) {
+          if (this.matchesGlob(p.slice(k).join("/"), g.slice(gi).join("/"))) return true;
+        }
+        return false;
+      }
+      if (pi >= p.length) return false;
+      if (!matchSeg(p[pi], pat)) return false;
+      pi++;
+      gi++;
+    }
+    return pi === p.length;
+  },
 };
 globalThis.__nodePath.posix = globalThis.__nodePath;
 const __nodeWinPath = {
