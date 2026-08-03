@@ -441,3 +441,6 @@ Stage 167 formalized invalid value validation for promise file-handle
 
 Stage 168 formalized encoding options for promise file-handle `writeFile`,
 asserting the decoded Latin-1 round trip and cleanup.
+
+Stage 169 formalized file-handle pull iteration through the upstream stream
+helpers, asserting text and byte lengths and cleaning up the file.
