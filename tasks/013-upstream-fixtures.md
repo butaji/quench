@@ -831,3 +831,6 @@ validation and suffix removal for POSIX and Win32 namespaces.
 
 Stage 302 formalized path namespace separators and delimiters, asserting the
 platform-specific values exposed by POSIX and Win32 paths.
+
+Stage 303 formalized upstream-complete path normalization and joining,
+asserting POSIX/Win32 parent traversal and basename suffix behavior.
