@@ -326,3 +326,4 @@ these small fixtures isolate the currently implemented contract.
 |   327 | util format trailing arguments and object inspection              | `tools/run-node-tests.sh --stage 327` |
 |   328 | util format detailed object inspection                            | `tools/run-node-tests.sh --stage 328` |
 |   329 | util format uppercase object inspection                           | `tools/run-node-tests.sh --stage 329` |
+|   330 | util format nested array inspection                               | `tools/run-node-tests.sh --stage 330` |
