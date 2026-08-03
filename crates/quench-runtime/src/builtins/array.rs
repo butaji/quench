@@ -245,6 +245,12 @@ fn make_array_with_new(
         obj.prototype = Some(Rc::clone(proto));
     }
     obj.kind = ObjectKind::Array;
+    obj.elements.clear();
+    obj.holes.clear();
+    obj.properties
+        .retain(|key, _| key == "length" || key.parse::<usize>().is_err());
+    obj.descriptors
+        .retain(|key, _| key == "length" || key.parse::<usize>().is_err());
     if args.len() == 1 {
         if let Value::Number(n) = args[0] {
             if n == n.floor() && (0.0..4294967296.0).contains(&n) {
