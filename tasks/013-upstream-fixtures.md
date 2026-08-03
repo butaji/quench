@@ -1029,6 +1029,8 @@ count, and microtask observation of the final count.
 Stage 368 formalized timer callback arguments plus `setImmediate` handle
 cancellation.
 
+Stage 369 formalized `process.nextTick` callback argument forwarding.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
