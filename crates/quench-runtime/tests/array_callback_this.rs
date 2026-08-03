@@ -28,6 +28,15 @@ fn array_of_uses_called_constructor_and_sets_length() {
 }
 
 #[test]
+fn array_from_uses_called_constructor_prototype() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var r=Array.from.call(Object,[1,2]); r.constructor===Object"),
+        Ok(Value::Boolean(true))
+    );
+}
+
+#[test]
 fn array_from_reads_array_elements_after_each_mapping_callback() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(

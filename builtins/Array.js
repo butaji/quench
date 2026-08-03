@@ -68,7 +68,7 @@ Array.from = function ArrayFrom(items) {
     var length = ToLength(object.length);
     for (var i = 0; i < length; i++) values.push(object[i]);
   }
-  var result = new Array(values.length);
+  var result = Reflect.construct(Array, [values.length], this);
   for (var i = 0; i < values.length; i++) CreateDataProperty(result, i, mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i));
   return result;
 };
