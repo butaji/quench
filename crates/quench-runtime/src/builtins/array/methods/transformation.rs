@@ -18,6 +18,14 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
             let arr = o.borrow();
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
+            } else if arr.exotic_kind == Some(crate::value::kind::ExoticKind::String) {
+                match arr.get("_value") {
+                    Some(Value::String(string)) => Ok(string
+                        .chars()
+                        .map(|character| Value::String(character.to_string()))
+                        .collect()),
+                    _ => Ok(Vec::new()),
+                }
             } else {
                 // For non-Array objects (array-likes, arguments), extract indexed properties.
                 // Arguments objects in mappable mode (sloppy mode, no rest/default params)
@@ -225,6 +233,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var p = {}; Object.defineProperty(p, 'length', {get: function() { return 2; }}); var C = function() {}; C.prototype = p; var o = new C(); o[0] = 12; o[1] = 11; o[2] = 9; Array.prototype.filter.call(o, function() { return true; }).length"),
             Ok(Value::Number(2.0))
+        );
+    }
+
+    #[test]
+    fn filter_reads_string_object_indices() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.prototype.filter.call(new String('012'), function() { return true; }).length"),
+            Ok(Value::Number(3.0))
         );
     }
 }
