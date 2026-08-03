@@ -25,6 +25,16 @@ pub fn set_constructing_class(class: Option<ClassValue>) {
     });
 }
 
+struct ConstructingClassGuard(Option<ClassValue>);
+
+impl Drop for ConstructingClassGuard {
+    fn drop(&mut self) {
+        CONSTRUCTING_CLASS.with(|cell| {
+            *cell.borrow_mut() = self.0.clone();
+        });
+    }
+}
+
 fn constructing_class() -> Option<ClassValue> {
     CONSTRUCTING_CLASS.with(|cell| cell.borrow().clone())
 }
@@ -143,7 +153,9 @@ pub fn instantiate_simple(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
+    let previous_constructing_class = current_constructing_class();
     set_constructing_class(Some(class.clone()));
+    let _constructing_class_guard = ConstructingClassGuard(previous_constructing_class);
     let this_val = new_instance(class, env)?;
     let body = class.constructor_body.clone();
     let call_env = Rc::new(RefCell::new(build_constructor_env(
@@ -266,7 +278,9 @@ pub fn instantiate_with_fields(
     env: &Rc<RefCell<Environment>>,
 ) -> Result<Value, JsError> {
     let _depth = check_depth_guard()?;
+    let previous_constructing_class = current_constructing_class();
     set_constructing_class(Some(class.clone()));
+    let _constructing_class_guard = ConstructingClassGuard(previous_constructing_class);
     let this_val = new_instance(class, env)?;
     let instance_rc = match &this_val {
         Value::Object(o) => Rc::clone(o),

@@ -502,6 +502,27 @@ mod tests {
     }
 
     #[test]
+    fn derived_private_method_cannot_install_after_super_seals_receiver() {
+        let result = eval(
+            "class B { constructor() { Object.preventExtensions(this); } } class M extends B { constructor() { super(); } #m() { return 42; } } let error; try { new M(); } catch (e) { error = [e.name, e.message]; } error;",
+        )
+        .unwrap();
+        assert_eq!(
+            result.to_string(),
+            "[TypeError,Cannot add private field to non-extensible object]"
+        );
+    }
+
+    #[test]
+    fn constructor_error_does_not_leak_constructing_class_state() {
+        let result = eval(
+            "class B { constructor(seal) { if (seal) Object.preventExtensions(this); } } class F extends B { #x; constructor(seal) { super(seal); this.#x = 42; } } class M extends B { constructor(seal) { super(seal); } #m() { return 42; } } let errors = []; try { new F(true); } catch (e) { errors.push(e.message); } try { new M(true); } catch (e) { errors.push(e.message); } errors;",
+        )
+        .unwrap();
+        assert_eq!(result.to_string(), "[Cannot add private field to non-extensible object,Cannot add private field to non-extensible object]");
+    }
+
+    #[test]
     fn undeclared_private_in_field_eval_throws_syntax_error() {
         let err =
             eval("class C { y = eval(\"executed = true; this.#x;\"); } new C();").unwrap_err();
