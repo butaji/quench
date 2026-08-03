@@ -1,6 +1,8 @@
 const fixtures = require("../common/fixtures");
-if (
-  typeof fixtures.fixturesDir !== "string" ||
-  !fixtures.fixturesDir.endsWith("/tests/node/test/fixtures")
-)
-  throw new Error("fixturesDir missing");
+const assert = require("assert");
+
+assert.strictEqual(typeof fixtures.fixturesDir, "string");
+assert.strictEqual(
+  fixtures.fixturesDir.endsWith("/tests/node/test/fixtures"),
+  true
+);
