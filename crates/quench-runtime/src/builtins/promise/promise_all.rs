@@ -175,6 +175,8 @@ fn process_promise_all_value(
         if let Some(ref mut d) = p.promise_data {
             d.reject(reason);
         }
+        drop(p);
+        crate::builtins::promise::callbacks::enqueue_promise_reactions(&promise_rc_r);
         Ok(Value::Undefined)
     })));
 

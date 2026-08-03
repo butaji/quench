@@ -209,7 +209,8 @@ self-hosted JavaScript layer.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   microtask scheduling, and the static `resolve`, `reject`, `all`, and `race`
-  entry points because JS would only add pass-through wrappers.
+  entry points because JS would only add pass-through wrappers. `Promise.all`
+  now enqueues reactions when a pending input rejects.
 - [~] RegExp `test` now performs the JS-owned `exec` call/result algorithm,
   while `toString` composes `source` and `flags` entirely in JS; compiled
   matching and `exec` remain Rust-backed.

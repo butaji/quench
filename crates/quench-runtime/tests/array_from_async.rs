@@ -52,3 +52,36 @@ fn array_from_async_passes_this_arg_to_mapping_callback() {
     .unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::Number(7.0)));
 }
+
+#[test]
+fn array_from_async_rejects_a_thenable_element() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result; var item={then:function(resolve,reject){reject('bad');}}; \
+         Array.fromAsync({length:1,0:item}).then(function(){result='ok';}, function(e){result=e;});",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("bad".to_string())));
+}
+
+#[test]
+fn promise_resolve_rejects_a_thenable() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result; var item={then:function(resolve,reject){reject('bad');}}; \
+         Promise.resolve(item).then(function(){result='ok';}, function(e){result=e;});",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("bad".to_string())));
+}
+
+#[test]
+fn promise_all_rejects_a_pending_thenable_promise() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result; var item={then:function(resolve,reject){reject('bad');}}; \
+         Promise.all([Promise.resolve(item)]).then(function(){result='ok';}, function(e){result=e;});",
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("bad".to_string())));
+}
