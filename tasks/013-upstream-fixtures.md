@@ -861,3 +861,6 @@ value greater than zero.
 
 Stage 312 formalized OS host information, memory/load metrics, and loopback
 network interfaces.
+
+Stage 313 formalized OS user information, asserting identity fields and
+Buffer-encoded username/shell results.
