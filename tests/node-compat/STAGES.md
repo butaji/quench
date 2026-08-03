@@ -337,3 +337,4 @@ these small fixtures isolate the currently implemented contract.
 |   338 | util format custom Error rendering                                | `tools/run-node-tests.sh --stage 338` |
 |   339 | util formatWithOptions invalid options validation                 | `tools/run-node-tests.sh --stage 339` |
 |   340 | common non-debug util type regression                              | `tools/run-node-tests.sh --stage 340` |
+|   341 | process stream TTY flags                                          | `tools/run-node-tests.sh --stage 341` |
