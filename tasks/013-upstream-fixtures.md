@@ -462,3 +462,6 @@ compressed/decompressed round-trip text and cleanup.
 
 Stage 175 formalized pull batch chunking, asserting batch shape, chunk size,
 batch count, and cleanup.
+
+Stage 176 formalized promise file-handle `readFile`, asserting decoded file
+contents and the `AbortError` from an already-aborted signal.
