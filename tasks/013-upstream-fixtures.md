@@ -330,3 +330,6 @@ writing, asserting invalid types, output, and cleanup.
 
 Stage 131 formalized fd-based callback `fs.appendFile`, asserting success,
 exact appended contents, and cleanup.
+
+Stage 132 formalized promise-based fd `fs.promises.appendFile`, asserting the
+same observable result and cleaning up the temporary file.
