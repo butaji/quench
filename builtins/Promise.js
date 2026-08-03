@@ -3,7 +3,6 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 var _nativeThen = Promise.prototype.then;
-var _nativeCatch = Promise.prototype.catch;
 
 // Promise.prototype.then (ES2025 §27.2.5.4)
 Promise.prototype.then = function PromiseThen(onFulfilled, onRejected) {
@@ -14,7 +13,7 @@ Promise.prototype.then = function PromiseThen(onFulfilled, onRejected) {
 // Promise.prototype.catch (ES2025 §27.2.5.2)
 Promise.prototype.catch = function PromiseCatch(onRejected) {
   if (this === null || this === undefined) throw ThrowTypeError("Promise.prototype.catch called on null or undefined");
-  return _nativeCatch.call(this, onRejected);
+  return _nativeThen.call(this, undefined, onRejected);
 };
 
 // Promise.prototype.finally (ES2025 §27.2.5.3)
