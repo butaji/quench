@@ -262,6 +262,15 @@ mod tests {
             Ok(Value::String("0,0,1,3".to_string()))
         );
     }
+
+    #[test]
+    fn copy_within_reloads_elements_after_start_coercion() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var a = []; a.length = 20; var b = []; for (var i = 0; i < 1024; i++) b[i] = i; b.copyWithin(0, {valueOf: function() { b.length = 20; return 1000; }}); [b.length, b[0]].join('|')"),
+            Ok(Value::String("20|undefined".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

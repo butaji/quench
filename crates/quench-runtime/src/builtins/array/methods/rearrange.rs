@@ -26,7 +26,12 @@ pub fn get_this_array_obj() -> Result<Rc<RefCell<Object>>, JsError> {
 
 /// Set the array's elements directly on the object
 pub fn set_elements(o: &Rc<RefCell<Object>>, new_elements: Vec<Value>) -> Result<Value, JsError> {
-    o.borrow_mut().elements = new_elements.clone();
+    let new_len = new_elements.len();
+    let mut object = o.borrow_mut();
+    object.elements = new_elements.clone();
+    object
+        .properties
+        .insert("length".to_string(), Value::Number(new_len as f64));
     Ok(Value::Number(new_elements.len() as f64))
 }
 
@@ -55,17 +60,38 @@ pub fn proto_reverse(_args: Vec<Value>) -> Result<Value, JsError> {
 
 pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
-    let mut elements = o.borrow().elements.clone();
-    let len = elements.len() as i64;
+    let len = o.borrow().elements.len() as i64;
     let target = relative_index(args.first(), len);
     let start = relative_index(args.get(1), len);
     let end = args
         .get(2)
         .map_or(len, |value| relative_index(Some(value), len));
     let count = (end - start).max(0).min(len - target);
-    let source = elements.clone();
+    let mut elements = o.borrow().elements.clone();
+    let current_len = o
+        .borrow()
+        .properties
+        .get("length")
+        .and_then(|value| match value {
+            Value::Number(length) => Some((*length).max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(elements.len());
+    elements.truncate(current_len);
     for offset in 0..count {
-        elements[(target + offset) as usize] = source[(start + offset) as usize].clone();
+        let key_string = (start + offset).to_string();
+        if o.borrow().has(&key_string) {
+            let value =
+                crate::eval::member::eval_object_member_value(&o, &Value::String(key_string), None)
+                    .unwrap_or(Value::Undefined);
+            if (target + offset) as usize >= elements.len() {
+                elements.push(value);
+            } else {
+                elements[(target + offset) as usize] = value;
+            }
+        } else if ((target + offset) as usize) < elements.len() {
+            elements[(target + offset) as usize] = Value::Undefined;
+        }
     }
     set_elements(&o, elements)?;
     Ok(Value::Object(Rc::clone(&o)))
