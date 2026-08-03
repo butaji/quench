@@ -14,7 +14,7 @@ pub fn register_weak_ref(ctx: &mut Context) {
 
     let proto_clone = Rc::clone(&proto_rc);
     proto_rc.borrow_mut().set(
-        "deref",
+        "__deref",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(this_obj) = this_val else {
