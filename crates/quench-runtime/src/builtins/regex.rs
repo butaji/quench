@@ -112,7 +112,17 @@ mod tests {
 
     #[test]
     fn regexp_escape_escapes_first_alphanumeric_and_hyphen() {
-        assert_eq!(regexp_escape("a-b"), r#"\x61\x2Db"#);
+        assert_eq!(regexp_escape("a-b"), r#"\x61\x2db"#);
+    }
+
+    #[test]
+    fn regexp_escape_rejects_non_strings() {
+        assert!(regexp_escape_impl(vec![Value::Number(1.0)]).is_err());
+    }
+
+    #[test]
+    fn regexp_escape_uses_lowercase_hex_digits() {
+        assert_eq!(regexp_escape("jjj"), r#"\x6ajj"#);
     }
 }
 
@@ -320,7 +330,14 @@ fn regexp_constructor_impl(
 }
 
 fn regexp_escape_impl(args: Vec<Value>) -> Result<Value, JsError> {
-    let input = args.first().map(to_js_string).unwrap_or_default();
+    let input = match args.first() {
+        Some(Value::String(value)) => value.clone(),
+        _ => {
+            return Err(JsError::new(
+                "TypeError: argument must be a string".to_string(),
+            ))
+        }
+    };
     Ok(Value::String(regexp_escape(&input)))
 }
 
@@ -328,12 +345,12 @@ fn regexp_escape(input: &str) -> String {
     let mut escaped = String::new();
     for (index, ch) in input.chars().enumerate() {
         if index == 0 && ch.is_ascii_alphanumeric() {
-            escaped.push_str(&format!(r#"\x{:02X}"#, ch as u32));
+            escaped.push_str(&format!(r#"\x{:02x}"#, ch as u32));
         } else if "^$\\.*+?()[]{}|/".contains(ch) {
             escaped.push('\\');
             escaped.push(ch);
         } else if ch.is_ascii_punctuation() {
-            escaped.push_str(&format!(r#"\x{:02X}"#, ch as u32));
+            escaped.push_str(&format!(r#"\x{:02x}"#, ch as u32));
         } else if ch == '\n' {
             escaped.push_str(r#"\n"#);
         } else if ch == '\r' {
