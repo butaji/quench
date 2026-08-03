@@ -282,6 +282,9 @@ self-hosted JavaScript layer.
   descriptors through `GetOwnPropDesc`.
 - [x] Normalize static self-hosted methods on native constructors, including
   `Array.from`'s specified length/name and the absence of a function prototype.
+- [x] Apply the shared non-constructable marker to static self-hosted methods;
+  static methods such as `Array.from` and `Array.of` now share the same core
+  constructor invariant as prototype methods.
 
 ## First increment
 

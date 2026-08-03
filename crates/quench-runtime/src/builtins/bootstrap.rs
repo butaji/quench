@@ -614,6 +614,13 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_static_methods_are_not_constructable() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("!__ops__.IsConstructor(Array.from) && !__ops__.IsConstructor(Array.of)").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

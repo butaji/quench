@@ -115,6 +115,7 @@ impl NativeConstructor {
         };
         let _ = function.set_property("name", Value::String(name.to_string()));
         let _ = function.set_property("prototype", Value::Undefined);
+        let _ = function.set_property("\0nonconstructable", Value::Boolean(true));
     }
 
     pub fn static_method_names(&self) -> Vec<String> {
