@@ -291,3 +291,6 @@ is removed before writing and cleaning up the path.
 
 Stage 118 formalized `Buffer.equals` coverage after vectored writes, asserting
 both equal and unequal byte sequences with cleanup.
+
+Stage 119 formalized invalid-buffer validation for sync and callback
+`fs.writev`, including descriptor and path cleanup.
