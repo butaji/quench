@@ -936,3 +936,6 @@ compact array rendering and nested object elision.
 
 Stage 337 formalized `util.format` SharedArrayBuffer inspection, including its
 byte contents and byte-length metadata.
+
+Stage 338 formalized custom Error formatting, preserving a custom error name
+and message in the single-argument representation.
