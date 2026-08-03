@@ -3,12 +3,13 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeTest = RegExp.prototype.__test;
 
 // RegExp.prototype.test (ES2025 §22.2.5.15)
 RegExp.prototype.test = function RegExpTest(S) {
   if (this === null || this === undefined) throw ThrowTypeError("RegExp.prototype.test called on null or undefined");
-  return _nativeTest.call(this, S);
+  var exec = this.exec;
+  if (!ops.IsCallable(exec)) throw ThrowTypeError("RegExp exec is not callable");
+  return exec.call(this, String(S)) !== null;
 };
 
 // RegExp.prototype.toString (ES2025 §22.2.5.16)

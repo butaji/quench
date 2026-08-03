@@ -146,8 +146,8 @@ self-hosted JavaScript layer.
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   microtask scheduling, and the static `resolve`, `reject`, `all`, and `race`
   entry points because JS would only add pass-through wrappers.
-- [~] RegExp `test` is JS-owned over a hidden Rust regex primitive, while
-  `toString` now composes `source` and `flags` entirely in JS; compiled
+- [~] RegExp `test` now performs the JS-owned `exec` call/result algorithm,
+  while `toString` composes `source` and `flags` entirely in JS; compiled
   matching and `exec` remain Rust-backed.
 - [~] ArrayBuffer public `slice` is JS-owned over a hidden Rust raw-buffer
   primitive. BigInt public `toString`, `valueOf`, `asIntN`, and `asUintN` are
