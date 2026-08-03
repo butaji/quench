@@ -515,3 +515,6 @@ endianness, round trips, and `ERR_BUFFER_OUT_OF_BOUNDS` diagnostics.
 
 Stage 192 formalized variable-width Buffer unsigned integer operations,
 asserting six-byte big- and little-endian round trips.
+
+Stage 193 formalized Buffer `Uint`/`UInt` method aliases, asserting that the
+modern spellings preserve the original method identity.
