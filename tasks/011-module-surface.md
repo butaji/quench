@@ -258,3 +258,6 @@ get, and server operations until the planned OpenSSL/rustls host boundary is
 implemented.
 Stage 556 registers `http2` with explicit unsupported errors and stable
 session constants; real HTTP/2 remains a future host networking slice.
+Stage 557 gives `node:test/reporters` an explicit unknown-built-in error,
+documenting the unsupported reporter integration instead of exposing a
+generic loader failure.
