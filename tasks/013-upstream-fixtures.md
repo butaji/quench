@@ -873,3 +873,6 @@ callable results convert to non-NaN numbers.
 
 Stage 316 formalized the upstream-complete OS core metrics contract, asserting
 numeric identity, uptime, memory, priority, and parallelism results.
+
+Stage 317 formalized `common.mustCallAtLeast`, asserting callbacks may exceed
+their minimum invocation count while recording the actual count.

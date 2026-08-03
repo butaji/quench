@@ -313,3 +313,4 @@ these small fixtures isolate the currently implemented contract.
 |   314 | OS devNull and available parallelism APIs                          | `tools/run-node-tests.sh --stage 314` |
 |   315 | OS function numeric coercion                                        | `tools/run-node-tests.sh --stage 315` |
 |   316 | OS core metrics upstream-complete contract                        | `tools/run-node-tests.sh --stage 316` |
+|   317 | common.mustCallAtLeast callback counting                         | `tools/run-node-tests.sh --stage 317` |
