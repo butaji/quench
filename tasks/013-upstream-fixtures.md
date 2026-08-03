@@ -918,3 +918,6 @@ and nested function reference rendering.
 
 Stage 331 formalized nested object `%o` inspection, preserving nested property
 structure and function reference rendering.
+
+Stage 332 formalized `util.format` Error handling, returning an Error's stack
+when it is the sole formatting argument.
