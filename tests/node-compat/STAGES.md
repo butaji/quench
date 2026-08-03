@@ -206,3 +206,4 @@ these small fixtures isolate the currently implemented contract.
 |   196 | Buffer single-precision float read/write operations          | `tools/run-node-tests.sh --stage 196` |
 |   197 | Buffer slicing, callable construction, and comparison        | `tools/run-node-tests.sh --stage 197` |
 |   198 | Buffer copy ranges, counts, and overlap semantics             | `tools/run-node-tests.sh --stage 198` |
+|   199 | Buffer concatenation, limits, and zero filling                | `tools/run-node-tests.sh --stage 199` |
