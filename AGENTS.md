@@ -1,5 +1,7 @@
 # AGENTS.md
 
+GitHub CI is forbidden in this repository. Do not add or restore GitHub Actions workflows.
+
 Do TDD. Dont do debug code. Dont do comments. Dont do debug prints. Never guess — write a
 failing unit test first, every time. Unit test is the best comment and the best debug print you can make.
 
