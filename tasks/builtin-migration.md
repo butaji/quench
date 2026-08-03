@@ -250,6 +250,10 @@ self-hosted JavaScript layer.
   remain Rust core while async algorithms are self-hosted where possible.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
+- [x] Keep function ToPrimitive coercion on the non-recursive source-text
+  fallback when inherited self-hosted methods would recurse; own coercion
+  hooks remain honored. This fixes Array numeric-index conversion without
+  adding a Rust builtin.
 
 ## First increment
 

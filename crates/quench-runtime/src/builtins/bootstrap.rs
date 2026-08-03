@@ -490,6 +490,13 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_at_coerces_function_index() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("[10, 20].at(function() {}) === 10").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn self_hosted_array_search_coerces_from_index() {
         let mut ctx = new_ctx();
         let r = ctx

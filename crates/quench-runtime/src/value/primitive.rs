@@ -77,18 +77,14 @@ fn to_primitive_function(
     let this_val = Value::Function((**f).clone());
 
     let mut first_was_object = false;
-    let mut first_found = false;
     if let Some(ref m) = first_method {
-        first_found = true;
         let v = crate::eval::call_value_with_this(m.clone(), vec![], this_val.clone())?;
         if !matches!(v, Value::Object(_) | Value::Function(_)) {
             return Ok(v);
         }
         first_was_object = true;
     }
-    let mut second_found = false;
     if let Some(ref m) = second_method {
-        second_found = true;
         let v = crate::eval::call_value_with_this(m.clone(), vec![], this_val.clone())?;
         if !matches!(v, Value::Object(_) | Value::Function(_)) {
             return Ok(v);
@@ -100,33 +96,6 @@ fn to_primitive_function(
             );
             crate::value::set_thrown_value(err);
             return Err(crate::value::JsError("TypeError".to_string()));
-        }
-    }
-
-    // No own properties found — try inherited toString/valueOf from
-    // Function.prototype (the [[Prototype]] of function objects), not from
-    // the function's `.prototype` property (which is the prototype for
-    // instances created via `new` and has Object.prototype as its own
-    // [[Prototype]]).
-    let func_proto = crate::builtins::get_function_prototype();
-    if !first_found {
-        if let Some(ref fp) = func_proto {
-            if let Some(m) = fp.borrow().get(first) {
-                let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
-                if !matches!(v, Value::Object(_) | Value::Function(_)) {
-                    return Ok(v);
-                }
-            }
-        }
-    }
-    if !second_found {
-        if let Some(ref fp) = func_proto {
-            if let Some(m) = fp.borrow().get(second) {
-                let v = crate::eval::call_value_with_this(m, vec![], this_val.clone())?;
-                if !matches!(v, Value::Object(_) | Value::Function(_)) {
-                    return Ok(v);
-                }
-            }
         }
     }
 
