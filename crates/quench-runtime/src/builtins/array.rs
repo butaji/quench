@@ -114,6 +114,8 @@ pub fn register_array(ctx: &mut Context) {
 
 fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let items = args.first().cloned().unwrap_or(Value::Undefined);
+    let original_items = items.clone();
+    let map_fn = args.get(1).cloned();
     let elements = match items {
         Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
             object.borrow().elements.clone()
@@ -140,6 +142,28 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
                 .collect()
         }
         _ => Vec::new(),
+    };
+    let elements = if let Some(map_fn) = map_fn {
+        elements
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let call_args = vec![value, Value::Number(index as f64), original_items.clone()];
+                match &map_fn {
+                    Value::Function(_) => crate::eval::call_value_with_this(
+                        map_fn.clone(),
+                        call_args,
+                        Value::Undefined,
+                    ),
+                    Value::NativeFunction(function) => function.call(Value::Undefined, call_args),
+                    _ => Err(JsError(
+                        "Array.from map function is not callable".to_string(),
+                    )),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        elements
     };
     Ok(Value::Object(Rc::new(RefCell::new(
         Object::new_array_from(elements),

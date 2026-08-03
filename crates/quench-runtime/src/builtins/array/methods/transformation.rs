@@ -662,6 +662,15 @@ mod tests {
             Ok(Value::Number(1.0))
         );
     }
+
+    #[test]
+    fn array_from_applies_map_function() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.from([1,2],function(value,index){return value+index;}).join(',')"),
+            Ok(Value::String("1,3".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
