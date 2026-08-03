@@ -306,3 +306,6 @@ asserting selected-byte count, output contents, and cleanup.
 
 Stage 123 formalized `util.promisify` callback conversion and resolved-value
 behavior.
+
+Stage 124 formalized promise file-handle reads, asserting byte count, buffer
+identity/content, close, and cleanup.
