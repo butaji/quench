@@ -240,3 +240,6 @@ callback, and promise calls, including file and directory predicates.
 
 Stage 101 verified the internal `fs` flag parser across read, write, append,
 exclusive, synchronous, and invalid flag forms.
+
+Stage 102 verified numeric and octal-string modes for synchronous and
+callback-based `fs.open` calls.
