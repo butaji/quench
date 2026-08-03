@@ -433,6 +433,11 @@ fn set_search_last_index(
     if let Some(setter) = setter {
         crate::eval::function::call_value_with_this(setter, vec![value], this_val.clone())?;
     } else {
+        if matches!(obj.borrow().get_descriptor("lastIndex"), Some(flags) if !flags.writable) {
+            return Err(JsError::new(
+                "TypeError: lastIndex is not writable".to_string(),
+            ));
+        }
         obj.borrow_mut().set("lastIndex", value);
     }
     Ok(())
