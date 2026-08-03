@@ -50,7 +50,8 @@ queue in `tasks/refactor-plan.md` (R18+).
   wiring, and property descriptor that can be authored in `builtins/*.js`
   belongs there. Rust is reserved for interpreter/core operations and
   implementations requiring performance, native memory, crate-backed
-  functionality, or engine integration. Rust may also retain an implementation
+  functionality, or engine integration such as timers, GC hooks,
+  synchronization, and scheduling. Rust may also retain an implementation
   when the equivalent JS builtin would materially increase total maintained
   LOC; that exception must be recorded in `tasks/builtin-migration.md`.
 - **`__ops__` diverges from the canonical ops** (R21): `SameValueZero` calls
