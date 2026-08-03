@@ -378,3 +378,6 @@ contents after closing the handle and cleaning up the temporary file.
 
 Stage 147 formalized native synchronous `fs.realpath` behavior by comparing it
 with the standard synchronous resolver and cleaning up the temporary file.
+
+Stage 148 formalized UTF-8 and Buffer encoding options for synchronous
+`fs.realpath`, asserting equivalent path results and cleanup.
