@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchOriginalRequireWithStreamPromises = globalThis.require;\nconst __quenchStreamPromises = {\n  pipeline: (...streams) => {\n    const destination = streams.pop();\n    for (const source of streams) source.pipe(destination);\n    return new Promise((resolve, reject) => {\n      destination.on("end", resolve);\n      destination.on("error", reject);\n    });\n  },\n  finished: (stream) => new Promise((resolve, reject) => {\n    stream.on("end", resolve);\n    stream.on("error", reject);\n  }),\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "stream/promises") return __quenchStreamPromises;\n  return __quenchOriginalRequireWithStreamPromises(specifier);\n};\n'
+);
