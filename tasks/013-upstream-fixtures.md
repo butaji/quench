@@ -411,3 +411,6 @@ metadata rather than target metadata and cleaning up both entries.
 
 Stage 158 formalized synchronous, callback, and promise hard-link creation,
 asserting shared contents and cleaning up both links and the source.
+
+Stage 159 formalized invalid source and target argument validation for
+`fs.linkSync`, asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.

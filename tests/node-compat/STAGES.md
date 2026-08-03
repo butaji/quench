@@ -166,3 +166,4 @@ these small fixtures isolate the currently implemented contract.
 |   156 | promise temporary-directory creation                      | `tools/run-node-tests.sh --stage 156` |
 |   157 | promise symbolic-link metadata with `lstat`               | `tools/run-node-tests.sh --stage 157` |
 |   158 | synchronous, callback, and promise hard links             | `tools/run-node-tests.sh --stage 158` |
+|   159 | invalid source/target validation for `fs.linkSync`        | `tools/run-node-tests.sh --stage 159` |
