@@ -133,8 +133,27 @@ String.prototype.slice = function StringSlice(start, end) {
 };
 
 String.prototype.split = function StringSplit(separator, limit) {
-  if (separator instanceof RegExp) return _regexSplit.call(this, separator, limit);
-  return _split.call(this, separator, limit);
+  var string = this + '';
+  var max = limit === undefined ? 4294967295 : Number(limit) >>> 0;
+  if (max === 0) return [];
+  if (separator instanceof RegExp) return _regexSplit.call(string, separator, max);
+  if (separator === undefined) return [string];
+  var delimiter = separator + '';
+  if (delimiter === '') {
+    var units = [];
+    for (var i = 0; i < string.length && units.length < max; i++) units.push(string.charAt(i));
+    return units;
+  }
+  var result = [];
+  var start = 0;
+  while (result.length + 1 < max) {
+    var next = _indexOf.call(string, delimiter, start);
+    if (next < 0) break;
+    result.push(string.slice(start, next));
+    start = next + delimiter.length;
+  }
+  result.push(string.slice(start));
+  return result;
 };
 
 String.prototype.toString = function StringToString() {

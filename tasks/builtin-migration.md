@@ -102,6 +102,9 @@ self-hosted JavaScript layer.
   argument ordering over the hidden UTF-16 slice primitive.
 - [~] `String.prototype.slice` now performs JS negative-index and infinity
   clamping in JS over the hidden UTF-16 slice primitive.
+- [~] `String.prototype.split` now owns string-separator, empty-separator,
+  limit, and result construction algorithms in JS; RegExp splitting remains
+  Rust-backed.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned
