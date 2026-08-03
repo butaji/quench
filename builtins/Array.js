@@ -630,7 +630,8 @@ Array.prototype.toReversed = function ArrayToReversed() {
   var len = ToLength(O.length);
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    CreateDataProperty(A, len - 1 - i, O[i]);
+    var from = len - 1 - i;
+    CreateDataProperty(A, i, O[from]);
   }
   return A;
 };
