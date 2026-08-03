@@ -40,7 +40,7 @@ pub use transformation::{
 
 /// Setup all prototype methods on an array prototype object
 pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>) {
-    use crate::value::{NativeFunction, PropertyFlags, Value};
+    use crate::value::{NativeFunction, Value};
     use std::rc::Rc;
 
     let m = |name: &str, f: fn(Vec<Value>) -> Result<Value, crate::JsError>| {
