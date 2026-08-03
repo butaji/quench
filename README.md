@@ -11,6 +11,7 @@ cargo run -p quench-node -- --stage 284
 tools/run-node-tests.sh tests/node/test/parallel/test-querystring.js
 tools/compat-coverage.sh
 tools/check-focused-stages.sh
+tools/check-all-tests.sh
 
 Feature-gated `stream/iter` stages are run with:
 
@@ -34,6 +35,10 @@ inventory. It deliberately reports Node API coverage as `unmeasured`: a count
 of focused fixtures is not a valid percentage of the full Node API surface.
 `tools/check-focused-stages.sh` runs every focused stage and reports concrete
 pass/fail counts; it does not turn those counts into an API percentage.
+`tools/check-all-tests.sh` runs Rust tests with `cargo-nextest` when installed
+(or Cargo's standard runner), then runs the Node API stages in parallel.
+Because stages are CLI-driven JavaScript processes, their parallel runner is
+separate from nextest's Rust test process model.
 For the empirical test-file percentage requested during development, run
 `tools/measure-node-tests.sh [directory]`. It builds once and executes each
 JavaScript file individually, reporting passed, failed, skipped, and the
