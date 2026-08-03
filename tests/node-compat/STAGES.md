@@ -184,3 +184,4 @@ these small fixtures isolate the currently implemented contract.
 |   174 | file-handle pull stream transform modules                 | `tools/run-node-tests.sh --stage 174` |
 |   175 | file-handle pull batch chunking                           | `tools/run-node-tests.sh --stage 175` |
 |   176 | file-handle `readFile` and abort signals                  | `tools/run-node-tests.sh --stage 176` |
+|   177 | file-handle `write` contract and validation                | `tools/run-node-tests.sh --stage 177` |
