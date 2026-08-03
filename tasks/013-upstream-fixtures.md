@@ -390,3 +390,6 @@ asserting equivalent results and cleaning up the temporary file.
 
 Stage 151 formalized promise fd `fstat` and `fchmod`, asserting metadata,
 permission bits, descriptor closure, and cleanup.
+
+Stage 152 formalized invalid numeric paths for synchronous and callback
+`fs.access`, asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
