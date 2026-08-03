@@ -224,3 +224,6 @@ these small fixtures isolate the currently implemented contract.
 |   214 | Buffer `from` string coercion                                 | `tools/run-node-tests.sh --stage 214` |
 |   215 | Buffer `from` argument validation                             | `tools/run-node-tests.sh --stage 215` |
 |   216 | Buffer constants and `kMaxLength`                            | `tools/run-node-tests.sh --stage 216` |
+|   217 | Buffer backing metadata and pool size                         | `tools/run-node-tests.sh --stage 217` |
+|   218 | Buffer `toString` encoding case-insensitivity                 | `tools/run-node-tests.sh --stage 218` |
+|   219 | Buffer `write` unknown-encoding validation                    | `tools/run-node-tests.sh --stage 219` |
