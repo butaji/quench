@@ -255,3 +255,70 @@ Retrospective:
   before any cluster listener fires. Synchronous emission in
   `test-cluster-basic.js` causes a temporal-dead-zone ReferenceError
   because the listener references `worker` before its declaration.
+
+## Status — cluster disconnect / kill-signal / new http.Server slice (done)
+
+Follow-on slice landed. Changes:
+
+- `worker.kill(signal)` now accepts an optional signal string and
+  propagates it to `process.signalCode` (defaults to `"SIGTERM"`).
+- `worker.disconnect()` emits a `disconnect` event on both the worker
+  and the cluster, sets `exitedAfterDisconnect = true`, and (if the
+  worker was previously `online` or `listening`) transitions it to
+  `dead` with `exitCode = 0, signalCode = null`, emitting `exit` on the
+  cluster first and the worker second.
+- `cluster.disconnect(callback)` calls `worker.disconnect()` on every
+  tracked worker, then queues the callback.
+- `http` module refactored to a `NodeHttpServer` class cached on
+  `globalThis.__nodeHttp`. `http.Server`, `http.createServer`,
+  `http.get`, and `http.request` are all exported; `new
+  http.Server(handler)` works. The server's `close()` removes it from
+  the in-process `servers` map and emits `close`. Responses expose
+  `statusCode` (default 200), `getHeader`, `removeHeader`, and `write`
+  in addition to the existing `setHeader` / `setEncoding` / `end`.
+- Cluster re-entry guard: `globalThis.__quench_in_cluster_worker` is
+  set during the worker re-eval so that primary scripts which call
+  `cluster.fork()` at the top level (and therefore re-run inside the
+  worker eval) do not infinitely recurse. This preserves the
+  pre-refactor behaviour for `tests/node-compat/stage-504` and
+  similar primary-only stages.
+
+Focused stages:
+- `tests/node-compat/stage-509/cluster-disconnect.js`: `worker.disconnect()`
+  emits `disconnect` on the worker and the cluster, transitions
+  `state` to `dead` with `exitCode = 0, signalCode = null`, and
+  `exitedAfterDisconnect = true`. **Passes.**
+- `tests/node-compat/stage-510/cluster-kill-signal.js`:
+  `worker.kill("SIGKILL")` does not emit `disconnect`, sets
+  `signalCode = "SIGKILL"`, `exitCode = null`, `state = "dead"`,
+  `exitedAfterDisconnect = false`. **Passes.**
+
+Full focused-stage suite: **509/509 pass** (the 169-174 stages still
+require `--experimental-stream-iter`, which `tools/check-focused-stages.sh`
+passes automatically).
+
+Upstream fixtures: `test-cluster-fork-env.js` and
+`test-cluster-disconnect-with-no-workers.js` continue to pass. The
+remaining 5 cluster fixtures (`test-cluster-basic.js`,
+`test-cluster-disconnect.js`, `test-cluster-worker-exit.js`,
+`test-cluster-worker-kill.js`, `test-cluster-setup-primary.js`) need
+real TCP sockets (`__quench_tcp_connect` / `__quench_tcp_bind` /
+`__quench_socket_*`), real http request handling, and
+`cluster.setupPrimary` arg variants — all tracked in `tasks/013` row #1
+and `tasks/014` host surface.
+
+Retrospective (additions):
+- The polyfill must not re-evaluate the entry source on nested
+  `cluster.fork()` calls triggered by primary-only top-level code; a
+  re-entry sentinel (`__quench_in_cluster_worker`) prevents infinite
+  recursion. The first worker re-eval still runs, which is what
+  Node-style `if/else if` fixtures need.
+- `http.Server` is now a class, not a plain object literal, so
+  `new http.Server(handler)` works. The class is cached on
+  `globalThis.__nodeHttp` alongside the existing `servers` map so
+  `require('http')` returns the same constructor across re-evaluations.
+- The `setImmediate`/`queueMicrotask` ordering rule from the previous
+  slice (emit cluster events before worker events) extends to the
+  disconnect path: `cluster.emit("disconnect", worker)` first, then
+  `worker.emit("disconnect")`, then the eventual `cluster.emit("exit")`
+  before `worker.emit("exit")`.
