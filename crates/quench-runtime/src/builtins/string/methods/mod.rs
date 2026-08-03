@@ -4,7 +4,6 @@ pub mod at;
 pub mod basic;
 pub mod case;
 pub mod concat;
-pub mod pad;
 pub mod replace;
 pub mod search;
 pub mod slice;
@@ -36,7 +35,6 @@ pub fn install_string_methods(proto: &Rc<RefCell<Object>>) {
     trim::install_trim_methods(proto);
     slice::install_slice_methods(proto);
     concat::install_split_concat_methods(proto);
-    pad::install_repeat_pad_methods(proto);
     to_string::install_to_string_methods(proto);
     at::install_at_method(proto);
 }

@@ -48,10 +48,10 @@ self-hosted JavaScript layer.
   storage primitives.
 - [~] `Array.from` is JS-owned; Rust retains `fromAsync` and core iterator/
   storage primitives.
-- [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`, and
-  trim variants are now authored in `builtins/String.js`; Rust retains string
-  storage, iteration, and RegExp execution. Remaining String methods are
-  pending migration.
+- [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`,
+  `padStart`, `padEnd`, and trim variants are now authored in
+  `builtins/String.js`; Rust retains string storage, iteration, and RegExp
+  execution. Remaining String methods are pending migration.
 - [~] Math algorithms: `max`, `min`, and `abs` are self-hosted in
   `builtins/Math.js`; Rust retains numeric primitives and performance-heavy
   functions. Number/Boolean/Symbol work is pending.

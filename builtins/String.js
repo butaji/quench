@@ -30,6 +30,28 @@ String.prototype.repeat = function StringRepeat(count) {
   return result;
 };
 
+String.prototype.padStart = function StringPadStart(maxLength, fillString) {
+  var string = _String(this);
+  var target = Math.floor(maxLength);
+  if (target <= string.length || target === Infinity) return string;
+  var fill = fillString === undefined ? " " : _String(fillString);
+  if (fill.length === 0) return string;
+  var padding = "";
+  while (padding.length < target - string.length) padding += fill;
+  return padding.slice(0, target - string.length) + string;
+};
+
+String.prototype.padEnd = function StringPadEnd(maxLength, fillString) {
+  var string = _String(this);
+  var target = Math.floor(maxLength);
+  if (target <= string.length || target === Infinity) return string;
+  var fill = fillString === undefined ? " " : _String(fillString);
+  if (fill.length === 0) return string;
+  var padding = "";
+  while (padding.length < target - string.length) padding += fill;
+  return string + padding.slice(0, target - string.length);
+};
+
 String.prototype.trim = function StringTrim() {
   return _String(this).replace(/^\s+|\s+$/g, "");
 };
