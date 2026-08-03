@@ -474,3 +474,6 @@ successful results, and the error callback contract for missing paths.
 
 Stage 179 formalized path namespace, parse, and format behavior, asserting
 POSIX/Win32 exports and invalid argument diagnostics.
+
+Stage 180 formalized Win32 path parsing, formatting, and basename behavior,
+asserting Windows roots, separators, extensions, and trailing separators.
