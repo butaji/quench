@@ -539,3 +539,6 @@ explicit truncation limits, and zero-filled output when the input list is empty.
 
 Stage 200 formalized Buffer fill values, asserting encoded string repetition,
 range bounds, and numeric byte filling.
+
+Stage 201 formalized Buffer forward and reverse index searches, asserting
+string offsets, byte searches, and missing-value results.
