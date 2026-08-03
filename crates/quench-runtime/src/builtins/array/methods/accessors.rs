@@ -92,7 +92,24 @@ pub fn proto_slice(args: Vec<Value>) -> Result<Value, JsError> {
 
 /// Array.prototype.concat(...arrays)
 pub fn proto_concat(args: Vec<Value>) -> Result<Value, JsError> {
-    let mut elements = get_this_array()?;
+    let this = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match this {
+        Value::Object(object) => object,
+        primitive => match crate::value::to_object(&primitive)? {
+            Value::Object(object) => object,
+            _ => {
+                return Err(JsError(
+                    "Array.prototype method called on non-object".to_string(),
+                ))
+            }
+        },
+    };
+    let mut elements = if receiver.borrow().kind == ObjectKind::Array {
+        receiver.borrow().elements.clone()
+    } else {
+        vec![Value::Object(receiver)]
+    };
     for arg in args {
         match &arg {
             Value::Object(o) if o.borrow().kind == ObjectKind::Array => {

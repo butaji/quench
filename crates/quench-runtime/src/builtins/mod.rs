@@ -115,6 +115,19 @@ impl Object {
     pub(crate) fn new_array_from(items: Vec<Value>) -> Self {
         let mut obj = Object::new(ObjectKind::Array);
         obj.elements = items.clone();
+        for (index, value) in items.iter().enumerate() {
+            obj.properties.insert(index.to_string(), value.clone());
+            obj.descriptors.insert(
+                index.to_string(),
+                crate::value::object::helpers::PropertyFlags {
+                    value: Some(value.clone()),
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    ..Default::default()
+                },
+            );
+        }
         obj.define_array_length(items.len() as f64);
         if let Some(proto) = crate::builtins::array::get_array_prototype() {
             obj.prototype = Some(proto);
