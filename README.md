@@ -13,6 +13,9 @@ and `tasks/refactor-plan.md` for the active queue.
 ```bash
 cargo build -p quench-runtime
 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+# Optional faster unit and harness execution (install cargo-nextest first)
+cargo nextest run -p quench-runtime
+cargo nextest run -p quench-runtime --test test262 --profile test262 --run-ignored all
 ```
 
 ## test262 Runner — 122 stages, no skips, no checkpoints

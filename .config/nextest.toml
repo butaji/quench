@@ -1,0 +1,9 @@
+[profile.default]
+test-threads = "num-cpus"
+status-level = "fail"
+failure-output = "immediate-final"
+
+[profile.test262]
+test-threads = 1
+status-level = "fail"
+failure-output = "immediate-final"
