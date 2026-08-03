@@ -14,7 +14,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
 
 - Core: `assert`, `assert/strict` (via `__nodeAssert`), `buffer`, `cluster`,
   `child_process`, `crypto`, `events`, `fs`, `fs/promises`, `os`, `path`,
-  `path/posix`, `path/win32`, `querystring`, `stream`, `stream/iter`,
+  `path/posix`, `path/win32`, `querystring`, `constants`, `stream`, `stream/iter`,
   `stream/promises`, `stream/web`, `stream/consumers`,
   `string_decoder` (TODO), `timers`, `timers/promises`, `url`, `util`,
   `util/types`, `v8`, `vm`, `zlib`, `zlib/iter`.
@@ -204,3 +204,5 @@ the focused test uses a tiny input double, keeping terminal I/O out of the
 module slice until the tracked TTY callbacks are implemented.
 Stage 533 keeps REPL evaluation inside the JS runtime and exposes the server
 callback contract without adding a separate Rust evaluator or terminal loop.
+Stage 534 centralizes the common file, signal, and copy constants in a frozen
+JavaScript object, matching the existing host/polyfill numeric contracts.
