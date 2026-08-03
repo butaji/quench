@@ -1,6 +1,7 @@
 // Self-hosted Map prototype methods on top of __ops__
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
+var IsCallable = ops.IsCallable;
 
 // Save native implementations
 var _nativeGet = Map.prototype.__get;
@@ -53,9 +54,12 @@ Map.prototype.clear = function MapClear() {
 };
 
 Map.groupBy = function MapGroupBy(items, callbackfn) {
-  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  if (items === null || items === undefined) throw ThrowTypeError("Map.groupBy requires an iterable");
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var map = new Map();
-  var iterator = items[Symbol.iterator]();
+  var iteratorMethod = items[Symbol.iterator];
+  if (!IsCallable(iteratorMethod)) throw ThrowTypeError("Map.groupBy requires an iterable");
+  var iterator = iteratorMethod.call(items);
   var index = 0;
   var step;
   while (!(step = iterator.next()).done) {

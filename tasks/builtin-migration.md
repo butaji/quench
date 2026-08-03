@@ -109,7 +109,7 @@ self-hosted JavaScript layer.
   public bindings because they are direct lazy-iterator entry points; a JS
   proxy would add LOC without moving an ECMAScript algorithm.
 - [~] `Map.groupBy` is implemented in the self-hosted JS layer over Map
-  storage primitives.
+  storage primitives, including JS-side iterable and callback validation.
 - [~] WeakMap and WeakSet public methods are JS-owned over hidden Rust storage
   primitives; Rust retains weak-key storage and identity operations.
 - [~] WeakRef public `deref` is JS-owned over a hidden Rust weak-reference
