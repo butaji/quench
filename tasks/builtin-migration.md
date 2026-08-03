@@ -63,8 +63,8 @@ self-hosted JavaScript layer.
   utility methods; Rust retains the performance-sensitive numeric primitives.
   Number/Boolean/Symbol work is pending.
 - [~] Number formatting wrappers are routed through `builtins/Number.js`;
-  Rust retains numeric conversion, radix formatting, and constructor/storage
-  primitives until their JS algorithms have equivalent core operations.
+  public `toString` and `valueOf` are also JS-owned; Rust retains numeric
+  conversion, radix formatting, and constructor/storage primitives.
 - [~] Number static predicates (`isNaN`, `isFinite`, `isInteger`,
   `isSafeInteger`) are JS-owned; Rust retains numeric primitives.
 - [~] `Number.parseInt` and `Number.parseFloat` are JS-owned aliases over
