@@ -279,3 +279,6 @@ the Node-compatible `offset: null` default and identity of the result buffer.
 
 Stage 114 formalized `fs.read` range and position validation, asserting
 `ERR_OUT_OF_RANGE` and `ERR_INVALID_ARG_TYPE` results with cleanup.
+
+Stage 115 expanded vectored reads to sync, callback, and promise `fs.readv`
+forms, asserting byte counts, returned buffers, and cleanup.
