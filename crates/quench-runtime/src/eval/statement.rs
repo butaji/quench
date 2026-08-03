@@ -1686,13 +1686,22 @@ fn eval_for(
                 .clear_per_iteration();
         }
         if let Some(update) = update {
-            if matches!(
-                init,
+            let const_name = match init {
                 Some(ForInit::VarDeclaration {
                     kind: VarKind::Const,
+                    name,
                     ..
-                })
-            ) {
+                }) => Some(name.as_str()),
+                _ => None,
+            };
+            let updates_const = const_name.is_some_and(|name| {
+                matches!(
+                    update.as_ref(),
+                    Expression::Update { argument, .. }
+                        if matches!(argument.as_ref(), Expression::Identifier(target) if target == name)
+                )
+            });
+            if updates_const {
                 return Err(JsError("TypeError: Assignment to constant variable".into()));
             }
             let _ = eval_expression(update, env, in_arrow_function)?;
