@@ -2266,6 +2266,19 @@ globalThis.__nodePath = {
   sep: "/",
   delimiter: ":",
   isAbsolute: (value) => __nodePathArg(value).startsWith("/"),
+  resolve: (...parts) => {
+    let resolved = "";
+    let trailing = false;
+    for (const part of parts) {
+      if (!part) continue;
+      resolved = resolved
+        ? resolved + "/" + part.replace(/^\/+/, "")
+        : (part.startsWith("/") ? part : globalThis.__quench_cwd_get() + "/" + part);
+      if (part.endsWith("/") && !part.endsWith("\\")) trailing = true;
+    }
+    const out = globalThis.__nodePath.normalize(resolved);
+    return trailing && !out.endsWith("/") ? out + "/" : out;
+  },
   normalize: (value) => {
     const input = __nodePathArg(value);
     const absolute = input.startsWith("/");
@@ -2300,8 +2313,6 @@ globalThis.__nodePath = {
     return i > 0 ? name.slice(i) : "";
   },
   join: (...parts) =>
-    globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),
-  resolve: (...parts) =>
     globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),
   relative: (from, to) => {
     const a = globalThis.__nodePath
@@ -6209,15 +6220,35 @@ const __nodeUrlModuleExports = {
   URL: globalThis.__nodeURL,
   URLSearchParams: globalThis.__nodeURLSearchParams,
   fileURLToPath: (value) => {
-    const href = String(value);
+    let href;
+    if (value && typeof value.href === "string") href = value.href;
+    else href = String(value);
     if (!href.startsWith("file://"))
       throw new TypeError("URL must be a file URL");
-    return decodeURIComponent(href.slice("file://".length)) || "/";
+    let p = decodeURIComponent(href.slice("file://".length));
+    return p || "/";
   },
-  pathToFileURL: (value) =>
-    new globalThis.__nodeURL(
-      `file://${globalThis.__nodePath.resolve(String(value))}`,
-    ),
+  pathToFileURL: (value, options) => {
+    const windows = options && options.windows;
+    const sep = windows ? "\\" : "/";
+    const resolved = globalThis.__nodePath.resolve(String(value));
+    const isAbsolute = globalThis.__nodePath.isAbsolute(resolved);
+    let p = resolved.split(sep).join("/");
+    if (windows && /^[A-Za-z]:/.test(p)) p = "/" + p;
+    const trailing = resolved.endsWith(sep) || resolved.endsWith("/");
+    p = p
+      .split("/")
+      .map((seg, i) => {
+        if (i === 0) return seg;
+        return encodeURIComponent(seg)
+          .replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+      })
+      .join("/");
+    if (trailing && !p.endsWith("/")) p = p + "/";
+    return new globalThis.__nodeURL(
+      "file://" + (isAbsolute ? "" : "") + p,
+    );
+  },
   parse: (value) => {
     if (typeof value !== "string") {
       let received;
