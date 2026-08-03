@@ -251,3 +251,6 @@ these small fixtures isolate the currently implemented contract.
 |   241 | Buffer `toString` end-range edge clamping                        | `tools/run-node-tests.sh --stage 241` |
 |   242 | Buffer BigInt read/write alias parity                           | `tools/run-node-tests.sh --stage 242` |
 |   243 | Buffer display hooks (`toLocaleString`, inspect symbol)         | `tools/run-node-tests.sh --stage 243` |
+|   244 | `internal/buffer` `utf8Write` export                            | `tools/run-node-tests.sh --stage 244` |
+|   245 | Buffer size fractional truncation                              | `tools/run-node-tests.sh --stage 245` |
+|   246 | Buffer `indexOf` UCS-2 odd-offset handling                      | `tools/run-node-tests.sh --stage 246` |
