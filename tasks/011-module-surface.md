@@ -261,3 +261,5 @@ session constants; real HTTP/2 remains a future host networking slice.
 Stage 557 gives `node:test/reporters` an explicit unknown-built-in error,
 documenting the unsupported reporter integration instead of exposing a
 generic loader failure.
+Stage 558 gives `node:sqlite` an explicit unknown-built-in error until a
+SQLite host/runtime dependency is intentionally added.
