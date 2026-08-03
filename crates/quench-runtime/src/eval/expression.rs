@@ -466,8 +466,8 @@ pub fn eval_expression(
                 if matches!(name.as_str(), "NaN" | "undefined" | "Infinity") {
                     if crate::interpreter::is_strict_mode() && has_object_binding_environment(env) {
                         let (_, error) = crate::value::error::create_js_error_with_type(
-                            &format!("{} is not defined", name),
-                            "ReferenceError",
+                            &format!("Cannot assign to read-only property '{}'", name),
+                            "TypeError",
                         );
                         return Err(error);
                     }
@@ -489,9 +489,20 @@ pub fn eval_expression(
                     scope.borrow().get_kind(name),
                     Some(crate::ast::VarKind::Var) | None
                 );
+                if crate::interpreter::is_strict_mode()
+                    && scope.borrow().is_global_object_binding()
+                    && matches!(name.as_str(), "undefined" | "NaN" | "Infinity")
+                {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("Cannot assign to read-only property '{}'", name),
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
                 if is_var_like
                     && crate::interpreter::is_strict_mode()
                     && scope.borrow().object_binding_has(name) == Some(false)
+                    && !matches!(name.as_str(), "undefined" | "NaN" | "Infinity")
                 {
                     let (_, error) = crate::value::error::create_js_error_with_type(
                         &format!("{} is not defined", name),
@@ -499,7 +510,7 @@ pub fn eval_expression(
                     );
                     return Err(error);
                 }
-                let set_object_property = if scope.borrow().is_with_environment() {
+                let object_property_result = if scope.borrow().is_with_environment() {
                     scope.borrow().set_object_property_after_get(
                         name,
                         right_val.clone(),
@@ -511,8 +522,8 @@ pub fn eval_expression(
                         right_val.clone(),
                         crate::interpreter::is_strict_mode(),
                     )
-                } == Some(true);
-                if set_object_property {
+                };
+                if object_property_result == Some(true) {
                     if scope.borrow().is_global_object_binding() {
                         let strict = crate::interpreter::is_strict_mode();
                         if let Some(var_scope) = env.borrow().var_binding_scope(name) {
@@ -531,6 +542,13 @@ pub fn eval_expression(
                         }
                     }
                     return Ok(right_val);
+                }
+                if object_property_result == Some(false) && crate::interpreter::is_strict_mode() {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("Cannot assign to read-only property '{}'", name),
+                        "TypeError",
+                    );
+                    return Err(error);
                 }
                 if let Some(thrown) = crate::value::get_thrown_value() {
                     return Err(JsError(crate::value::to_js_string(&thrown)));
@@ -567,6 +585,15 @@ pub fn eval_expression(
             // No binding scope: identifier not found in env chain.
             if let Expression::Identifier(name) = assignment_target {
                 let name = name.clone();
+                if crate::interpreter::is_strict_mode()
+                    && matches!(name.as_str(), "undefined" | "NaN" | "Infinity")
+                {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        &format!("Cannot assign to read-only property '{}'", name),
+                        "TypeError",
+                    );
+                    return Err(error);
+                }
                 if let Some(result) = env.borrow().set_in_object_env(
                     &name,
                     right_val.clone(),

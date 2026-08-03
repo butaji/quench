@@ -854,6 +854,12 @@ mod with_statement {
     }
 
     #[test]
+    fn strict_assignment_to_global_constant_throws_type_error() {
+        let result = eval("'use strict'; undefined = 12;");
+        assert!(result.unwrap_err().0.contains("TypeError"));
+    }
+
+    #[test]
     fn object_spread_copies_symbol_value() {
         let result =
             eval("var s = Symbol('s'); var o = {}; o[s] = 1; var copy = { ...o }; copy[s];");
