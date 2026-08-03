@@ -773,3 +773,14 @@ percent-encoding preservation (verified against Node).
 Stage 284 formalized `querystring.stringify` object value coercion,
 asserting Date/RegExp/function values stringify empty and booleans/BigInt
 stringify (verified against Node).
+
+Stage 285 formalized `querystring` encoder options and URI errors, asserting
+custom `encodeURIComponent` and `ERR_INVALID_URI` for lone surrogates
+(verified against Node).
+
+Stage 286 formalized `querystring` numeric coercion and `maxKeys`, asserting
+NaN/Infinity stringify empty, separator/equalizer overloads, and key caps.
+
+Stage 287 formalized `querystring` decoding paths, asserting `unescapeBuffer`
+plus/space handling, custom `decodeURIComponent`, and `maxKeys` (verified
+against Node).
