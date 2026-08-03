@@ -215,6 +215,14 @@ mod tests {
             .eval("var o = {get lastIndex() { throw new Test262Error(); }, exec: function() { return null; }}; RegExp.prototype[Symbol.search].call(o)")
             .is_err());
     }
+
+    #[test]
+    fn regexp_symbol_search_propagates_string_coercion_errors() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert!(ctx
+            .eval("var o = {toString: function() { throw new Test262Error(); }}; /./[Symbol.search](o)")
+            .is_err());
+    }
 }
 
 use std::cell::RefCell;
@@ -355,9 +363,7 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     }
     let result = crate::eval::function::call_value_with_this(
         exec,
-        vec![Value::String(
-            args.first().map(to_js_string).unwrap_or_default(),
-        )],
+        vec![Value::String(regexp_search_string(args.first())?)],
         this_val.clone(),
     )?;
     let current_last_index = crate::eval::member::eval_object_member_value(
@@ -377,6 +383,28 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
         ),
         _ => Err(JsError::new("TypeError: invalid exec result".to_string())),
     }
+}
+
+fn regexp_search_string(value: Option<&Value>) -> Result<String, JsError> {
+    let value = value.unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Symbol(_)) {
+        return Err(JsError::new(
+            "TypeError: Cannot convert Symbol to string".to_string(),
+        ));
+    }
+    if let Value::Object(object) = value {
+        let method = object
+            .borrow()
+            .get("toString")
+            .ok_or_else(|| JsError::new("TypeError: missing toString".to_string()))?;
+        let result = crate::eval::function::call_value_with_this(
+            method,
+            Vec::new(),
+            Value::Object(Rc::clone(object)),
+        )?;
+        return Ok(to_js_string(&result));
+    }
+    Ok(to_js_string(value))
 }
 
 fn set_search_last_index(
