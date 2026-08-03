@@ -131,10 +131,9 @@ self-hosted JavaScript layer.
 - [ ] Remove duplicate Rust registrations and dormant JS wrappers.
 - [~] Duplicate public numeric-global registration was removed from `date.rs`;
   the URI module is now the single Rust primitive source for those wrappers.
-- [~] Timer globals remain Rust-owned as host/engine integration points;
-  their public bindings are JS-owned through `builtins/Host.js`, while the
-  timer behavior and scheduling remain Rust-owned under the documented
-  core/performance exception.
+- [~] Timer globals remain Rust-owned as host/engine integration points and
+  a lower-LOC exception; their scheduling behavior is not an ECMAScript
+  builtin algorithm.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
 

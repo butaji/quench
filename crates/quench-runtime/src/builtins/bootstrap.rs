@@ -233,13 +233,6 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/URI.js"
         )),
     ),
-    (
-        "Host",
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../builtins/Host.js"
-        )),
-    ),
     // Phase 20: AsyncFunction — sets @@toStringTag on %AsyncFunctionPrototype%
     (
         "AsyncFunction",

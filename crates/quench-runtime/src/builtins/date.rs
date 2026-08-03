@@ -23,18 +23,18 @@ pub fn register_global_functions(ctx: &mut Context) {
 }
 
 fn register_timer_functions(ctx: &mut Context) {
-    ctx.register_native("__setTimeout", |args| {
+    ctx.register_native("setTimeout", |args| {
         let _callback = args.first().map(to_js_string).unwrap_or_default();
         let _delay = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
         Ok(Value::Number(1.0))
     });
-    ctx.register_native("__setInterval", |args| {
+    ctx.register_native("setInterval", |args| {
         let _callback = args.first().map(to_js_string).unwrap_or_default();
         let _interval = args.get(1).map(|v| to_number(v) as u64).unwrap_or(0);
         Ok(Value::Number(1.0))
     });
-    ctx.register_native("__clearTimeout", |_args| Ok(Value::Undefined));
-    ctx.register_native("__clearInterval", |_args| Ok(Value::Undefined));
+    ctx.register_native("clearTimeout", |_args| Ok(Value::Undefined));
+    ctx.register_native("clearInterval", |_args| Ok(Value::Undefined));
 }
 
 fn register_type_converters(ctx: &mut Context) {
