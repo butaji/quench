@@ -97,6 +97,8 @@ self-hosted JavaScript layer.
   primitives; Rust retains weak-key storage and identity operations.
 - [~] WeakRef public `deref` is JS-owned over a hidden Rust weak-reference
   primitive; FinalizationRegistry remains GC/finalizer-backed.
+- [~] Iterator public static and prototype methods are JS-owned over hidden
+  Rust streaming/state-machine primitives.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and
