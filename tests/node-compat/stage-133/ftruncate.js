@@ -1,10 +1,12 @@
 const fs = require("fs");
+const assert = require("assert");
 
 const path = `/tmp/quench-node-stage-133-${process.pid}`;
 fs.writeFileSync(path, "abcdef");
 const fd = fs.openSync(path, "r+");
 fs.ftruncateSync(fd, 3);
-if (fs.statSync(path).size !== 3) throw new Error("ftruncate sync mismatch");
+assert.strictEqual(fs.statSync(path).size, 3);
 fs.ftruncateSync(fd, 1);
-if (fs.statSync(path).size !== 1) throw new Error("ftruncate mismatch");
+assert.strictEqual(fs.statSync(path).size, 1);
 fs.closeSync(fd);
+fs.rmSync(path);
