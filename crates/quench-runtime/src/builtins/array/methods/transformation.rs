@@ -126,6 +126,13 @@ fn make_filter_result(receiver: &Value, elements: Vec<Value>) -> Result<Value, J
             return Err(JsError::new("TypeError: cannot define property"));
         }
         for (index, value) in elements.iter().enumerate() {
+            if object
+                .borrow()
+                .get_descriptor(&index.to_string())
+                .is_some_and(|flags| !flags.configurable)
+            {
+                return Err(JsError::new("TypeError: cannot redefine property"));
+            }
             object.borrow_mut().set(&index.to_string(), value.clone());
         }
         object
@@ -498,6 +505,14 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert!(ctx
             .eval("var A=function(){this.length=0; Object.preventExtensions(this)}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=A; a.filter(function(){return true})")
+            .is_err());
+    }
+
+    #[test]
+    fn filter_throws_when_species_index_is_non_configurable() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var A=function(){Object.defineProperty(this,'0',{writable:true,configurable:false})}; var a=[1]; a.constructor={}; a.constructor[Symbol.species]=A; a.filter(function(){return true})")
             .is_err());
     }
 
