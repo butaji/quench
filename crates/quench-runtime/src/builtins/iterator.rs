@@ -166,17 +166,17 @@ pub fn register_iterator(ctx: &mut Context) {
     }
 
     // ---- %IteratorPrototype% methods ----
-    register_proto_method(&proto_rc, "map", iterator_map);
-    register_proto_method(&proto_rc, "filter", iterator_filter);
-    register_proto_method(&proto_rc, "take", iterator_take);
-    register_proto_method(&proto_rc, "drop", iterator_drop);
-    register_proto_method(&proto_rc, "flatMap", iterator_flat_map);
-    register_proto_method(&proto_rc, "reduce", iterator_reduce);
-    register_proto_method(&proto_rc, "toArray", iterator_to_array);
-    register_proto_method(&proto_rc, "forEach", iterator_for_each);
-    register_proto_method(&proto_rc, "some", iterator_some);
-    register_proto_method(&proto_rc, "every", iterator_every);
-    register_proto_method(&proto_rc, "find", iterator_find);
+    register_proto_method(&proto_rc, "__map", iterator_map);
+    register_proto_method(&proto_rc, "__filter", iterator_filter);
+    register_proto_method(&proto_rc, "__take", iterator_take);
+    register_proto_method(&proto_rc, "__drop", iterator_drop);
+    register_proto_method(&proto_rc, "__flatMap", iterator_flat_map);
+    register_proto_method(&proto_rc, "__reduce", iterator_reduce);
+    register_proto_method(&proto_rc, "__toArray", iterator_to_array);
+    register_proto_method(&proto_rc, "__forEach", iterator_for_each);
+    register_proto_method(&proto_rc, "__some", iterator_some);
+    register_proto_method(&proto_rc, "__every", iterator_every);
+    register_proto_method(&proto_rc, "__find", iterator_find);
 
     // ---- Iterator constructor / namespace ----
     let iterator_fn = NativeFunction::new(iterator_constructor);
@@ -185,7 +185,7 @@ pub fn register_iterator(ctx: &mut Context) {
 
     // Iterator.from (static method)
     let from_fn = NativeFunction::new(iterator_from);
-    let _ = iterator_fn.set_property("from", Value::NativeFunction(Rc::new(from_fn)));
+    let _ = iterator_fn.set_property("__from", Value::NativeFunction(Rc::new(from_fn)));
 
     ctx.set_global(
         "Iterator".to_string(),
