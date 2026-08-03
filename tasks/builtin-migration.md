@@ -112,6 +112,9 @@ self-hosted JavaScript layer.
 - [~] `String.prototype.includes`, `startsWith`, and `endsWith` now own their
   coercion, RegExp rejection, and position algorithms in JS; Rust retains the
   indexed search primitive.
+- [~] String-pattern `replace` and `replaceAll` now perform matching,
+  callable replacement, and basic substitution-token expansion in JS; Rust
+  retains RegExp matching, captures, and regex replacement execution.
 - [~] Removed the dormant Rust implementations for self-hosted `concat`,
   `split`, `substring`, and `slice`; Rust retains only the performance-sensitive
   `repeat` primitive in this method group.

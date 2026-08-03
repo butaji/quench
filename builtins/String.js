@@ -219,12 +219,51 @@ String.prototype.search = function StringSearch(regexp) {
 };
 
 String.prototype.replace = function StringReplace(searchValue, replaceValue) {
-  return _replace.call(this, searchValue, replaceValue);
+  if (searchValue instanceof RegExp) return _replace.call(this, searchValue, replaceValue);
+  var string = this + '';
+  var search = searchValue + '';
+  var index = _indexOf.call(string, search, 0);
+  if (index < 0) return string;
+  return string.slice(0, index) + StringReplacement(search, replaceValue, index, string) + string.slice(index + search.length);
 };
 
 String.prototype.replaceAll = function StringReplaceAll(searchValue, replaceValue) {
-  return _replaceAll.call(this, searchValue, replaceValue);
+  if (searchValue instanceof RegExp) return _replaceAll.call(this, searchValue, replaceValue);
+  var string = this + '';
+  var search = searchValue + '';
+  if (search.length === 0) {
+    var emptyResult = '';
+    for (var emptyIndex = 0; emptyIndex <= string.length; emptyIndex++) {
+      emptyResult += StringReplacement(search, replaceValue, emptyIndex, string);
+      if (emptyIndex < string.length) emptyResult += string.charAt(emptyIndex);
+    }
+    return emptyResult;
+  }
+  var result = '';
+  var start = 0;
+  while (true) {
+    var index = _indexOf.call(string, search, start);
+    if (index < 0) return result + string.slice(start);
+    result += string.slice(start, index) + StringReplacement(search, replaceValue, index, string);
+    start = index + search.length;
+  }
 };
+
+function StringReplacement(search, replacement, index, string) {
+  if (typeof replacement === 'function') return replacement(search, index, string);
+  var text = replacement + '';
+  var result = '';
+  for (var i = 0; i < text.length; i++) {
+    if (text.charAt(i) !== '$' || i + 1 === text.length) { result += text.charAt(i); continue; }
+    var token = text.charAt(++i);
+    if (token === '$') result += '$';
+    else if (token === '&') result += search;
+    else if (token === '`') result += string.slice(0, index);
+    else if (token === "'") result += string.slice(index + search.length);
+    else result += '$' + token;
+  }
+  return result;
+}
 
 String.prototype.repeat = function StringRepeat(count) {
   return _repeat.call(this, count);
