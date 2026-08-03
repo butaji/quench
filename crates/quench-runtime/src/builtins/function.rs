@@ -171,6 +171,11 @@ pub(crate) fn extract_args_from_array_like(
 fn proto_bind(args: Vec<Value>) -> Result<Value, JsError> {
     let target_func = crate::builtins::get_native_this()
         .ok_or_else(|| JsError("Function.prototype.bind called on non-function".to_string()))?;
+    if !target_func.is_callable() {
+        return Err(JsError(
+            "TypeError: Function.prototype.bind called on non-function".to_string(),
+        ));
+    }
 
     let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
     let bound_args: Vec<Value> = if args.len() > 1 {
@@ -978,6 +983,13 @@ mod tests {
             value,
             Value::String("call|1|false|false|true;apply|2|false|false|true;bind|1|false|false|true;toString|0|false|false|true".into())
         );
+    }
+
+    #[test]
+    fn function_apply_and_bind_reject_non_callable_targets() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx.eval("Function.prototype.apply.call({}, null)").is_err());
+        assert!(ctx.eval("Function.prototype.bind.call({}, null)").is_err());
     }
 
     #[test]
