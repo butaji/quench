@@ -122,8 +122,9 @@ self-hosted JavaScript layer.
   primitive. BigInt public `toString`, `valueOf`, `asIntN`, and `asUintN` are
   JS-owned over hidden Rust arbitrary-precision primitives. Date public
   static, conversion, accessor, and mutator methods are JS-owned over hidden
-  Rust chrono primitives. JSON, URI, DataView, and remaining TypedArray
-  wrappers retain their crate-backed and raw-buffer primitives in Rust.
+  Rust chrono primitives. JSON and URI public methods are JS-owned over
+  crate-backed and UTF-8 primitives; DataView and remaining TypedArray
+  wrappers retain their raw-buffer primitives in Rust.
 - [~] Error, Function, and RegExp public methods are JS-owned where wrappers
   exist; Rust retains constructors, call mechanics, compiled matching, and
   error storage. Proxy and remaining constructors/prototypes are pending.
