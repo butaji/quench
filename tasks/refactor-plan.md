@@ -34,16 +34,12 @@ relevant test262 stage.
   `builtins/object_static/descriptors.rs`. One op = one implementation; add a
   failing test per op. Required before R22 revives the JS layer.
 
-- **R22 — JS builtins layer decision.** `bootstrap_js_builtins` is never
-  called by `Context::new()`, the CLI, or the test262 runner
-  (`context/helpers.rs:236`); conformance is Rust-builtins-only. Decide:
-  (a) revive — migrate Rust builtins to `builtins/*.js` on top of `__ops__`
-  and delete the Rust implementations (the minimum-Rust-LOC lever), fixing the
-  dormant layer's own bugs first (Array iterator methods, negative indexes,
-  SameValueZero), or (b) delete — remove `builtins/*.js` +
-  `bootstrap_js_builtins` and the JS-vs-Rust duplication in `docs/`.
-  Either way, update `docs/architecture.md`, `AGENTS.md`, and
-  `tasks/meta-analysis-stream.md` to state the truth.
+- **R22 — Migrate all builtins to JS.** The migration is tracked in
+  `tasks/builtin-migration.md`. `bootstrap_js_builtins` is currently dormant;
+  migrate one family at a time on top of canonical `__ops__`, measure the
+  relevant Test262 stage, and delete duplicate Rust registrations only after
+  the JS path is green. Rust remains for the interpreter core,
+  performance-sensitive storage/scheduling, and crate-backed primitives.
 
 - **R23 — Thread-local reduction.** 48 `thread_local!` slots vs the
   shrink-to-zero principle. Targets: strict mode (`interpreter.rs:290`,
