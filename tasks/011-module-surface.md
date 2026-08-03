@@ -80,8 +80,8 @@ fixture cluster, and the next concrete slice.
 - `http2` — TODO. Stage-516: `http2.createServer` minimal
   (in-process loopback).
 - `inspector` — return `ERR_UNKNOWN_BUILTIN_MODULE`.
-- `module` — TODO. Stage-517: `module.builtinModules` (the array itself),
-  `module.createRequire`, `module._cache`, `module._extensions`.
+- `module` — stage 529 provides `builtinModules`, `isBuiltin`,
+  `createRequire`, `_cache`, and `_extensions`.
 - `net` — minimal. Need: real `net.createServer`/`net.connect` via host
   TCP; `net.Socket`, `net.BlockList`, `net.isIP`, `net.isIPv4`,
   `net.isIPv6`.
@@ -191,3 +191,6 @@ helper, keeping byte conversion behavior consistent across all consumers.
 Stage 528 confirmed rquickjs URL hostname normalization does not provide
 Punycode conversion, so the module uses the RFC 3492 algorithm directly and
 keeps the implementation independent of a Rust or external runtime hook.
+Stage 529 reuses the existing global loader for `createRequire`, keeping the
+module registration surface in JavaScript without introducing a second Rust
+module system.
