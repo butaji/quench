@@ -40,7 +40,7 @@ pub use transformation::{
 
 /// Setup all prototype methods on an array prototype object
 pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>) {
-    use crate::value::{NativeFunction, Value};
+    use crate::value::{NativeFunction, PropertyFlags, Value};
     use std::rc::Rc;
 
     let m = |name: &str, f: fn(Vec<Value>) -> Result<Value, crate::JsError>| {
@@ -94,14 +94,27 @@ fn setup_accessor_methods(
     proto: &std::cell::RefCell<crate::value::Object>,
     m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>),
 ) {
-    use crate::value::{NativeFunction, Value};
+    use crate::value::{NativeFunction, PropertyFlags, Value};
     use std::rc::Rc;
 
     m("slice", proto_slice);
     m("concat", proto_concat);
     m("join", proto_join);
     m("toString", proto_to_string);
-    m("at", proto_at);
+    let at = Rc::new(NativeFunction::new_with_name("at", proto_at));
+    at.define_property(
+        "length",
+        Value::Number(1.0),
+        PropertyFlags {
+            value: Some(Value::Number(1.0)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+        },
+    );
+    proto
+        .borrow_mut()
+        .set_builtin_method("at", Value::NativeFunction(at));
     m("entries", proto_entries);
     m("keys", proto_keys);
     let values = Value::NativeFunction(Rc::new(NativeFunction::new_with_name(

@@ -778,6 +778,15 @@ mod tests {
             Ok(Value::Number(1.0))
         );
     }
+
+    #[test]
+    fn array_at_has_one_argument_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.prototype.at.length"),
+            Ok(Value::Number(1.0))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
