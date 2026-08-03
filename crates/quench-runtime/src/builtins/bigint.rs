@@ -226,7 +226,7 @@ fn setup_bigint_prototype(proto: &Rc<RefCell<Object>>) {
     }));
     set_function_metadata(&to_string_fn, "toString", 0.0);
     proto.borrow_mut().define(
-        "toString",
+        "__toString",
         Value::NativeFunction(to_string_fn),
         method_flags(),
     );
@@ -238,7 +238,7 @@ fn setup_bigint_prototype(proto: &Rc<RefCell<Object>>) {
     }));
     set_function_metadata(&value_of_fn, "valueOf", 0.0);
     proto.borrow_mut().define(
-        "valueOf",
+        "__valueOf",
         Value::NativeFunction(value_of_fn),
         method_flags(),
     );
@@ -321,18 +321,18 @@ fn setup_bigint_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         value: None,
     };
     bigint_obj.borrow_mut().define(
-        "asIntN",
+        "__asIntN",
         Value::NativeFunction(Rc::clone(&as_int_n)),
         static_flags.clone(),
     );
     bigint_obj.borrow_mut().define(
-        "asUintN",
+        "__asUintN",
         Value::NativeFunction(Rc::clone(&as_uint_n)),
         static_flags,
     );
 
-    bigint_ctor.set_static_method("asIntN", bigint_obj.borrow().get("asIntN").unwrap());
-    bigint_ctor.set_static_method("asUintN", bigint_obj.borrow().get("asUintN").unwrap());
+    bigint_ctor.set_static_method("__asIntN", bigint_obj.borrow().get("__asIntN").unwrap());
+    bigint_ctor.set_static_method("__asUintN", bigint_obj.borrow().get("__asUintN").unwrap());
     let bigint_ctor_value = Value::NativeConstructor(Rc::clone(&bigint_ctor));
 
     // BigInt.prototype.constructor = BigInt

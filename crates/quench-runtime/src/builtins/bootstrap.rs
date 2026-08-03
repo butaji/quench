@@ -59,6 +59,13 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
         )),
     ),
     (
+        "BigInt",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/BigInt.js"
+        )),
+    ),
+    (
         "String",
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
