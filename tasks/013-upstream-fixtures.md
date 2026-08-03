@@ -333,3 +333,6 @@ exact appended contents, and cleanup.
 
 Stage 132 formalized promise-based fd `fs.promises.appendFile`, asserting the
 same observable result and cleaning up the temporary file.
+
+Stage 133 formalized synchronous `fs.ftruncate`, asserting successive size
+changes through an open descriptor and cleaning up the temporary file.
