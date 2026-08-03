@@ -90,6 +90,48 @@ pub fn make_array(elements: Vec<Value>) -> Value {
     Value::Object(Rc::new(RefCell::new(arr)))
 }
 
+fn make_filter_result(receiver: &Value, elements: Vec<Value>) -> Result<Value, JsError> {
+    let Value::Object(receiver) = receiver else {
+        return Ok(make_array(elements));
+    };
+    let Some(Value::Object(constructor)) = receiver.borrow().get("constructor") else {
+        return Ok(make_array(elements));
+    };
+    let Some(Value::Symbol(species)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
+    else {
+        return Ok(make_array(elements));
+    };
+    let Some(Value::Function(function)) = constructor.borrow().get(&species.property_key()) else {
+        return Ok(make_array(elements));
+    };
+    let prototype = crate::eval::class::get_constructor_prototype(&Value::Function(function.clone()))?
+        .or_else(crate::builtins::get_object_prototype)
+        .ok_or_else(|| JsError::new("Array species has no prototype"))?;
+    let target = Value::Object(Rc::new(RefCell::new(Object::with_prototype(
+        ObjectKind::Ordinary,
+        prototype,
+    ))));
+    let result = call_value_with_this(
+        Value::Function(function),
+        vec![Value::Number(0.0)],
+        target.clone(),
+    )?;
+    let result = match result {
+        Value::Object(_) | Value::Function(_) | Value::NativeFunction(_) => result,
+        _ => target,
+    };
+    if let Value::Object(object) = &result {
+        for (index, value) in elements.iter().enumerate() {
+            object.borrow_mut().set(&index.to_string(), value.clone());
+        }
+        object
+            .borrow_mut()
+            .set("length", Value::Number(elements.len() as f64));
+    }
+    Ok(result)
+}
+
 /// Call a callback function with standard arguments
 pub fn call_callback(
     callback: &Value,
@@ -175,7 +217,7 @@ pub fn proto_filter(args: Vec<Value>) -> Result<Value, JsError> {
             result.push(elem);
         }
     }
-    Ok(make_array(result))
+    make_filter_result(&receiver, result)
 }
 
 /// Array.prototype.reduce(callback, initialValue?)
@@ -436,6 +478,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var d=Object.getOwnPropertyDescriptor(Array.prototype.filter,'length'); [d.value,d.writable,d.enumerable,d.configurable].join('|')"),
             Ok(Value::String("1|false|false|true".to_string()))
+        );
+    }
+
+    #[test]
+    fn filter_uses_custom_species_prototype() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var a=[1]; var C=function(){}; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.filter(function(){return true}); Object.getPrototypeOf(r)===C.prototype"),
+            Ok(Value::Boolean(true))
         );
     }
 
