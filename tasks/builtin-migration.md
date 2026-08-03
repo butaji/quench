@@ -118,9 +118,8 @@ self-hosted JavaScript layer.
   numeric parsing primitives, increasing total maintained LOC.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
-  and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and
-  `race` are also JS-owned over hidden Rust primitives; constructor and
-  combinator algorithms remain Rust-backed.
+  microtask scheduling, and the static `resolve`, `reject`, `all`, and `race`
+  entry points because JS would only add pass-through wrappers.
 - [~] RegExp `test` and `toString` are JS-owned over hidden Rust regex
   primitives; compiled matching and `exec` remain Rust-backed.
 - [~] ArrayBuffer public `slice` is JS-owned over a hidden Rust raw-buffer
