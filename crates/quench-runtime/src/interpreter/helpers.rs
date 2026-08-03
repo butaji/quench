@@ -687,9 +687,11 @@ pub fn has_legacy_octal(source: &str) -> bool {
                     i -= 2;
                 }
             }
-            if i + 2 < bytes.len() && bytes[i + 1] == b'x' {
+            if i + 2 < bytes.len()
+                && matches!(bytes[i + 1], b'b' | b'B' | b'o' | b'O' | b'x' | b'X')
+            {
                 i += 2;
-                if bytes[i].is_ascii_hexdigit() {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 continue;

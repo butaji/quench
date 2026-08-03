@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "inspect-test"
-version = "0.1.99"
+version = "0.1.0"
 dependencies = [
  "quench-runtime",
 ]
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "quench-runtime"
-version = "0.1.0"
+version = "0.1.99"
 dependencies = [
  "anyhow",
  "chrono",

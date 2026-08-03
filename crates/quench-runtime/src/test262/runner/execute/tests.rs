@@ -80,6 +80,17 @@ fn only_strict_numeric_negative_test_is_rejected_during_parse() {
 }
 
 #[test]
+fn bigint_hex_literals_are_not_rejected_as_legacy_octal() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::{default_test262_dir, run_single_test};
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join("test/language/expressions/equals/bigint-and-bigint.js");
+    let harness = HarnessLoader::new(&root);
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
 fn regexp_modifier_overlap_is_rejected_during_parse() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};
