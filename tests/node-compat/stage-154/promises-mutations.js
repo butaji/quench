@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const root = `/tmp/quench-node-stage-154-${process.pid}`;
@@ -8,7 +9,7 @@ const fs = require("fs");
   fs.writeFileSync(source, "copy");
   await fs.promises.copyFile(source, copy);
   await fs.promises.rename(copy, renamed);
-  if (fs.readFileSync(renamed, "utf8") !== "copy")
-    throw new Error("promise mutation mismatch");
+  assert.strictEqual(fs.readFileSync(renamed, "utf8"), "copy");
   await fs.promises.unlink(renamed);
+  await fs.promises.unlink(source);
 })().then(() => undefined);
