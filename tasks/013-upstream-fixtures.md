@@ -503,3 +503,6 @@ length, zero-filled remainder, and truncation at invalid hex characters.
 
 Stage 188 formalized Buffer `includes`, asserting string and byte searches,
 offset behavior, empty-value handling, and encoding-aware matching.
+
+Stage 189 formalized Buffer `includes` validation, asserting
+`ERR_INVALID_ARG_TYPE` for unsupported search values.
