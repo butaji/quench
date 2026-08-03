@@ -106,6 +106,13 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/Symbol.js"
         )),
     ),
+    (
+        "ArrayUnscopables",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/ArrayUnscopables.js"
+        )),
+    ),
     // Phase 10: Date
     (
         "Date",
@@ -335,7 +342,12 @@ fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
         .borrow()
         .descriptors
         .keys()
-        .filter_map(|key| prototype.borrow().get_own(key).map(|value| (key.clone(), value)))
+        .filter_map(|key| {
+            prototype
+                .borrow()
+                .get_own(key)
+                .map(|value| (key.clone(), value))
+        })
         .collect::<Vec<_>>();
     for descriptor in prototype.borrow_mut().descriptors.values_mut() {
         descriptor.enumerable = false;
@@ -344,10 +356,7 @@ fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
         if let crate::value::Value::Function(function) = value {
             let _ = function.set_property("prototype", crate::value::Value::Undefined);
             let _ = function.set_property("name", crate::value::Value::String(key));
-            let _ = function.set_property(
-                "\0nonconstructable",
-                crate::value::Value::Boolean(true),
-            );
+            let _ = function.set_property("\0nonconstructable", crate::value::Value::Boolean(true));
         }
     }
 }
@@ -468,7 +477,9 @@ mod tests {
     #[test]
     fn self_hosted_array_methods_are_not_constructable() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("!__ops__.IsConstructor(Array.prototype.map)").unwrap();
+        let r = ctx
+            .eval("!__ops__.IsConstructor(Array.prototype.map)")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -489,7 +500,9 @@ mod tests {
     fn self_hosted_array_at_coerces_index() {
         let mut ctx = new_ctx();
         let r = ctx
-            .eval("[10, 20].at(false) === 10 && [10, 20].at({valueOf:function(){return 1;}}) === 20")
+            .eval(
+                "[10, 20].at(false) === 10 && [10, 20].at({valueOf:function(){return 1;}}) === 20",
+            )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
@@ -576,7 +589,9 @@ mod tests {
     fn self_hosted_array_methods_have_intrinsic_names() {
         let mut ctx = new_ctx();
         let r = ctx
-            .eval("Array.prototype.at.name === 'at' && Array.prototype.findLast.name === 'findLast'")
+            .eval(
+                "Array.prototype.at.name === 'at' && Array.prototype.findLast.name === 'findLast'",
+            )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
@@ -593,7 +608,9 @@ mod tests {
     #[test]
     fn self_hosted_methods_do_not_expose_function_prototypes() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("Array.prototype.join.prototype === undefined").unwrap();
+        let r = ctx
+            .eval("Array.prototype.join.prototype === undefined")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -609,14 +626,18 @@ mod tests {
     #[test]
     fn self_hosted_array_from_has_one_function_length() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("Array.from.length === 1 && Array.from.name === 'from'").unwrap();
+        let r = ctx
+            .eval("Array.from.length === 1 && Array.from.name === 'from'")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
     #[test]
     fn self_hosted_array_static_methods_are_not_constructable() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("!__ops__.IsConstructor(Array.from) && !__ops__.IsConstructor(Array.of)").unwrap();
+        let r = ctx
+            .eval("!__ops__.IsConstructor(Array.from) && !__ops__.IsConstructor(Array.of)")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
@@ -652,7 +673,9 @@ mod tests {
     #[test]
     fn array_length_maximum_does_not_allocate_storage() {
         let mut ctx = new_ctx();
-        let r = ctx.eval("var a = []; a.length = 4294967295; a.length === 4294967295").unwrap();
+        let r = ctx
+            .eval("var a = []; a.length = 4294967295; a.length === 4294967295")
+            .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 
