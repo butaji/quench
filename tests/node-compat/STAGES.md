@@ -213,3 +213,4 @@ these small fixtures isolate the currently implemented contract.
 |   203 | Buffer equality, typed arrays, and validation                 | `tools/run-node-tests.sh --stage 203` |
 |   204 | Buffer byte lengths across encodings and views                | `tools/run-node-tests.sh --stage 204` |
 |   205 | Buffer string writes, offsets, and UTF-16 encoding             | `tools/run-node-tests.sh --stage 205` |
+|   206 | Buffer instance/static comparison and ordering               | `tools/run-node-tests.sh --stage 206` |
