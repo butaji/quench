@@ -8,6 +8,15 @@ var _nativeHas = Set.prototype.has;
 var _nativeDelete = Set.prototype.delete;
 var _nativeClear = Set.prototype.clear;
 
+Set.prototype.forEach = function SetForEach(callbackfn, thisArg) {
+  if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.forEach called on null or undefined");
+  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  var iterator = this.values();
+  var step;
+  while (!(step = iterator.next()).done) callbackfn.call(thisArg, step.value, step.value, this);
+  return undefined;
+};
+
 // Set.prototype.add (ES2025 §24.2.3.1)
 Set.prototype.add = function SetAdd(value) {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.add called on null or undefined");

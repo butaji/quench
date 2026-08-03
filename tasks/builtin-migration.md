@@ -38,6 +38,8 @@ self-hosted JavaScript layer.
   `__ops__` primitives; Rust retains symbol identity, boxing, registry,
   description, and well-known symbols.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
+- [~] Map and Set `forEach` algorithms are now self-hosted over Rust-backed
+  iterators; Rust retains keyed storage and iterator state.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Constructor and combinator algorithms remain

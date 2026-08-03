@@ -9,6 +9,18 @@ var _nativeHas = Map.prototype.has;
 var _nativeDelete = Map.prototype.delete;
 var _nativeClear = Map.prototype.clear;
 
+Map.prototype.forEach = function MapForEach(callbackfn, thisArg) {
+  if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.forEach called on null or undefined");
+  if (typeof callbackfn !== 'function') throw ThrowTypeError("callbackfn is not a function");
+  var iterator = this.entries();
+  var step;
+  while (!(step = iterator.next()).done) {
+    var entry = step.value;
+    callbackfn.call(thisArg, entry[1], entry[0], this);
+  }
+  return undefined;
+};
+
 // Map.prototype.get (ES2025 §24.1.3.6)
 Map.prototype.get = function MapGet(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.get called on null or undefined");
