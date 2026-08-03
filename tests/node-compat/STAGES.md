@@ -272,3 +272,6 @@ these small fixtures isolate the currently implemented contract.
 |   262 | Buffer `copyBytesFrom` element-size bounds                      | `tools/run-node-tests.sh --stage 262` |
 |   263 | Buffer `concat` length and truncation                           | `tools/run-node-tests.sh --stage 263` |
 |   264 | Buffer inspect limit and named-property rendering               | `tools/run-node-tests.sh --stage 264` |
+|   276 | `util.format` float and numeric edge cases                     | `tools/run-node-tests.sh --stage 276` |
+|   277 | `util.inspect` string and function rendering                   | `tools/run-node-tests.sh --stage 277` |
+|   278 | `node:test` options callback invocation                        | `tools/run-node-tests.sh --stage 278` |
