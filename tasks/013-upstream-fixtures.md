@@ -939,3 +939,6 @@ byte contents and byte-length metadata.
 
 Stage 338 formalized custom Error formatting, preserving a custom error name
 and message in the single-argument representation.
+
+Stage 339 formalized `util.formatWithOptions` option validation, preserving
+`ERR_INVALID_ARG_TYPE` for non-object option values.
