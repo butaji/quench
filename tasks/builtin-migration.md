@@ -294,6 +294,9 @@ self-hosted JavaScript layer.
 - [x] Validate array length assignments before storage mutation, rejecting
   non-integer or out-of-range values with `RangeError` and preventing huge
   allocations/timeouts for values at or above 2³².
+- [x] Keep array lengths at or above the sparse-storage threshold logical
+  instead of allocating dense backing storage; indexed writes and `push` now
+  handle the maximum length without exhausting memory.
 
 ## First increment
 

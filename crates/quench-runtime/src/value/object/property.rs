@@ -163,6 +163,10 @@ impl Object {
     /// Assign `length` on an Array exotic object (truncate/extend elements).
     pub fn set_array_length_value(&mut self, value: Value) {
         let new_len = crate::value::to_number(&value).max(0.0) as usize;
+        if new_len >= crate::value::object::helpers::MAX_ARRAY_ELEMENTS {
+            self.define_array_length(new_len as f64);
+            return;
+        }
         if self.elements.len() > new_len {
             self.elements.truncate(new_len);
             self.properties

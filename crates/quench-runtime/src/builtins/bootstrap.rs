@@ -650,6 +650,13 @@ mod tests {
     }
 
     #[test]
+    fn array_length_maximum_does_not_allocate_storage() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("var a = []; a.length = 4294967295; a.length === 4294967295").unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx
