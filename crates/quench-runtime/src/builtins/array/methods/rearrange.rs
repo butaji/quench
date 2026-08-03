@@ -123,8 +123,10 @@ pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
             } else {
                 elements[(target + offset) as usize] = value;
             }
+            o.borrow_mut().holes.remove(&((target + offset) as usize));
         } else if ((target + offset) as usize) < elements.len() {
             elements[(target + offset) as usize] = Value::Undefined;
+            o.borrow_mut().holes.insert((target + offset) as usize);
         }
     }
     set_elements(&o, elements)?;
@@ -306,5 +308,14 @@ mod tests {
         assert_eq!(result.unwrap(), crate::value::Value::Number(3.0));
         let result = ctx.eval("var c = [1,2]; var d = c.reverse(); d.push(0); c.length;");
         assert_eq!(result.unwrap(), crate::value::Value::Number(3.0));
+    }
+
+    #[test]
+    fn copy_within_preserves_source_holes() {
+        let mut ctx = create_test_context();
+        assert_eq!(
+            ctx.eval("var a=[0,1,,,1]; a.copyWithin(0,1,4); [a.hasOwnProperty(1),a.hasOwnProperty(2),a.hasOwnProperty(3)].join(',')"),
+            Ok(crate::value::Value::String("false,false,false".to_string()))
+        );
     }
 }
