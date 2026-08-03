@@ -731,6 +731,21 @@ fn has_tail_call_in_statement(
     }
 }
 
+fn is_tail_candidate(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Block(stmts) | Statement::SequenceDecls(stmts) => {
+            stmts.last().is_some_and(is_tail_candidate)
+        }
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => is_tail_candidate(consequent) || alternate.as_deref().is_some_and(is_tail_candidate),
+        Statement::Return(Some(expr)) => is_tail_expr(expr),
+        _ => false,
+    }
+}
+
 /// Evaluate a single statement
 pub fn eval_statement(
     stmt: &Statement,
@@ -761,13 +776,21 @@ pub fn eval_statement(
             alternate,
         } => {
             let cond_val = eval_expression(condition, env, in_arrow_function)?;
-            if to_bool(&cond_val) {
-                eval_statement(consequent.as_ref(), env, _is_expr_body, in_arrow_function)
+            let selected = if to_bool(&cond_val) {
+                consequent.as_ref()
             } else if let Some(alt) = alternate {
-                eval_statement(alt.as_ref(), env, _is_expr_body, in_arrow_function)
+                alt.as_ref()
             } else {
-                Ok(Value::Undefined)
+                return Ok(Value::Undefined);
+            };
+            if acc_stack_len() > 0 && is_tail_candidate(selected) {
+                if let Statement::Block(stmts) = selected {
+                    if handle_tail_call_in_block(stmts, env, in_arrow_function, false)?.is_some() {
+                        return Ok(Value::Undefined);
+                    }
+                }
             }
+            eval_statement(selected, env, _is_expr_body, in_arrow_function)
         }
         Statement::While { condition, body } => eval_while(condition, body, env, in_arrow_function),
         Statement::DoWhile {

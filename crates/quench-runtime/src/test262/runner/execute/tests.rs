@@ -1214,6 +1214,22 @@ fn function_construct_with_primitive_prototype_uses_object_prototype() {
 }
 
 #[test]
+fn if_branches_support_tail_call_optimization() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for relative in [
+        "tests/test262/test/language/statements/if/tco-if-body.js",
+        "tests/test262/test/language/statements/if/tco-else-body.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join(relative);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
 fn generator_class_method_rejects_yield_parameter_binding() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
