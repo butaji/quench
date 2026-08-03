@@ -735,6 +735,9 @@ fn check_stmt(stmt: &ast::Statement, strict: bool) -> Result<(), JsError> {
         }
         ast::Statement::ForInStatement(for_in) => {
             check_for_in_declaration_errors(for_in)?;
+            if strict {
+                check_for_of_lhs_strict_binding(&for_in.left)?;
+            }
             check_no_fn_decl_in_stmt(&for_in.body)?;
             walk_inner_statements_for_fn_params(&for_in.body, strict)?;
             // BoundNames of ForDeclaration cannot contain "let" (§13.7.5.1).

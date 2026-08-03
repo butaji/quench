@@ -1181,6 +1181,23 @@ fn const_update_assignment_throws_type_error() {
 }
 
 #[test]
+fn strict_for_in_destructuring_rejects_eval_and_arguments_targets() {
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    for relative in [
+        "tests/test262/test/language/statements/for-in/dstr/array-elem-target-simple-strict.js",
+        "tests/test262/test/language/statements/for-in/dstr/obj-id-init-simple-strict.js",
+        "tests/test262/test/language/statements/for-in/dstr/obj-id-simple-strict.js",
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .join(relative);
+        assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+    }
+}
+
+#[test]
 fn generator_class_method_rejects_yield_parameter_binding() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
