@@ -334,3 +334,4 @@ these small fixtures isolate the currently implemented contract.
 |   335 | util formatWithOptions color handling                             | `tools/run-node-tests.sh --stage 335` |
 |   336 | util formatWithOptions compact handling                           | `tools/run-node-tests.sh --stage 336` |
 |   337 | util format SharedArrayBuffer inspection                          | `tools/run-node-tests.sh --stage 337` |
+|   338 | util format custom Error rendering                                | `tools/run-node-tests.sh --stage 338` |
