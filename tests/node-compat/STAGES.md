@@ -254,3 +254,6 @@ these small fixtures isolate the currently implemented contract.
 |   244 | `internal/buffer` `utf8Write` export                            | `tools/run-node-tests.sh --stage 244` |
 |   245 | Buffer size fractional truncation                              | `tools/run-node-tests.sh --stage 245` |
 |   246 | Buffer `indexOf` UCS-2 odd-offset handling                      | `tools/run-node-tests.sh --stage 246` |
+|   247 | Buffer `indexOf` encoding overload                             | `tools/run-node-tests.sh --stage 247` |
+|   248 | `util.inspect` Buffer rendering                                | `tools/run-node-tests.sh --stage 248` |
+|   249 | Buffer `INSPECT_MAX_BYTES` live limit                          | `tools/run-node-tests.sh --stage 249` |
