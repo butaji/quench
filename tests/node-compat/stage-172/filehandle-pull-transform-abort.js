@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 const { text } = require("stream/iter");
 
 (async () => {
@@ -9,17 +10,17 @@ const { text } = require("stream/iter");
     chunks.map((chunk) =>
       new TextEncoder().encode(new TextDecoder().decode(chunk).toUpperCase())
     );
-  if ((await text(handle.pull(upper))) !== "HELLO")
-    throw new Error("pull transform mismatch");
+  assert.strictEqual(await text(handle.pull(upper)), "HELLO");
   await handle.close();
   const aborted = await fs.promises.open(path, "r");
   const controller = new AbortController();
   controller.abort();
   try {
     await text(aborted.pull({ signal: controller.signal }));
-    throw new Error("pull abort accepted");
+    assert.fail("pull abort accepted");
   } catch (error) {
-    if (error.name !== "AbortError") throw error;
+    assert.strictEqual(error.name, "AbortError");
   }
   await aborted.close();
+  fs.rmSync(path);
 })();
