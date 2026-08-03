@@ -19,46 +19,12 @@ var DefineProp = ops.DefineProp;
 var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
-var _objectToString = Object.prototype.__toString;
 var _objectToLocaleString = Object.prototype.__toLocaleString;
-var _objectValueOf = Object.prototype.__valueOf;
-var _hasOwnProperty = Object.prototype.__hasOwnProperty;
-var _isPrototypeOf = Object.prototype.__isPrototypeOf;
-var _propertyIsEnumerable = Object.prototype.__propertyIsEnumerable;
-var _lookupGetter = Object.prototype.___lookupGetter__;
-var _lookupSetter = Object.prototype.___lookupSetter__;
-
-Object.prototype.toString = function ObjectToString() {
-  return _objectToString.call(this);
-};
 
 Object.prototype.toLocaleString = function ObjectToLocaleString() {
   return this.toString();
 };
 
-Object.prototype.valueOf = function ObjectValueOf() {
-  return _objectValueOf.call(this);
-};
-
-Object.prototype.hasOwnProperty = function ObjectHasOwnProperty(propertyKey) {
-  return _hasOwnProperty.call(this, propertyKey);
-};
-
-Object.prototype.isPrototypeOf = function ObjectIsPrototypeOf(value) {
-  return _isPrototypeOf.call(this, value);
-};
-
-Object.prototype.propertyIsEnumerable = function ObjectPropertyIsEnumerable(propertyKey) {
-  return _propertyIsEnumerable.call(this, propertyKey);
-};
-
-Object.prototype.__lookupGetter__ = function ObjectLookupGetter(propertyKey) {
-  return _lookupGetter.call(this, propertyKey);
-};
-
-Object.prototype.__lookupSetter__ = function ObjectLookupSetter(propertyKey) {
-  return _lookupSetter.call(this, propertyKey);
-};
 
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {

@@ -52,9 +52,10 @@ self-hosted JavaScript layer.
   direct `get`, `set`, `deleteProperty`, `construct`, `apply`, and
   `defineProperty` bindings remain Rust-owned because JS would only add
   pass-through LOC. Proxy-sensitive execution remains in Rust.
-- [~] Object prototype public methods (`toString`, `toLocaleString`,
-  `valueOf`, `hasOwnProperty`, `isPrototypeOf`, and
-  `propertyIsEnumerable`) are JS-owned over hidden Rust object primitives.
+- [~] Object.prototype `toLocaleString` remains JS-owned because it composes
+  `toString`; direct `toString`, `valueOf`, ownership, prototype, enumerable,
+  and legacy accessor bindings remain Rust-owned because JS would only add
+  pass-through LOC.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   the dormant Rust method layer has been removed; Rust retains indexed
