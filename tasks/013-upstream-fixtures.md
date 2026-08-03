@@ -915,3 +915,6 @@ values and function rendering.
 
 Stage 330 formalized nested `%o` inspection, preserving array length metadata
 and nested function reference rendering.
+
+Stage 331 formalized nested object `%o` inspection, preserving nested property
+structure and function reference rendering.
