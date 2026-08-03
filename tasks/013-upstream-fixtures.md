@@ -551,3 +551,6 @@ mismatch detection, and `ERR_INVALID_ARG_TYPE` validation.
 
 Stage 204 formalized Buffer byte-length calculation, asserting UTF-8,
 UTF-16LE, typed-array, and ArrayBuffer sizing.
+
+Stage 205 formalized Buffer string writes, asserting offsets, byte counts,
+UTF-8 output, and UTF-16LE encoding.
