@@ -3,7 +3,7 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeSlice = ArrayBuffer.prototype.slice;
+var _nativeSlice = ArrayBuffer.prototype.__slice;
 
 // ArrayBuffer.prototype.slice (ES2025 §25.1.5.4)
 ArrayBuffer.prototype.slice = function ArrayBufferSlice(begin, end) {
