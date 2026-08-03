@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-166-${process.pid}`;
@@ -10,6 +11,6 @@ const fs = require("fs");
   }
   await handle.writeFile(chunks());
   await handle.close();
-  if (fs.readFileSync(path, "utf8") !== "abc")
-    throw new Error("async iterable mismatch");
+  assert.strictEqual(fs.readFileSync(path, "utf8"), "abc");
+  fs.rmSync(path);
 })();
