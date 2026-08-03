@@ -267,6 +267,15 @@ mod tests {
             Ok(Value::String("c".to_string()))
         );
     }
+
+    #[test]
+    fn regexp_match_all_iterator_is_iterable() {
+        let mut ctx = crate::Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var i = /a/g[Symbol.matchAll]('a'); i[Symbol.iterator]() === i"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -481,6 +490,16 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     iterator
         .borrow_mut()
         .set("next", Value::NativeFunction(Rc::new(next)));
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        let iterator_value = Value::Object(Rc::clone(&iterator));
+        let iterator_method = NativeFunction::new(move |_args| Ok(iterator_value.clone()));
+        iterator.borrow_mut().set_symbol(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(iterator_method)),
+        );
+    }
     Ok(Value::Object(iterator))
 }
 
