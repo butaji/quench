@@ -126,7 +126,11 @@ fn register_error_constructor(ctx: &mut Context, name: &str, proto: &Rc<RefCell<
     constructor.set_name(name);
     let ctor = Value::NativeConstructor(Rc::new(constructor));
     // Set Error.prototype.constructor = Error
-    proto.borrow_mut().set("constructor", ctor.clone());
+    let mut prototype = proto.borrow_mut();
+    prototype.set("constructor", ctor.clone());
+    if let Some(flags) = prototype.descriptors.get_mut("constructor") {
+        flags.enumerable = false;
+    }
     ctx.set_global(name.to_string(), ctor);
 }
 

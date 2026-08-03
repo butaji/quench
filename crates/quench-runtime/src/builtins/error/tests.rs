@@ -237,6 +237,15 @@ fn test_type_error_prototype_constructor_is_type_error() {
 }
 
 #[test]
+fn native_error_constructor_properties_are_non_enumerable() {
+    let mut ctx = crate::Context::new().unwrap();
+    let result = ctx
+        .eval("[Object.getOwnPropertyDescriptor(Error.prototype, 'constructor').enumerable, Object.getOwnPropertyDescriptor(TypeError.prototype, 'constructor').enumerable].join('|')")
+        .unwrap();
+    assert_eq!(result, crate::value::Value::String("false|false".into()));
+}
+
+#[test]
 fn core_error_message_own_property_spec() {
     let mut ctx = crate::Context::new().unwrap();
     // When called with msg, message IS own property
