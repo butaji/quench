@@ -570,6 +570,15 @@ mod tests {
             Ok(Value::String("1,2,3".to_string()))
         );
     }
+
+    #[test]
+    fn array_to_spliced_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[1, 2, 3].toSpliced(1, 1, 4).join(',')"),
+            Ok(Value::String("1,4,3".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

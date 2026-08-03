@@ -117,6 +117,32 @@ pub fn proto_splice(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(make_array(removed))
 }
 
+pub fn proto_to_spliced(args: Vec<Value>) -> Result<Value, JsError> {
+    let mut elements = crate::builtins::array::methods::transformation::get_this_array()?;
+    let len = elements.len() as isize;
+    let start = args
+        .first()
+        .map(|value| to_number(value) as isize)
+        .unwrap_or(0);
+    let start = if start < 0 {
+        (len + start).max(0).min(len) as usize
+    } else {
+        (start as usize).min(len as usize)
+    };
+    let delete_count = args
+        .get(1)
+        .map(|value| to_number(value).max(0.0) as usize)
+        .unwrap_or(elements.len() - start)
+        .min(elements.len() - start);
+    elements.splice(
+        start..start + delete_count,
+        args.get(2..).unwrap_or(&[]).iter().cloned(),
+    );
+    Ok(crate::builtins::array::methods::transformation::make_array(
+        elements,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
 

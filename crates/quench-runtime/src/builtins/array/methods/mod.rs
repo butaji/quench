@@ -22,7 +22,9 @@ pub use accessors::{
     proto_at, proto_concat, proto_entries, proto_join, proto_keys, proto_slice, proto_to_string,
 };
 pub use grouping::{proto_group_by, proto_group_by_to_map};
-pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshift};
+pub use mutation::{
+    proto_pop, proto_push, proto_shift, proto_splice, proto_to_spliced, proto_unshift,
+};
 pub use rearrange::{
     proto_copy_within, proto_fill, proto_reverse, proto_sort, proto_to_reversed, proto_to_sorted,
 };
@@ -75,6 +77,7 @@ fn setup_mutation_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crat
     m("shift", proto_shift);
     m("unshift", proto_unshift);
     m("splice", proto_splice);
+    m("toSpliced", proto_to_spliced);
 }
 
 fn setup_rearrange_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
