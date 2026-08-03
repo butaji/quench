@@ -24,6 +24,28 @@ Object.prototype.toLocaleString = function ObjectToLocaleString() {
   return this.toString();
 };
 
+Object.prototype.__lookupGetter__ = function ObjectLookupGetter(P) {
+  var current = ToObject(this);
+  var key = ToPropertyKey(P);
+  while (current !== null) {
+    var descriptor = GetOwnPropDesc(current, key);
+    if (descriptor !== undefined) return descriptor.get;
+    current = GetPrototypeOf(current);
+  }
+  return undefined;
+};
+
+Object.prototype.__lookupSetter__ = function ObjectLookupSetter(P) {
+  var current = ToObject(this);
+  var key = ToPropertyKey(P);
+  while (current !== null) {
+    var descriptor = GetOwnPropDesc(current, key);
+    if (descriptor !== undefined) return descriptor.set;
+    current = GetPrototypeOf(current);
+  }
+  return undefined;
+};
+
 
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {

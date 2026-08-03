@@ -60,6 +60,9 @@ self-hosted JavaScript layer.
   `toString`; direct `toString`, `valueOf`, ownership, prototype, enumerable,
   and legacy accessor bindings remain Rust-owned because JS would only add
   pass-through LOC.
+- [~] Legacy `Object.prototype.__lookupGetter__` and `__lookupSetter__` are
+  now fully self-hosted over descriptor and prototype operations; their Rust
+  accessor-chain implementations were removed.
 - [~] Removed dormant duplicate Object migration bindings after self-hosting;
   Rust retains only the hidden locale-string primitive needed by the core
   bootstrap boundary.
