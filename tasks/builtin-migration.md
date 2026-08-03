@@ -15,8 +15,9 @@ self-hosted JavaScript layer.
 
 ## Family queue
 
-- [ ] Complete the `__ops__` bridge and bootstrap realm lifecycle. Normal
-  contexts now enter `bootstrap_js_builtins` after native registration.
+- [~] The `__ops__` bridge is active and normal contexts enter
+  `bootstrap_js_builtins` after native registration; realm lifecycle cleanup
+  remains pending.
 - [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
 - [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains
   canonical SameValue and descriptor/constructor primitives.
