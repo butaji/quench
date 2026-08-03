@@ -6982,7 +6982,92 @@ globalThis.require = (specifier) => {
     return childProcess;
   }
   if (name === "net") {
+    const isIPv4 = (input) => {
+      if (typeof input !== "string") return false;
+      const parts = input.split(".");
+      if (parts.length !== 4) return false;
+      for (const part of parts) {
+        if (!/^\d+$/.test(part)) return false;
+        const n = Number(part);
+        if (n < 0 || n > 255) return false;
+        if (part.length > 1 && part.startsWith("0")) return false;
+      }
+      return true;
+    };
+    const isIPv6 = (input) => {
+      if (typeof input !== "string" || input.length === 0) return false;
+      let address = input;
+      if (address.includes("%")) {
+        const percentIndex = address.indexOf("%");
+        if (percentIndex === address.length - 1) return false;
+        if (address.indexOf("%", percentIndex + 1) !== -1) return false;
+        const zone = address.slice(percentIndex + 1);
+        if (
+          zone.includes(":") ||
+          zone.includes("%") ||
+          zone.includes("@") ||
+          zone.length === 0 ||
+          !/^[0-9A-Za-z._-]+$/.test(zone)
+        )
+          return false;
+        address = address.slice(0, percentIndex);
+        if (address.length === 0) return false;
+      }
+      if (address === "::") return true;
+      const doubleColonIndex = address.indexOf("::");
+      if (doubleColonIndex !== -1 && address.indexOf("::", doubleColonIndex + 1) !== -1)
+        return false;
+      const hasDoubleColon = doubleColonIndex !== -1;
+      const head = hasDoubleColon ? address.slice(0, doubleColonIndex) : address;
+      const tail = hasDoubleColon ? address.slice(doubleColonIndex + 2) : "";
+      const headGroups = head === "" ? [] : head.split(":");
+      const tailGroups = tail === "" ? [] : tail.split(":");
+      let expanded = 0;
+      const validateGroup = (group) => {
+        if (group.includes(".")) {
+          const parts = group.split(".");
+          if (parts.length !== 4) return false;
+          for (const part of parts) {
+            if (!/^\d+$/.test(part)) return false;
+            const n = Number(part);
+            if (n < 0 || n > 255) return false;
+          }
+          const a = Number(parts[0]);
+          const b = Number(parts[1]);
+          const c = Number(parts[2]);
+          const d = Number(parts[3]);
+          expanded += 2;
+        } else {
+          if (group.length === 0 || group.length > 4) return false;
+          if (!/^[0-9a-fA-F]+$/.test(group)) return false;
+          expanded++;
+        }
+        return true;
+      };
+      for (const group of headGroups) {
+        if (!validateGroup(group)) return false;
+      }
+      for (const group of tailGroups) {
+        if (!validateGroup(group)) return false;
+      }
+      if (hasDoubleColon) {
+        if (expanded > 7) return false;
+      } else {
+        if (expanded !== 8) return false;
+      }
+      return true;
+    };
+    const isIP = (input) => {
+      if (typeof input !== "string") return 0;
+      const address = input.includes("%") ? input.slice(0, input.indexOf("%")) : input;
+      if (isIPv4(address)) return 4;
+      if (isIPv6(address)) return 6;
+      return 0;
+    };
     return {
+      isIP,
+      isIPv4,
+      isIPv6,
       createServer: (handler) => {
         const server = new globalThis.__nodeEventEmitter();
         server._handle = { close: () => {} };
