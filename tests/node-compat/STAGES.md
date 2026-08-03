@@ -134,3 +134,4 @@ these small fixtures isolate the currently implemented contract.
 |   124 | promise file-handle buffer reads                          | `tools/run-node-tests.sh --stage 124` |
 |   125 | fd-based `fs.writeFileSync`                               | `tools/run-node-tests.sh --stage 125` |
 |   126 | typed-array `fs.writeFileSync` input                      | `tools/run-node-tests.sh --stage 126` |
+|   127 | DataView `fs.writeFileSync` input                         | `tools/run-node-tests.sh --stage 127` |
