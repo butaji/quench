@@ -352,10 +352,11 @@ fn private_member_type_error(env: &Rc<RefCell<Environment>>) -> JsError {
             );
         }
     }
-    let (_, js_err) = create_js_error_with_type(
+    let (err_val, js_err) = create_js_error_with_type(
         "Cannot read private member from an object whose class did not declare it",
         "TypeError",
     );
+    crate::value::set_thrown_value(err_val);
     js_err
 }
 

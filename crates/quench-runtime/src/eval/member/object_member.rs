@@ -350,6 +350,28 @@ mod tests {
     }
 
     #[test]
+    fn private_field_primitive_receiver_error_has_type_error_identity() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class C { #p = 1; m() { try { this.#p; return ['none', false]; } catch (e) { return [e.name, e instanceof TypeError]; } } } C.prototype.m.call(15);",
+            )
+            .unwrap();
+        assert_eq!(result.to_string(), "[TypeError,true]");
+    }
+
+    #[test]
+    fn private_field_nullish_receivers_keep_strict_this() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "class C { #p = 1; m() { try { this.#p; return ['none', false]; } catch (e) { return [e.name, e instanceof TypeError]; } } } let c = new C(); [c.m.call(null), c.m.call(undefined)];",
+            )
+            .unwrap();
+        assert_eq!(result.to_string(), "[[TypeError,true],[TypeError,true]]");
+    }
+
+    #[test]
     fn private_method_preserves_home_object_for_super_access() {
         let mut ctx = Context::new().unwrap();
         let result = ctx

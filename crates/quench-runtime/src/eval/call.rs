@@ -329,9 +329,12 @@ pub fn eval_member(
         if let PropertyKey::Computed(expression) = property {
             crate::eval::expression::eval_expression(expression, env, in_arrow_function)?;
         }
-        return Err(JsError(
-            "TypeError: Cannot read properties of null or undefined".into(),
-        ));
+        let (error, js_err) = crate::value::error::create_js_error_with_type(
+            "Cannot read properties of null or undefined",
+            "TypeError",
+        );
+        crate::value::set_thrown_value(error);
+        return Err(js_err);
     }
     let prop_name = eval_property_key(property, env, in_arrow_function)?;
     eval_member_access(&obj_val, &prop_name, env)
