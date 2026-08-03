@@ -459,3 +459,6 @@ argument-type/range diagnostics and cleanup.
 
 Stage 174 formalized `stream/iter` and `zlib/iter` pull transforms, asserting
 compressed/decompressed round-trip text and cleanup.
+
+Stage 175 formalized pull batch chunking, asserting batch shape, chunk size,
+batch count, and cleanup.
