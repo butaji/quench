@@ -633,3 +633,12 @@ array-like lengths clamp to zero.
 
 Stage 231 formalized `crypto.randomBytes` and `randomFillSync`, asserting
 Uint8Array results, sizing, and in-place fill.
+
+Stage 232 formalized Buffer `isAscii`/`isUtf8` predicates, asserting valid
+ASCII/UTF-8 acceptance and rejection of non-ASCII and overlong sequences.
+
+Stage 233 formalized `util` TextEncoder/TextDecoder exports, asserting
+encode/decode round trips.
+
+Stage 234 formalized `internal/errors` code classes, asserting instantiable
+`ERR_OUT_OF_RANGE` as a RangeError.

@@ -239,3 +239,6 @@ these small fixtures isolate the currently implemented contract.
 |   229 | Buffer `from` unknown-encoding validation                      | `tools/run-node-tests.sh --stage 229` |
 |   230 | Buffer prototype metadata and alloc edge cases                 | `tools/run-node-tests.sh --stage 230` |
 |   231 | `crypto.randomBytes` and `randomFillSync`                      | `tools/run-node-tests.sh --stage 231` |
+|   232 | Buffer `isAscii`/`isUtf8` predicates                           | `tools/run-node-tests.sh --stage 232` |
+|   233 | `util` TextEncoder/TextDecoder exports                         | `tools/run-node-tests.sh --stage 233` |
+|   234 | `internal/errors` code classes                                 | `tools/run-node-tests.sh --stage 234` |
