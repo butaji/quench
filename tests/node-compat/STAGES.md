@@ -124,3 +124,4 @@ these small fixtures isolate the currently implemented contract.
 |   114 | `fs.read` offset and position validation                  | `tools/run-node-tests.sh --stage 114` |
 |   115 | sync, callback, and promise vectored `fs.readv`           | `tools/run-node-tests.sh --stage 115` |
 |   116 | sync write/read and vectored `fs.writev`                  | `tools/run-node-tests.sh --stage 116` |
+|   117 | `fs.open` write-mode truncation                           | `tools/run-node-tests.sh --stage 117` |
