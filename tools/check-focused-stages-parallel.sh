@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-jobs=${QUENCH_NODE_STAGE_JOBS:-${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}}
+jobs=${QUENCH_NODE_STAGE_JOBS:-${JOBS:-4}}
 failures=$(mktemp)
 trap 'rm -f "$failures"' EXIT HUP INT TERM
 export root failures
