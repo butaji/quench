@@ -7,6 +7,13 @@ var ThrowTypeError = ops.ThrowTypeError;
 var SameValueZero = ops.SameValueZero;
 var HasProperty = ops.HasProperty;
 
+function ToLength(value) {
+  var n = Number(value);
+  if (n !== n || n <= 0) return 0;
+  if (n === Infinity) return 9007199254740991;
+  return Math.min(Math.floor(n), 9007199254740991);
+}
+
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
@@ -29,7 +36,7 @@ Array.from = function ArrayFrom(items, mapfn, thisArg) {
     while (!(step = iterator.next()).done) values.push(step.value);
   } else {
     var object = ToObject(items);
-    var length = object.length >>> 0;
+    var length = ToLength(object.length);
     for (var i = 0; i < length; i++) values.push(object[i]);
   }
   var result = new Array(values.length);
@@ -42,7 +49,7 @@ Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.forEach called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
@@ -57,7 +64,7 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.map called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var A = new Array(len);
   for (var k = 0; k < len; k++) {
@@ -73,7 +80,7 @@ Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.filter called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var A = new Array(0);
   var to = 0;
@@ -94,7 +101,7 @@ Array.prototype.reduce = function ArrayReduce(callbackfn /*, initialValue */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.reduce called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0 && arguments.length < 2) throw ThrowTypeError("Reduce of empty array with no initial value");
   var k = 0;
   var accumulator = arguments.length >= 2 ? arguments[1] : undefined;
@@ -115,7 +122,7 @@ Array.prototype.find = function ArrayFind(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.find called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
@@ -131,7 +138,7 @@ Array.prototype.some = function ArraySome(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.some called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
@@ -146,7 +153,7 @@ Array.prototype.every = function ArrayEvery(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.every called on null or undefined");
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
@@ -160,7 +167,7 @@ Array.prototype.every = function ArrayEvery(callbackfn /*, thisArg */) {
 Array.prototype.includes = function ArrayIncludes(searchElement /*, fromIndex */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.includes called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0) return false;
   var n = arguments.length > 1 ? arguments[1] : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
@@ -174,7 +181,7 @@ Array.prototype.includes = function ArrayIncludes(searchElement /*, fromIndex */
 Array.prototype.indexOf = function ArrayIndexOf(searchElement /*, fromIndex */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.indexOf called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   if (len === 0) return -1;
   var n = arguments.length > 1 ? arguments[1] : 0;
   var k = Math.max(n >= 0 ? n : len + n, 0);
@@ -188,7 +195,7 @@ Array.prototype.indexOf = function ArrayIndexOf(searchElement /*, fromIndex */) 
 Array.prototype.join = function ArrayJoin(separator) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.join called on null or undefined");
   var O = ToObject(this);
-  var len = O.length >>> 0;
+  var len = ToLength(O.length);
   var sep = separator === undefined ? ',' : String(separator);
   if (len === 0) return '';
   var R = '';
