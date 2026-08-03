@@ -3,8 +3,8 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeToFixed = Number.prototype.toFixed;
-var _nativeToExponential = Number.prototype.toExponential;
+var _nativeToFixed = Number.prototype.__toFixed;
+var _nativeToExponential = Number.prototype.__toExponential;
 var _nativeToPrecision = Number.prototype.toPrecision;
 
 Number.isNaN = function NumberIsNaN(value) {

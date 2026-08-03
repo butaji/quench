@@ -40,14 +40,14 @@ pub fn register_number(ctx: &mut Context) {
 
 fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     proto.borrow_mut().set(
-        "toFixed",
+        "__toFixed",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             proto_to_fixed_impl(args)
         }))),
     );
 
     proto.borrow_mut().set(
-        "toExponential",
+        "__toExponential",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             proto_to_exponential_impl(args)
         }))),
@@ -98,7 +98,7 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
             Ok(Value::Number(to_number(&this_val)))
         }))),
     );
-    for name in ["toFixed", "toExponential", "toString", "valueOf"] {
+    for name in ["__toFixed", "__toExponential", "toString", "valueOf"] {
         if let Some(flags) = proto.borrow_mut().descriptors.get_mut(name) {
             flags.enumerable = false;
         }
@@ -277,7 +277,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         value: None,
     };
     number_obj.borrow_mut().define(
-        "isInteger",
+        "__isInteger",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec: only returns true if arg is already Number type and integer
             Ok(Value::Boolean(matches!(
@@ -288,7 +288,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "isNaN",
+        "__isNaN",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec: returns true only if arg is already Number type AND is NaN
             Ok(Value::Boolean(
@@ -298,7 +298,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "isFinite",
+        "__isFinite",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec: only returns true if arg is already Number type and finite
             Ok(Value::Boolean(matches!(
@@ -309,7 +309,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "isSafeInteger",
+        "__isSafeInteger",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             // Per spec: only returns true if arg is already Number and safe integer
             Ok(Value::Boolean(matches!(
@@ -321,7 +321,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "parseInt",
+        "__parseInt",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
             let radix = args.get(1).map(|v| to_number(v) as i32).unwrap_or(0);
@@ -337,7 +337,7 @@ fn setup_number_static(proto: &Rc<RefCell<Object>>, ctx: &mut Context) {
         static_flags.clone(),
     );
     number_obj.borrow_mut().define(
-        "parseFloat",
+        "__parseFloat",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let s = args.first().map(to_js_string).unwrap_or_default();
             Ok(Value::Number(crate::builtins::date::spec_parse_float(&s)))
