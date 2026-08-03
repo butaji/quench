@@ -548,3 +548,6 @@ shape and restoration through `Buffer.from`.
 
 Stage 203 formalized Buffer equality, asserting typed-array compatibility,
 mismatch detection, and `ERR_INVALID_ARG_TYPE` validation.
+
+Stage 204 formalized Buffer byte-length calculation, asserting UTF-8,
+UTF-16LE, typed-array, and ArrayBuffer sizing.
