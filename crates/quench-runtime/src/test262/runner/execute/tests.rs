@@ -103,6 +103,13 @@ fn eval_super_property_from_class_method_is_valid() {
 }
 
 #[test]
+fn isolated_large_output_test_does_not_block_on_pipes() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/test262/test/language/expressions/left-shift/S11.7.1_A4_T1.js");
+    assert_eq!(run_isolated(&path), TestOutcome::Pass);
+}
+
+#[test]
 fn regexp_modifier_overlap_is_rejected_during_parse() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::{default_test262_dir, run_single_test};

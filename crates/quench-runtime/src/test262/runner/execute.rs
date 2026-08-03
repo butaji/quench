@@ -1,8 +1,11 @@
 //! Run a single test262 case (in-process with timeout, or subprocess).
 
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::Path;
+use std::process::{ExitStatus, Stdio};
 use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use crate::test262::harness::HarnessLoader;
@@ -1474,8 +1477,8 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
         .env("TEST262_NOSKIP", "1")
         .env("TEST262_DIR", crate::test262::runner::default_test262_dir())
         .env("RUST_MIN_STACK", "33554432")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn();
     let mut child = match child {
         Ok(c) => c,
@@ -1489,16 +1492,20 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
             }
         }
     };
+    let stdout = child
+        .stdout
+        .take()
+        .map(|pipe| thread::spawn(|| read_pipe(pipe)));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|pipe| thread::spawn(|| read_pipe(pipe)));
     let deadline = std::time::Instant::now() + Duration::from_secs(test_timeout_secs());
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                return match child.wait_with_output() {
-                    Ok(out) => classify_isolated(&out, test_path),
-                    Err(e) => TestOutcome::Fail {
-                        failure: TestFailure::from_message(format!("isolated output: {}", e)),
-                    },
-                };
+            Ok(Some(status)) => {
+                let output = child_output(status, stdout, stderr);
+                return classify_isolated(&output, test_path);
             }
             Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -1520,6 +1527,28 @@ pub fn run_isolated(test_path: &Path) -> TestOutcome {
                 };
             }
         }
+    }
+}
+
+fn read_pipe(mut pipe: impl Read) -> Vec<u8> {
+    let mut output = Vec::new();
+    let _ = pipe.read_to_end(&mut output);
+    output
+}
+
+fn child_output(
+    status: ExitStatus,
+    stdout: Option<thread::JoinHandle<Vec<u8>>>,
+    stderr: Option<thread::JoinHandle<Vec<u8>>>,
+) -> std::process::Output {
+    std::process::Output {
+        status,
+        stdout: stdout
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default(),
+        stderr: stderr
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default(),
     }
 }
 

@@ -65,9 +65,12 @@ pub fn eval_impl(args: Vec<Value>, ctx: &mut Context) -> Result<Value, JsError> 
         }
         false
     });
+    let has_super_syntax =
+        source.contains("super(") || source.contains("super.") || source.contains("super[");
+    let has_super_property = source.contains("super.") || source.contains("super[");
     if crate::interpreter::is_direct_eval()
-        && (source.contains("super(") || source.contains("super.") || source.contains("super["))
-        && !has_super_binding
+        && has_super_syntax
+        && (source.contains("super(") || !has_super_binding && has_super_property)
     {
         let (err_val, js_err) = crate::value::error::create_js_error_with_type(
             "super call is not valid in this eval context",
