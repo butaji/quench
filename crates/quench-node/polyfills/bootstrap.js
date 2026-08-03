@@ -7113,10 +7113,13 @@ globalThis.require = (specifier) => {
         if (reentry) return;
         const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
         const previousIsWorker = cluster.isWorker;
+        const previousArgv = process.argv;
         for (const [key, value] of Object.entries(env)) {
           if (value === undefined) continue;
           process.env[key] = value;
         }
+        const setupArgs = cluster.settings && cluster.settings.args ? cluster.settings.args : [];
+        if (setupArgs.length) process.argv = [...process.argv, ...setupArgs];
         cluster.isWorker = true;
         cluster.worker = worker;
         globalThis.__quench_in_cluster_worker = true;
@@ -7128,6 +7131,7 @@ globalThis.require = (specifier) => {
           workerError = error;
         }
         cluster.isWorker = previousIsWorker;
+        process.argv = previousArgv;
         globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
         if (worker.state === "dead") return;
         queueMicrotask(() => {

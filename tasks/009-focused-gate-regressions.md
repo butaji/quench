@@ -492,3 +492,16 @@ Follow-on slice landed. Changes:
   the cluster worker context), `process.send` returns `false`.
 
 Focused-stage suite: **509/509 pass**.
+
+## Status — cluster fork argv extension slice (done)
+
+Follow-on slice landed. Changes:
+
+- `cluster.fork` re-eval now appends `cluster.settings.args` (set via
+  `cluster.setupPrimary({ args: [...] })`) to `process.argv` for the
+  duration of the worker re-evaluation, then restores the previous
+  `process.argv` in the `finally`. This lets a worker branch read
+  `process.argv[2]` to obtain the first setupPrimary argument, matching
+  the Node contract for the `test-cluster-setup-primary.js` fixture.
+
+Focused-stage suite: **509/509 pass**.
