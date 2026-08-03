@@ -300,3 +300,6 @@ returned-buffer identity, contents, and cleanup.
 
 Stage 121 formalized promise-based vectored `fs.writev`, asserting bytes
 written, exact file contents, and cleanup.
+
+Stage 122 formalized the options-object callback form of `fs.write`,
+asserting selected-byte count, output contents, and cleanup.
