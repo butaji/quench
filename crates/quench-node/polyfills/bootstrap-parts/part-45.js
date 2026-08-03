@@ -1,0 +1,3 @@
+globalThis.__quench_bootstrap_fragments.push(
+  'const __quenchOriginalRequireWithOsHelpers = globalThis.require;\nconst __quenchOsHelpers = {\n  homedir: () => globalThis.__quench_homedir || globalThis.process?.env?.HOME || "/",\n  tmpdir: () => globalThis.__quench_tmpdir || "/tmp",\n  userInfo: () => ({ uid: 0, gid: 0, username: "unknown", homedir: __quenchOsHelpers.homedir(), shell: null }),\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "os") return Object.assign({}, __quenchOriginalRequireWithOsHelpers(specifier), __quenchOsHelpers);\n  return __quenchOriginalRequireWithOsHelpers(specifier);\n};\n'
+);
