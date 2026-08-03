@@ -11,11 +11,9 @@ mod tests;
 
 use crate::builtins::object_static::{
     object_assign, object_create, object_define_properties, object_define_property,
-    object_freeze, object_from_entries, object_get_own_property_descriptor,
+    object_get_own_property_descriptor,
     object_get_own_property_descriptors, object_get_own_property_names,
-    object_get_own_property_symbols, object_get_prototype_of, object_has_own,
-    object_is_extensible, object_is_frozen, object_is_sealed,
-    object_prevent_extensions, object_seal, object_set_prototype_of,
+    object_get_own_property_symbols,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -102,46 +100,6 @@ pub fn register_object(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_get_own_property_symbols,
         ))),
-    );
-    constructor.set_static_method(
-        "freeze",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_freeze))),
-    );
-    constructor.set_static_method(
-        "isFrozen",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_frozen))),
-    );
-    constructor.set_static_method(
-        "seal",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_seal))),
-    );
-    constructor.set_static_method(
-        "isSealed",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_sealed))),
-    );
-    constructor.set_static_method(
-        "hasOwn",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_has_own))),
-    );
-    constructor.set_static_method(
-        "fromEntries",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_from_entries))),
-    );
-    constructor.set_static_method(
-        "getPrototypeOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_get_prototype_of))),
-    );
-    constructor.set_static_method(
-        "setPrototypeOf",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_set_prototype_of))),
-    );
-    constructor.set_static_method(
-        "preventExtensions",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_prevent_extensions))),
-    );
-    constructor.set_static_method(
-        "isExtensible",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_is_extensible))),
     );
 
     constructor.set_name("Object");

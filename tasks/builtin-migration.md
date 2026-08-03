@@ -24,6 +24,9 @@ self-hosted JavaScript layer.
   operation; Rust retains the underlying property storage and key traversal.
 - [~] `Object.values` and `Object.entries` are JS-owned over the same
   enumerable-key operation.
+- [~] Object ownership/prototype/extensibility algorithms (`hasOwn`,
+  `fromEntries`, prototype operations, freeze/seal queries) are JS-owned;
+  Rust retains descriptor mutation primitives.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
