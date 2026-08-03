@@ -333,7 +333,11 @@ impl ValueFunction {
                 return Some(value.clone());
             }
         }
-        if key == "prototype" && !self.is_arrow && (!self.is_method || self.is_generator) {
+        if key == "prototype"
+            && !self.is_property_deleted("prototype")
+            && !self.is_arrow
+            && (!self.is_method || self.is_generator)
+        {
             return Some(Value::Object(self.get_prototype()));
         }
         self.properties.borrow().get(key).cloned()
@@ -352,7 +356,10 @@ impl ValueFunction {
             names.push("name".to_string());
         }
         // Non-arrow functions always have a .prototype property.
-        if !self.is_arrow && (!self.is_method || self.is_generator) {
+        if !self.is_property_deleted("prototype")
+            && !self.is_arrow
+            && (!self.is_method || self.is_generator)
+        {
             names.push("prototype".to_string());
         }
         for key in self.properties.borrow().keys() {
@@ -413,7 +420,7 @@ impl ValueFunction {
     /// Remove a property. Returns true if it was present.
     pub fn remove_property(&self, key: &str) -> bool {
         let removed = self.properties.borrow_mut().remove(key).is_some();
-        if matches!(key, "name" | "length") {
+        if matches!(key, "name" | "length" | "prototype") {
             let marker = Self::deleted_marker(key);
             let was_deleted = self.properties.borrow_mut().remove(&marker).is_some();
             if was_deleted {

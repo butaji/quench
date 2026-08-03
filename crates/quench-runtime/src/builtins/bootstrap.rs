@@ -339,6 +339,7 @@ fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
     }
     for (key, value) in values {
         if let crate::value::Value::Function(function) = value {
+            let _ = function.set_property("prototype", crate::value::Value::Undefined);
             let _ = function.set_property("name", crate::value::Value::String(key));
             let _ = function.set_property(
                 "\0nonconstructable",
@@ -583,6 +584,13 @@ mod tests {
         let r = ctx
             .eval("var a = ['x', , undefined]; a.hasOwnProperty('0') && !a.hasOwnProperty('1') && a.hasOwnProperty('2')")
             .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_methods_do_not_expose_function_prototypes() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("Array.prototype.join.prototype === undefined").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 

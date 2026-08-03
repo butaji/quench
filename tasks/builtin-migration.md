@@ -274,6 +274,9 @@ self-hosted JavaScript layer.
 - [x] Make `__ops__.GetOwnPropDesc` use canonical `Object::get_own_value`,
   including present array elements while excluding holes; this fixes shared
   own-property semantics for sparse arrays and sort.
+- [x] Normalize self-hosted prototype methods with `prototype: undefined`,
+  preventing ordinary function prototype objects from leaking onto builtins
+  such as `Array.prototype.join`.
 
 ## First increment
 
