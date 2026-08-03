@@ -819,3 +819,6 @@ canonical ISO timestamp string.
 
 Stage 298 formalized `%o` object-string formatting, asserting quoted strings
 and escaped apostrophes.
+
+Stage 299 formalized POSIX path validation, asserting `ERR_INVALID_ARG_TYPE`
+for invalid values passed to common path operations.
