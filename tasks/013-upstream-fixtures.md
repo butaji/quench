@@ -795,3 +795,6 @@ Node).
 
 Stage 290 formalized `querystring` upstream-complete behavior, asserting
 array values, separator/equalizer overloads, and the `unescape` override.
+
+Stage 291 formalized `util.format` rendering for null-prototype objects,
+asserting the explicit null-prototype marker and property output.
