@@ -97,7 +97,6 @@ fn setup_number_prototype(proto: &Rc<RefCell<Object>>) {
     );
     for name in ["toFixed", "toExponential", "toString", "valueOf"] {
         if let Some(flags) = proto.borrow_mut().descriptors.get_mut(name) {
-            flags.writable = false;
             flags.enumerable = false;
         }
     }
@@ -650,9 +649,7 @@ mod tests {
         let value = eval("['toFixed', 'toExponential', 'toString', 'valueOf'].map(function (name) { var d = Object.getOwnPropertyDescriptor(Number.prototype, name); return [d.writable, d.enumerable, d.configurable].join('|'); }).join(';')");
         assert_eq!(
             value,
-            Value::String(
-                "false|false|true;false|false|true;false|false|true;false|false|true".into()
-            )
+            Value::String("true|false|true;true|false|true;true|false|true;true|false|true".into())
         );
     }
 }
