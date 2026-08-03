@@ -420,3 +420,6 @@ Stage 160 formalized UTF-8 and Buffer encoding options for synchronous
 
 Stage 161 formalized the upstream symlink-capability helper, asserting that
 the harness environment supports symbolic-link fixtures.
+
+Stage 162 formalized invalid target argument validation for `fs.symlinkSync`,
+asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
