@@ -426,11 +426,12 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let Value::Object(regex_obj) = this_val else {
         return Err(JsError::new("TypeError: incompatible receiver".to_string()));
     };
-    let flags = regex_obj
-        .borrow()
-        .internal_regex_flags
-        .clone()
-        .unwrap_or_default();
+    let flags_value = crate::eval::member::eval_object_member_value(
+        &regex_obj,
+        &Value::String("flags".to_string()),
+        current_regex_env().as_ref(),
+    )?;
+    let flags = regexp_search_string(Some(&flags_value))?;
     if !flags.contains('g') {
         return Err(JsError::new(
             "TypeError: matchAll requires global RegExp".to_string(),
