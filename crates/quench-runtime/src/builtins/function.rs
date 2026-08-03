@@ -1061,4 +1061,16 @@ mod tests {
             .unwrap();
         assert_eq!(name, Value::String("bound foo".to_string()));
     }
+
+    #[test]
+    fn bound_function_name_and_length_are_configurable() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval("var f = function foo(a, b) {}.bind(null, 1); var n = Object.getOwnPropertyDescriptor(f, 'name'); var l = Object.getOwnPropertyDescriptor(f, 'length'); Object.defineProperty(f, 'name', {value: 'x'}); Object.defineProperty(f, 'length', {value: 9}); [n.writable, n.enumerable, n.configurable, l.writable, l.enumerable, l.configurable, f.name, f.length].join('|')")
+            .unwrap();
+        assert_eq!(
+            value,
+            Value::String("false|false|true|false|false|true|x|9".into())
+        );
+    }
 }
