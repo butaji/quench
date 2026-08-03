@@ -3,7 +3,6 @@
 mod callbacks;
 mod constructor;
 mod helpers;
-mod instance_methods;
 mod microtask;
 mod static_methods;
 
@@ -26,8 +25,6 @@ pub use static_methods::{
     promise_all_impl, promise_race_impl, promise_reject_impl_static, promise_resolve_impl_static,
 };
 
-// Re-export instance method for internal use
-pub use instance_methods::promise_then_impl;
 
 #[cfg(test)]
 mod tests {
