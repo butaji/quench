@@ -355,62 +355,62 @@ pub fn register_date(ctx: &mut Context) {
         }))),
     );
     date_proto_rc.borrow_mut().set(
-        "__getTimezoneOffset",
+        "getTimezoneOffset",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| Ok(Value::Number(0.0))))),
     );
     date_proto_rc.borrow_mut().set(
-        "__getTime",
+        "getTime",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             Ok(Value::Number(date_timestamp(&this_val)))
         }))),
     );
-    install_date_getter(&date_proto_rc, "__getFullYear", |ms| {
+    install_date_getter(&date_proto_rc, "getFullYear", |ms| {
         date_parts_from_timestamp(ms).0
     });
-    install_date_getter(&date_proto_rc, "__getMonth", |ms| {
+    install_date_getter(&date_proto_rc, "getMonth", |ms| {
         date_parts_from_timestamp(ms).1
     });
-    install_date_getter(&date_proto_rc, "__getDate", |ms| {
+    install_date_getter(&date_proto_rc, "getDate", |ms| {
         date_parts_from_timestamp(ms).2
     });
-    install_date_getter(&date_proto_rc, "__getUTCFullYear", |ms| {
+    install_date_getter(&date_proto_rc, "getUTCFullYear", |ms| {
         date_parts_from_timestamp(ms).0
     });
-    install_date_getter(&date_proto_rc, "__getUTCMonth", |ms| {
+    install_date_getter(&date_proto_rc, "getUTCMonth", |ms| {
         date_parts_from_timestamp(ms).1
     });
-    install_date_getter(&date_proto_rc, "__getUTCDate", |ms| {
+    install_date_getter(&date_proto_rc, "getUTCDate", |ms| {
         date_parts_from_timestamp(ms).2
     });
     for name in [
-        "__getDay",
-        "__getHours",
-        "__getMilliseconds",
-        "__getMinutes",
-        "__getSeconds",
-        "__getUTCDay",
-        "__getUTCHours",
-        "__getUTCMilliseconds",
-        "__getUTCMinutes",
-        "__getUTCSeconds",
-        "__setDate",
-        "__setFullYear",
-        "__setHours",
-        "__setMilliseconds",
-        "__setMinutes",
-        "__setMonth",
-        "__setSeconds",
-        "__setTime",
-        "__setUTCDate",
-        "__setUTCFullYear",
-        "__setUTCHours",
-        "__setUTCMilliseconds",
-        "__setUTCMinutes",
-        "__setUTCMonth",
-        "__setUTCSeconds",
-        "__toLocaleString",
-        "__toUTCString",
+        "getDay",
+        "getHours",
+        "getMilliseconds",
+        "getMinutes",
+        "getSeconds",
+        "getUTCDay",
+        "getUTCHours",
+        "getUTCMilliseconds",
+        "getUTCMinutes",
+        "getUTCSeconds",
+        "setDate",
+        "setFullYear",
+        "setHours",
+        "setMilliseconds",
+        "setMinutes",
+        "setMonth",
+        "setSeconds",
+        "setTime",
+        "setUTCDate",
+        "setUTCFullYear",
+        "setUTCHours",
+        "setUTCMilliseconds",
+        "setUTCMinutes",
+        "setUTCMonth",
+        "setUTCSeconds",
+        "toLocaleString",
+        "toUTCString",
     ] {
         install_date_placeholder(&date_proto_rc, name);
     }
@@ -493,13 +493,13 @@ pub fn register_date(ctx: &mut Context) {
         .borrow_mut()
         .set("prototype", Value::Object(Rc::clone(&date_proto_rc)));
     date_wrapper_rc.borrow_mut().set(
-        "__now",
+        "now",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             Ok(Value::Number(chrono_now() as f64))
         }))),
     );
     date_wrapper_rc.borrow_mut().set(
-        "__parse",
+        "parse",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let text = args.first().map(to_js_string).unwrap_or_default();
             let timestamp = chrono::DateTime::parse_from_rfc3339(&text)
@@ -509,7 +509,7 @@ pub fn register_date(ctx: &mut Context) {
         }))),
     );
     date_wrapper_rc.borrow_mut().set(
-        "__UTC",
+        "UTC",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let year = args.first().map(to_number).unwrap_or(f64::NAN) as i32;
             let month = args.get(1).map(to_number).unwrap_or(0.0) as i32;

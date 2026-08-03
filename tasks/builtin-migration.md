@@ -126,8 +126,9 @@ self-hosted JavaScript layer.
 - [~] ArrayBuffer public `slice` is JS-owned over a hidden Rust raw-buffer
   primitive. BigInt public `toString`, `valueOf`, `asIntN`, and `asUintN` are
   JS-owned over hidden Rust arbitrary-precision primitives. Date public
-  static, conversion, accessor, and mutator methods are JS-owned over hidden
-  Rust chrono primitives. JSON and URI public methods are JS-owned over
+  static, conversion, accessor, and mutator methods remain Rust-owned when
+  they are direct chrono primitive bindings; JS retains Date methods that add
+  validation or algorithms. JSON and URI public methods are Rust-owned over
   crate-backed and UTF-8 primitives; DataView and remaining TypedArray
   wrappers retain their raw-buffer primitives in Rust.
 - [~] Error, Function, and RegExp public methods are JS-owned where wrappers
