@@ -180,3 +180,4 @@ these small fixtures isolate the currently implemented contract.
 |   170 | file-handle pull start/limit/chunk options                | `tools/run-node-tests.sh --stage 170` |
 |   171 | file-handle pull locking and position state               | `tools/run-node-tests.sh --stage 171` |
 |   172 | file-handle pull transforms and abort signals             | `tools/run-node-tests.sh --stage 172` |
+|   173 | file-handle pull option validation                        | `tools/run-node-tests.sh --stage 173` |
