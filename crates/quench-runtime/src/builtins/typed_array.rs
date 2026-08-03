@@ -60,7 +60,7 @@ pub fn register_typed_arrays(ctx: &mut Context) {
     // TypedArray instances use ObjData::Idx to provide these values dynamically.
     // Register fill method
     typed_array_proto_rc.borrow_mut().set_builtin_method(
-        "__fill",
+        "fill",
         Value::NativeFunction(Rc::new(NativeFunction::new(proto_fill))),
     );
 
@@ -416,11 +416,11 @@ pub fn register_typed_array_iterator() {
         Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
     );
     typed_array_proto.borrow_mut().set_builtin_method(
-        "__values",
+        "values",
         Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_values))),
     );
     typed_array_proto.borrow_mut().set_builtin_method(
-        "__keys",
+        "keys",
         Value::NativeFunction(Rc::new(NativeFunction::new(typed_array_keys))),
     );
 }

@@ -102,9 +102,11 @@ self-hosted JavaScript layer.
 - [~] Generator and AsyncGenerator public methods are JS-owned wrappers over
   hidden Rust state-machine primitives; Rust retains suspension, resumption,
   completion, and async promise scheduling as interpreter execution logic.
-- [~] TypedArray public `fill`, `values`, `keys`, and `@@iterator` methods are JS-owned over
-  hidden Rust raw-buffer and lazy-iterator primitives; constructors, indexed
-  storage, element coercion, and iterator state remain Rust core.
+- [~] TypedArray callback-validating methods (`filter`, `map`, `forEach`, and
+  `reduce`) remain JS-owned; pass-through `fill`, `values`, `keys`, and
+  `@@iterator` bindings remain Rust-owned because wrappers add LOC without an
+  algorithm. Constructors, indexed storage, coercion, and iterator state stay
+  Rust core.
 - [~] JSON public `parse` and `stringify` methods remain Rust-owned because
   the JS layer would only add pass-through wrappers over the crate-backed
   serializer/parser, increasing total maintained LOC.
