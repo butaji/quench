@@ -249,3 +249,6 @@ the `EBADF` result for a descriptor closed twice.
 
 Stage 104 retained descriptor mode-mask coverage for `open` and `fchmod`,
 confirming special mode bits do not leak into the public permission mask.
+
+Stage 105 expanded promise-based `readdir` `Dirent` coverage to file and
+directory predicates, parent paths, and cleanup of the temporary tree.
