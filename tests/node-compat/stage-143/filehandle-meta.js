@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-143-${process.pid}`;
@@ -8,6 +9,7 @@ const fs = require("fs");
   await handle.sync();
   await handle.datasync();
   await handle.close();
-  if (stats.size !== 3 || !stats.isFile())
-    throw new Error("filehandle metadata mismatch");
+  assert.strictEqual(stats.size, 3);
+  assert.strictEqual(stats.isFile(), true);
+  fs.rmSync(path);
 })().then(() => undefined);

@@ -363,3 +363,6 @@ both byte counts, reconstructed contents, and cleanup.
 
 Stage 142 formalized promise file-handle truncation, asserting the resulting
 contents after shrinking an open file and cleaning up the temporary file.
+
+Stage 143 formalized file-handle metadata, `sync`, and `datasync`, asserting
+file size/type metadata and cleanup after closing the handle.
