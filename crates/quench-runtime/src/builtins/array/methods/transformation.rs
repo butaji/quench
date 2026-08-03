@@ -20,6 +20,19 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
         primitive => crate::value::to_object(&primitive)?,
     };
     match receiver {
+        Value::Function(function) => {
+            let length = crate::value::try_to_number(&crate::eval::member::eval_function_member(
+                &function, "length",
+            )?)?
+            .max(0.0) as usize;
+            Ok((0..length)
+                .map(|index| {
+                    function
+                        .get_property(&index.to_string())
+                        .unwrap_or(Value::Undefined)
+                })
+                .collect())
+        }
         Value::Object(o) => {
             let arr = o.borrow();
             if arr.kind == ObjectKind::Array {
@@ -577,6 +590,15 @@ mod tests {
         assert_eq!(
             ctx.eval("[1, 2, 3].toSpliced(1, 1, 4).join(',')"),
             Ok(Value::String("1,4,3".to_string()))
+        );
+    }
+
+    #[test]
+    fn array_index_of_reads_function_properties() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var f=function(a,b){}; f[1]=true; Array.prototype.indexOf.call(f,true)"),
+            Ok(Value::Number(1.0))
         );
     }
 }
