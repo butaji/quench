@@ -1023,6 +1023,9 @@ write options.
 Stage 366 formalized timer timeout scheduling, cancellation, and microtask
 ordering.
 
+Stage 367 formalized repeating interval callbacks, cancellation after a fixed
+count, and microtask observation of the final count.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
