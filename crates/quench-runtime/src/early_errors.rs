@@ -1795,25 +1795,6 @@ fn check_body_for_function_decl(stmt: &ast::Statement) -> Result<(), JsError> {
                 ));
             }
         }
-        // Check inside blocks
-        ast::Statement::BlockStatement(block) => {
-            for s in &block.body {
-                if matches!(s, ast::Statement::FunctionDeclaration(_)) {
-                    return Err(JsError(
-                        "SyntaxError: Function declaration in for-of statement body is not allowed"
-                            .into(),
-                    ));
-                }
-                if let ast::Statement::LabeledStatement(labeled) = s {
-                    if is_any_label_wrapping_fn(&labeled.body) {
-                        return Err(JsError(
-                            "SyntaxError: Labelled function declaration in for-of statement body is not allowed"
-                                .into(),
-                        ));
-                    }
-                }
-            }
-        }
         _ => {}
     }
     Ok(())
@@ -2654,15 +2635,13 @@ mod tests {
     }
 
     #[test]
-    fn for_of_fn_decl_in_block_body_is_error() {
+    fn for_of_fn_decl_inside_block_body_is_allowed() {
         let s = "for (var x of []) { function f() {} }";
         let source_type = SourceType::default().with_script(true).with_jsx(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, s, source_type).parse();
         assert!(ret.diagnostics.is_empty());
-        let result = check_for_of_early_errors(&ret.program);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().0.contains("SyntaxError"));
+        assert!(check_for_of_early_errors(&ret.program).is_ok());
     }
 
     #[test]
