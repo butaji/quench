@@ -3,13 +3,13 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations before overriding
-var _nativeFloor = Math.floor;
-var _nativeCeil = Math.ceil;
-var _nativeRound = Math.round;
-var _nativeTrunc = Math.trunc;
-var _nativeSign = Math.sign;
-var _nativePow = Math.pow;
-var _nativeSqrt = Math.sqrt;
+var _nativeFloor = Math.__floor;
+var _nativeCeil = Math.__ceil;
+var _nativeRound = Math.__round;
+var _nativeTrunc = Math.__trunc;
+var _nativeSign = Math.__sign;
+var _nativePow = Math.__pow;
+var _nativeSqrt = Math.__sqrt;
 
 // Math.max (ES2025 §21.3.2.24)
 Math.max = function MathMax() {

@@ -125,17 +125,17 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
         };
     }
 
-    math_fn!("floor", f64::floor);
-    math_fn!("ceil", f64::ceil);
+    math_fn!("__floor", f64::floor);
+    math_fn!("__ceil", f64::ceil);
     // Use custom js_round instead of f64::round for spec compliance
     math.borrow_mut().set(
-        "round",
+        "__round",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let x = args.first().map(to_number).unwrap_or(0.0);
             Ok(Value::Number(js_round(x)))
         }))),
     );
-    math_fn!("sqrt", f64::sqrt);
+    math_fn!("__sqrt", f64::sqrt);
     math_fn!("sin", f64::sin);
     math_fn!("cos", f64::cos);
     math_fn!("tan", f64::tan);
@@ -147,7 +147,7 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
     math_fn!("log2", f64::log2);
     math_fn!("exp", f64::exp);
     math_fn!("log1p", f64::ln_1p);
-    math_fn!("trunc", f64::trunc);
+    math_fn!("__trunc", f64::trunc);
     math_fn!("cbrt", f64::cbrt);
     math_fn!("expm1", f64::exp_m1);
     math_fn!("cosh", f64::cosh);
@@ -158,7 +158,7 @@ fn register_unary_math_fns(math: &Rc<RefCell<Object>>) {
     math_fn!("atanh", f64::atanh);
     // Math.sign preserves 0/-0 and NaN, so f64::signum alone won't do
     math.borrow_mut().set(
-        "sign",
+        "__sign",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let x = args.first().map(to_number).unwrap_or(0.0);
             let r = if x.is_nan() || x == 0.0 {
@@ -195,7 +195,7 @@ fn register_binary_math_fns(math: &Rc<RefCell<Object>>) {
         }))),
     );
     math.borrow_mut().set(
-        "pow",
+        "__pow",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let base = args.first().map(to_number).unwrap_or(0.0);
             let exp = args.get(1).map(to_number).unwrap_or(1.0);
