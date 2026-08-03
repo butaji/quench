@@ -671,3 +671,12 @@ share implementations.
 
 Stage 243 formalized Buffer display hooks, asserting `toLocaleString`
 delegates to `toString` and the inspect custom symbol renders hex.
+
+Stage 244 formalized the `internal/buffer` `utf8Write` export, asserting its
+function presence.
+
+Stage 245 formalized Buffer size fractional truncation, asserting `alloc`
+and `allocUnsafe` truncate fractional sizes to integer lengths.
+
+Stage 246 formalized Buffer `indexOf` UCS-2 odd-offset handling, asserting
+an odd byte offset in ucs2 search yields no match.
