@@ -88,17 +88,7 @@ pub fn register_array(ctx: &mut Context) {
     );
     array_constructor.set_static_method(
         "from",
-        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
-            let items = args.first().cloned().unwrap_or(Value::Undefined);
-            let arr = match items {
-                Value::Object(o) => {
-                    let elements: Vec<Value> = o.borrow().elements.clone();
-                    Object::new_array_from(elements)
-                }
-                _ => Object::new_array(0),
-            };
-            Ok(Value::Object(Rc::new(RefCell::new(arr))))
-        }))),
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| array_from_impl(args)))),
     );
     array_constructor.set_static_method(
         "of",
@@ -120,6 +110,40 @@ pub fn register_array(ctx: &mut Context) {
         "Array".to_string(),
         Value::NativeConstructor(array_constructor_rc),
     );
+}
+
+fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let items = args.first().cloned().unwrap_or(Value::Undefined);
+    let elements = match items {
+        Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
+            object.borrow().elements.clone()
+        }
+        Value::Object(object) => {
+            let length = crate::eval::member::eval_object_member_value(
+                &object,
+                &Value::String("length".to_string()),
+                None,
+            )
+            .ok()
+            .and_then(|value| crate::value::try_to_number(&value).ok())
+            .unwrap_or(0.0)
+            .max(0.0) as usize;
+            (0..length)
+                .map(|index| {
+                    crate::eval::member::eval_object_member_value(
+                        &object,
+                        &Value::String(index.to_string()),
+                        None,
+                    )
+                    .unwrap_or(Value::Undefined)
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    Ok(Value::Object(Rc::new(RefCell::new(
+        Object::new_array_from(elements),
+    ))))
 }
 
 fn make_array_with_new(

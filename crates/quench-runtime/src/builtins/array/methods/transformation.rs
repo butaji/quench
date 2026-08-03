@@ -644,6 +644,24 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_map_preserves_math_receiver_tag() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Math.length=1; Math[0]=1; Array.prototype.map.call(Math,function(v,i,o){return Object.prototype.toString.call(o)==='[object Math]';})[0]"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_from_reads_array_like_length_and_index() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.from({0:'a',length:1}).length"),
+            Ok(Value::Number(1.0))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
