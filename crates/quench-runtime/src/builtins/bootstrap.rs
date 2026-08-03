@@ -58,6 +58,13 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/Number.js"
         )),
     ),
+    (
+        "String",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../builtins/String.js"
+        )),
+    ),
     // Phase 6: Error
     (
         "Error",

@@ -22,7 +22,10 @@ self-hosted JavaScript layer.
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
   native `toSorted` path pending polish.
-- [ ] String algorithms; retain string storage and RegExp execution in Rust.
+- [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`, and
+  trim variants are now authored in `builtins/String.js`; Rust retains string
+  storage, iteration, and RegExp execution. Remaining String methods are
+  pending migration.
 - [~] Math algorithms: `max`, `min`, and `abs` are self-hosted in
   `builtins/Math.js`; Rust retains numeric primitives and performance-heavy
   functions. Number/Boolean/Symbol work is pending.
