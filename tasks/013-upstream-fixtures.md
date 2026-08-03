@@ -288,3 +288,6 @@ Stage 116 formalized the write/read fixture and added sync vectored
 
 Stage 117 formalized `fs.open` write-mode truncation, asserting stale content
 is removed before writing and cleaning up the path.
+
+Stage 118 formalized `Buffer.equals` coverage after vectored writes, asserting
+both equal and unequal byte sequences with cleanup.
