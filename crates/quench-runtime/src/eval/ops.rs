@@ -89,7 +89,10 @@ pub fn make_ops_object() -> Value {
             },
             _ => return Err(JsError::new("Symbol receiver required")),
         };
-        Ok(Value::String(format!("Symbol({})", symbol.desc.as_deref().unwrap_or(""))))
+        Ok(Value::String(format!(
+            "Symbol({})",
+            symbol.desc.as_deref().unwrap_or("")
+        )))
     });
 
     set_op(&mut obj, "SymbolValueOf", |args| {
@@ -564,7 +567,7 @@ pub fn make_ops_object() -> Value {
                         .borrow_mut()
                         .set("configurable", Value::Boolean(flags.configurable));
                     Ok(Value::Object(desc_rc))
-                } else if let Some(val) = obj_ref.properties.get(&key) {
+                } else if let Some(val) = obj_ref.get_own_value(&key) {
                     let flags = obj_ref.descriptors.get(&key).cloned().unwrap_or(
                         crate::value::object::helpers::PropertyFlags {
                             value: Some(val.clone()),

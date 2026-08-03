@@ -578,6 +578,15 @@ mod tests {
     }
 
     #[test]
+    fn sparse_array_literals_keep_present_element_ownership() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("var a = ['x', , undefined]; a.hasOwnProperty('0') && !a.hasOwnProperty('1') && a.hasOwnProperty('2')")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

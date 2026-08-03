@@ -271,6 +271,9 @@ self-hosted JavaScript layer.
 - [x] Normalize self-hosted prototype method `name` properties from their
   installed property keys during bootstrap, preserving the intrinsic names
   expected by the language while keeping implementation bodies in JS.
+- [x] Make `__ops__.GetOwnPropDesc` use canonical `Object::get_own_value`,
+  including present array elements while excluding holes; this fixes shared
+  own-property semantics for sparse arrays and sort.
 
 ## First increment
 
