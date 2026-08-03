@@ -112,14 +112,6 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
             "/../../builtins/Date.js"
         )),
     ),
-    // Phase 11: JSON
-    (
-        "JSON",
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../builtins/JSON.js"
-        )),
-    ),
     // Phase 12: Map
     (
         "Map",
@@ -223,14 +215,6 @@ const BUILTIN_FILES: &[(&str, &str)] = &[
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../builtins/DataView.js"
-        )),
-    ),
-    // Phase 19.75: URI global wrappers over Rust UTF-8/percent primitives.
-    (
-        "URI",
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../builtins/URI.js"
         )),
     ),
     // Phase 20: AsyncFunction — sets @@toStringTag on %AsyncFunctionPrototype%

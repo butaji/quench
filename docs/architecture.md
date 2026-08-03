@@ -93,7 +93,7 @@ Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
 ## JS builtins
 
-37 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
+35 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
 (`builtins/bootstrap.rs`) loads them during normal context initialization.
 `__ops__` is scaffolded in
 `builtins/core/ops_wrapper.rs`. Order:
@@ -103,13 +103,13 @@ builtins/
 ├── Object.js, Array.js, Iterator.js, Symbol.js,
 ├── Number.js, Boolean.js, String.js, Math.js,
 ├── Map.js, Set.js, WeakMap.js, WeakSet.js,
-├── Promise.js, JSON.js, Reflect.js, Proxy.js,
+├── Promise.js, Reflect.js, Proxy.js,
 ├── RegExp.js, Date.js, BigInt.js,
 ├── TypedArray.js, ArrayBuffer.js, DataView.js, Atomics.js,
 ├── AsyncIterator.js, AsyncGenerator.js, AsyncFunction.js,
 ├── DisposableStack.js, AsyncDisposableStack.js,
 ├── FinalizationRegistry.js, WeakRef.js,
-└── URI.js
+└── Host integration remains Rust-owned where a JS proxy would add LOC.
 ```
 
 Every `.prototype.*`, intrinsic iterator prototype, `Object.*`,
