@@ -273,3 +273,6 @@ including invalid source and destination path validation.
 
 Stage 112 formalized the existing `fs.read` options-object fixture, asserting
 sync and callback byte results and cleaning up its descriptor and file.
+
+Stage 113 formalized the Buffer/options callback form of `fs.read`, including
+the Node-compatible `offset: null` default and identity of the result buffer.
