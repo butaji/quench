@@ -784,3 +784,14 @@ NaN/Infinity stringify empty, separator/equalizer overloads, and key caps.
 Stage 287 formalized `querystring` decoding paths, asserting `unescapeBuffer`
 plus/space handling, custom `decodeURIComponent`, and `maxKeys` (verified
 against Node).
+
+Stage 288 formalized `querystring` decode fallback and `unescape` override,
+asserting the default decoder is used when `decodeURIComponent` throws and
+that a monkey-patched `querystring.unescape` is honored.
+
+Stage 289 formalized `querystring.unescape` malformed-escape handling,
+asserting partial/odd `%` escapes pass through unchanged (verified against
+Node).
+
+Stage 290 formalized `querystring` upstream-complete behavior, asserting
+array values, separator/equalizer overloads, and the `unescape` override.
