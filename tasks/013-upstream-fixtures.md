@@ -521,3 +521,6 @@ modern spellings preserve the original method identity.
 
 Stage 194 formalized validation for variable-width Buffer reads, asserting
 argument-type and range errors for invalid byte lengths.
+
+Stage 195 formalized Buffer signed integer operations, asserting fixed-width
+big/little-endian round trips and a variable-width signed round trip.
