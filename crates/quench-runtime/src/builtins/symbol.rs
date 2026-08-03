@@ -176,7 +176,7 @@ fn setup_symbol_for_method(symbol_fn: &Rc<NativeFunction>) {
             .unwrap_or_else(|| "undefined".to_string());
         Ok(symbol_for_impl(&key))
     });
-    let _ = symbol_fn.set_property("for", Value::NativeFunction(Rc::new(symbol_for)));
+    let _ = symbol_fn.set_property("__for", Value::NativeFunction(Rc::new(symbol_for)));
 }
 
 /// Set up Symbol.keyFor method
@@ -185,7 +185,7 @@ fn setup_symbol_key_for_method(symbol_fn: &Rc<NativeFunction>) {
         let sym = args.first().cloned().unwrap_or(Value::Undefined);
         symbol_key_for_impl(sym)
     });
-    let _ = symbol_fn.set_property("keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
+    let _ = symbol_fn.set_property("__keyFor", Value::NativeFunction(Rc::new(symbol_key_for)));
 }
 
 /// Set up Symbol.prototype with basic methods (toString, valueOf, description)
@@ -207,7 +207,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
             )),
         }
     });
-    proto.set("toString", Value::NativeFunction(Rc::new(to_string)));
+    proto.set("__toString", Value::NativeFunction(Rc::new(to_string)));
     let value_of = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
@@ -217,7 +217,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
             )),
         }
     });
-    proto.set("valueOf", Value::NativeFunction(Rc::new(value_of)));
+    proto.set("__valueOf", Value::NativeFunction(Rc::new(value_of)));
     let description = NativeFunction::new(|_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         match this_symbol_payload(&this_val) {
@@ -229,7 +229,7 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
             )),
         }
     });
-    proto.set("description", Value::NativeFunction(Rc::new(description)));
+    proto.set("__description", Value::NativeFunction(Rc::new(description)));
     for flags in proto.descriptors.values_mut() {
         flags.enumerable = false;
     }

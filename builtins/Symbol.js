@@ -3,6 +3,17 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 var SymbolToString = ops.SymbolToString;
 var SymbolValueOf = ops.SymbolValueOf;
+var _symbolFor = Symbol.__for;
+var _symbolKeyFor = Symbol.__keyFor;
+var _symbolDescription = Symbol.prototype.__description;
+
+Symbol.for = function SymbolFor(key) {
+  return _symbolFor.call(this, key);
+};
+
+Symbol.keyFor = function SymbolKeyFor(symbol) {
+  return _symbolKeyFor.call(this, symbol);
+};
 
 // Symbol.prototype.toString (ES2025 §20.4.3.3)
 Symbol.prototype.toString = function SymbolToString() {
@@ -14,6 +25,11 @@ Symbol.prototype.toString = function SymbolToString() {
 Symbol.prototype.valueOf = function SymbolValueOf() {
   if (this === null || this === undefined) throw ThrowTypeError("Symbol.prototype.valueOf called on null or undefined");
   return SymbolValueOf(this);
+};
+
+Symbol.prototype.description = function SymbolDescription() {
+  if (this === null || this === undefined) throw ThrowTypeError("Symbol.prototype.description called on null or undefined");
+  return _symbolDescription.call(this);
 };
 
 // Symbol.prototype[Symbol.toPrimitive] (ES2025 §20.4.3.2)
