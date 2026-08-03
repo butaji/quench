@@ -175,6 +175,14 @@ mod tests {
             Value::String("get [Symbol.species]".to_string())
         );
     }
+
+    #[test]
+    fn regexp_symbol_match_calls_custom_exec() {
+        assert_eq!(
+            eval("var o = {exec: function() { return null; }}; RegExp.prototype[Symbol.match].call(o)"),
+            Value::Null
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -247,6 +255,15 @@ fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
         }))),
     );
 
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("match")
+    {
+        proto.borrow_mut().set(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(NativeFunction::new(regexp_symbol_match_impl))),
+        );
+    }
+
     // Add source property (defaults to "(?:)")
     proto
         .borrow_mut()
@@ -259,6 +276,24 @@ fn setup_regexp_prototype(proto: &Rc<RefCell<Object>>) {
     proto.borrow_mut().set("multiline", Value::Boolean(false));
     // Note: lastIndex is NOT set on the prototype — it must be an own data
     // property on each instance per ES §21.2.6.1 ({ writable: true, enumerable: false, configurable: false }).
+}
+
+fn regexp_symbol_match_impl(args: Vec<Value>) -> Result<Value, JsError> {
+    let this_val = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError::new("RegExp.prototype[@@match] requires 'this'".to_string()))?;
+    let Value::Object(obj) = &this_val else {
+        return Err(JsError::new("TypeError: incompatible receiver".to_string()));
+    };
+    let exec = obj.borrow().get("exec").ok_or_else(|| {
+        JsError::new("TypeError: RegExp.prototype[@@match] requires callable exec".to_string())
+    })?;
+    crate::eval::function::call_value_with_this(
+        exec,
+        vec![Value::String(
+            args.first().map(to_js_string).unwrap_or_default(),
+        )],
+        this_val,
+    )
 }
 
 // ============================================================================
@@ -318,6 +353,14 @@ pub fn register_regexp(ctx: &mut Context) {
                 enumerable: false,
                 configurable: true,
             },
+        );
+    }
+    if let Some(Value::Symbol(symbol)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("match")
+    {
+        regexp_proto.borrow_mut().set(
+            &symbol.property_key(),
+            Value::NativeFunction(Rc::new(NativeFunction::new(regexp_symbol_match_impl))),
         );
     }
     regexp_obj_rc
