@@ -193,3 +193,4 @@ these small fixtures isolate the currently implemented contract.
 |   183 | `util.format` BigInt conversions                            | `tools/run-node-tests.sh --stage 183` |
 |   184 | `util.format` symbol numeric conversions                    | `tools/run-node-tests.sh --stage 184` |
 |   185 | `util.format` numeric separators and options                | `tools/run-node-tests.sh --stage 185` |
+|   186 | `util.format` string objects and custom conversion           | `tools/run-node-tests.sh --stage 186` |
