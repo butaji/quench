@@ -58,6 +58,14 @@ pub fn proto_reverse(_args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::clone(&o)))
 }
 
+pub fn proto_to_reversed(_args: Vec<Value>) -> Result<Value, JsError> {
+    let mut elements = crate::builtins::array::methods::transformation::get_this_array()?;
+    elements.reverse();
+    Ok(crate::builtins::array::methods::transformation::make_array(
+        elements,
+    ))
+}
+
 pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
     let len = crate::eval::member::eval_object_member_value(
