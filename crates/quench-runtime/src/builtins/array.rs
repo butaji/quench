@@ -77,6 +77,17 @@ pub fn register_array(ctx: &mut Context) {
 
     // Set static methods on the constructor
     let mut array_from_async = NativeFunction::new(|args| {
+        if let Some(map_fn) = args.get(1) {
+            if !matches!(map_fn, Value::Undefined) && !map_fn.is_callable() {
+                let (error, _) = crate::value::error::create_js_error_with_type(
+                    "Array.fromAsync map function is not callable",
+                    "TypeError",
+                );
+                let promise = crate::builtins::promise::create_pending_promise();
+                crate::builtins::promise::settle_reject(&promise, error);
+                return Ok(Value::Object(promise));
+            }
+        }
         if args.get(1).is_some()
             && matches!(args.first(), Some(Value::Object(items)) if items.borrow().kind == ObjectKind::Array)
         {

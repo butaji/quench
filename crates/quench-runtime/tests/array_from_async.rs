@@ -35,6 +35,14 @@ fn array_from_async_rejects_non_callable_mapping_function() {
 }
 
 #[test]
+fn array_from_async_rejects_non_callable_mapping_for_array_like_input() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval("var result; Array.fromAsync({length:0}, null).then(()=>result='ok', e=>result=e.name);")
+        .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("TypeError".to_string())));
+}
+
+#[test]
 fn array_from_async_observes_array_mutation_during_iteration() {
     let mut ctx = Context::new().unwrap();
     ctx.eval("var items=[1,2,3]; var result; var p=Array.fromAsync(items); items[0]=7; items[1]=8; p.then(v=>{result=v.join(',');});").unwrap();
