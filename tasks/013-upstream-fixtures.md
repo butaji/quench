@@ -698,3 +698,12 @@ symbol coerced to a numeric placeholder yields `NaN`.
 
 Stage 252 formalized the internal `JSStream` binding shim, asserting an
 instantiable stream with an `_externalStream` handle.
+
+Stage 253 formalized `util.types` basic predicates, asserting `isDate`,
+`isMap`, and `isArrayBufferView`.
+
+Stage 254 formalized the full `util.types` predicate matrix, asserting each
+predicate fires only for its own category across all value kinds.
+
+Stage 255 formalized typed-array brand checks, asserting DataView and
+TypedArray are distinguished by brand even under prototype spoofing.

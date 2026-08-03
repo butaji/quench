@@ -260,3 +260,6 @@ these small fixtures isolate the currently implemented contract.
 |   250 | Buffer inspect own-property rendering                          | `tools/run-node-tests.sh --stage 250` |
 |   251 | `util.format` symbol numeric conversions                        | `tools/run-node-tests.sh --stage 251` |
 |   252 | internal `JSStream` binding shim                               | `tools/run-node-tests.sh --stage 252` |
+|   253 | `util.types` basic predicates                                  | `tools/run-node-tests.sh --stage 253` |
+|   254 | `util.types` full predicate matrix                             | `tools/run-node-tests.sh --stage 254` |
+|   255 | typed-array brand checks (DataView vs TypedArray)               | `tools/run-node-tests.sh --stage 255` |
