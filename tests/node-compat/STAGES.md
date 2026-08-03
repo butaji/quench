@@ -216,3 +216,4 @@ these small fixtures isolate the currently implemented contract.
 |   206 | Buffer instance/static comparison and ordering               | `tools/run-node-tests.sh --stage 206` |
 |   207 | Buffer factory constructors and unsafe allocation            | `tools/run-node-tests.sh --stage 207` |
 |   208 | Buffer endian swap operations                                 | `tools/run-node-tests.sh --stage 208` |
+|   209 | Buffer BigInt read/write operations                           | `tools/run-node-tests.sh --stage 209` |

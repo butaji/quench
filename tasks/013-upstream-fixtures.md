@@ -563,3 +563,6 @@ coercion and `allocUnsafeSlow` sizing.
 
 Stage 208 formalized Buffer endian swap operations, asserting `swap16`,
 `swap32`, and `swap64` in-place byte reordering.
+
+Stage 209 formalized Buffer BigInt read/write operations, asserting signed
+and unsigned 64-bit values in both byte orders.
