@@ -903,3 +903,6 @@ Node error code and native-error classification.
 
 Stage 326 formalized the upstream-complete `util` contract, combining legacy
 helpers, USV conversion, VT stripping, and native-error recognition.
+
+Stage 327 formalized `util.format` trailing-argument joining and object-format
+inspection behavior.
