@@ -387,3 +387,6 @@ Stage 149 formalized the upstream common fixtures helper, asserting that its
 
 Stage 150 formalized promise `fs.realpath` with string and Buffer encodings,
 asserting equivalent results and cleaning up the temporary file.
+
+Stage 151 formalized promise fd `fstat` and `fchmod`, asserting metadata,
+permission bits, descriptor closure, and cleanup.
