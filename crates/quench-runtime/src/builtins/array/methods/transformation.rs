@@ -440,6 +440,15 @@ mod tests {
     }
 
     #[test]
+    fn array_search_transform_methods_have_standard_lengths() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[Array.prototype.findLast,Array.prototype.findLastIndex,Array.prototype.flatMap].map(function(f){return f.length}).join('|')"),
+            Ok(Value::String("1|1|1".to_string()))
+        );
+    }
+
+    #[test]
     fn every_has_standard_length_descriptor() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
