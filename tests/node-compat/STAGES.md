@@ -336,3 +336,4 @@ these small fixtures isolate the currently implemented contract.
 |   337 | util format SharedArrayBuffer inspection                          | `tools/run-node-tests.sh --stage 337` |
 |   338 | util format custom Error rendering                                | `tools/run-node-tests.sh --stage 338` |
 |   339 | util formatWithOptions invalid options validation                 | `tools/run-node-tests.sh --stage 339` |
+|   340 | common non-debug util type regression                              | `tools/run-node-tests.sh --stage 340` |
