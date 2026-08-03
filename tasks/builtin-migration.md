@@ -105,6 +105,9 @@ self-hosted JavaScript layer.
 - [~] TypedArray public `fill`, `values`, `keys`, and `@@iterator` methods are JS-owned over
   hidden Rust raw-buffer and lazy-iterator primitives; constructors, indexed
   storage, element coercion, and iterator state remain Rust core.
+- [~] JSON public `parse` and `stringify` methods are JS-owned wrappers over
+  the crate-backed Rust serializer/parser; JSON parsing and serialization stay
+  Rust-owned for recursive data conversion and engine integration.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
   and microtask scheduling. Public `then`, `resolve`, `reject`, `all`, and

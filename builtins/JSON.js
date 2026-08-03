@@ -3,8 +3,8 @@ var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
 // Save native implementations
-var _nativeStringify = JSON.stringify;
-var _nativeParse = JSON.parse;
+var _nativeStringify = JSON.__stringify;
+var _nativeParse = JSON.__parse;
 
 // JSON.stringify (ES2025 §25.5.2)
 JSON.stringify = function JSONStringify(value, replacer, space) {

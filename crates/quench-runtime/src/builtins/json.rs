@@ -388,13 +388,13 @@ pub fn register_json(ctx: &mut Context) {
     };
 
     json.borrow_mut().define(
-        "stringify",
+        "__stringify",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| json_stringify(&args)))),
         flags.clone(),
     );
 
     json.borrow_mut().define(
-        "parse",
+        "__parse",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| json_parse(&args)))),
         flags,
     );
