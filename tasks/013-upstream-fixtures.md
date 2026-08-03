@@ -837,3 +837,6 @@ asserting POSIX/Win32 parent traversal and basename suffix behavior.
 
 Stage 304 formalized Win32 literal path normalization and basename behavior,
 asserting escaped separators and suffix removal.
+
+Stage 305 formalized Win32 parsing of slash-rooted paths, asserting the root,
+directory, basename, extension, and name fields.
