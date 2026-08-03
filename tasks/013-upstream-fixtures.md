@@ -956,3 +956,6 @@ Stage 343 formalized basic `vm` context creation and expression evaluation.
 
 Stage 344 formalized `assert` handling of an Error object as the assertion
 message, preserving the original Error instance when thrown.
+
+Stage 345 formalized `assert.throws` returning the thrown error and matching
+its constructor.
