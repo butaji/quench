@@ -178,3 +178,4 @@ these small fixtures isolate the currently implemented contract.
 |   168 | promise file-handle `writeFile` encoding                  | `tools/run-node-tests.sh --stage 168` |
 |   169 | file-handle pull text and byte iterators                  | `tools/run-node-tests.sh --stage 169` |
 |   170 | file-handle pull start/limit/chunk options                | `tools/run-node-tests.sh --stage 170` |
+|   171 | file-handle pull locking and position state               | `tools/run-node-tests.sh --stage 171` |
