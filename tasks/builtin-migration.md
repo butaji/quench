@@ -41,7 +41,8 @@ self-hosted JavaScript layer.
   extensibility algorithms are JS-owned over `__ops__`.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
-  Rust retains indexed storage, construction, and iteration plumbing.
+  the dormant Rust method layer has been removed; Rust retains indexed
+  storage, construction, and iteration plumbing.
 - [~] `Array.isArray` is JS-owned through the canonical type predicate; Rust
   retains Array construction and indexed storage.
 - [~] `Array.of` is JS-owned; Rust retains the Array constructor and indexed

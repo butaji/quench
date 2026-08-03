@@ -8,9 +8,6 @@ use crate::value::{
 };
 use crate::Context;
 
-pub mod methods;
-
-
 /// Maximum length accepted by the Array constructor before it would
 /// materialize an unreasonable number of elements (2^20).
 const MAX_ARRAY_LENGTH: f64 = 1_048_576.0;
