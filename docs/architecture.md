@@ -93,7 +93,7 @@ Remainder of `eval/` is eval nodes only — no spec-op re-implementations.
 
 ## JS builtins
 
-37 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
+38 `.js` files in `builtins/` (root of repo). `bootstrap_js_builtins`
 (`builtins/bootstrap.rs`) loads them during normal context initialization.
 `__ops__` is scaffolded in
 `builtins/core/ops_wrapper.rs`. Order:
@@ -109,7 +109,7 @@ builtins/
 ├── AsyncIterator.js, AsyncGenerator.js, AsyncFunction.js,
 ├── DisposableStack.js, AsyncDisposableStack.js,
 ├── FinalizationRegistry.js, WeakRef.js,
-└── URI.js
+├── URI.js, Host.js
 ```
 
 Every `.prototype.*`, intrinsic iterator prototype, `Object.*`,
