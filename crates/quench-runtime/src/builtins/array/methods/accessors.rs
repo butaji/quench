@@ -238,6 +238,20 @@ pub fn proto_keys(_args: Vec<Value>) -> Result<Value, JsError> {
     }
 }
 
+pub fn proto_values(_args: Vec<Value>) -> Result<Value, JsError> {
+    let this = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype.values called on null or undefined".to_string()))?;
+    match this {
+        Value::Object(object) => Ok(crate::builtins::map::helpers::make_live_index_iterator(
+            object,
+            crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
+        )),
+        _ => Err(JsError(
+            "Array.prototype.values requires an object".to_string(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::value::Value;

@@ -203,24 +203,12 @@ pub fn register_array_iterator() {
         return;
     };
     let key = sym.property_key();
-    let iter_fn = NativeFunction::new(array_values_iterator);
-    array_proto
-        .borrow_mut()
-        .set_builtin_method(&key, Value::NativeFunction(Rc::new(iter_fn)));
-}
-
-fn array_values_iterator(_args: Vec<Value>) -> Result<Value, JsError> {
-    let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
-    let Value::Object(arr_rc) = this_val else {
-        let (_, js_err) = crate::value::error::create_js_error_with_type(
-            "Array.prototype.values called on incompatible receiver",
-            "TypeError",
-        );
-        return Err(js_err);
-    };
-    // Use live index iterator so mutations during iteration are respected.
-    Ok(crate::builtins::map::helpers::make_live_index_iterator(
-        arr_rc,
-        crate::builtins::map::helpers::LiveIndexIteratorMode::Values,
-    ))
+    let values = array_proto.borrow().get_own_value("values");
+    if let Some(values) = values {
+        let mut prototype = array_proto.borrow_mut();
+        prototype.set_symbol(&key, values);
+        if let Some(flags) = prototype.descriptors.get_mut(&key) {
+            flags.enumerable = false;
+        }
+    }
 }

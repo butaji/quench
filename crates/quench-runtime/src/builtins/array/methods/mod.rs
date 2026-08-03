@@ -20,6 +20,7 @@ pub use mutation::{get_this_array_obj, set_elements};
 // Re-export method implementations
 pub use accessors::{
     proto_at, proto_concat, proto_entries, proto_join, proto_keys, proto_slice, proto_to_string,
+    proto_values,
 };
 pub use grouping::{proto_group_by, proto_group_by_to_map};
 pub use mutation::{
@@ -52,7 +53,7 @@ pub fn setup_prototype_methods(proto: &std::cell::RefCell<crate::value::Object>)
     setup_transformation_methods(&m);
     setup_mutation_methods(&m);
     setup_rearrange_methods(&m);
-    setup_accessor_methods(&m);
+    setup_accessor_methods(proto, &m);
     setup_search_methods(&m);
     setup_grouping_methods(&m);
 }
@@ -89,7 +90,13 @@ fn setup_rearrange_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, cra
     m("sort", proto_sort);
 }
 
-fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
+fn setup_accessor_methods(
+    proto: &std::cell::RefCell<crate::value::Object>,
+    m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>),
+) {
+    use crate::value::{NativeFunction, Value};
+    use std::rc::Rc;
+
     m("slice", proto_slice);
     m("concat", proto_concat);
     m("join", proto_join);
@@ -97,6 +104,18 @@ fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crat
     m("at", proto_at);
     m("entries", proto_entries);
     m("keys", proto_keys);
+    let values = Value::NativeFunction(Rc::new(NativeFunction::new_with_name(
+        "values",
+        proto_values,
+    )));
+    proto.borrow_mut().set("values", values.clone());
+    if let Some(crate::Value::Symbol(iterator)) =
+        crate::builtins::symbol::get_well_known_symbol_no_ctx("iterator")
+    {
+        proto
+            .borrow_mut()
+            .set_symbol(&iterator.property_key(), values);
+    }
 }
 
 fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {

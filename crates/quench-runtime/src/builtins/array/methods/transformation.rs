@@ -601,6 +601,15 @@ mod tests {
             Ok(Value::Number(1.0))
         );
     }
+
+    #[test]
+    fn array_iterator_aliases_values() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.prototype[Symbol.iterator] === Array.prototype.values"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
