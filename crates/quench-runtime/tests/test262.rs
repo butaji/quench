@@ -838,6 +838,22 @@ fn test_runner_path_multi_let_per_iteration() {
     }
 }
 
+#[test]
+fn test_runner_path_let_closure_inside_initialization() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test262_dir = manifest_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/test262");
+    let harness = HarnessLoader::new(test262_dir.to_str().unwrap());
+    let test_path = test262_dir
+        .join("test/language/statements/let/syntax/let-closure-inside-initialization.js");
+
+    assert_eq!(run_single_test(&harness, &test_path), TestOutcome::Pass);
+}
+
 // ── Staged runner ───────────────────────────────────────────────────────────
 
 #[test]

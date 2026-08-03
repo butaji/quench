@@ -686,9 +686,7 @@ fn has_tail_call_in_statement(
                 Ok(false)
             }
         }
-        Statement::Labeled { body, .. } => {
-            has_tail_call_in_statement(body, env, in_arrow_function)
-        }
+        Statement::Labeled { body, .. } => has_tail_call_in_statement(body, env, in_arrow_function),
         Statement::If {
             consequent,
             alternate,
@@ -1554,6 +1552,26 @@ fn eval_for(
     if let Some(for_init) = init {
         eval_for_init(for_init, env, in_arrow_function)?;
     }
+    if head_lexical {
+        let initial_values = {
+            let env_ref = env.borrow();
+            per_iter_names
+                .iter()
+                .filter_map(|name| {
+                    env_ref
+                        .get_scope_from_bottom(0)?
+                        .borrow()
+                        .get(name)
+                        .map(|value| (name.clone(), value))
+                })
+                .collect::<Vec<_>>()
+        };
+        env.borrow_mut().push_scope();
+        for (name, value) in initial_values {
+            env.borrow_mut().declare_var(name.clone(), VarKind::Let);
+            env.borrow_mut().initialize_declared(&name, value);
+        }
+    }
     let mut completion = Value::Undefined;
     loop {
         // Push PI for THIS iteration (snapshot HEAD values). PI is on the chain
@@ -1580,6 +1598,7 @@ fn eval_for(
             if head_lexical {
                 env.borrow_mut().pop_scope();
                 env.borrow_mut().pop_scope();
+                env.borrow_mut().pop_scope();
             }
             return Ok(body_val);
         }
@@ -1590,10 +1609,12 @@ fn eval_for(
                     if head_lexical {
                         env.borrow_mut().pop_scope();
                         env.borrow_mut().pop_scope();
+                        env.borrow_mut().pop_scope();
                     }
                     return Ok(body_val);
                 }
                 if head_lexical {
+                    env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                 }
@@ -1603,6 +1624,7 @@ fn eval_for(
             Some(cf @ ControlFlow::Continue(_)) => {
                 if !loop_handles_continue(&cf, &loop_labels) {
                     if head_lexical {
+                        env.borrow_mut().pop_scope();
                         env.borrow_mut().pop_scope();
                         env.borrow_mut().pop_scope();
                     }
@@ -1681,6 +1703,7 @@ fn eval_for(
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
+                    env.borrow_mut().pop_scope();
                 }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
@@ -1689,12 +1712,14 @@ fn eval_for(
                 if head_lexical {
                     env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
+                    env.borrow_mut().pop_scope();
                 }
                 set_control_flow(ControlFlow::Return(val.clone()));
                 return Ok(val);
             }
             Some(ControlFlow::Throw(val)) => {
                 if head_lexical {
+                    env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                     env.borrow_mut().pop_scope();
                 }
@@ -1749,6 +1774,7 @@ fn eval_for(
     }
     // Pop the for-head scope (HEAD). PI was already popped inside the loop.
     if head_lexical {
+        env.borrow_mut().pop_scope();
         env.borrow_mut().pop_scope();
     }
     Ok(completion)

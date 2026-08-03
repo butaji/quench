@@ -85,7 +85,7 @@ fn let_for_init_closure() {
     let v = result.unwrap();
     assert_eq!(
         v,
-        Value::Number(5.0),
+        Value::Number(0.0),
         "init closure must see initial value (0)"
     );
 }
