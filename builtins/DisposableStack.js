@@ -1,30 +1,55 @@
-// Self-hosted DisposableStack builtins on top of __ops__
-//
-// %DisposableStackPrototype% provides explicit resource management
-// per ES2025 §27.5.3. Methods on the prototype:
-//   - dispose()      — disposes all resources on the stack (reverse order)
-//   - use(value)     — adds a synchronous disposable resource to the stack
-//   - adopt(value, onDispose) — adds a value with a custom disposal function
-//   - defer(onDispose) — adds a disposal function alone
-//   - move()         — moves resources to a new DisposableStack
-//   - disposed (getter) — returns whether the stack has been disposed
-//
-// Requires Rust-side implementation:
-//   - DisposableStack constructor function
-//   - %DisposableStackPrototype% with internal [[DisposableState]] slot
-//   - Native dispose/use/adopt/defer/move methods
-//   - SuppressedError error type
-//   - Symbol.dispose well-known symbol
-//
-// Once those exist, this file saves the native methods and wraps them
-// with null/undefined checks, following the standard pattern:
-//
-//   var ops = __ops__;
-//   var ThrowTypeError = ops.ThrowTypeError;
-//   var _nativeDispose = DisposableStack.prototype.dispose;
-//
-//   DisposableStack.prototype.dispose = function DisposableStackDispose() {
-//     if (this === null || this === undefined)
-//       throw ThrowTypeError("DisposableStack.prototype.dispose called on null or undefined");
-//     return _nativeDispose.apply(this, arguments);
-//   };
+var ThrowTypeError = __ops__.ThrowTypeError;
+
+function DisposableStack() {
+  if (!(this instanceof DisposableStack)) throw ThrowTypeError("DisposableStack requires new");
+  Object.defineProperty(this, "__resources", { value: [], writable: true });
+  Object.defineProperty(this, "__disposed", { value: false, writable: true });
+}
+
+DisposableStack.prototype.use = function DisposableStackUse(value) {
+  if (this.__disposed) throw new ReferenceError("DisposableStack is already disposed");
+  var method = value == null ? undefined : value[Symbol.dispose];
+  if (typeof method !== 'function') throw new TypeError("Object is not disposable");
+  this.__resources.push(function() { method.call(value); });
+  return value;
+};
+
+DisposableStack.prototype.adopt = function DisposableStackAdopt(value, onDispose) {
+  if (this.__disposed) throw new ReferenceError("DisposableStack is already disposed");
+  if (typeof onDispose !== 'function') throw new TypeError("onDispose is not callable");
+  this.__resources.push(function() { onDispose(value); });
+  return value;
+};
+
+DisposableStack.prototype.defer = function DisposableStackDefer(onDispose) {
+  if (this.__disposed) throw new ReferenceError("DisposableStack is already disposed");
+  if (typeof onDispose !== 'function') throw new TypeError("onDispose is not callable");
+  this.__resources.push(onDispose);
+};
+
+DisposableStack.prototype.dispose = function DisposableStackDispose() {
+  if (this.__disposed) return undefined;
+  this.__disposed = true;
+  var completion;
+  while (this.__resources.length) {
+    try { this.__resources.pop()(); }
+    catch (error) { completion = completion === undefined ? error : new SuppressedError(error, completion); }
+  }
+  if (completion !== undefined) throw completion;
+};
+
+DisposableStack.prototype.move = function DisposableStackMove() {
+  if (this.__disposed) throw new ReferenceError("DisposableStack is already disposed");
+  var moved = new DisposableStack();
+  moved.__resources = this.__resources;
+  this.__resources = [];
+  this.__disposed = true;
+  return moved;
+};
+
+Object.defineProperty(DisposableStack.prototype, "disposed", {
+  get: function() { return this.__disposed; }, enumerable: false, configurable: true
+});
+Object.defineProperty(DisposableStack.prototype, Symbol.dispose, {
+  value: DisposableStack.prototype.dispose, writable: true, configurable: true
+});

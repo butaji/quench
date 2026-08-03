@@ -144,6 +144,9 @@ self-hosted JavaScript layer.
 - [~] Timer globals remain Rust-owned as host/engine integration points and
   a lower-LOC exception; their scheduling behavior is not an ECMAScript
   builtin algorithm.
+- [~] `DisposableStack` is now implemented in `builtins/DisposableStack.js`
+  with JS-owned resource storage and disposal ordering; async disposal remains
+  pending and will use JS promise composition when its semantics are complete.
 - [x] Route normal context initialization through the self-hosted bootstrap
   path. Conformance polish follows the migration pass.
 
