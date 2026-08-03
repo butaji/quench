@@ -194,3 +194,12 @@ fn symbol_subclass_constructor_throws_on_super() {
         .unwrap();
     assert_eq!(result.to_string(), "TypeError");
 }
+
+#[test]
+fn symbol_prototype_methods_are_non_enumerable() {
+    let mut ctx = create_test_context();
+    let result = ctx
+        .eval("[Object.getOwnPropertyDescriptor(Symbol.prototype, 'toString').enumerable, Object.getOwnPropertyDescriptor(Symbol.prototype, 'valueOf').enumerable].join('|')")
+        .unwrap();
+    assert_eq!(result, Value::String("false|false".into()));
+}

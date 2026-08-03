@@ -230,6 +230,9 @@ fn setup_symbol_prototype(symbol_fn: &Rc<NativeFunction>) {
         }
     });
     proto.set("description", Value::NativeFunction(Rc::new(description)));
+    for flags in proto.descriptors.values_mut() {
+        flags.enumerable = false;
+    }
     let _ = symbol_fn.set_property("prototype", Value::Object(Rc::new(RefCell::new(proto))));
 }
 
