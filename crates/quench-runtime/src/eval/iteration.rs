@@ -294,6 +294,10 @@ fn obtain_async_iterator(
     )?;
     match iterator {
         Value::Object(iterator) => Ok((iterator, false)),
+        Value::Generator(generator) => Ok((
+            crate::value::generator::generator_as_iterator_object(generator),
+            false,
+        )),
         _ => Err(iterator_type_error("iterator is not an object")),
     }
 }

@@ -29,6 +29,14 @@ fn array_from_async_consumes_async_iterables() {
 }
 
 #[test]
+fn array_from_async_accepts_async_generator_methods() {
+    let mut ctx = new_context();
+    ctx.eval("async function* gen(){yield 1; yield 2;} var result; Array.fromAsync({[Symbol.asyncIterator]:gen}, x=>x*2).then(v=>result=v.join(','));")
+        .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("2,4".to_string())));
+}
+
+#[test]
 fn symbol_description_accepts_a_well_known_symbol_receiver() {
     let mut ctx = new_context();
     assert_eq!(
