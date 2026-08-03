@@ -191,6 +191,14 @@ mod tests {
             Value::Number(86.0)
         );
     }
+
+    #[test]
+    fn regexp_symbol_search_sets_and_restores_last_index() {
+        assert_eq!(
+            eval("var seen; var o = {lastIndex: 34, exec: function() { seen = this.lastIndex; return null; }}; RegExp.prototype[Symbol.search].call(o); [seen, o.lastIndex].join('|')"),
+            Value::String("0|34".to_string())
+        );
+    }
 }
 
 use std::cell::RefCell;
@@ -308,7 +316,7 @@ fn regexp_symbol_match_impl(args: Vec<Value>) -> Result<Value, JsError> {
         vec![Value::String(
             args.first().map(to_js_string).unwrap_or_default(),
         )],
-        this_val,
+        this_val.clone(),
     )
 }
 
@@ -321,13 +329,16 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let exec = obj.borrow().get("exec").ok_or_else(|| {
         JsError::new("TypeError: RegExp.prototype[@@search] requires callable exec".to_string())
     })?;
+    let last_index = obj.borrow().get("lastIndex").unwrap_or(Value::Number(0.0));
+    obj.borrow_mut().set("lastIndex", Value::Number(0.0));
     let result = crate::eval::function::call_value_with_this(
         exec,
         vec![Value::String(
             args.first().map(to_js_string).unwrap_or_default(),
         )],
-        this_val,
+        this_val.clone(),
     )?;
+    obj.borrow_mut().set("lastIndex", last_index);
     match result {
         Value::Null => Ok(Value::Number(-1.0)),
         Value::Object(result) => Ok(result.borrow().get("index").unwrap_or(Value::Undefined)),
