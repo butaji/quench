@@ -575,3 +575,6 @@ Stage 211 formalized Buffer `isEncoding`, accepting every supported encoding
 
 Stage 212 formalized Buffer `copyBytesFrom`, asserting element-size-aware
 byte copying with offset/length bounds and defaults.
+
+Stage 213 formalized the `vm.runInNewContext` shim, evaluating code in a
+fresh context with the supplied sandbox globals.
