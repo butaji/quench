@@ -891,3 +891,6 @@ reference converts to the same number returned by invoking it.
 
 Stage 322 formalized the upstream-complete OS core contract, asserting the
 combined tmpdir, CPU, parallelism, memory, user information, and devNull APIs.
+
+Stage 323 formalized core `util` compatibility helpers, covering legacy array
+and object extension checks plus USV conversion and VT control stripping.
