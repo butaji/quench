@@ -150,3 +150,4 @@ these small fixtures isolate the currently implemented contract.
 |   140 | promise file-handle offset writes                         | `tools/run-node-tests.sh --stage 140` |
 |   141 | promise file-handle vectored read/write                   | `tools/run-node-tests.sh --stage 141` |
 |   142 | promise file-handle truncation                            | `tools/run-node-tests.sh --stage 142` |
+|   143 | promise file-handle metadata and sync methods             | `tools/run-node-tests.sh --stage 143` |
