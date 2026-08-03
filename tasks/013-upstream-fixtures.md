@@ -28,7 +28,7 @@ Each row is a slice. The prefix is the file-name prefix in
 
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
-| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559 (scheduling constants) |
+| 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560 (worker connection state) |
 | 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503                    |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
@@ -138,3 +138,6 @@ quickly: `SCHED_NONE` and `SCHED_RR`. Keeping this slice as a small final
 bootstrap fragment avoided touching the Rust host and made the stage and lint
 checks complete in one iteration. The next cluster slice should measure
 representative upstream fixtures before adding more API surface.
+
+Stage 560 extends that probe to the worker connection predicate exposed by
+the upstream cluster fixtures.
