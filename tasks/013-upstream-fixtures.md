@@ -810,3 +810,6 @@ the subclass name, sparse length, and enumerable properties.
 
 Stage 295 formalized `util.format` Symbol.toPrimitive conversion, asserting
 the string hint for `%s` and default coercion in concatenation.
+
+Stage 296 formalized `util.format` rendering for Date and Symbol built-ins,
+asserting Date inspection equivalence and Symbol descriptions.

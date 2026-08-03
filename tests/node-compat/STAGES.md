@@ -292,3 +292,4 @@ these small fixtures isolate the currently implemented contract.
 |   293 | `util.format` class instance rendering                        | `tools/run-node-tests.sh --stage 293` |
 |   294 | `util.format` Array subclass rendering                         | `tools/run-node-tests.sh --stage 294` |
 |   295 | `util.format` Symbol.toPrimitive conversion                    | `tools/run-node-tests.sh --stage 295` |
+|   296 | `util.format` Date and Symbol built-in rendering               | `tools/run-node-tests.sh --stage 296` |
