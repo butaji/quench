@@ -974,3 +974,6 @@ and the `generatedMessage` marker.
 
 Stage 350 formalized `assert.doesNotThrow` failure handling, including the
 assertion error code and operation metadata.
+
+Stage 351 formalized `assert.throws` regular-expression and predicate-function
+validators for thrown errors.
