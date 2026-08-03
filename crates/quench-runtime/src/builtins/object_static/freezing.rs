@@ -304,6 +304,15 @@ pub fn object_set_prototype_of(args: Vec<Value>) -> Result<Value, JsError> {
                     "TypeError: Cannot set prototype of module namespace object",
                 ));
             }
+            if let Some(Value::Object(candidate)) = &proto {
+                let mut current = Some(Rc::clone(candidate));
+                while let Some(node) = current {
+                    if Rc::ptr_eq(&node, o) {
+                        return Err(JsError::from("TypeError: cyclic prototype value"));
+                    }
+                    current = node.borrow().prototype.as_ref().map(Rc::clone);
+                }
+            }
             o.borrow_mut().prototype = match proto {
                 Some(Value::Object(proto)) => Some(proto),
                 _ => None,
@@ -520,6 +529,16 @@ mod tests {
         ctx.eval("var a = {}; var b = {x: 1}; Object.setPrototypeOf(a, b);")
             .unwrap();
         assert_eq!(ctx.eval("a.x").unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn test_set_prototype_of_rejects_cycles() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval(
+                "var a = {}; var b = {}; Object.setPrototypeOf(a, b); Object.setPrototypeOf(b, a);"
+            )
+            .is_err());
     }
 
     #[test]
