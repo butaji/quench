@@ -99,7 +99,7 @@ pub fn register_reflect(ctx: &mut Context) {
         reflect.prototype = Some(proto);
     }
     reflect.set(
-        "get",
+        "__get",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
                 let target = args
@@ -127,7 +127,7 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
-        "set",
+        "__set",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
                 let target = args
@@ -185,7 +185,7 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
-        "deleteProperty",
+        "__deleteProperty",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
                 let target = args
@@ -208,13 +208,13 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
-        "construct",
+        "__construct",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             reflect_construct,
         ))),
     );
     reflect.set(
-        "apply",
+        "__apply",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
                 let target = args
@@ -232,7 +232,7 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
-        "defineProperty",
+        "__defineProperty",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| match object_define_property(args) {
                 Ok(_) => Ok(Value::Boolean(true)),
