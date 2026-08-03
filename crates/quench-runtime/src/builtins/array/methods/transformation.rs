@@ -706,6 +706,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_reduce_reads_string_wrapper_indices() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; var value=new String('012'); Array.prototype.reduce.call(value,function(prev,current,index){if(index===1) seen=prev==='0'; return current;}); seen"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

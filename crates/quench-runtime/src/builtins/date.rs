@@ -109,7 +109,11 @@ fn create_string_constructor_fn(string_proto_clone: Rc<RefCell<Object>>) -> Valu
             };
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             if let Value::Object(this_obj) = this_val {
-                this_obj.borrow_mut().set("0", Value::String(s.clone()));
+                for (index, character) in s.chars().enumerate() {
+                    this_obj
+                        .borrow_mut()
+                        .set(&index.to_string(), Value::String(character.to_string()));
+                }
                 this_obj.borrow_mut().define(
                     "length",
                     Value::Number(s.len() as f64),
