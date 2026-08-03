@@ -51,6 +51,9 @@ Object.prototype.propertyIsEnumerable = function ObjectPropertyIsEnumerable(P) {
   return descriptor !== undefined && descriptor.enumerable === true;
 };
 
+Object.prototype.hasOwnProperty = function ObjectHasOwnProperty(P) {
+  return GetOwnPropDesc(ToObject(this), ToPropertyKey(P)) !== undefined;
+};
 
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)
 Object.getOwnPropertyDescriptor = function ObjectGetOwnPropertyDescriptor(O, P) {

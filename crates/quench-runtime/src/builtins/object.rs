@@ -152,9 +152,9 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
         }))),
     );
 
-    // Object.prototype.hasOwnProperty
+    // Internal fallback for the self-hosted Object.prototype.hasOwnProperty.
     object_proto_rc.borrow_mut().set_builtin_method(
-        "hasOwnProperty",
+        "__hasOwnProperty",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             object_prototype_has_own_property,
         ))),
