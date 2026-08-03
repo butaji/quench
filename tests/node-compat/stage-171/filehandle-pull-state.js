@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 const { text } = require("stream/iter");
 
 (async () => {
@@ -8,19 +9,18 @@ const { text } = require("stream/iter");
   const readable = handle.pull();
   try {
     handle.pull();
-    throw new Error("pull did not lock");
+    assert.fail("pull did not lock");
   } catch (error) {
-    if (error.code !== "ERR_INVALID_STATE") throw error;
+    assert.strictEqual(error.code, "ERR_INVALID_STATE");
   }
-  if ((await text(readable)) !== "abc")
-    throw new Error("pull state read mismatch");
-  if ((await text(handle.pull())) !== "")
-    throw new Error("pull position mismatch");
+  assert.strictEqual(await text(readable), "abc");
+  assert.strictEqual(await text(handle.pull()), "");
   await handle.close();
   try {
     handle.pull();
-    throw new Error("closed pull accepted");
+    assert.fail("closed pull accepted");
   } catch (error) {
-    if (error.code !== "ERR_INVALID_STATE") throw error;
+    assert.strictEqual(error.code, "ERR_INVALID_STATE");
   }
+  fs.rmSync(path);
 })();
