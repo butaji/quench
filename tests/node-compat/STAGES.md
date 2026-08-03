@@ -257,3 +257,6 @@ these small fixtures isolate the currently implemented contract.
 |   247 | Buffer `indexOf` encoding overload                             | `tools/run-node-tests.sh --stage 247` |
 |   248 | `util.inspect` Buffer rendering                                | `tools/run-node-tests.sh --stage 248` |
 |   249 | Buffer `INSPECT_MAX_BYTES` live limit                          | `tools/run-node-tests.sh --stage 249` |
+|   250 | Buffer inspect own-property rendering                          | `tools/run-node-tests.sh --stage 250` |
+|   251 | `util.format` symbol numeric conversions                        | `tools/run-node-tests.sh --stage 251` |
+|   252 | internal `JSStream` binding shim                               | `tools/run-node-tests.sh --stage 252` |
