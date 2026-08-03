@@ -57,7 +57,7 @@ fn create_error_proto(name: &str) -> Object {
     proto.set("name", Value::String(name.to_string()));
     let default_name = name.to_string();
     proto.set(
-        "toString",
+        "__toString",
         Value::NativeFunction(Rc::new(NativeFunction::new(move |_args| {
             let this = get_native_this().unwrap_or(Value::Undefined);
             let Value::Object(obj_rc) = &this else {
