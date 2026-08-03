@@ -435,3 +435,6 @@ asserting concatenated string/Buffer contents and cleanup.
 
 Stage 166 formalized async-iterable input to promise file-handle `writeFile`,
 asserting concatenated contents and cleanup.
+
+Stage 167 formalized invalid value validation for promise file-handle
+`writeFile`, asserting `ERR_INVALID_ARG_TYPE` and cleaning up the file.
