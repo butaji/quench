@@ -348,3 +348,4 @@ these small fixtures isolate the currently implemented contract.
 |   349 | AssertionError generated metadata                                 | `tools/run-node-tests.sh --stage 349` |
 |   350 | assert.doesNotThrow failure handling                              | `tools/run-node-tests.sh --stage 350` |
 |   351 | assert.throws regex and function validators                       | `tools/run-node-tests.sh --stage 351` |
+|   352 | assert.throws regex mismatch handling                             | `tools/run-node-tests.sh --stage 352` |
