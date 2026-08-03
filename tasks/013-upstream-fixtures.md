@@ -29,7 +29,7 @@ Each row is a slice. The prefix is the file-name prefix in
 | #  | Prefix                       | Count   | Module / domain                          | Existing stage(s)                |
 | -- | ---------------------------- | ------- | ---------------------------------------- | -------------------------------- |
 | 1  | `cluster-`                   |  ~95    | task 009 next slice; cluster / child IPC | 504, 505, 506, 507, 508, 509, 510, 559, 560, 561, 562, 563, 564, 565, 566, 567, 568 (process IPC) |
-| 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503, 569, 570, 571, 572, 573, 574, 575, 576, 577, 578, 579, 580, 581, 582 (exec encoding) |
+| 2  | `child-process-`             |  ~125   | task 011 / child_process; fork/exec/stdio| 501, 502, 503, 569, 570, 571, 572, 573, 574, 575, 576, 577, 578, 579, 580, 581, 582, 583 (env inheritance) |
 | 3  | `http-`                      |  ~250   | task 011 / http; server, client, agent   | 494                              |
 | 4  | `http2-`                     |  ~60    | task 011 / http2; session / stream       | — (TODO)                         |
 | 5  | `https-`                     |  ~30    | task 011 / https; TLS over loopback      | — (TODO)                         |
@@ -213,3 +213,6 @@ Stage 581 added the missing `ChildProcess.ref()` method alongside the
 existing `unref()` method.
 
 Stage 582 added Buffer output conversion for `exec({ encoding: "buffer" })`.
+
+Stage 583 verified that simulated `env` children inherit `process.env` when
+no explicit environment option is provided.
