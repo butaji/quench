@@ -490,3 +490,7 @@ and `%f` output for BigInt values.
 
 Stage 184 formalized numeric `util.format` conversions for symbols, asserting
 the `NaN` result for decimal, integer, and floating-point placeholders.
+
+Stage 185 formalized numeric separators in `util.format` and
+`formatWithOptions`, asserting separator-aware Number and BigInt output,
+including large values.
