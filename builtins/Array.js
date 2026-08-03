@@ -79,7 +79,7 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
   if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
   var values = [];
   var index = 0;
-  if (items[Symbol.asyncIterator] !== undefined || items[Symbol.iterator] !== undefined) {
+  if (!IsArray(items) && (items[Symbol.asyncIterator] !== undefined || items[Symbol.iterator] !== undefined)) {
     for await (var value of items) {
       values.push(mapfn === undefined ? value : await mapfn.call(thisArg, value, index, items));
       index++;
@@ -87,7 +87,7 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
   } else {
     var length = ToLength(items.length);
     for (var i = 0; i < length; i++) {
-      var element = await items[i];
+      var element = await Promise.resolve(items[i]);
       values.push(mapfn === undefined ? element : await mapfn.call(thisArg, element, i, items));
     }
   }

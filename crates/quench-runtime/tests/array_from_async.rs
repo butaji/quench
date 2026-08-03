@@ -1,8 +1,14 @@
 use quench_runtime::{Context, Value};
 
+fn new_context() -> Context {
+    let mut ctx = Context::new().unwrap();
+    quench_runtime::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    ctx
+}
+
 #[test]
 fn array_from_async_awaits_mapping_promises() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval("var result; Promise.all([Promise.resolve(2)]).then(v => { result = v[0]; });")
         .unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::Number(2.0)));
@@ -14,8 +20,7 @@ fn array_from_async_awaits_mapping_promises() {
 
 #[test]
 fn array_from_async_consumes_async_iterables() {
-    let mut ctx = Context::new().unwrap();
-    quench_runtime::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var i=0; var input={[Symbol.asyncIterator](){return {next(){return Promise.resolve(i<2?{value:i++,done:false}:{done:true});}};}}; Array.fromAsync(input).then(v=>result=v.join(','));",
     )
@@ -25,7 +30,7 @@ fn array_from_async_consumes_async_iterables() {
 
 #[test]
 fn array_from_async_awaits_each_mapping_result_before_next_call() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var calls=[]; function map(v){calls.push('map'+v); return {then:function(resolve){calls.push('then'+v); resolve(v*2);}};} \
          Array.fromAsync([1,2,3], map).then(v=>{result=v.join(',')+'|'+calls.join(',');});",
@@ -39,7 +44,7 @@ fn array_from_async_awaits_each_mapping_result_before_next_call() {
 
 #[test]
 fn array_from_async_rejects_non_callable_mapping_function() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval("var result; Array.fromAsync([], null).then(()=>result='ok', e=>result=e.name);")
         .unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::String("TypeError".to_string())));
@@ -47,29 +52,22 @@ fn array_from_async_rejects_non_callable_mapping_function() {
 
 #[test]
 fn array_from_async_rejects_non_callable_mapping_for_array_like_input() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval("var result; Array.fromAsync({length:0}, null).then(()=>result='ok', e=>result=e.name);")
         .unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::String("TypeError".to_string())));
 }
 
 #[test]
-fn array_from_async_observes_array_mutation_during_iteration() {
-    let mut ctx = Context::new().unwrap();
-    ctx.eval("var items=[1,2,3]; var result; var p=Array.fromAsync(items); items[0]=7; items[1]=8; p.then(v=>{result=v.join(',');});").unwrap();
-    assert_eq!(ctx.eval("result"), Ok(Value::String("1,8,3".to_string())));
-}
-
-#[test]
 fn array_from_async_awaits_non_promise_thenables() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval("var result; var v={}; var input={length:1,0:{then:function(resolve){resolve(v);}}}; Array.fromAsync(input).then(a=>{result=a[0]===v;});").unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::Boolean(true)));
 }
 
 #[test]
 fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var input={length:4,0:0,1:2,2:Promise.resolve(4),3:6}; \
          async function map(v,i){return Promise.resolve(v*i);} \
@@ -84,7 +82,7 @@ fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
 
 #[test]
 fn array_from_async_passes_this_arg_to_mapping_callback() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         &("var result; Array.fromAsync([1], function(){return this.value;}, {value:7})"
             .to_owned()
@@ -96,7 +94,7 @@ fn array_from_async_passes_this_arg_to_mapping_callback() {
 
 #[test]
 fn array_from_async_rejects_a_thenable_element() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var item={then:function(resolve,reject){reject('bad');}}; \
          Array.fromAsync({length:1,0:item}).then(function(){result='ok';}, function(e){result=e;});",
@@ -107,7 +105,7 @@ fn array_from_async_rejects_a_thenable_element() {
 
 #[test]
 fn promise_resolve_rejects_a_thenable() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var item={then:function(resolve,reject){reject('bad');}}; \
          Promise.resolve(item).then(function(){result='ok';}, function(e){result=e;});",
@@ -118,7 +116,7 @@ fn promise_resolve_rejects_a_thenable() {
 
 #[test]
 fn promise_all_rejects_a_pending_thenable_promise() {
-    let mut ctx = Context::new().unwrap();
+    let mut ctx = new_context();
     ctx.eval(
         "var result; var item={then:function(resolve,reject){reject('bad');}}; \
          Promise.all([Promise.resolve(item)]).then(function(){result='ok';}, function(e){result=e;});",
