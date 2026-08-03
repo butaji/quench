@@ -250,3 +250,6 @@ Stage 552 adds the common single-directory wildcard form of
 Stage 553 registers `dns` and `dns/promises` with server configuration,
 resolver, callback lookup, and promise lookup contracts; real DNS resolution
 remains a subsequent host-boundary slice.
+Stage 554 registers the `dgram` UDP socket shape with bind/send/close events
+and address reporting; actual datagram I/O remains tracked for the Rust socket
+boundary.
