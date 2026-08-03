@@ -368,3 +368,4 @@ these small fixtures isolate the currently implemented contract.
 |   369 | process.nextTick callback arguments                              | `tools/run-node-tests.sh --stage 369` |
 |   370 | stream writable backpressure and drain                            | `tools/run-node-tests.sh --stage 370` |
 |   371 | stream readable pause and resume                                  | `tools/run-node-tests.sh --stage 371` |
+|   372 | stream Transform chunk processing                                | `tools/run-node-tests.sh --stage 372` |
