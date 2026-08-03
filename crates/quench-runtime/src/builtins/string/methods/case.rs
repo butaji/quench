@@ -10,7 +10,7 @@ pub fn install_case_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
 
     proto_clone.borrow_mut().set(
-        "toUpperCase",
+        "__toUpperCase",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |_| match super::this_js_string() {
                 Some(s) => Ok(Value::String(s.to_uppercase())),
@@ -20,7 +20,7 @@ pub fn install_case_methods(proto: &Rc<RefCell<Object>>) {
     );
 
     proto_clone.borrow_mut().set(
-        "toLowerCase",
+        "__toLowerCase",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |_| match super::this_js_string() {
                 Some(s) => Ok(Value::String(s.to_lowercase())),

@@ -8,6 +8,8 @@ var _startsWith = String.prototype.__startsWith;
 var _endsWith = String.prototype.__endsWith;
 var _indexOf = String.prototype.__indexOf;
 var _lastIndexOf = String.prototype.__lastIndexOf;
+var _toUpperCase = String.prototype.__toUpperCase;
+var _toLowerCase = String.prototype.__toLowerCase;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -44,6 +46,17 @@ String.prototype.codePointAt = function StringCodePointAt(position) {
 String.prototype.at = function StringAt(index) {
   return _at.call(this, index);
 };
+
+String.prototype.toUpperCase = function StringToUpperCase() {
+  return _toUpperCase.call(this);
+};
+
+String.prototype.toLowerCase = function StringToLowerCase() {
+  return _toLowerCase.call(this);
+};
+
+String.prototype.toLocaleUpperCase = String.prototype.toUpperCase;
+String.prototype.toLocaleLowerCase = String.prototype.toLowerCase;
 
 String.prototype.repeat = function StringRepeat(count) {
   var string = _String(this);
