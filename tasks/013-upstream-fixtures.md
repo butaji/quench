@@ -471,3 +471,6 @@ Stage 177 formalized promise file-handle `write`, asserting string writes and
 
 Stage 178 formalized callback `realpath`, asserting default and null options,
 successful results, and the error callback contract for missing paths.
+
+Stage 179 formalized path namespace, parse, and format behavior, asserting
+POSIX/Win32 exports and invalid argument diagnostics.
