@@ -158,41 +158,6 @@ pub fn register_reflect(ctx: &mut Context) {
         reflect.prototype = Some(proto);
     }
     reflect.set(
-        "ownKeys",
-        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-            |args: Vec<Value>| match args.first() {
-                Some(Value::Object(o)) => {
-                    let object = o.borrow();
-                    let mut keys: Vec<Value> =
-                        object.own_keys().into_iter().map(Value::String).collect();
-                    if object.kind == ObjectKind::ModuleNamespace {
-                        if let Some(Value::Symbol(symbol)) =
-                            crate::builtins::symbol::get_well_known_symbol_no_ctx("toStringTag")
-                        {
-                            if object
-                                .symbol_properties
-                                .contains_key(&symbol.property_key())
-                            {
-                                keys.push(Value::Symbol(symbol));
-                            }
-                        }
-                    }
-                    Ok(Value::Object(Rc::new(RefCell::new(
-                        Object::new_array_from(keys),
-                    ))))
-                }
-                _ => {
-                    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
-                        "Reflect.ownKeys called on non-object",
-                        "TypeError",
-                    );
-                    crate::value::set_thrown_value(err_val);
-                    Err(js_err)
-                }
-            },
-        ))),
-    );
-    reflect.set(
         "get",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
