@@ -368,8 +368,6 @@ pub fn reject_eval_var_lexical_conflict(
     }
     for name in names {
         if name == "arguments"
-            && (crate::interpreter::is_in_async_function()
-                || crate::interpreter::is_in_async_generator())
             && eval_env.borrow().get_kind(&name) == Some(ast::VarKind::Var)
             && eval_env.borrow().get(&name).is_some()
         {

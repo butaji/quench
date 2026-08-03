@@ -203,6 +203,7 @@ pub(crate) fn call_value_impl(
                 call_env_rc
                     .borrow_mut()
                     .define("arguments".to_string(), args_obj);
+                predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
                 bind_params(&f, &f.params, &args, &call_env_rc)?;
                 let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &f.params);
                 body_env_rc.borrow_mut().push_scope();

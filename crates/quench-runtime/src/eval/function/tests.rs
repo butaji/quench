@@ -2410,6 +2410,13 @@ fn async_function_eval_arguments_conflict_rejects_with_syntax_error() {
 }
 
 #[test]
+fn async_generator_eval_arguments_conflict_is_synchronous_syntax_error() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("async function * f(p = eval('var arguments')) { var arguments; } f()");
+    assert!(result.unwrap_err().0.contains("SyntaxError"));
+}
+
+#[test]
 fn await_using_async_dispose_method_keeps_binding_through_async_test_wrapper() {
     let mut ctx = Context::new().unwrap();
     ctx.eval(
