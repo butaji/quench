@@ -359,9 +359,6 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let Value::Object(obj) = &this_val else {
         return Err(JsError::new("TypeError: incompatible receiver".to_string()));
     };
-    let exec = obj.borrow().get("exec").ok_or_else(|| {
-        JsError::new("TypeError: RegExp.prototype[@@search] requires callable exec".to_string())
-    })?;
     let last_index = crate::eval::member::eval_object_member_value(
         obj,
         &Value::String("lastIndex".to_string()),
@@ -370,6 +367,9 @@ fn regexp_symbol_search_impl(args: Vec<Value>) -> Result<Value, JsError> {
     if !same_value_search(&last_index, &Value::Number(0.0)) {
         set_search_last_index(obj, &this_val, Value::Number(0.0))?;
     }
+    let exec = obj.borrow().get("exec").ok_or_else(|| {
+        JsError::new("TypeError: RegExp.prototype[@@search] requires callable exec".to_string())
+    })?;
     let result = crate::eval::function::call_value_with_this(
         exec,
         vec![Value::String(regexp_search_string(args.first())?)],
