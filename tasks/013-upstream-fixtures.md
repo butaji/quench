@@ -912,3 +912,6 @@ metadata, circular references, and multiline formatting.
 
 Stage 329 formalized `%O` shallow object inspection, including unquoted string
 values and function rendering.
+
+Stage 330 formalized nested `%o` inspection, preserving array length metadata
+and nested function reference rendering.
