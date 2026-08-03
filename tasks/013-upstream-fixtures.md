@@ -921,3 +921,6 @@ structure and function reference rendering.
 
 Stage 332 formalized `util.format` Error handling, returning an Error's stack
 when it is the sole formatting argument.
+
+Stage 333 formalized `%c` CSS directive handling, discarding the style value
+while preserving subsequent arguments.
