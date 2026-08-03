@@ -126,22 +126,22 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let mut map_fn = args.get(1).cloned();
     let iterable = if matches!(items, Value::Object(ref object) if object.borrow().kind != ObjectKind::Array)
     {
-        if let Some(function) = map_fn.clone() {
-            let values = array_from_iterable_with_map(&items, function)?;
-            map_fn = None;
-            Some(values)
-        } else {
-            let has_iterator = crate::builtins::map::helpers::iterator_prop_key()
-                .and_then(|key| match &items {
-                    Value::Object(object) => object.borrow().get(&key),
-                    _ => None,
-                })
-                .is_some();
-            if has_iterator {
-                Some(crate::eval::iteration::get_iterator(&items)?)
+        let has_iterator = crate::builtins::map::helpers::iterator_prop_key()
+            .and_then(|key| match &items {
+                Value::Object(object) => object.borrow().get(&key),
+                _ => None,
+            })
+            .is_some();
+        if has_iterator {
+            if let Some(function) = map_fn.clone() {
+                let values = array_from_iterable_with_map(&items, function)?;
+                map_fn = None;
+                Some(values)
             } else {
-                None
+                Some(crate::eval::iteration::get_iterator(&items)?)
             }
+        } else {
+            None
         }
     } else {
         None
@@ -176,6 +176,10 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
             _ => Vec::new(),
         },
     };
+    let elements = elements
+        .into_iter()
+        .map(await_fulfilled_promise)
+        .collect::<Vec<_>>();
     let elements = if let Some(map_fn) = map_fn {
         elements
             .into_iter()
@@ -201,6 +205,16 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(Value::Object(Rc::new(RefCell::new(
         Object::new_array_from(elements),
     ))))
+}
+
+fn await_fulfilled_promise(value: Value) -> Value {
+    let Value::Object(object) = &value else {
+        return value;
+    };
+    let fulfilled = object.borrow().promise_data.as_ref().and_then(|data| {
+        (data.state == crate::value::object::PromiseState::Fulfilled).then(|| data.result.clone())
+    });
+    fulfilled.unwrap_or(value)
 }
 
 fn array_from_iterable_with_map(items: &Value, map_fn: Value) -> Result<Vec<Value>, JsError> {

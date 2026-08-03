@@ -223,6 +223,10 @@ fn attach_callbacks_to_value(
                                         Object::new_array_from(results_clone),
                                     ))));
                                 }
+                                drop(p);
+                                crate::builtins::promise::callbacks::enqueue_promise_reactions(
+                                    &ctx.promise_rc,
+                                );
                             }
                         }
                     }

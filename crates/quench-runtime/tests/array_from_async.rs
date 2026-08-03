@@ -11,3 +11,18 @@ fn array_from_async_awaits_mapping_promises() {
         .unwrap();
     assert_eq!(ctx.eval("result"), Ok(Value::Number(2.0)));
 }
+
+#[test]
+fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        "var result; var input={length:4,0:0,1:2,2:Promise.resolve(4),3:6}; \
+         async function map(v,i){return Promise.resolve(v*i);} \
+         Array.fromAsync(input,map).then(v=>{result=v.join(',');},e=>{result='ERR:'+e;});",
+    )
+    .unwrap();
+    assert_eq!(
+        ctx.eval("result"),
+        Ok(Value::String("0,2,8,18".to_string()))
+    );
+}
