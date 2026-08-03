@@ -58,6 +58,8 @@ self-hosted JavaScript layer.
   primitives until their JS algorithms have equivalent core operations.
 - [~] Number static predicates (`isNaN`, `isFinite`, `isInteger`,
   `isSafeInteger`) are JS-owned; Rust retains numeric primitives.
+- [~] `Number.parseInt` and `Number.parseFloat` are JS-owned aliases over
+  Rust-backed global parsing primitives.
 - [~] Boolean prototype `toString` and `valueOf` are JS-owned; Rust retains
   Boolean construction, boxing, and primitive conversion.
 - [~] Symbol prototype `toString` and `valueOf` are JS-owned through canonical
