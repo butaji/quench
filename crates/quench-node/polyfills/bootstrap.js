@@ -267,6 +267,19 @@ globalThis.process = {
     }
     queueMicrotask(() => callback(...args));
   },
+  send: (...values) => {
+    const callback = values.at(-1);
+    const hasCallback = typeof callback === "function";
+    const message = hasCallback ? values.slice(0, -1) : values;
+    const cluster = globalThis.__nodeCluster;
+    if (cluster && cluster.isWorker && cluster.worker) {
+      queueMicrotask(() => {
+        for (const value of message) cluster.worker.emit("message", value);
+      });
+      return true;
+    }
+    return false;
+  },
   hrtime: (previous) => {
     const ns = BigInt(globalThis.__quench_now_ns());
     const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];
