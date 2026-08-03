@@ -369,3 +369,6 @@ file size/type metadata and cleanup after closing the handle.
 
 Stage 144 formalized file-handle chmod and closed-handle behavior, asserting
 permission bits, `EBADF`, and cleanup.
+
+Stage 145 formalized promise file-handle `writeFile` and `readFile`, asserting
+round-trip contents and cleanup after closing the handle.
