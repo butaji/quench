@@ -927,3 +927,6 @@ while preserving subsequent arguments.
 
 Stage 334 formalized `%j` circular JSON handling, rendering circular values as
 `[Circular]` instead of throwing.
+
+Stage 335 formalized `util.formatWithOptions` color handling across mixed
+primitive arguments.

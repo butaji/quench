@@ -331,3 +331,4 @@ these small fixtures isolate the currently implemented contract.
 |   332 | util format Error stack rendering                                 | `tools/run-node-tests.sh --stage 332` |
 |   333 | util format CSS directive handling                                | `tools/run-node-tests.sh --stage 333` |
 |   334 | util format JSON circular handling                                | `tools/run-node-tests.sh --stage 334` |
+|   335 | util formatWithOptions color handling                             | `tools/run-node-tests.sh --stage 335` |
