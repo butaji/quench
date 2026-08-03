@@ -171,3 +171,4 @@ these small fixtures isolate the currently implemented contract.
 |   161 | upstream symlink capability helper                        | `tools/run-node-tests.sh --stage 161` |
 |   162 | invalid target validation for `fs.symlinkSync`            | `tools/run-node-tests.sh --stage 162` |
 |   163 | invalid type validation for `fs.symlinkSync`              | `tools/run-node-tests.sh --stage 163` |
+|   164 | promise file-handle basic `writeFile`                     | `tools/run-node-tests.sh --stage 164` |
