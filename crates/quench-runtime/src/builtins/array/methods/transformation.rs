@@ -239,9 +239,22 @@ pub fn proto_some(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = crate::builtins::get_native_this();
 
-    for (i, elem) in elements.iter().enumerate() {
-        let result = call_callback(&callback, elem, i, &elements)?;
+    for i in 0..elements.len() {
+        let Some(elem) = receiver.as_ref().and_then(|receiver| {
+            let Value::Object(object) = receiver else {
+                return Some(Value::Undefined);
+            };
+            let key = i.to_string();
+            if !object.borrow().has(&key) {
+                return None;
+            }
+            crate::eval::member::eval_object_member_value(object, &Value::String(key), None).ok()
+        }) else {
+            continue;
+        };
+        let result = call_callback(&callback, &elem, i, &elements)?;
         if !to_bool(&result) {
             return Ok(Value::Boolean(false));
         }
@@ -384,6 +397,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("var accessed=false; var o={0:1,1:1}; Object.defineProperty(o,'length',{get:function(){return {toString:function(){accessed=true;return '2';}}}}); Array.prototype.every.call(o,function(v){return v===1;}); accessed"),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn array_every_reads_holes_after_callback_mutation() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; var a=[1,2,,4]; a.every(function(v,i){if(i===0)a[2]=3;if(v===3)seen=true;return true;}); seen"),
             Ok(Value::Boolean(true))
         );
     }
