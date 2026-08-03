@@ -4,21 +4,7 @@ use crate::value::{to_number, JsError, ObjectKind, Value};
 
 /// Get the array elements from 'this'
 fn get_this_array() -> Result<Vec<Value>, JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::Object(o)) => {
-            let arr = o.borrow();
-            if arr.kind == ObjectKind::Array {
-                Ok(arr.elements.clone())
-            } else {
-                Err(JsError(
-                    "Array.prototype method called on non-array".to_string(),
-                ))
-            }
-        }
-        _ => Err(JsError(
-            "Array.prototype method called on non-object".to_string(),
-        )),
-    }
+    crate::builtins::array::methods::transformation::get_this_array()
 }
 
 /// Call callback for find/findLast methods
@@ -72,6 +58,67 @@ pub fn proto_index_of(args: Vec<Value>) -> Result<Value, JsError> {
     #[allow(clippy::needless_range_loop)]
     for i in from_idx..elements.len() {
         if crate::value::strict_eq(&elements[i], &search) {
+            return Ok(Value::Number(i as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+
+pub fn proto_last_index_of(args: Vec<Value>) -> Result<Value, JsError> {
+    let search = args.first().cloned().unwrap_or(Value::Undefined);
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let (elements, object) = match receiver {
+        Value::Object(object) if object.borrow().kind == ObjectKind::Array => {
+            (object.borrow().elements.clone(), None)
+        }
+        Value::Object(object) => {
+            let length_value = crate::eval::member::eval_object_member_value(
+                &object,
+                &Value::String("length".to_string()),
+                None,
+            )?;
+            let length = crate::value::try_to_number(&length_value)?.max(0.0) as usize;
+            (Vec::new(), Some((object, length)))
+        }
+        _ => {
+            return Err(JsError(
+                "Array.prototype method called on non-object".to_string(),
+            ))
+        }
+    };
+    let length = object
+        .as_ref()
+        .map_or(elements.len(), |(_, length)| *length);
+    if length == 0 {
+        return Ok(Value::Number(-1.0));
+    }
+    let from = args.get(1).map(to_number).unwrap_or((length - 1) as f64);
+    if from.is_nan() {
+        return Ok(Value::Number(-1.0));
+    }
+    let start = if from < 0.0 {
+        let adjusted = length as f64 + from;
+        if adjusted < 0.0 {
+            return Ok(Value::Number(-1.0));
+        }
+        adjusted as usize
+    } else {
+        (from as usize).min(length - 1)
+    };
+    for i in (0..=start).rev() {
+        let value = object.as_ref().map_or_else(
+            || elements[i].clone(),
+            |(object, _)| {
+                crate::eval::member::eval_object_member_value(
+                    object,
+                    &Value::String(i.to_string()),
+                    None,
+                )
+                .unwrap_or(Value::Undefined)
+            },
+        );
+        if crate::value::strict_eq(&value, &search) {
             return Ok(Value::Number(i as f64));
         }
     }

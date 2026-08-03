@@ -175,6 +175,43 @@ pub fn proto_reduce(args: Vec<Value>) -> Result<Value, JsError> {
     Ok(accumulator)
 }
 
+pub fn proto_reduce_right(args: Vec<Value>) -> Result<Value, JsError> {
+    let elements = get_this_array()?;
+    let receiver =
+        crate::builtins::get_native_this().unwrap_or_else(|| make_array(elements.clone()));
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    let mut index = elements.len();
+    let mut accumulator = match args.get(1).cloned() {
+        Some(initial) => initial,
+        None if elements.is_empty() => {
+            return Err(JsError(
+                "Reduce of empty array with no initial value".to_string(),
+            ))
+        }
+        None => {
+            index -= 1;
+            elements[index].clone()
+        }
+    };
+    while index > 0 {
+        index -= 1;
+        let callback_args = vec![
+            accumulator,
+            elements[index].clone(),
+            Value::Number(index as f64),
+            receiver.clone(),
+        ];
+        accumulator = match &callback {
+            Value::Function(_) => {
+                call_value_with_this(callback.clone(), callback_args, Value::Undefined)?
+            }
+            Value::NativeFunction(nf) => nf.call(Value::Undefined, callback_args)?,
+            _ => return Err(JsError("Callback is not a function".to_string())),
+        };
+    }
+    Ok(accumulator)
+}
+
 /// Array.prototype.forEach(callback, thisArg?)
 pub fn proto_for_each(args: Vec<Value>) -> Result<Value, JsError> {
     let elements = get_this_array()?;
@@ -323,6 +360,24 @@ mod tests {
         assert_eq!(
             ctx.eval("var a=['x','y']; var r=[]; a.findIndex(function(v) { r.push(v); if (r.length === 1) a.shift(); }); r.join('|')"),
             Ok(Value::String("x|undefined".to_string()))
+        );
+    }
+
+    #[test]
+    fn array_last_index_of_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[1, 2, 1].lastIndexOf(1, -1)"),
+            Ok(Value::Number(2.0))
+        );
+    }
+
+    #[test]
+    fn array_reduce_right_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("[1, 2, 3].reduceRight(function(a, b) { return a - b; })"),
+            Ok(Value::Number(0.0))
         );
     }
 }

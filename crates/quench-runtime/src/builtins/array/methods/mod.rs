@@ -26,11 +26,11 @@ pub use mutation::{proto_pop, proto_push, proto_shift, proto_splice, proto_unshi
 pub use rearrange::{proto_copy_within, proto_fill, proto_reverse, proto_sort};
 pub use search::{
     proto_find, proto_find_index, proto_find_last, proto_find_last_index, proto_includes,
-    proto_index_of,
+    proto_index_of, proto_last_index_of,
 };
 pub use transformation::{
     proto_every, proto_filter, proto_flat, proto_flat_map, proto_for_each, proto_map, proto_reduce,
-    proto_some,
+    proto_reduce_right, proto_some,
 };
 
 /// Setup all prototype methods on an array prototype object
@@ -60,6 +60,7 @@ fn setup_transformation_methods(
     m("filter", proto_filter);
     m("forEach", proto_for_each);
     m("reduce", proto_reduce);
+    m("reduceRight", proto_reduce_right);
     m("some", proto_some);
     m("every", proto_every);
     m("flat", proto_flat);
@@ -93,6 +94,7 @@ fn setup_accessor_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crat
 
 fn setup_search_methods(m: &impl Fn(&str, fn(Vec<Value>) -> Result<Value, crate::JsError>)) {
     m("indexOf", proto_index_of);
+    m("lastIndexOf", proto_last_index_of);
     m("includes", proto_includes);
     m("find", proto_find);
     m("findIndex", proto_find_index);
