@@ -478,3 +478,17 @@ Upstream fixtures:
   fixture's `process.on('exit', …)` handler, likely an off-by-one or
   ordering difference in `common.mustCall` invocations between the
   primary and the in-process worker. Tracked as the next sub-slice.
+
+## Status — process.send slice (done)
+
+Follow-on slice landed. Changes:
+
+- `process.send(message[, callback])` is now implemented on the
+  `process` global. When called from a cluster worker branch
+  (`cluster.isWorker === true` and `cluster.worker` is set), it
+  schedules a microtask that emits `'message'` on the shared Worker
+  instance. The primary's `worker.on('message', …)` listener receives
+  the value on the next microtask. In the primary branch (or outside
+  the cluster worker context), `process.send` returns `false`.
+
+Focused-stage suite: **509/509 pass**.
