@@ -1755,6 +1755,15 @@ fn eval_for(
             None => {}
         }
         if head_lexical {
+            let pi = env.borrow().get_scope_from_bottom(0);
+            let head = env.borrow().get_scope_from_bottom(1);
+            if let (Some(pi), Some(head)) = (pi, head) {
+                for name in &per_iter_names {
+                    if let Some(value) = pi.borrow().get(name) {
+                        head.borrow_mut().set(name.clone(), value, false);
+                    }
+                }
+            }
             env.borrow_mut().pop_scope();
             push_for_body_iteration_scope(&mut env.borrow_mut(), &per_iter_names);
             env.borrow()

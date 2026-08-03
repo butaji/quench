@@ -1301,3 +1301,14 @@ fn generator_class_method_rejects_yield_parameter_binding() {
     let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
     assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
 }
+
+#[test]
+fn for_loop_increment_closure_captures_iteration_binding() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("tests/test262/test/language/statements/for/scope-body-lex-open.js");
+    let harness = HarnessLoader::new(&crate::test262::runner::default_test262_dir());
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
