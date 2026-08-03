@@ -13,8 +13,14 @@ use crate::value::{to_bool, to_number, JsError, Object, ObjectKind, Value};
 /// Get the array elements from 'this'
 /// Array methods are intentionally generic - they work on any array-like object
 pub fn get_this_array() -> Result<Vec<Value>, JsError> {
-    match crate::builtins::get_native_this() {
-        Some(Value::Object(o)) => {
+    let receiver = crate::builtins::get_native_this()
+        .ok_or_else(|| JsError("Array.prototype method called on non-object".to_string()))?;
+    let receiver = match receiver {
+        Value::Object(object) => Value::Object(object),
+        primitive => crate::value::to_object(&primitive)?,
+    };
+    match receiver {
+        Value::Object(o) => {
             let arr = o.borrow();
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
@@ -27,9 +33,7 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                     _ => Ok(Vec::new()),
                 }
             } else {
-                // For non-Array objects (array-likes, arguments), extract indexed properties.
-                // Arguments objects in mappable mode (sloppy mode, no rest/default params)
-                // store values in `elements` rather than `properties`, so check both.
+                drop(arr);
                 let mut elements = Vec::new();
                 let mut i = 0u32;
                 let length = crate::eval::member::eval_object_member_value(
@@ -41,18 +45,16 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                 .and_then(|value| crate::value::try_to_number(&value).ok())
                 .map(|length| length.max(0.0) as u32);
                 while length.is_none_or(|limit| i < limit) {
-                    let val = arr.properties.get(&i.to_string()).or_else(|| {
-                        let idx = i as usize;
-                        if idx < arr.elements.len() && !arr.holes.contains(&idx) {
-                            Some(&arr.elements[idx])
-                        } else {
-                            None
-                        }
-                    });
-                    match val {
-                        Some(v) => elements.push(v.clone()),
+                    let value = crate::eval::member::eval_object_member_value(
+                        &o,
+                        &Value::String(i.to_string()),
+                        None,
+                    )
+                    .ok();
+                    match value {
+                        Some(value) => elements.push(value),
                         None if length.is_none() => break,
-                        None => {}
+                        None => elements.push(Value::Undefined),
                     }
                     i += 1;
                 }
@@ -530,6 +532,15 @@ mod tests {
         assert_eq!(
             ctx.eval("Boolean.prototype[0]=true; Boolean.prototype.length=1; Array.prototype.filter.call(false,function(v,i,obj){return obj instanceof Boolean;}).length"),
             Ok(Value::Number(1.0))
+        );
+    }
+
+    #[test]
+    fn array_find_boxes_boolean_receiver() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Boolean.prototype[0]=true; Boolean.prototype.length=1; Array.prototype.find.call(false,function(v){return v;})"),
+            Ok(Value::Boolean(true))
         );
     }
 }
