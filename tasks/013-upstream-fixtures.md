@@ -716,3 +716,14 @@ characters map to the exact low-byte sequence (verified against Node).
 
 Stage 258 formalized Buffer detached-arraybuffer state validation, asserting
 `ERR_INVALID_STATE` when operating on a transferred (detached) buffer.
+
+Stage 259 formalized Buffer surrogate-pair UTF-8 encoding, asserting lone
+surrogates map to U+FFFD and valid pairs to the 4-byte sequence, matching
+`TextEncoder` byte-for-byte on long input.
+
+Stage 260 formalized Buffer `compare` offset-selection, asserting explicit
+target/start/end offsets and `ERR_INVALID_ARG_TYPE` for non-numeric offsets.
+
+Stage 261 formalized Buffer `fill` forged-length bounds check, asserting
+`ERR_BUFFER_OUT_OF_BOUNDS` when a forged `length` exceeds the backing store
+(verified against Node).
