@@ -264,3 +264,6 @@ Stage 108 expanded symlink metadata coverage to sync and callback `stat`/
 
 Stage 109 expanded promise symlink/readlink coverage with explicit file type,
 target round-trip, promise `lstat`, and cleanup.
+
+Stage 110 added sync, callback, and promise `fs.unlink` coverage, including
+Node-compatible invalid path argument validation.
