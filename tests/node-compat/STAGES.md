@@ -317,3 +317,4 @@ these small fixtures isolate the currently implemented contract.
 |   318 | OS tmpdir environment precedence and normalization               | `tools/run-node-tests.sh --stage 318` |
 |   319 | POSIX os.tmpdir slash preservation                                | `tools/run-node-tests.sh --stage 319` |
 |   320 | OS string-returning function coercion                             | `tools/run-node-tests.sh --stage 320` |
+|   321 | OS totalmem numeric coercion                                      | `tools/run-node-tests.sh --stage 321` |
