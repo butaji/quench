@@ -46,6 +46,11 @@ queue in `tasks/refactor-plan.md` (R18+).
   are being removed family by family; only core, performance-sensitive, and
   crate-backed primitives remain. Migration status is tracked in
   `tasks/builtin-migration.md`; conformance polish follows the migration pass.
+- **Builtin ownership rule:** every algorithm, public method, constructor
+  wiring, and property descriptor that can be authored in `builtins/*.js`
+  belongs there. Rust is reserved for interpreter/core operations and
+  implementations requiring performance, native memory, crate-backed
+  functionality, or engine integration.
 - **`__ops__` diverges from the canonical ops** (R21): `SameValueZero` calls
   `same_value`, `HasProperty` implements `has_own`, `IsCallable` misses
   callable objects, and `DefineProp`/`SealObject`/`FreezeObject` duplicate

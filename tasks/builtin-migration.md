@@ -12,6 +12,11 @@ self-hosted JavaScript layer.
 - Delete replaced Rust registration only after the JS path is green.
 - Run the relevant Test262 stage before and after each family migration.
 - Test262 digest output is the only conformance progress evidence.
+- Every builtin algorithm, public method, constructor wiring, and property
+  descriptor that can be authored in `builtins/*.js` must live there. Rust
+  may retain only interpreter/core operations and implementations requiring
+  Rust for performance, native memory, crate-backed functionality, or engine
+  integration.
 
 ## Family queue
 

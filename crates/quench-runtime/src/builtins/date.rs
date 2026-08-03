@@ -382,62 +382,62 @@ pub fn register_date(ctx: &mut Context) {
         }))),
     );
     date_proto_rc.borrow_mut().set(
-        "getTimezoneOffset",
+        "__getTimezoneOffset",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| Ok(Value::Number(0.0))))),
     );
     date_proto_rc.borrow_mut().set(
-        "getTime",
+        "__getTime",
         Value::NativeFunction(Rc::new(NativeFunction::new(|_args| {
             let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
             Ok(Value::Number(date_timestamp(&this_val)))
         }))),
     );
-    install_date_getter(&date_proto_rc, "getFullYear", |ms| {
+    install_date_getter(&date_proto_rc, "__getFullYear", |ms| {
         date_parts_from_timestamp(ms).0
     });
-    install_date_getter(&date_proto_rc, "getMonth", |ms| {
+    install_date_getter(&date_proto_rc, "__getMonth", |ms| {
         date_parts_from_timestamp(ms).1
     });
-    install_date_getter(&date_proto_rc, "getDate", |ms| {
+    install_date_getter(&date_proto_rc, "__getDate", |ms| {
         date_parts_from_timestamp(ms).2
     });
-    install_date_getter(&date_proto_rc, "getUTCFullYear", |ms| {
+    install_date_getter(&date_proto_rc, "__getUTCFullYear", |ms| {
         date_parts_from_timestamp(ms).0
     });
-    install_date_getter(&date_proto_rc, "getUTCMonth", |ms| {
+    install_date_getter(&date_proto_rc, "__getUTCMonth", |ms| {
         date_parts_from_timestamp(ms).1
     });
-    install_date_getter(&date_proto_rc, "getUTCDate", |ms| {
+    install_date_getter(&date_proto_rc, "__getUTCDate", |ms| {
         date_parts_from_timestamp(ms).2
     });
     for name in [
-        "getDay",
-        "getHours",
-        "getMilliseconds",
-        "getMinutes",
-        "getSeconds",
-        "getUTCDay",
-        "getUTCHours",
-        "getUTCMilliseconds",
-        "getUTCMinutes",
-        "getUTCSeconds",
-        "setDate",
-        "setFullYear",
-        "setHours",
-        "setMilliseconds",
-        "setMinutes",
-        "setMonth",
-        "setSeconds",
-        "setTime",
-        "setUTCDate",
-        "setUTCFullYear",
-        "setUTCHours",
-        "setUTCMilliseconds",
-        "setUTCMinutes",
-        "setUTCMonth",
-        "setUTCSeconds",
-        "toLocaleString",
-        "toUTCString",
+        "__getDay",
+        "__getHours",
+        "__getMilliseconds",
+        "__getMinutes",
+        "__getSeconds",
+        "__getUTCDay",
+        "__getUTCHours",
+        "__getUTCMilliseconds",
+        "__getUTCMinutes",
+        "__getUTCSeconds",
+        "__setDate",
+        "__setFullYear",
+        "__setHours",
+        "__setMilliseconds",
+        "__setMinutes",
+        "__setMonth",
+        "__setSeconds",
+        "__setTime",
+        "__setUTCDate",
+        "__setUTCFullYear",
+        "__setUTCHours",
+        "__setUTCMilliseconds",
+        "__setUTCMinutes",
+        "__setUTCMonth",
+        "__setUTCSeconds",
+        "__toLocaleString",
+        "__toUTCString",
     ] {
         install_date_placeholder(&date_proto_rc, name);
     }
