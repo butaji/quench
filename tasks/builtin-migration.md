@@ -37,7 +37,8 @@ self-hosted JavaScript layer.
   `fromEntries`, prototype operations, freeze/seal queries) are JS-owned;
   Rust retains descriptor mutation primitives.
 - [~] `Object.fromEntries` now performs JS-side iterable acquisition and
-  entry validation before using core property writes.
+  entry validation before using core property writes, and creates data
+  properties correctly for keys such as `"__proto__"`.
 - [~] `Object.groupBy` is implemented in the self-hosted JS layer over
   iterator and object primitives, including JS-side iterable and callback
   validation and canonical `ToPropertyKey` coercion.

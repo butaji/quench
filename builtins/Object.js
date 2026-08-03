@@ -106,7 +106,9 @@ Object.fromEntries = function ObjectFromEntries(iterable) {
     if (result.done) break;
     var entry = result.value;
     if (entry === null || entry === undefined) throw ThrowTypeError("Object.fromEntries entry is not an object");
-    obj[entry[0]] = entry[1];
+    Object.defineProperty(obj, entry[0], {
+      value: entry[1], writable: true, enumerable: true, configurable: true
+    });
   }
   return obj;
 };
