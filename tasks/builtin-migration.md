@@ -37,6 +37,8 @@ self-hosted JavaScript layer.
   prototype primitive.
 - [~] `Object.getOwnPropertySymbols` is JS-owned over the canonical own-key
   primitive; Rust retains symbol identity and key storage.
+- [~] Reflect own-key, property-presence, descriptor, prototype, and
+  extensibility algorithms are JS-owned over `__ops__`.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, and iteration plumbing.
