@@ -195,6 +195,7 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let items = args.first().cloned().unwrap_or(Value::Undefined);
     let original_items = items.clone();
     let mut map_fn = args.get(1).cloned();
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
     let iterable = if matches!(items, Value::Object(ref object) if object.borrow().kind != ObjectKind::Array)
     {
         let has_iterator = crate::builtins::map::helpers::iterator_prop_key()
@@ -205,7 +206,7 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
             .is_some();
         if has_iterator {
             if let Some(function) = map_fn.clone() {
-                let values = array_from_iterable_with_map(&items, function)?;
+                let values = array_from_iterable_with_map(&items, function, this_arg.clone())?;
                 map_fn = None;
                 Some(values)
             } else {
@@ -261,9 +262,9 @@ fn array_from_impl(args: Vec<Value>) -> Result<Value, JsError> {
                     Value::Function(_) => crate::eval::call_value_with_this(
                         map_fn.clone(),
                         call_args,
-                        Value::Undefined,
+                        this_arg.clone(),
                     ),
-                    Value::NativeFunction(function) => function.call(Value::Undefined, call_args),
+                    Value::NativeFunction(function) => function.call(this_arg.clone(), call_args),
                     _ => Err(JsError(
                         "Array.from map function is not callable".to_string(),
                     )),
@@ -288,7 +289,11 @@ fn await_fulfilled_promise(value: Value) -> Value {
     fulfilled.unwrap_or(value)
 }
 
-fn array_from_iterable_with_map(items: &Value, map_fn: Value) -> Result<Vec<Value>, JsError> {
+fn array_from_iterable_with_map(
+    items: &Value,
+    map_fn: Value,
+    this_arg: Value,
+) -> Result<Vec<Value>, JsError> {
     let Value::Object(object) = items else {
         return Ok(Vec::new());
     };
@@ -305,9 +310,9 @@ fn array_from_iterable_with_map(items: &Value, map_fn: Value) -> Result<Vec<Valu
         let call_args = vec![value, Value::Number(values.len() as f64), items.clone()];
         let mapped = match &map_fn {
             Value::Function(_) => {
-                crate::eval::call_value_with_this(map_fn.clone(), call_args, Value::Undefined)
+                crate::eval::call_value_with_this(map_fn.clone(), call_args, this_arg.clone())
             }
-            Value::NativeFunction(function) => function.call(Value::Undefined, call_args),
+            Value::NativeFunction(function) => function.call(this_arg.clone(), call_args),
             _ => Err(JsError(
                 "Array.from map function is not callable".to_string(),
             )),
@@ -387,6 +392,15 @@ mod tests {
         assert_eq!(
             ctx.eval("var d=Object.getOwnPropertyDescriptor(Array,'of'); [d.value.length,d.value===Array.of,d.writable,d.enumerable,d.configurable].join('|')"),
             Ok(Value::String("0|true|false|false|true".to_string()))
+        );
+    }
+
+    #[test]
+    fn array_from_uses_this_arg_for_mapping_callback() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.from([1], function () { return this.value; }, {value: 7})[0]"),
+            Ok(Value::Number(7.0))
         );
     }
 }

@@ -40,3 +40,15 @@ fn array_from_async_awaits_arraylike_values_and_mapping_promises() {
         Ok(Value::String("0,2,8,18".to_string()))
     );
 }
+
+#[test]
+fn array_from_async_passes_this_arg_to_mapping_callback() {
+    let mut ctx = Context::new().unwrap();
+    ctx.eval(
+        &("var result; Array.fromAsync([1], function(){return this.value;}, {value:7})"
+            .to_owned()
+            + ".then(v=>{result=v[0];});"),
+    )
+    .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::Number(7.0)));
+}

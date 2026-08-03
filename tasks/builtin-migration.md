@@ -91,8 +91,8 @@ self-hosted JavaScript layer.
   async-engine boundary rather than a one-line JS proxy. Mapped Promise
   results are aggregated through the existing native `Promise.all` path, and
   non-iterable array-like inputs now use indexed mapping with already-fulfilled
-  input Promises unwrapped. Pending thenables and async-iterator resumption
-  remain outstanding.
+  input Promises unwrapped. Mapping callbacks preserve the supplied `thisArg`.
+  Pending thenables and async-iterator resumption remain outstanding.
 - [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
   locale argument forwarding, and element-call validation; locale formatting
   primitives remain owned by the relevant value types.
