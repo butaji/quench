@@ -209,6 +209,23 @@ Array.prototype.join = function ArrayJoin(separator) {
   return R;
 };
 
+Array.prototype.toLocaleString = function ArrayToLocaleString(locales, options) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toLocaleString called on null or undefined");
+  var O = ToObject(this);
+  var len = ToLength(O.length);
+  var R = '';
+  for (var k = 0; k < len; k++) {
+    if (k > 0) R += ',';
+    if (!HasProperty(O, k)) continue;
+    var value = O[k];
+    if (value === null || value === undefined) continue;
+    var method = value.toLocaleString;
+    if (!IsCallable(method)) throw ThrowTypeError("Array element toLocaleString is not callable");
+    R += method.call(value, locales, options);
+  }
+  return R;
+};
+
 Array.prototype.push = function ArrayPush() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
   var O = ToObject(this);

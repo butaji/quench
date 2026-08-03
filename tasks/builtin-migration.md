@@ -66,6 +66,9 @@ self-hosted JavaScript layer.
   storage primitives.
 - [~] `Array.from` is JS-owned; Rust retains `fromAsync` and core iterator/
   storage primitives.
+- [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
+  locale argument forwarding, and element-call validation; locale formatting
+  primitives remain owned by the relevant value types.
 - [~] Array-like length coercion now routes through the JS-owned `ToLength`
   helper throughout `builtins/Array.js`. This is an ECMAScript algorithm, not
   a Rust storage primitive; depth/index/delete-count coercions remain their
