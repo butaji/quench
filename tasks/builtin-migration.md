@@ -297,6 +297,9 @@ self-hosted JavaScript layer.
 - [x] Keep array lengths at or above the sparse-storage threshold logical
   instead of allocating dense backing storage; indexed writes and `push` now
   handle the maximum length without exhausting memory.
+- [x] Use `CreateDataProperty` for `flat`/`flatMap` output indices instead of
+  `push`, preventing inherited index setters from intercepting flattened
+  result construction.
 
 ## First increment
 

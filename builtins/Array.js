@@ -582,13 +582,14 @@ Array.prototype.flat = function ArrayFlat() {
   var depth = arguments.length === 0 ? undefined : arguments[0];
   var d = depth === undefined ? 1 : ToIntegerOrInfinity(depth);
   var result = [];
+  var resultIndex = 0;
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) {
       if (d > 0 && IsArray(O[i])) {
         var sub = O[i].flat(d - 1);
-        for (var j = 0; j < sub.length; j++) result.push(sub[j]);
+        for (var j = 0; j < sub.length; j++) CreateDataProperty(result, resultIndex++, sub[j]);
       } else {
-        result.push(O[i]);
+        CreateDataProperty(result, resultIndex++, O[i]);
       }
     }
   }
@@ -603,11 +604,12 @@ Array.prototype.flatMap = function ArrayFlatMap(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var result = [];
+  var resultIndex = 0;
   for (var i = 0; i < len; i++) {
     if (HasProperty(O, i)) {
       var val = callbackfn.call(thisArg, O[i], i, O);
-      if (IsArray(val)) { for (var j = 0; j < val.length; j++) result.push(val[j]); }
-      else { result.push(val); }
+      if (IsArray(val)) { for (var j = 0; j < val.length; j++) CreateDataProperty(result, resultIndex++, val[j]); }
+      else { CreateDataProperty(result, resultIndex++, val); }
     }
   }
   return result;

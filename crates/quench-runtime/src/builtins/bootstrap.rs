@@ -657,6 +657,19 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_flat_defines_own_result_indices() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "Object.defineProperty(Array.prototype, '0', { set: function() {}, configurable: true }); \
+                 var result = [[1]].flat(); delete Array.prototype[0]; \
+                 result[0] === 1 && Object.prototype.hasOwnProperty.call(result, '0')",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx
