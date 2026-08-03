@@ -24,8 +24,14 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                 // store values in `elements` rather than `properties`, so check both.
                 let mut elements = Vec::new();
                 let mut i = 0u32;
-                let length = arr.properties.get("length").and_then(|value| match value {
-                    Value::Number(length) => Some((*length).max(0.0) as u32),
+                let length = crate::eval::member::eval_object_member_value(
+                    &o,
+                    &Value::String("length".to_string()),
+                    None,
+                )
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(length) => Some(length.max(0.0) as u32),
                     _ => None,
                 });
                 while length.is_none_or(|limit| i < limit) {
@@ -37,8 +43,10 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                             None
                         }
                     });
-                    if let Some(v) = val {
-                        elements.push(v.clone());
+                    match val {
+                        Some(v) => elements.push(v.clone()),
+                        None if length.is_none() => break,
+                        None => {}
                     }
                     i += 1;
                 }
@@ -207,6 +215,15 @@ mod tests {
         let mut ctx = Context::new().unwrap();
         assert_eq!(
             ctx.eval("Array.prototype.filter.call({0: 12, 1: 11, 2: 9, length: 2}, function() { return true; }).length"),
+            Ok(Value::Number(2.0))
+        );
+    }
+
+    #[test]
+    fn filter_reads_inherited_array_like_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var p = {}; Object.defineProperty(p, 'length', {get: function() { return 2; }}); var C = function() {}; C.prototype = p; var o = new C(); o[0] = 12; o[1] = 11; o[2] = 9; Array.prototype.filter.call(o, function() { return true; }).length"),
             Ok(Value::Number(2.0))
         );
     }
