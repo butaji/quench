@@ -2,7 +2,7 @@
 var ops = __ops__;
 var ThrowTypeError = ops.ThrowTypeError;
 
-var _nativeThen = Promise.prototype.then;
+var _nativeThen = Promise.prototype.__then;
 var _nativeResolve = Promise.__resolve;
 var _nativeReject = Promise.__reject;
 var _nativeAll = Promise.__all;

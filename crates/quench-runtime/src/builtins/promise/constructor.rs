@@ -164,7 +164,7 @@ fn create_promise_proto() -> Rc<RefCell<Object>> {
     let proto = super::helpers::create_promise_proto();
 
     proto.borrow_mut().set(
-        "then",
+        "__then",
         Value::NativeFunction(Rc::new(NativeFunction::new(promise_then_impl))),
     );
     proto
