@@ -206,6 +206,13 @@ pub fn make_ops_object() -> Value {
             Ok(Value::Boolean(
                 crate::eval::object::proxy_has_property(obj_rc, &key).unwrap_or(false),
             ))
+        } else if let Value::Function(function) = &o {
+            let own = function.get_property(&key).is_some()
+                || matches!(key.as_str(), "length" | "name" | "prototype");
+            let inherited = crate::eval::member::eval_function_member(function, &key)
+            .map(|value| !matches!(value, Value::Undefined))
+            .unwrap_or(false);
+            Ok(Value::Boolean(own || inherited))
         } else {
             Ok(Value::Boolean(false))
         }
@@ -603,12 +610,15 @@ pub fn make_ops_object() -> Value {
                 let Some(value) = function.get_property(&key) else {
                     return Ok(Value::Undefined);
                 };
-                let mut desc = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                let mut desc =
+                    crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
                 desc.set("value", value);
                 desc.set("writable", Value::Boolean(false));
                 desc.set("enumerable", Value::Boolean(false));
                 desc.set("configurable", Value::Boolean(true));
-                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(desc))))
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    desc,
+                ))))
             }
             _ => Ok(Value::Undefined),
         }

@@ -1018,6 +1018,18 @@ mod tests {
     }
 
     #[test]
+    fn user_function_is_instanceof_function_after_array_map_call() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval(
+                "var f=function(a,b){}; f[0]=1; f[1]=2; \
+                 Array.prototype.map.call(f, function(_,_,o){return o instanceof Function;})[0]"
+            ),
+            Ok(Value::Boolean(true))
+        );
+    }
+
+    #[test]
     fn function_prototype_methods_have_standard_metadata() {
         let mut ctx = Context::new().unwrap();
         let value = ctx

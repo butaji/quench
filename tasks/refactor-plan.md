@@ -26,14 +26,16 @@ relevant test262 stage.
   `value/primitive.rs::to_primitive`, propagate TypeErrors, delete the
   hand-rolled copy and its `#[allow(dead_code)]`.
 
-- **R21 — `__ops__` bridge semantics.** `eval/ops.rs` diverges from the
-  canonical ops: `IsCallable` misses callable objects, `HasProperty` is
-  `has_own`, `SameValueZero` calls `same_value` (wrong on -0/+0),
+- **R21 — `__ops__` bridge semantics.** `eval/ops.rs` still diverges from the
+  canonical ops: `IsCallable` misses callable objects, `HasProperty` needs
+  complete callable/proxy semantics, `SameValueZero` calls `same_value` (wrong on -0/+0),
   `CreateDataProperty` uses `.set()`, and `DefineProp`/`SealObject`/
   `FreezeObject`/`SetPrototypeOf` duplicate descriptor logic that lives in
-  `builtins/object_static/descriptors.rs`. One op = one implementation; add a
-  failing test per op. Required before conformance polish can declare the
-  self-hosted layer complete.
+  `builtins/object_static/descriptors.rs`. `HasProperty` now also covers user
+  function values so self-hosted Array methods can observe indexed properties
+  on callable receivers. One op = one implementation; add a failing test per
+  op. Required before conformance polish can declare the self-hosted layer
+  complete.
 
 - **R22 — Migrate all builtins to JS.** The migration is tracked in
   `tasks/builtin-migration.md`; `bootstrap_js_builtins` is active for normal
