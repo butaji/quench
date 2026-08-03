@@ -429,3 +429,6 @@ Stage 163 formalized invalid symlink-type validation, asserting Node's
 
 Stage 164 formalized basic promise file-handle `writeFile`, asserting the
 round-trip contents after closing the handle and cleaning up the file.
+
+Stage 165 formalized iterable input to promise file-handle `writeFile`,
+asserting concatenated string/Buffer contents and cleanup.
