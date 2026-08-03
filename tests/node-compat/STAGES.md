@@ -363,3 +363,4 @@ these small fixtures isolate the currently implemented contract.
 |   364 | fs positioned Buffer reads and writes                            | `tools/run-node-tests.sh --stage 364` |
 |   365 | fs append Buffer bytes                                           | `tools/run-node-tests.sh --stage 365` |
 |   366 | timer timeout scheduling and cancellation                        | `tools/run-node-tests.sh --stage 366` |
+|   367 | timer interval repetition and cancellation                       | `tools/run-node-tests.sh --stage 367` |
