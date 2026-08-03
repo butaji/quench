@@ -158,7 +158,10 @@ Object.getOwnPropertyDescriptors = function ObjectGetOwnPropertyDescriptors(O) {
 // Object.getOwnPropertyNames (ES2025 §20.1.2.11)
 Object.getOwnPropertyNames = function ObjectGetOwnPropertyNames(O) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
-  return OwnKeys(ToObject(O));
+  var keys = OwnKeys(ToObject(O));
+  var names = [];
+  for (var i = 0; i < keys.length; i++) if (typeof keys[i] === 'string') names.push(keys[i]);
+  return names;
 };
 
 Object.getOwnPropertySymbols = function ObjectGetOwnPropertySymbols(O) {
