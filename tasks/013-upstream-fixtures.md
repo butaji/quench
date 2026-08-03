@@ -876,3 +876,6 @@ numeric identity, uptime, memory, priority, and parallelism results.
 
 Stage 317 formalized `common.mustCallAtLeast`, asserting callbacks may exceed
 their minimum invocation count while recording the actual count.
+
+Stage 318 formalized `os.tmpdir` environment precedence, asserting trailing
+separator normalization and TMPDIR/TMP/TEMP fallback ordering.
