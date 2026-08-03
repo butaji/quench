@@ -185,35 +185,6 @@ pub fn register_reflect(ctx: &mut Context) {
         ))),
     );
     reflect.set(
-        "getOwnPropertyDescriptor",
-        Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
-            |args: Vec<Value>| {
-                let target = args.first().ok_or_else(|| {
-                    JsError::new("Reflect.getOwnPropertyDescriptor requires target")
-                })?;
-                let key = to_property_key(args.get(1).ok_or_else(|| {
-                    JsError::new("Reflect.getOwnPropertyDescriptor requires key")
-                })?)?;
-                let Value::Object(target) = target else {
-                    return Err(JsError::new(
-                        "Reflect.getOwnPropertyDescriptor target must be an object",
-                    ));
-                };
-                let Some(flags) = target.borrow().get_descriptor(&key) else {
-                    return Ok(Value::Undefined);
-                };
-                let mut descriptor = Object::new(ObjectKind::Ordinary);
-                if let Some(value) = flags.value {
-                    descriptor.set("value", value);
-                    descriptor.set("writable", Value::Boolean(flags.writable));
-                }
-                descriptor.set("enumerable", Value::Boolean(flags.enumerable));
-                descriptor.set("configurable", Value::Boolean(flags.configurable));
-                Ok(Value::Object(Rc::new(RefCell::new(descriptor))))
-            },
-        ))),
-    );
-    reflect.set(
         "deleteProperty",
         Value::NativeFunction(Rc::new(crate::value::NativeFunction::new(
             |args: Vec<Value>| {
