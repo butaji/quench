@@ -348,3 +348,6 @@ asserting their exact decoded-string results and cleaning up the temporary file.
 
 Stage 137 formalized the synchronous `fs.readFileSync` buffer option,
 asserting returned contents and preservation of an untouched buffer byte.
+
+Stage 138 formalized `fs.readFileSync` with the `a+` flag, asserting creation
+of a missing file, its empty decoded result, and cleanup.
