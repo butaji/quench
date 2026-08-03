@@ -333,3 +333,4 @@ these small fixtures isolate the currently implemented contract.
 |   334 | util format JSON circular handling                                | `tools/run-node-tests.sh --stage 334` |
 |   335 | util formatWithOptions color handling                             | `tools/run-node-tests.sh --stage 335` |
 |   336 | util formatWithOptions compact handling                           | `tools/run-node-tests.sh --stage 336` |
+|   337 | util format SharedArrayBuffer inspection                          | `tools/run-node-tests.sh --stage 337` |
