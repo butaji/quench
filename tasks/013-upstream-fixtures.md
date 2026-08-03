@@ -393,3 +393,6 @@ permission bits, descriptor closure, and cleanup.
 
 Stage 152 formalized invalid numeric paths for synchronous and callback
 `fs.access`, asserting Node's `ERR_INVALID_ARG_TYPE` diagnostics.
+
+Stage 153 formalized promise `fs.chmod`, asserting updated permission bits and
+cleaning up the temporary file.
