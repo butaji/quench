@@ -97,11 +97,14 @@ Object.isExtensible = function ObjectIsExtensible(O) {
 Object.fromEntries = function ObjectFromEntries(iterable) {
   if (iterable === null || iterable === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   var obj = {};
-  var it = iterable[Symbol.iterator]();
+  var iteratorMethod = iterable[Symbol.iterator];
+  if (!IsCallable(iteratorMethod)) throw ThrowTypeError("Object.fromEntries requires an iterable");
+  var it = iteratorMethod.call(iterable);
   while (true) {
     var result = it.next();
     if (result.done) break;
     var entry = result.value;
+    if (entry === null || entry === undefined) throw ThrowTypeError("Object.fromEntries entry is not an object");
     obj[entry[0]] = entry[1];
   }
   return obj;
