@@ -612,6 +612,12 @@ pub fn register_date(ctx: &mut Context) {
             ))
         }))),
     );
+    for flags in date_proto_rc.borrow_mut().descriptors.values_mut() {
+        flags.enumerable = false;
+    }
+    for flags in date_wrapper_rc.borrow_mut().descriptors.values_mut() {
+        flags.enumerable = false;
+    }
     ctx.set_global("Date".to_string(), Value::Object(date_wrapper_rc));
 }
 
@@ -929,5 +935,14 @@ mod tests {
         let expected = eval_num("3.14");
         assert!((eval_num("parseFloat('3.14')") - expected).abs() < 1e-10);
         assert_eq!(eval_num("parseFloat('.01')"), 0.01);
+    }
+
+    #[test]
+    fn date_prototype_methods_are_non_enumerable() {
+        let mut ctx = Context::new().unwrap();
+        let value = ctx
+            .eval("[Object.getOwnPropertyDescriptor(Date.prototype, 'toString').enumerable, Object.getOwnPropertyDescriptor(Date.prototype, 'toUTCString').enumerable].join('|')")
+            .unwrap();
+        assert_eq!(value, Value::String("false|false".into()));
     }
 }
