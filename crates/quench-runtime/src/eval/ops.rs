@@ -79,6 +79,31 @@ pub fn make_ops_object() -> Value {
         Ok(Value::String(crate::value::to_js_string(&v)))
     });
 
+    set_op(&mut obj, "SymbolToString", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        let symbol = match value {
+            Value::Symbol(symbol) => symbol,
+            Value::Object(object) => match object.borrow().get("_value") {
+                Some(Value::Symbol(symbol)) => symbol,
+                _ => return Err(JsError::new("Symbol receiver required")),
+            },
+            _ => return Err(JsError::new("Symbol receiver required")),
+        };
+        Ok(Value::String(format!("Symbol({})", symbol.desc.as_deref().unwrap_or(""))))
+    });
+
+    set_op(&mut obj, "SymbolValueOf", |args| {
+        let value = args.first().cloned().unwrap_or(Value::Undefined);
+        match value {
+            Value::Symbol(symbol) => Ok(Value::Symbol(symbol)),
+            Value::Object(object) => match object.borrow().get("_value") {
+                Some(Value::Symbol(symbol)) => Ok(Value::Symbol(symbol)),
+                _ => Err(JsError::new("Symbol receiver required")),
+            },
+            _ => Err(JsError::new("Symbol receiver required")),
+        }
+    });
+
     set_op(&mut obj, "ToNumber", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
         Ok(Value::Number(crate::eval::ops::to_number(&v)))

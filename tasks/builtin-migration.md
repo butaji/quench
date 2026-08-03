@@ -34,6 +34,9 @@ self-hosted JavaScript layer.
   primitives until their JS algorithms have equivalent core operations.
 - [~] Boolean prototype `toString` and `valueOf` are JS-owned; Rust retains
   Boolean construction, boxing, and primitive conversion.
+- [~] Symbol prototype `toString` and `valueOf` are JS-owned through canonical
+  `__ops__` primitives; Rust retains symbol identity, boxing, registry,
+  description, and well-known symbols.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
 - [~] Promise algorithms: `Promise.prototype.catch` and `finally` are
   self-hosted in `builtins/Promise.js`; Rust retains promise state, reactions,
