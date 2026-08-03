@@ -402,3 +402,6 @@ contents after the rename and cleaning up all temporary files.
 
 Stage 155 formalized promise directory removal, asserting the directory no
 longer exists after `fs.promises.rmdir`.
+
+Stage 156 formalized promise `mkdtemp`, asserting prefix and directory
+semantics before removing the temporary directory.
