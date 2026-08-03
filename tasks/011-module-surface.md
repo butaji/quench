@@ -22,7 +22,7 @@ The 32 modules registered in `bootstrap.js` (grouped):
 - Process: `process` (via `globalThis.process`), `worker_threads` (stub).
 - Networking: `http` (in-process), `https` (TODO), `http2` (TODO), `net`
   (stub), `dgram` (TODO), `tls` (TODO), `dns`, `dns/promises`.
-- I/O: `readline`, `readline/promises`, `repl` (TODO), `tty` (TODO),
+- I/O: `readline`, `readline/promises`, `repl`, `tty` (TODO),
   `console` (via `globalThis.console`), `module` (TODO),
   `diagnostics_channel`, `inspector` (return ERR), `wasi` (return
   ERR), `domain` (legacy).
@@ -101,8 +101,8 @@ fixture cluster, and the next concrete slice.
   `Interface` and `createInterface` surface. Need: `Interface` class,
   `createInterface`, `emitKeypressEvents`, real keypress decoding via
   host `__quench_tty_*`.
-- `repl` — TODO. Stage-518: minimal `repl.start()` in-process using
-  `vm` + `readline`.
+- `repl` — stage 533 provides an in-process `repl.start()` server with
+  evaluation, prompt, event, and close contracts.
 - `stream` — done (task 004). Need: `pipeline`, `finished`, `Readable.from`
   (done), `Writable.duplex`, `Transform._transform`, `PassThrough`.
 - `stream/iter` — gated by `--experimental-stream-iter`. Done.
@@ -202,3 +202,5 @@ and callback binding contracts.
 Stage 532 layers promise questions over the existing line-event convention;
 the focused test uses a tiny input double, keeping terminal I/O out of the
 module slice until the tracked TTY callbacks are implemented.
+Stage 533 keeps REPL evaluation inside the JS runtime and exposes the server
+callback contract without adding a separate Rust evaluator or terminal loop.
