@@ -297,3 +297,4 @@ these small fixtures isolate the currently implemented contract.
 |   298 | `util.format` object string inspection and escaping             | `tools/run-node-tests.sh --stage 298` |
 |   299 | POSIX path invalid argument validation                         | `tools/run-node-tests.sh --stage 299` |
 |   300 | Win32 path invalid argument validation                         | `tools/run-node-tests.sh --stage 300` |
+|   301 | Path basename suffix validation and removal                    | `tools/run-node-tests.sh --stage 301` |

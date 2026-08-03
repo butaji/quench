@@ -825,3 +825,6 @@ for invalid values passed to common path operations.
 
 Stage 300 formalized Win32 path validation, asserting `ERR_INVALID_ARG_TYPE`
 for invalid values passed to common Windows path operations.
+
+Stage 301 formalized path `basename` suffix handling, asserting invalid suffix
+validation and suffix removal for POSIX and Win32 namespaces.
