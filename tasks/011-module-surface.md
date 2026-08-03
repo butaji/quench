@@ -214,3 +214,5 @@ Stage 536 confirms the legacy `sys` module is best represented as the exact
 Stage 537 converts the unsupported `trace_events` path into an explicit
 `ERR_UNKNOWN_BUILTIN_MODULE` error, making unsupported-target behavior
 Node-compatible and testable instead of leaking a generic loader exception.
+Stage 538 applies the same explicit unsupported-module contract to `wasi`;
+WASI runtime integration remains outside the in-process rquickjs target.
