@@ -1005,6 +1005,9 @@ round-trip and byte-layout checks.
 Stage 360 formalized Buffer instance and static comparison methods across
 Buffer and Uint8Array inputs.
 
+Stage 361 formalized Buffer fill encoding validation and its invalid-argument
+error metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
