@@ -167,14 +167,14 @@ fn test_symbol_for_identity() {
 }
 
 #[test]
-fn test_symbol_subclassing() {
+fn test_symbol_subclassing_throws() {
     let mut ctx = create_test_context();
     reset_global_symbol_registry();
 
-    let value = ctx
+    let error = ctx
         .eval("class MySymbol extends Symbol { constructor(desc) { super(desc); } } new MySymbol('test');")
-        .unwrap();
-    assert!(matches!(value, Value::Object(_)));
+        .unwrap_err();
+    assert!(error.0.contains("Symbol is not a constructor"));
 }
 
 #[test]
@@ -184,4 +184,13 @@ fn symbol_disposal_well_known_symbols_exist() {
         .eval("typeof Symbol.dispose === 'symbol' && typeof Symbol.asyncDispose === 'symbol'")
         .unwrap();
     assert_eq!(result, Value::Boolean(true));
+}
+
+#[test]
+fn symbol_subclass_constructor_throws_on_super() {
+    let mut ctx = create_test_context();
+    let result = ctx
+        .eval("class S extends Symbol { constructor() { super(); } } let name; try { new S(); } catch (e) { name = e.name; } name;")
+        .unwrap();
+    assert_eq!(result.to_string(), "TypeError");
 }
