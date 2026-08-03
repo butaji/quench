@@ -220,3 +220,4 @@ these small fixtures isolate the currently implemented contract.
 |   210 | Buffer ArrayBuffer views and memory sharing                   | `tools/run-node-tests.sh --stage 210` |
 |   211 | Buffer `isEncoding` validation                                | `tools/run-node-tests.sh --stage 211` |
 |   212 | Buffer `copyBytesFrom` typed-array copies                     | `tools/run-node-tests.sh --stage 212` |
+|   213 | `vm.runInNewContext` evaluation shim                          | `tools/run-node-tests.sh --stage 213` |
