@@ -282,3 +282,6 @@ Stage 114 formalized `fs.read` range and position validation, asserting
 
 Stage 115 expanded vectored reads to sync, callback, and promise `fs.readv`
 forms, asserting byte counts, returned buffers, and cleanup.
+
+Stage 116 formalized the write/read fixture and added sync vectored
+`fs.writev` coverage with exact contents and cleanup.
