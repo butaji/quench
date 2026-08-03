@@ -294,9 +294,6 @@ pub fn object_define_property(args: Vec<Value>) -> Result<Value, JsError> {
     }
 
     if let Value::NativeFunction(nf) = &obj {
-        if prop != "name" && prop != "length" {
-            return Ok(obj);
-        }
         if let Some(existing) = nf.get_property_flags(&prop) {
             let value_changed = flags.value.as_ref().is_some_and(|value| {
                 existing
