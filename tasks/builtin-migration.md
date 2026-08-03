@@ -40,7 +40,7 @@ self-hosted JavaScript layer.
   entry validation before using core property writes.
 - [~] `Object.groupBy` is implemented in the self-hosted JS layer over
   iterator and object primitives, including JS-side iterable and callback
-  validation.
+  validation and canonical `ToPropertyKey` coercion.
 - [~] Object own-property descriptor/name queries are JS-owned; symbol-key
   enumeration remains Rust-backed until its canonical JS bridge is complete.
 - [~] `Object.assign` is JS-owned over canonical key enumeration and core

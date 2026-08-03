@@ -19,6 +19,7 @@ var DefineProp = ops.DefineProp;
 var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
+var ToPropertyKey = ops.ToPropertyKey;
 Object.prototype.toLocaleString = function ObjectToLocaleString() {
   return this.toString();
 };
@@ -207,7 +208,7 @@ Object.groupBy = function ObjectGroupBy(items, callbackfn) {
   var step;
   while (!(step = iterator.next()).done) {
     var value = step.value;
-    var key = String(callbackfn(value, index++));
+    var key = ToPropertyKey(callbackfn(value, index++));
     if (groups[key] === undefined) groups[key] = [];
     groups[key].push(value);
   }
