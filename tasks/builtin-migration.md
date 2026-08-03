@@ -89,7 +89,10 @@ self-hosted JavaScript layer.
   await/resumption, iterator closing, and Promise scheduling are exposed as
   canonical self-hosting operations; its current implementation is an
   async-engine boundary rather than a one-line JS proxy. Mapped Promise
-  results are aggregated through the existing native `Promise.all` path.
+  results are aggregated through the existing native `Promise.all` path, and
+  non-iterable array-like inputs now use indexed mapping with already-fulfilled
+  input Promises unwrapped. Pending thenables and async-iterator resumption
+  remain outstanding.
 - [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
   locale argument forwarding, and element-call validation; locale formatting
   primitives remain owned by the relevant value types.
