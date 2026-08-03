@@ -539,6 +539,12 @@ mod tests {
     }
 
     #[test]
+    fn number_static_constant_descriptor_is_immutable() {
+        let value = eval("var d = Object.getOwnPropertyDescriptor(Number, 'EPSILON'); [d.writable, d.enumerable, d.configurable].join('|')");
+        assert_eq!(value, Value::String("false|false|false".into()));
+    }
+
+    #[test]
     fn test_to_fixed_handles_special_values() {
         let nan_result = proto_to_fixed_impl(vec![]);
         assert!(nan_result.is_ok());

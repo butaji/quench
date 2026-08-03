@@ -112,6 +112,10 @@ impl NativeConstructor {
         self.deleted_static_methods.borrow().contains(name)
     }
 
+    pub fn is_non_deletable_static_method(&self, name: &str) -> bool {
+        self.non_deletable_static_methods.borrow().contains(name)
+    }
+
     pub fn delete_static_method(&self, name: &str) -> bool {
         if self.non_deletable_static_methods.borrow().contains(name) {
             return false;

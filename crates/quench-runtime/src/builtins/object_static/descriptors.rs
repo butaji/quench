@@ -1225,12 +1225,13 @@ pub fn get_native_constructor_property_descriptor(
     }
     // Check for custom static methods first
     if let Some(value) = nc.get_static_method(prop) {
+        let immutable = nc.is_non_deletable_static_method(prop);
         return Ok(make_descriptor_value(
             PropertyFlags {
                 value: Some(value),
-                writable: true,
+                writable: !immutable,
                 enumerable: false,
-                configurable: true,
+                configurable: !immutable,
             },
             Value::Undefined,
         ));
