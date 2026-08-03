@@ -658,4 +658,13 @@ mod tests {
         );
         assert_eq!(result.unwrap(), Value::String("set in with".into()));
     }
+
+    #[test]
+    fn derived_constructor_iterator_return_can_call_super() {
+        let mut ctx = Context::new().unwrap();
+        let result = ctx.eval(
+            "var iter = { [Symbol.iterator]() { return this; }, next() { return {done: false}; }, return() { this.f(); return {done: true}; } }; class C extends class {} { constructor() { iter.f = () => super(); for (var k of iter) { return; } } } typeof new C();",
+        );
+        assert_eq!(result.unwrap(), Value::String("object".into()));
+    }
 }

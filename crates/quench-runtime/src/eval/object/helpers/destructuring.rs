@@ -861,7 +861,6 @@ fn invoke_iterator_return_inner(
     // call the accessor if present, then check the value.
     let resolved = if let Some(getter) = binding.get_getter("return") {
         if let Some(func) = getter.func.clone() {
-            drop(binding);
             match crate::eval::function::call_value_with_this(func, args.clone(), iter_this.clone())
             {
                 Ok(val) => val,
@@ -871,7 +870,6 @@ fn invoke_iterator_return_inner(
             let params: Vec<crate::ast::Param> = Vec::new();
             let body: Vec<crate::ast::Statement> = (*getter.body).clone();
             let closure = getter.closure.clone();
-            drop(binding);
             match crate::eval::function::call_value_with_this(
                 crate::value::Value::Function(crate::value::ValueFunction::new_arrow(
                     params,
@@ -886,7 +884,9 @@ fn invoke_iterator_return_inner(
             }
         }
     } else {
-        binding.get("return").unwrap_or(Value::Undefined)
+        let resolved = binding.get("return").unwrap_or(Value::Undefined);
+        drop(binding);
+        resolved
     };
     // GetMethod step: if func is undefined or null, return undefined.
     if matches!(resolved, Value::Undefined | Value::Null) {
