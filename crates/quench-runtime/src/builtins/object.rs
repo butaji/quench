@@ -13,7 +13,7 @@ use crate::builtins::object_static::{
     object_assign, object_create, object_define_properties, object_define_property, object_entries,
     object_freeze, object_from_entries, object_get_own_property_descriptor,
     object_get_own_property_descriptors, object_get_own_property_names,
-    object_get_own_property_symbols, object_get_prototype_of, object_has_own, object_is,
+    object_get_own_property_symbols, object_get_prototype_of, object_has_own,
     object_is_extensible, object_is_frozen, object_is_sealed, object_keys,
     object_prevent_extensions, object_seal, object_set_prototype_of, object_values,
 };
@@ -134,10 +134,6 @@ pub fn register_object(ctx: &mut Context) {
     constructor.set_static_method(
         "hasOwn",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_has_own))),
-    );
-    constructor.set_static_method(
-        "is",
-        Value::NativeFunction(Rc::new(NativeFunction::new(object_is))),
     );
     constructor.set_static_method(
         "fromEntries",

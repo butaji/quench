@@ -18,6 +18,8 @@ self-hosted JavaScript layer.
 - [ ] Complete the `__ops__` bridge and bootstrap realm lifecycle. Normal
   contexts now enter `bootstrap_js_builtins` after native registration.
 - [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
+- [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains
+  canonical SameValue and descriptor/constructor primitives.
 - [~] Array algorithms and methods: the JS layer now owns the common
   transformation, search, mutation, rearrangement, and accessor methods;
   Rust retains indexed storage, construction, iteration plumbing, and the
