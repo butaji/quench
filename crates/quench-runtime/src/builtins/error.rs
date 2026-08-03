@@ -230,6 +230,20 @@ fn register_aggregate_error(ctx: &mut Context, parent_proto: &Rc<RefCell<Object>
                         obj.set("message", Value::String(to_js_string(msg_arg)));
                     }
                 }
+                if let Some(Value::Object(options)) = args.get(2) {
+                    if let Some(cause) = options.borrow().get("cause") {
+                        obj.define_own_property(
+                            "cause",
+                            &PropertyDescriptor {
+                                value: Some(cause),
+                                writable: Some(true),
+                                enumerable: Some(false),
+                                configurable: Some(true),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
             };
             if let Some(Value::Object(error_rc)) = get_native_this() {
                 let mut obj = error_rc.borrow_mut();
