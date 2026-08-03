@@ -106,7 +106,8 @@ fixture cluster, and the next concrete slice.
 - `stream` — done (task 004). Need: `pipeline`, `finished`, `Readable.from`
   (done), `Writable.duplex`, `Transform._transform`, `PassThrough`.
 - `stream/iter` — gated by `--experimental-stream-iter`. Done.
-- `stream/promises` — register `pipeline`/`finished`.
+- `stream/promises` — stage 525 complete: promise-based `pipeline` and
+  `finished` reuse the existing evented stream contracts.
 - `stream/web` — register WHATWG `ReadableStream`/`WritableStream`/
   `TransformStream` polyfills; goal is to pass `test-stream-web*` fixtures.
 - `string_decoder` — stage 519 complete: UTF-8 `StringDecoder.write()` and
@@ -177,3 +178,6 @@ round-trip test confirms chunk boundaries are preserved as iterable values
 without adding a host callback.
 Stage 524 confirms `util/types` can be implemented entirely from JavaScript
 intrinsics, with no host callback or Rust surface expansion.
+Stage 525 confirms promise stream orchestration can remain in JavaScript:
+`pipeline`/`finished` subscribe to the existing `pipe`, `end`, and `error`
+events without expanding the Rust host.
