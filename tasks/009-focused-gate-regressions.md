@@ -177,3 +177,81 @@ Implementation plan for the next slice (kept here, not started):
 6. Run up-stream `test-cluster-basic.js` and `test-cluster-fork-env.js`
    directly with the binary to confirm the polyfill matches Node.
 7. Commit per stage, then move on.
+
+## Status — cluster worker lifecycle slice (done)
+
+Follow-on slice landed. Changes:
+
+- `crates/quench-node/src/main.rs`: expose `globalThis.__quench_script_source`
+  before the wrapped eval (the `__quench_script_source` name is the only host
+  callback added by this slice).
+- `crates/quench-node/polyfills/bootstrap.js`:
+  - Cluster module rewritten with a cached `globalThis.__nodeCluster` so
+    `require('cluster')` returns the same object across the primary and
+    worker re-evaluations.
+  - `NodeClusterWorker` class with `id`/`state`/`process.exitCode`/
+    `process.signalCode`, chainable `send`/`kill`/`disconnect`, and the
+    `none` → `online` → `listening` → `dead` state machine.
+  - `cluster.fork(env)` re-evaluates `__quench_script_source` in a microtask
+    with `cluster.isWorker = true` and `cluster.worker = workerInstance`,
+    merges `env` into `process.env` before the eval, and restores `isWorker`
+    in `finally`. `cluster.emit("fork", worker)` is also deferred to the
+    microtask so the primary's `const worker = cluster.fork()` is assigned
+    before any cluster listeners fire (matches Node semantics and avoids
+    the temporal-dead-zone trap in `test-cluster-basic.js`).
+  - `worker.kill()` sets `process.exitCode = null` and
+    `process.signalCode = "SIGTERM"`, then emits `exit` on the cluster
+    first, then on the worker (so cluster listeners see `state === "dead"`
+    in the correct order).
+  - `worker.send(message)` emits a `"message"` event on the worker (the
+    worker and primary share the same in-process Worker object, so the
+    primary's `worker.on("message", …)` receives it on the next microtask).
+  - `globalThis.__nodeClusterListening(info)` hook fires the cluster
+    `listening` event and the worker `listening` event with the address
+    info `{address, addressType: 4, fd: undefined, port}`.
+  - `http.Server.listen(0, host, …)` calls the cluster listening hook
+    (so a worker branch's `new http.Server().listen(0, '127.0.0.1')` fires
+    the cluster `listening` event with the right shape).
+  - `process.exit(code)` sets `process.exitCode` (Node semantics for an
+    in-process simulator; the harness's process-exit handler uses the
+    updated `process.exitCode`).
+  - `process.kill(pid, signal)` is a stub.
+
+Focused stages:
+- `tests/node-compat/stage-507/cluster-worker-lifecycle.js` — fork →
+  online → listening → exit lifecycle, worker states, listening info
+  shape, Worker instance, exit code/signal. **Passes.**
+- `tests/node-compat/stage-508/cluster-fork-env.js` — `fork(env)` merges
+  `env` into `process.env` in the worker branch; `cluster.worker.send`
+  round-trips to the primary. **Passes.**
+
+Up-stream fixtures:
+- `test-cluster-fork-env.js` — **passes.**
+- `test-cluster-disconnect-with-no-workers.js` — **passes.**
+- `test-cluster-basic.js`, `test-cluster-disconnect.js`,
+  `test-cluster-worker-exit.js`, `test-cluster-worker-kill.js`,
+  `test-cluster-setup-primary.js` — need additional polyfill work
+  (http real request handling, `cluster.worker.disconnect` cleanup,
+  `cluster.setupPrimary` arg variants, `cluster.fork()` stdio options).
+  Logged as the next sub-slices under `tasks/013` row #1.
+
+Retrospective:
+- The in-process worker re-evaluation re-runs the entry script top-level.
+  Primary-only top-level asserts must be guarded by the canonical
+  `if (cluster.isWorker) { … } else if (cluster.isPrimary) { … }` shape;
+  the focused stage mirrors the Node fixture's structure.
+- The http listen hook must be called from a synchronous site (not a
+  microtask) so the cluster listening event fires before the
+  `worker.kill()` triggered by the worker listening handler mutates
+  `worker.state` to `"dead"`. Earlier versions emitted the cluster
+  `listening` event from a queued microtask and the cluster listener
+  captured `state === "dead"`.
+- `cluster.emit("exit", …)` must fire before `worker.emit("exit", …)`
+  so the focused stage's `worker.on("exit", …)` handler (which asserts
+  on the cluster-level event sequence) sees the cluster event in the
+  array before the deep equality check.
+- `cluster.emit("fork", worker)` must be deferred to a microtask inside
+  `fork()` so the primary's `const worker = cluster.fork()` is assigned
+  before any cluster listener fires. Synchronous emission in
+  `test-cluster-basic.js` causes a temporal-dead-zone ReferenceError
+  because the listener references `worker` before its declaration.

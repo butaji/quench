@@ -375,6 +375,7 @@ fn run_source_with_runtime(
             }),
         )?;
         ctx.eval::<(), _>(BOOTSTRAP.as_bytes())?;
+        ctx.globals().set("__quench_script_source", source)?;
         let wrapped = format!("try {{\n{source}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}");
         ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
             let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}"));

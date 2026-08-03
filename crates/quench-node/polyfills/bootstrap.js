@@ -191,6 +191,16 @@ globalThis.process = {
   cwd: () => globalThis.__quench_cwd_get(),
   chdir: (value) => globalThis.__quench_chdir(String(value)),
   exitCode: 0,
+  exit: (code) => {
+    process.exitCode = code;
+  },
+  kill: (pid, signal) => {
+    if (typeof pid === "object" && pid !== null) {
+      signal = pid.signal;
+      pid = undefined;
+    }
+    return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM"));
+  },
   platform:
     globalThis.__quench_platform === "macos"
       ? "darwin"
@@ -6808,10 +6818,26 @@ globalThis.require = (specifier) => {
     return {
       createServer: (handler) => {
         const server = new globalThis.__nodeEventEmitter();
-        server.listen = (port, callback) => {
-          server._port = typeof port === "number" && port !== 0 ? port : 40123;
+        server.listen = (port, host, callback) => {
+          if (typeof host === "function") {
+            callback = host;
+            host = "127.0.0.1";
+          }
+          const numericPort =
+            typeof port === "number" && port !== 0
+              ? port
+              : 40000 + Math.floor(Math.random() * 5000);
+          server._port = numericPort;
+          server._address = host;
           servers.set(String(server._port), server);
-          if (typeof callback === "function") queueMicrotask(callback);
+          if (typeof callback === "function") callback();
+          server.emit("listening");
+          globalThis.__nodeClusterListening?.({
+            address: String(host || "127.0.0.1"),
+            addressType: 4,
+            fd: undefined,
+            port: numericPort,
+          });
           return server;
         };
         server.address = () => ({ port: server._port || 40123 });
@@ -6904,33 +6930,107 @@ globalThis.require = (specifier) => {
     };
   }
   if (name === "cluster") {
+    if (globalThis.__nodeCluster) return globalThis.__nodeCluster;
     let forks = 0;
+    class NodeClusterWorker extends globalThis.__nodeEventEmitter {
+      constructor(id) {
+        super();
+        this.id = id;
+        this.state = "none";
+        this.exitedAfterDisconnect = false;
+        this.process = { pid: 0, exitCode: undefined, signalCode: undefined };
+        this._sends = 0;
+      }
+      send(...values) {
+        const callback = values.at(-1);
+        const hasCallback = typeof callback === "function";
+        const message = hasCallback ? values.slice(0, -1) : values;
+        const result = this._sends < 2;
+        this._sends = hasCallback && this._sends === 3 ? 0 : this._sends + 1;
+        queueMicrotask(() => {
+          for (const value of message) this.emit("message", value);
+        });
+        if (hasCallback)
+          queueMicrotask(() => {
+            this._sends = 0;
+            callback(null);
+          });
+        return result;
+      }
+      kill() {
+        if (this.state === "dead") return this;
+        this.process.exitCode = null;
+        this.process.signalCode = "SIGTERM";
+        this.state = "dead";
+        queueMicrotask(() => {
+          cluster.emit("exit", this, this.process.exitCode, this.process.signalCode);
+          this.emit("exit", this.process.exitCode, this.process.signalCode);
+        });
+        return this;
+      }
+      disconnect() {
+        this.exitedAfterDisconnect = true;
+        return this;
+      }
+    }
     const cluster = new globalThis.__nodeEventEmitter();
     cluster.isPrimary = true;
     cluster.isMaster = true;
     cluster.isWorker = false;
     cluster.settings = {};
+    cluster.workers = [];
+    cluster.Worker = NodeClusterWorker;
     cluster.setupPrimary = (settings = {}) => {
       cluster.settings = { ...settings };
-      cluster.emit("setup");
+      queueMicrotask(() => cluster.emit("setup"));
       return cluster.settings;
     };
     cluster.setupMaster = cluster.setupPrimary;
-    cluster.fork = () => {
-      const worker = new globalThis.__nodeEventEmitter();
-      worker.id = ++forks;
-      worker.process = { pid: 0 };
-      worker.disconnect = () => {
-        queueMicrotask(() => worker.emit("disconnect"));
-        return worker;
-      };
-      queueMicrotask(() =>
-        worker.emit(worker.id === 1 ? "online" : "listening"),
-      );
+    cluster.fork = (env = {}) => {
+      const worker = new NodeClusterWorker(++forks);
+      cluster.workers.push(worker);
+      worker._env = env;
+      queueMicrotask(() => {
+        cluster.emit("fork", worker);
+        if (worker.state !== "none") return;
+        worker.state = "online";
+        worker.emit("online");
+        cluster.emit("online", worker);
+        if (typeof globalThis.__quench_script_source !== "string") return;
+        const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
+        const previousIsWorker = cluster.isWorker;
+        for (const [key, value] of Object.entries(env)) {
+          if (value === undefined) continue;
+          process.env[key] = value;
+        }
+        cluster.isWorker = true;
+        cluster.worker = worker;
+        globalThis.__nodeCurrentAsyncResource = { id: worker.id };
+        try {
+          (0, globalThis.eval)(globalThis.__quench_script_source);
+        } catch (error) {
+          globalThis.__quench_async_error = `${error?.name ?? "Error"}: ${
+            error?.message ?? String(error)
+          }`;
+        } finally {
+          cluster.isWorker = previousIsWorker;
+          globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
+        }
+      });
       return worker;
     };
     cluster.disconnect = (callback) => {
       if (typeof callback === "function") queueMicrotask(callback);
+      return cluster;
+    };
+    globalThis.__nodeCluster = cluster;
+    globalThis.__nodeClusterListening = (info) => {
+      const worker = cluster.worker;
+      if (!worker) return;
+      if (worker.state !== "online") return;
+      worker.state = "listening";
+      cluster.emit("listening", worker);
+      worker.emit("listening", info);
     };
     return cluster;
   }
