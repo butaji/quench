@@ -474,16 +474,24 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
             crate::builtins::symbol::get_well_known_symbol_no_ctx("species")
         {
             if let Some(species_fn) = constructor.borrow().get(&species.property_key()) {
-                let matcher = crate::eval::function::call_value_with_this(
+                if matches!(
                     species_fn,
-                    vec![
-                        Value::Object(Rc::clone(&regex_obj)),
-                        Value::String(flags.clone()),
-                    ],
-                    Value::Undefined,
-                )?;
-                if let Value::Object(matcher) = matcher {
-                    matcher_obj = matcher;
+                    Value::Function(_)
+                        | Value::NativeFunction(_)
+                        | Value::NativeConstructor(_)
+                        | Value::Class(_)
+                ) {
+                    let matcher = crate::eval::function::call_value_with_this(
+                        species_fn,
+                        vec![
+                            Value::Object(Rc::clone(&regex_obj)),
+                            Value::String(flags.clone()),
+                        ],
+                        Value::Undefined,
+                    )?;
+                    if let Value::Object(matcher) = matcher {
+                        matcher_obj = matcher;
+                    }
                 }
             }
         }
