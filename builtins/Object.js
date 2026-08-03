@@ -161,6 +161,14 @@ Object.getOwnPropertyNames = function ObjectGetOwnPropertyNames(O) {
   return OwnKeys(ToObject(O));
 };
 
+Object.getOwnPropertySymbols = function ObjectGetOwnPropertySymbols(O) {
+  if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
+  var keys = OwnKeys(ToObject(O));
+  var symbols = [];
+  for (var i = 0; i < keys.length; i++) if (typeof keys[i] === 'symbol') symbols.push(keys[i]);
+  return symbols;
+};
+
 // Object.create (ES2025 §20.1.2.2)
 Object.create = function ObjectCreate(proto, properties) {
   if (proto !== null && typeof proto !== 'object') throw ThrowTypeError("Object prototype may only be an Object or null");

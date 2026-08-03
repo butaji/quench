@@ -11,7 +11,6 @@ mod tests;
 
 use crate::builtins::object_static::{
     object_define_properties, object_define_property,
-    object_get_own_property_symbols,
 };
 use crate::value::{NativeConstructor, NativeFunction, Object, ObjectKind, Value};
 use crate::Context;
@@ -67,12 +66,6 @@ pub fn register_object(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new_named(
             "defineProperties",
             object_define_properties,
-        ))),
-    );
-    constructor.set_static_method(
-        "getOwnPropertySymbols",
-        Value::NativeFunction(Rc::new(NativeFunction::new(
-            object_get_own_property_symbols,
         ))),
     );
 
