@@ -107,7 +107,18 @@ String.prototype.concat = function StringConcat() {
 };
 
 String.prototype.substring = function StringSubstring(start, end) {
-  return _substring.call(this, start, end);
+  var string = this + '';
+  var length = string.length;
+  var first = Number(start);
+  var from = first !== first || first < 0 ? 0 : first === Infinity ? length : Math.floor(first);
+  var last = end === undefined ? length : Number(end);
+  var to = last !== last || last < 0 ? 0 : last === Infinity ? length : Math.floor(last);
+  if (from > to) {
+    var swap = from;
+    from = to;
+    to = swap;
+  }
+  return string.slice(from, to);
 };
 
 String.prototype.slice = function StringSlice(start, end) {

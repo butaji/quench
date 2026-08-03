@@ -98,6 +98,8 @@ self-hosted JavaScript layer.
   bitwise length conversion; its UTF-16/string primitives remain Rust-backed.
 - [~] `String.prototype.concat` now performs its coercion and argument
   concatenation algorithm in JS; Rust retains only the hidden string primitive.
+- [~] `String.prototype.substring` now performs JS coercion, clamping, and
+  argument ordering over the hidden UTF-16 slice primitive.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned
