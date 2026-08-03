@@ -356,7 +356,7 @@ Array.prototype.fill = function ArrayFill(value /*, start, end */) {
   var len = ToLength(O.length);
   var relativeStart = arguments.length > 1 ? ToIntegerOrInfinity(arguments[1]) : 0;
   var k = relativeStart >= 0 ? relativeStart : Math.max(len + relativeStart, 0);
-  var relativeEnd = arguments.length > 2 ? ToIntegerOrInfinity(arguments[2]) : len;
+  var relativeEnd = arguments.length > 2 && arguments[2] !== undefined ? ToIntegerOrInfinity(arguments[2]) : len;
   var final = relativeEnd >= 0 ? Math.min(relativeEnd, len) : Math.max(len + relativeEnd, 0);
   while (k < final) { O[k] = value; k++; }
   return O;

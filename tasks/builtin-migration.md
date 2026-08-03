@@ -102,6 +102,8 @@ self-hosted JavaScript layer.
   separate abstract operations.
 - [~] `Array.prototype.copyWithin` now clamps target, start, and end positions
   to the receiver length in the self-hosted JS algorithm.
+- [~] `Array.prototype.fill` treats an explicitly supplied `undefined` end
+  argument as the receiver length, matching the self-hosted algorithm.
 - [~] Added the shared JS `ToIntegerOrInfinity` operation and routed
   `Array.prototype.slice` index coercion through it.
 - [~] Routed Array `at`, `includes`, `indexOf`, and `lastIndexOf` positions
