@@ -518,3 +518,6 @@ asserting six-byte big- and little-endian round trips.
 
 Stage 193 formalized Buffer `Uint`/`UInt` method aliases, asserting that the
 modern spellings preserve the original method identity.
+
+Stage 194 formalized validation for variable-width Buffer reads, asserting
+argument-type and range errors for invalid byte lengths.
