@@ -195,3 +195,4 @@ these small fixtures isolate the currently implemented contract.
 |   185 | `util.format` numeric separators and options                | `tools/run-node-tests.sh --stage 185` |
 |   186 | `util.format` string objects and custom conversion           | `tools/run-node-tests.sh --stage 186` |
 |   187 | Buffer hex writes and invalid input truncation              | `tools/run-node-tests.sh --stage 187` |
+|   188 | Buffer `includes` values, offsets, and encodings            | `tools/run-node-tests.sh --stage 188` |
