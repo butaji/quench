@@ -797,6 +797,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_at_tracks_shared_resizable_buffer_shrink() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var b=new ArrayBuffer(4,{maxByteLength:8}); var fixed=new Uint8Array(b,0,4); var writer=new Uint8Array(b); writer[3]=3; var before=Array.prototype.at.call(fixed,-1); b.resize(3); before===3 && Array.prototype.at.call(fixed,-1)===undefined"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

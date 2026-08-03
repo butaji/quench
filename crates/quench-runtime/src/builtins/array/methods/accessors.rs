@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::value::{to_js_string, to_number, JsError, Object, ObjectKind, Value};
+use crate::value::{to_js_string, to_number, JsError, ObjData, Object, ObjectKind, Value};
 
 // ============================================================================
 // Helper functions
@@ -18,6 +18,15 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
             // Array methods work on any object with numeric indices
             if arr.kind == ObjectKind::Array {
                 Ok(arr.elements.clone())
+            } else if matches!(arr.data, ObjData::Idx { .. }) {
+                let length = arr
+                    .get("length")
+                    .and_then(|value| crate::value::try_to_number(&value).ok())
+                    .unwrap_or(0.0)
+                    .max(0.0) as usize;
+                Ok((0..length)
+                    .map(|index| arr.get(&index.to_string()).unwrap_or(Value::Undefined))
+                    .collect())
             } else {
                 // For non-Array objects (array-likes, arguments), extract indexed properties.
                 // Arguments objects in mappable mode (sloppy mode, no rest/default params)
