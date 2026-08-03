@@ -1,4 +1,5 @@
 const fs = require("fs");
+const assert = require("assert");
 
 (async () => {
   const path = `/tmp/quench-node-stage-141-${process.pid}`;
@@ -7,10 +8,11 @@ const fs = require("fs");
     [Buffer.from("ab"), Buffer.from("cd")],
     0
   );
-  if (written.bytesWritten !== 4) throw new Error("filehandle writev mismatch");
+  assert.strictEqual(written.bytesWritten, 4);
   const buffers = [Buffer.alloc(2), Buffer.alloc(2)];
   const read = await handle.readv(buffers, 0);
   await handle.close();
-  if (read.bytesRead !== 4 || Buffer.concat(read.buffers).toString() !== "abcd")
-    throw new Error("filehandle readv mismatch");
+  assert.strictEqual(read.bytesRead, 4);
+  assert.strictEqual(Buffer.concat(read.buffers).toString(), "abcd");
+  fs.rmSync(path);
 })().then(() => undefined);
