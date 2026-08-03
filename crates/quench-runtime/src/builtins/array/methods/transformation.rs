@@ -24,7 +24,11 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                 // store values in `elements` rather than `properties`, so check both.
                 let mut elements = Vec::new();
                 let mut i = 0u32;
-                loop {
+                let length = arr.properties.get("length").and_then(|value| match value {
+                    Value::Number(length) => Some((*length).max(0.0) as u32),
+                    _ => None,
+                });
+                while length.is_none_or(|limit| i < limit) {
                     let val = arr.properties.get(&i.to_string()).or_else(|| {
                         let idx = i as usize;
                         if idx < arr.elements.len() && !arr.holes.contains(&idx) {
@@ -33,13 +37,10 @@ pub fn get_this_array() -> Result<Vec<Value>, JsError> {
                             None
                         }
                     });
-                    match val {
-                        Some(v) => {
-                            elements.push(v.clone());
-                            i += 1;
-                        }
-                        None => break,
+                    if let Some(v) = val {
+                        elements.push(v.clone());
                     }
+                    i += 1;
                 }
                 Ok(elements)
             }
@@ -195,6 +196,20 @@ pub fn proto_every(args: Vec<Value>) -> Result<Value, JsError> {
         }
     }
     Ok(Value::Boolean(true))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Context, Value};
+
+    #[test]
+    fn filter_uses_array_like_length() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Array.prototype.filter.call({0: 12, 1: 11, 2: 9, length: 2}, function() { return true; }).length"),
+            Ok(Value::Number(2.0))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
