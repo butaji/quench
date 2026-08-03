@@ -4,7 +4,6 @@ var ThrowTypeError = ops.ThrowTypeError;
 
 var _nativeThen = Promise.prototype.then;
 var _nativeCatch = Promise.prototype.catch;
-var _nativeFinally = Promise.prototype.finally;
 
 // Promise.prototype.then (ES2025 §27.2.5.4)
 Promise.prototype.then = function PromiseThen(onFulfilled, onRejected) {
@@ -21,5 +20,14 @@ Promise.prototype.catch = function PromiseCatch(onRejected) {
 // Promise.prototype.finally (ES2025 §27.2.5.3)
 Promise.prototype.finally = function PromiseFinally(onFinally) {
   if (this === null || this === undefined) throw ThrowTypeError("Promise.prototype.finally called on null or undefined");
-  return _nativeFinally.call(this, onFinally);
+  var isCallable = typeof onFinally === 'function';
+  var thenFinally = function(value) {
+    var result = isCallable ? onFinally() : onFinally;
+    return Promise.resolve(result).then(function() { return value; });
+  };
+  var catchFinally = function(reason) {
+    var result = isCallable ? onFinally() : onFinally;
+    return Promise.resolve(result).then(function() { throw reason; });
+  };
+  return _nativeThen.call(this, thenFinally, catchFinally);
 };

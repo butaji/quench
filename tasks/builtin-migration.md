@@ -33,7 +33,9 @@ self-hosted JavaScript layer.
   Rust retains numeric conversion, radix formatting, and constructor/storage
   primitives until their JS algorithms have equivalent core operations.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
-- [ ] Promise and iterator algorithms; retain scheduling and suspension.
+- [~] Promise algorithms: `Promise.prototype.finally` is self-hosted in
+  `builtins/Promise.js`; Rust retains promise state, reactions, and
+  microtask scheduling. Constructor and combinator algorithms remain pending.
 - [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
   wrappers; retain their crate-backed and raw-buffer primitives in Rust.
 - [ ] Error, Function, Proxy, and remaining constructors/prototypes.

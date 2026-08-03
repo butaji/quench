@@ -171,11 +171,6 @@ fn create_promise_proto() -> Rc<RefCell<Object>> {
         "catch",
         Value::NativeFunction(Rc::new(NativeFunction::new(promise_catch_impl))),
     );
-    proto.borrow_mut().set(
-        "finally",
-        Value::NativeFunction(Rc::new(NativeFunction::new(promise_finally_impl))),
-    );
-
     proto
 }
 
