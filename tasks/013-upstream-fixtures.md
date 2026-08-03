@@ -933,3 +933,6 @@ primitive arguments.
 
 Stage 336 formalized `util.formatWithOptions` compact inspection, preserving
 compact array rendering and nested object elision.
+
+Stage 337 formalized `util.format` SharedArrayBuffer inspection, including its
+byte contents and byte-length metadata.
