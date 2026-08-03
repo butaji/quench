@@ -29,6 +29,9 @@ self-hosted JavaScript layer.
 - [~] Math algorithms: `max`, `min`, and `abs` are self-hosted in
   `builtins/Math.js`; Rust retains numeric primitives and performance-heavy
   functions. Number/Boolean/Symbol work is pending.
+- [~] Number formatting wrappers are routed through `builtins/Number.js`;
+  Rust retains numeric conversion, radix formatting, and constructor/storage
+  primitives until their JS algorithms have equivalent core operations.
 - [ ] Map, Set, WeakMap, and WeakSet algorithms; retain keyed storage.
 - [ ] Promise and iterator algorithms; retain scheduling and suspension.
 - [ ] Date, JSON, URI, RegExp, BigInt, ArrayBuffer, DataView, and TypedArray
