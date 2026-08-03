@@ -18,8 +18,10 @@ self-hosted JavaScript layer.
 - [ ] Complete the `__ops__` bridge and bootstrap realm lifecycle. Normal
   contexts now enter `bootstrap_js_builtins` after native registration.
 - [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
-- [ ] Array algorithms and methods; retain indexed storage and typed-array
-  performance operations in Rust.
+- [~] Array algorithms and methods: the JS layer now owns the common
+  transformation, search, mutation, rearrangement, and accessor methods;
+  Rust retains indexed storage, construction, iteration plumbing, and the
+  native `toSorted` path pending polish.
 - [ ] String algorithms; retain string storage and RegExp execution in Rust.
 - [~] Math algorithms: `max`, `min`, and `abs` are self-hosted in
   `builtins/Math.js`; Rust retains numeric primitives and performance-heavy

@@ -176,7 +176,15 @@ Array.prototype.join = function ArrayJoin(separator) {
   return R;
 };
 
-// Array.prototype.pop (ES2025 §23.1.3.23)
+Array.prototype.push = function ArrayPush() {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  for (var i = 0; i < arguments.length; i++) O[len + i] = arguments[i];
+  O.length = len + arguments.length;
+  return O.length;
+};
+
 Array.prototype.pop = function ArrayPop() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.pop called on null or undefined");
   var O = ToObject(this);
@@ -344,8 +352,67 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   return -1;
 };
 
-// Array.prototype.sort — kept as native (cannot be self-hosted without recursion)
-// Array.prototype.toSorted — kept as native for the same reason
+Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.copyWithin called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var to = target >= 0 ? target : Math.max(len + target, 0);
+  var from = start >= 0 ? start : Math.max(len + start, 0);
+  var final = end === undefined ? len : (end >= 0 ? end : Math.max(len + end, 0));
+  var count = Math.min(final - from, len - to);
+  var direction = 1;
+  if (from < to && to < from + count) { from += count - 1; to += count - 1; direction = -1; }
+  while (count > 0) {
+    if (from in O) O[to] = O[from]; else delete O[to];
+    from += direction; to += direction; count--;
+  }
+  return O;
+};
+
+Array.prototype.sort = function ArraySort(comparefn) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.sort called on null or undefined");
+  if (comparefn !== undefined && !IsCallable(comparefn)) throw ThrowTypeError("comparefn is not a function");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var values = [];
+  for (var i = 0; i < len; i++) if (i in O) values.push(O[i]);
+  for (var i = 1; i < values.length; i++) {
+    var value = values[i];
+    var j = i - 1;
+    while (j >= 0) {
+      var order = comparefn === undefined ? String(values[j]) > String(value) : comparefn(values[j], value) > 0;
+      if (!order) break;
+      values[j + 1] = values[j]; j--;
+    }
+    values[j + 1] = value;
+  }
+  for (var i = 0; i < len; i++) { if (i < values.length) O[i] = values[i]; else delete O[i]; }
+  return O;
+};
+
+Array.prototype.toString = function ArrayToString() {
+  return this.join();
+};
+
+Array.prototype.at = function ArrayAt(index) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.at called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  var k = index >= 0 ? index : len + index;
+  return k < 0 || k >= len ? undefined : O[k];
+};
+
+Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex) {
+  if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.lastIndexOf called on null or undefined");
+  var O = ToObject(this);
+  var len = O.length >>> 0;
+  if (len === 0) return -1;
+  var k = fromIndex === undefined ? len - 1 : (fromIndex >= 0 ? Math.min(fromIndex, len - 1) : len + fromIndex);
+  for (; k >= 0; k--) if (k in O && O[k] === searchElement) return k;
+  return -1;
+};
+
+// Array.prototype.toSorted remains native until its allocation path is moved.
 
 // Array.prototype.splice (ES2025 §23.1.3.30)
 Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */) {
