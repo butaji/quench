@@ -924,3 +924,6 @@ when it is the sole formatting argument.
 
 Stage 333 formalized `%c` CSS directive handling, discarding the style value
 while preserving subsequent arguments.
+
+Stage 334 formalized `%j` circular JSON handling, rendering circular values as
+`[Circular]` instead of throwing.
