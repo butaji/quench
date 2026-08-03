@@ -105,6 +105,9 @@ self-hosted JavaScript layer.
 - [~] `String.prototype.split` now owns string-separator, empty-separator,
   limit, and result construction algorithms in JS; RegExp splitting remains
   Rust-backed.
+- [~] Removed the dormant Rust implementations for self-hosted `concat`,
+  `split`, `substring`, and `slice`; Rust retains only the performance-sensitive
+  `repeat` primitive in this method group.
 - [~] Math public algorithms and coercion-sensitive methods are self-hosted in
   `builtins/Math.js`, including `max`, `min`, `abs`, rounding, transcendental,
   and numeric utility methods; the pure `random` entry point remains Rust-owned
