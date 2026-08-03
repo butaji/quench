@@ -42,6 +42,8 @@ self-hosted JavaScript layer.
   retains Array construction and indexed storage.
 - [~] `Array.of` is JS-owned; Rust retains the Array constructor and indexed
   storage primitives.
+- [~] `Array.from` is JS-owned; Rust retains `fromAsync` and core iterator/
+  storage primitives.
 - [~] String algorithms: `includes`, `startsWith`, `endsWith`, `repeat`, and
   trim variants are now authored in `builtins/String.js`; Rust retains string
   storage, iteration, and RegExp execution. Remaining String methods are

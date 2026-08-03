@@ -77,9 +77,6 @@ pub fn register_array(ctx: &mut Context) {
     array_constructor.set_name("Array");
 
     // Set static methods on the constructor
-    let mut array_from = NativeFunction::new(|args| array_from_impl(args));
-    define_static_method_length(&mut array_from);
-    array_constructor.set_static_method("from", Value::NativeFunction(Rc::new(array_from)));
     let mut array_from_async = NativeFunction::new(|args| {
         let array = array_from_impl(args)?;
         crate::builtins::promise::promise_resolve_impl_static(

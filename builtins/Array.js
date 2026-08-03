@@ -17,6 +17,25 @@ Array.of = function ArrayOf() {
   return result;
 };
 
+Array.from = function ArrayFrom(items, mapfn, thisArg) {
+  if (items === null || items === undefined) throw ThrowTypeError("Array.from requires an object");
+  if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
+  var values = [];
+  var iteratorMethod = items[Symbol.iterator];
+  if (typeof iteratorMethod === 'function') {
+    var iterator = iteratorMethod.call(items);
+    var step;
+    while (!(step = iterator.next()).done) values.push(step.value);
+  } else {
+    var object = ToObject(items);
+    var length = object.length >>> 0;
+    for (var i = 0; i < length; i++) values.push(object[i]);
+  }
+  var result = new Array(values.length);
+  for (var i = 0; i < values.length; i++) result[i] = mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i);
+  return result;
+};
+
 // Array.prototype.forEach (ES2025 §23.1.3.17)
 Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.forEach called on null or undefined");
