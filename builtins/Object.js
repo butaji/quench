@@ -25,6 +25,8 @@ var _objectValueOf = Object.prototype.__valueOf;
 var _hasOwnProperty = Object.prototype.__hasOwnProperty;
 var _isPrototypeOf = Object.prototype.__isPrototypeOf;
 var _propertyIsEnumerable = Object.prototype.__propertyIsEnumerable;
+var _lookupGetter = Object.prototype.___lookupGetter__;
+var _lookupSetter = Object.prototype.___lookupSetter__;
 
 Object.prototype.toString = function ObjectToString() {
   return _objectToString.call(this);
@@ -48,6 +50,14 @@ Object.prototype.isPrototypeOf = function ObjectIsPrototypeOf(value) {
 
 Object.prototype.propertyIsEnumerable = function ObjectPropertyIsEnumerable(propertyKey) {
   return _propertyIsEnumerable.call(this, propertyKey);
+};
+
+Object.prototype.__lookupGetter__ = function ObjectLookupGetter(propertyKey) {
+  return _lookupGetter.call(this, propertyKey);
+};
+
+Object.prototype.__lookupSetter__ = function ObjectLookupSetter(propertyKey) {
+  return _lookupSetter.call(this, propertyKey);
 };
 
 // Object.getOwnPropertyDescriptor (ES2025 §20.1.2.7)

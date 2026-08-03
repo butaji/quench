@@ -179,12 +179,12 @@ fn register_object_prototype_methods(object_proto_rc: &Rc<RefCell<Object>>) {
     );
 
     object_proto_rc.borrow_mut().set_builtin_method(
-        "__lookupGetter__",
+        "___lookupGetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_getter))),
     );
 
     object_proto_rc.borrow_mut().set_builtin_method(
-        "__lookupSetter__",
+        "___lookupSetter__",
         Value::NativeFunction(Rc::new(NativeFunction::new(object_prototype_lookup_setter))),
     );
 }
