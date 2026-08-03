@@ -109,7 +109,8 @@ fixture cluster, and the next concrete slice.
 - `stream/promises` — register `pipeline`/`finished`.
 - `stream/web` — register WHATWG `ReadableStream`/`WritableStream`/
   `TransformStream` polyfills; goal is to pass `test-stream-web*` fixtures.
-- `string_decoder` — TODO. Stage-519: `StringDecoder` class.
+- `string_decoder` — stage 519 complete: UTF-8 `StringDecoder.write()` and
+  `end()` preserve incomplete multibyte sequences across Buffer chunks.
 - `sys` — alias to `util`.
 - `timers` / `timers/promises` — done (task 003).
 - `tls` — TODO. Stage-520: real `tls.connect`/`tls.createServer` over
@@ -154,4 +155,9 @@ fixture cluster, and the next concrete slice.
 
 ## Status
 
-Not started (modulo task 009 cluster-work and the existing 32).
+Stage 519 is complete. The implementation required no new host callback: the
+polyfill keeps incomplete UTF-8 bytes locally and delegates complete sequences
+to the existing `TextDecoder`. The focused stage caught that rquickjs does not
+flush `TextDecoder.decode(undefined)`, so `end()` explicitly supplies an empty
+typed array. Future slices should include a direct runtime probe for boundary
+inputs before finalizing the focused assertion.
