@@ -527,3 +527,6 @@ big/little-endian round trips and a variable-width signed round trip.
 
 Stage 196 formalized Buffer single-precision float operations, asserting
 big/little-endian round trips and write return offsets.
+
+Stage 197 formalized Buffer slicing, callable construction, and comparison,
+asserting negative bounds, callable `Buffer`, and `Buffer.compare` behavior.
