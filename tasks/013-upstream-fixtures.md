@@ -351,3 +351,6 @@ asserting returned contents and preservation of an untouched buffer byte.
 
 Stage 138 formalized `fs.readFileSync` with the `a+` flag, asserting creation
 of a missing file, its empty decoded result, and cleanup.
+
+Stage 139 formalized default `fs.writeFileSync` permission bits, comparing the
+created mode with the process umask and cleaning up the temporary file.
