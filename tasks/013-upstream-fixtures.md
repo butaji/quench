@@ -906,3 +906,6 @@ helpers, USV conversion, VT stripping, and native-error recognition.
 
 Stage 327 formalized `util.format` trailing-argument joining and object-format
 inspection behavior.
+
+Stage 328 formalized detailed `%o` object inspection, including function
+metadata, circular references, and multiline formatting.
