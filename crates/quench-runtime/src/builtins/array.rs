@@ -88,6 +88,26 @@ pub fn register_array(ctx: &mut Context) {
                 return Ok(Value::Object(promise));
             }
         }
+        if let Some(Value::Object(items)) = args.first() {
+            if let Some(Value::Symbol(symbol)) =
+                crate::builtins::symbol::get_well_known_symbol_no_ctx("asyncIterator")
+            {
+                let method = crate::eval::member::eval_object_member(
+                    items,
+                    &symbol.property_key(),
+                    None,
+                )?;
+                if !matches!(method, Value::Undefined | Value::Null) && !method.is_callable() {
+                    let (error, _) = crate::value::error::create_js_error_with_type(
+                        "Array.fromAsync async iterator method is not callable",
+                        "TypeError",
+                    );
+                    let promise = crate::builtins::promise::create_pending_promise();
+                    crate::builtins::promise::settle_reject(&promise, error);
+                    return Ok(Value::Object(promise));
+                }
+            }
+        }
         if args.get(1).is_some()
             && matches!(args.first(), Some(Value::Object(items)) if items.borrow().kind == ObjectKind::Array)
         {
