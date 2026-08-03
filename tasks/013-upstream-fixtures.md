@@ -375,3 +375,6 @@ round-trip contents and cleanup after closing the handle.
 
 Stage 146 formalized promise file-handle `appendFile`, asserting appended
 contents after closing the handle and cleaning up the temporary file.
+
+Stage 147 formalized native synchronous `fs.realpath` behavior by comparing it
+with the standard synchronous resolver and cleaning up the temporary file.
