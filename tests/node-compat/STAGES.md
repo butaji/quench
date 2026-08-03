@@ -344,3 +344,4 @@ these small fixtures isolate the currently implemented contract.
 |   345 | assert.throws return value and constructor matching                | `tools/run-node-tests.sh --stage 345` |
 |   346 | assert.throws object matching                                     | `tools/run-node-tests.sh --stage 346` |
 |   347 | assert message formatting and operators                           | `tools/run-node-tests.sh --stage 347` |
+|   348 | assert.throws constructor mismatch                                | `tools/run-node-tests.sh --stage 348` |
