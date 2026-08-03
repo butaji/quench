@@ -219,3 +219,5 @@ WASI runtime integration remains outside the in-process rquickjs target.
 Stage 539 extends the explicit unsupported boundary to both inspector module
 variants, preventing debugger APIs from falling through to a generic loader
 error on this target.
+Stage 540 adds `util.parseArgs` for boolean/string options, negated flags,
+positionals, repeated values, and token reporting without expanding Rust.
