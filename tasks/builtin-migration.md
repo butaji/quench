@@ -265,6 +265,9 @@ self-hosted JavaScript layer.
 - [x] Make the shared `ToPrimitive` path unwrap boxed primitive `_value`
   storage after `Symbol.toPrimitive`, fixing generic array-like length
   coercion without adding per-builtin conversion code.
+- [x] Add the shared JS `CreateDataProperty` helper for self-hosted Array
+  result creation, and use it where result indices must be own properties
+  even when an inherited index setter exists.
 
 ## First increment
 

@@ -21,6 +21,16 @@ function ToIntegerOrInfinity(value) {
   return n < 0 ? Math.ceil(n) : Math.floor(n);
 }
 
+function CreateDataProperty(O, key, value) {
+  Object.defineProperty(O, String(key), {
+    value: value,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+  return true;
+}
+
 // Array.isArray (ES2025 §23.1.2.3)
 Array.isArray = function ArrayIsArray(arg) {
   return IsArray(arg);
@@ -28,7 +38,7 @@ Array.isArray = function ArrayIsArray(arg) {
 
 Array.of = function ArrayOf() {
   var result = new Array(arguments.length);
-  for (var i = 0; i < arguments.length; i++) result[i] = arguments[i];
+  for (var i = 0; i < arguments.length; i++) CreateDataProperty(result, i, arguments[i]);
   return result;
 };
 
@@ -47,7 +57,7 @@ Array.from = function ArrayFrom(items, mapfn, thisArg) {
     for (var i = 0; i < length; i++) values.push(object[i]);
   }
   var result = new Array(values.length);
-  for (var i = 0; i < values.length; i++) result[i] = mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i);
+  for (var i = 0; i < values.length; i++) CreateDataProperty(result, i, mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i));
   return result;
 };
 
@@ -76,7 +86,7 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
   var A = new Array(len);
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
-      A[k] = callbackfn.call(thisArg, O[k], k, O);
+      CreateDataProperty(A, k, callbackfn.call(thisArg, O[k], k, O));
     }
   }
   return A;
@@ -95,7 +105,7 @@ Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
     if (HasProperty(O, k)) {
       var kValue = O[k];
       if (callbackfn.call(thisArg, kValue, k, O)) {
-        A[to] = kValue;
+        CreateDataProperty(A, to, kValue);
         to = to + 1;
       }
     }
@@ -268,7 +278,7 @@ Array.prototype.slice = function ArraySlice(start, end) {
   var A = new Array(count);
   var n = 0;
   while (k < final) {
-    if (HasProperty(O, k)) A[n] = O[k];
+    if (HasProperty(O, k)) CreateDataProperty(A, n, O[k]);
     k++;
     n++;
   }
@@ -291,13 +301,13 @@ Array.prototype.concat = function ArrayConcat() {
       var len = ToLength(E.length);
       while (k < len) {
         if (k in E) {
-          A[n] = E[k];
+          CreateDataProperty(A, n, E[k]);
           n = n + 1;
         }
         k++;
       }
     } else {
-      A[n] = E;
+      CreateDataProperty(A, n, E);
       n = n + 1;
     }
   }
@@ -507,7 +517,7 @@ Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */
   // Gather deleted
   var removed = new Array(actualDeleteCount);
   for (var i = 0; i < actualDeleteCount; i++) {
-    if (HasProperty(O, actualStart + i)) removed[i] = O[actualStart + i];
+    if (HasProperty(O, actualStart + i)) CreateDataProperty(removed, i, O[actualStart + i]);
   }
   // Move elements
   if (itemCount < actualDeleteCount) {
