@@ -101,7 +101,13 @@ pub fn proto_copy_within(args: Vec<Value>) -> Result<Value, JsError> {
 pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let o = get_this_array_obj()?;
     let mut elements = o.borrow().elements.clone();
-    let len = elements.len() as i64;
+    let len = crate::eval::member::eval_object_member_value(
+        &o,
+        &Value::String("length".to_string()),
+        None,
+    )
+    .and_then(|value| crate::value::try_to_number(&value))?
+    .max(0.0) as i64;
     let start = relative_index(args.get(1), len)?;
     let end = match args.get(2) {
         None | Some(Value::Undefined) => len,
@@ -109,7 +115,19 @@ pub fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     };
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     for index in start..end.min(len) {
-        elements[index as usize] = value.clone();
+        let key = index.to_string();
+        let setter = o.borrow().get_setter_func(&key);
+        if let Some(setter) = setter {
+            crate::eval::function::call_value_with_this(
+                setter,
+                vec![value.clone()],
+                Value::Object(Rc::clone(&o)),
+            )?;
+        } else if (index as usize) < elements.len() {
+            elements[index as usize] = value.clone();
+        } else {
+            o.borrow_mut().set(&key, value.clone());
+        }
     }
     set_elements(&o, elements)?;
     Ok(Value::Object(Rc::clone(&o)))

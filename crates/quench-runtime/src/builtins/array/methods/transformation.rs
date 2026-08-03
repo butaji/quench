@@ -290,6 +290,14 @@ mod tests {
             Value::Boolean(true)
         );
     }
+
+    #[test]
+    fn fill_propagates_array_like_length_errors() {
+        let mut ctx = Context::new().unwrap();
+        assert!(ctx
+            .eval("var o = {}; Object.defineProperty(o, 'length', {get: function() { throw new Error('length'); }}); [].fill.call(o, 1)")
+            .is_err());
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
