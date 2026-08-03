@@ -867,3 +867,6 @@ Buffer-encoded username/shell results.
 
 Stage 314 formalized `os.devNull` and `availableParallelism`, asserting the
 null-device path and a positive numeric CPU-parallelism result.
+
+Stage 315 formalized numeric coercion of OS metric functions, asserting their
+callable results convert to non-NaN numbers.

@@ -311,3 +311,4 @@ these small fixtures isolate the currently implemented contract.
 |   312 | OS host information and loopback interfaces                      | `tools/run-node-tests.sh --stage 312` |
 |   313 | OS user information and Buffer encoding                          | `tools/run-node-tests.sh --stage 313` |
 |   314 | OS devNull and available parallelism APIs                          | `tools/run-node-tests.sh --stage 314` |
+|   315 | OS function numeric coercion                                        | `tools/run-node-tests.sh --stage 315` |
