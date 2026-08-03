@@ -329,3 +329,4 @@ these small fixtures isolate the currently implemented contract.
 |   330 | util format nested array inspection                               | `tools/run-node-tests.sh --stage 330` |
 |   331 | util format nested object inspection                              | `tools/run-node-tests.sh --stage 331` |
 |   332 | util format Error stack rendering                                 | `tools/run-node-tests.sh --stage 332` |
+|   333 | util format CSS directive handling                                | `tools/run-node-tests.sh --stage 333` |
