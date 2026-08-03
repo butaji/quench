@@ -212,11 +212,16 @@ fn array_from_async_mapped(args: &[Value]) -> Result<Value, JsError> {
     if items.borrow().kind != ObjectKind::Array {
         return Err(JsError::from("not an array"));
     }
+    let result = crate::builtins::promise::create_pending_promise();
     let map_fn = args.get(1).cloned().unwrap_or(Value::Undefined);
     if !map_fn.is_callable() {
-        return Err(JsError::from("Array.fromAsync map function is not callable"));
+        let (error, _) = crate::value::error::create_js_error_with_type(
+            "Array.fromAsync map function is not callable",
+            "TypeError",
+        );
+        crate::builtins::promise::settle_reject(&result, error);
+        return Ok(Value::Object(result));
     }
-    let result = crate::builtins::promise::create_pending_promise();
     let state = Rc::new(RefCell::new(AsyncMapState {
         items: Value::Object(Rc::clone(&items)),
         map_fn,

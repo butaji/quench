@@ -95,6 +95,8 @@ self-hosted JavaScript layer.
   Pending thenables and async-iterator resumption remain outstanding.
 - [~] Array input mapping now advances sequentially through the Promise
   scheduler, awaiting each mapping result before invoking the next callback.
+- [~] Non-callable `Array.fromAsync` mapping functions now produce a rejected
+  TypeError promise on the self-hosted async boundary.
 - [~] `Array.prototype.toLocaleString` is JS-owned, including hole handling,
   locale argument forwarding, and element-call validation; locale formatting
   primitives remain owned by the relevant value types.
