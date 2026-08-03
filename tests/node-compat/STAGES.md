@@ -318,3 +318,4 @@ these small fixtures isolate the currently implemented contract.
 |   319 | POSIX os.tmpdir slash preservation                                | `tools/run-node-tests.sh --stage 319` |
 |   320 | OS string-returning function coercion                             | `tools/run-node-tests.sh --stage 320` |
 |   321 | OS totalmem numeric coercion                                      | `tools/run-node-tests.sh --stage 321` |
+|   322 | OS upstream-complete core contract                                | `tools/run-node-tests.sh --stage 322` |

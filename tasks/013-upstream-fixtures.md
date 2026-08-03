@@ -888,3 +888,6 @@ coercion matches each function's direct result.
 
 Stage 321 formalized `os.totalmem` numeric coercion, asserting the function
 reference converts to the same number returned by invoking it.
+
+Stage 322 formalized the upstream-complete OS core contract, asserting the
+combined tmpdir, CPU, parallelism, memory, user information, and devNull APIs.
