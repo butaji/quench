@@ -91,6 +91,16 @@ pub fn register_array(ctx: &mut Context) {
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| array_from_impl(args)))),
     );
     array_constructor.set_static_method(
+        "fromAsync",
+        Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
+            let array = array_from_impl(args)?;
+            crate::builtins::promise::promise_resolve_impl_static(
+                vec![array],
+                crate::builtins::promise::get_promise_proto(),
+            )
+        }))),
+    );
+    array_constructor.set_static_method(
         "of",
         Value::NativeFunction(Rc::new(NativeFunction::new(|args| {
             let arr = Object::new_array_from(args.to_vec());

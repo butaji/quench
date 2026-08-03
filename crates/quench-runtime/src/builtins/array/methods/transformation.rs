@@ -735,6 +735,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_from_async_is_registered() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("typeof Array.fromAsync"),
+            Ok(Value::String("function".to_string()))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat
