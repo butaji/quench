@@ -5493,17 +5493,25 @@ const __nodeOsExports = {
       );
     return value;
   },
-  constants: {
-    signals: { SIGTERM: 15, SIGINT: 2 },
-    errno: { ENOENT: -2, EACCES: -13 },
-    priority: {
+  constants: Object.freeze({
+    signals: Object.freeze({
+      SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5,
+      SIGABRT: 6, SIGIOT: 6, SIGBUS: 10, SIGFPE: 8, SIGKILL: 9,
+      SIGUSR1: 30, SIGSEGV: 11, SIGUSR2: 31, SIGPIPE: 13, SIGALRM: 14,
+      SIGTERM: 15, SIGCHLD: 20, SIGCONT: 19, SIGSTOP: 17, SIGTSTP: 18,
+      SIGTTIN: 21, SIGTTOU: 22, SIGURG: 16, SIGXCPU: 24, SIGXFSZ: 25,
+      SIGVTALRM: 26, SIGPROF: 27, SIGWINCH: 28, SIGIO: 23, SIGINFO: 29,
+      SIGSYS: 12,
+    }),
+    errno: Object.freeze({ ENOENT: -2, EACCES: -13 }),
+    priority: Object.freeze({
       PRIORITY_LOW: 19,
       PRIORITY_BELOW_NORMAL: 10,
       PRIORITY_NORMAL: 0,
       PRIORITY_ABOVE_NORMAL: -7,
       PRIORITY_HIGH: -14,
-    },
-  },
+    }),
+  }),
 };
 globalThis.__nodeOs = __nodeOsExports;
 for (const [name, getter] of [
