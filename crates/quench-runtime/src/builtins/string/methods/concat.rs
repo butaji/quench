@@ -12,13 +12,13 @@ pub fn install_split_concat_methods(proto: &Rc<RefCell<Object>>) {
         Value::NativeFunction(Rc::new(NativeFunction::new(string_split_impl))),
     );
     proto_clone.borrow_mut().set(
-        "concat",
+        "__concat",
         Value::NativeFunction(Rc::new(NativeFunction::new(string_concat_impl))),
     );
 
     let proto_clone2 = Rc::clone(proto);
     proto_clone2.borrow_mut().set(
-        "repeat",
+        "__repeat",
         Value::NativeFunction(Rc::new(NativeFunction::new(string_repeat_impl))),
     );
 }

@@ -10,6 +10,10 @@ var _indexOf = String.prototype.__indexOf;
 var _lastIndexOf = String.prototype.__lastIndexOf;
 var _toUpperCase = String.prototype.__toUpperCase;
 var _toLowerCase = String.prototype.__toLowerCase;
+var _concat = String.prototype.__concat;
+var _repeat = String.prototype.__repeat;
+var _substring = String.prototype.__substring;
+var _slice = String.prototype.__slice;
 
 String.prototype.includes = function StringIncludes(searchString, position) {
   return _includes.call(this, searchString, position);
@@ -58,13 +62,20 @@ String.prototype.toLowerCase = function StringToLowerCase() {
 String.prototype.toLocaleUpperCase = String.prototype.toUpperCase;
 String.prototype.toLocaleLowerCase = String.prototype.toLowerCase;
 
+String.prototype.concat = function StringConcat() {
+  return _concat.apply(this, arguments);
+};
+
+String.prototype.substring = function StringSubstring(start, end) {
+  return _substring.call(this, start, end);
+};
+
+String.prototype.slice = function StringSlice(start, end) {
+  return _slice.call(this, start, end);
+};
+
 String.prototype.repeat = function StringRepeat(count) {
-  var string = _String(this);
-  var n = Math.floor(count);
-  if (n < 0 || n === Infinity) throw new RangeError("Invalid count value");
-  var result = "";
-  for (var i = 0; i < n; i++) result += string;
-  return result;
+  return _repeat.call(this, count);
 };
 
 String.prototype.padStart = function StringPadStart(maxLength, fillString) {

@@ -56,7 +56,7 @@ fn slice_impl(args: &[Value], s: &str) -> Value {
 pub fn install_slice_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
-        "substring",
+        "__substring",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(substring_impl(&args, &s)),
@@ -66,7 +66,7 @@ pub fn install_slice_methods(proto: &Rc<RefCell<Object>>) {
     );
 
     proto_clone.borrow_mut().set(
-        "slice",
+        "__slice",
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(slice_impl(&args, &s)),
