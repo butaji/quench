@@ -452,6 +452,7 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
     let Value::Object(regex_obj) = this_val else {
         return Err(JsError::new("TypeError: incompatible receiver".to_string()));
     };
+    let input = regexp_search_string(args.first())?;
     let flags_value = crate::eval::member::eval_object_member_value(
         &regex_obj,
         &Value::String("flags".to_string()),
@@ -470,7 +471,6 @@ fn regexp_symbol_match_all_impl(args: Vec<Value>) -> Result<Value, JsError> {
         .unwrap_or_default();
     let regex =
         Regex::new(&source).map_err(|_| JsError::new("Invalid regular expression".to_string()))?;
-    let input = regexp_search_string(args.first())?;
     let last_index = crate::eval::member::eval_object_member_value(
         &regex_obj,
         &Value::String("lastIndex".to_string()),
