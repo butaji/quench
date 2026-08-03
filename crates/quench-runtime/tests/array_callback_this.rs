@@ -17,3 +17,12 @@ fn concat_does_not_spread_object_initialized_by_array_apply() {
         Ok(Value::Number(4.0))
     );
 }
+
+#[test]
+fn array_of_uses_called_constructor_and_sets_length() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var hits=0; function Pack(){Object.defineProperty(this,'length',{set:function(v){hits++;}});} var r=Array.of.call(Pack,1,2); [hits,r instanceof Pack].join('|')"),
+        Ok(Value::String("1|true".to_string()))
+    );
+}

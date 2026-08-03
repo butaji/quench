@@ -37,8 +37,9 @@ Array.isArray = function ArrayIsArray(arg) {
 };
 
 Array.of = function ArrayOf() {
-  var result = new Array(arguments.length);
+  var result = new this(arguments.length);
   for (var i = 0; i < arguments.length; i++) CreateDataProperty(result, i, arguments[i]);
+  result.length = arguments.length;
   return result;
 };
 
