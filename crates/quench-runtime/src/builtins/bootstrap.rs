@@ -328,8 +328,22 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
 }
 
 fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
+    let values = prototype
+        .borrow()
+        .descriptors
+        .keys()
+        .filter_map(|key| prototype.borrow().get_own(key))
+        .collect::<Vec<_>>();
     for descriptor in prototype.borrow_mut().descriptors.values_mut() {
         descriptor.enumerable = false;
+    }
+    for value in values {
+        if let crate::value::Value::Function(function) = value {
+            let _ = function.set_property(
+                "\0nonconstructable",
+                crate::value::Value::Boolean(true),
+            );
+        }
     }
 }
 
@@ -443,6 +457,13 @@ mod tests {
         let r = ctx
             .eval("Object.keys(Array.prototype).indexOf('pop') === -1")
             .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn self_hosted_array_methods_are_not_constructable() {
+        let mut ctx = new_ctx();
+        let r = ctx.eval("!__ops__.IsConstructor(Array.prototype.map)").unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
 

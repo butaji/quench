@@ -529,7 +529,12 @@ pub fn is_constructor_value(val: &Value) -> bool {
             }
             nf.constructable || nf.prototype.borrow().is_some()
         }
-        Value::Function(f) => !f.is_arrow && !f.is_async && !f.is_generator,
+        Value::Function(f) => {
+            if f.get_property("\0nonconstructable").is_some() {
+                return false;
+            }
+            !f.is_arrow && !f.is_async && !f.is_generator
+        }
         Value::Object(o) => {
             if let Some(target) = o.borrow().get_own_value("__quench_proxy_target") {
                 return is_constructor_value(&target);

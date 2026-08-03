@@ -27,6 +27,8 @@ self-hosted JavaScript layer.
   remains pending.
 - [~] Bootstrap normalizes own properties on intrinsic prototypes to the
   spec-required non-enumerable default after self-hosted JS installation.
+- [~] The same bootstrap boundary marks self-hosted intrinsic methods as
+  non-constructable, matching built-in method semantics.
 - [~] Object and Reflect algorithms are JS-owned where practical; descriptor,
   call, and proxy-sensitive primitives remain in `__ops__`/Rust.
 - [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains
