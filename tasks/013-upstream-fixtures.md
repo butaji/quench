@@ -623,3 +623,13 @@ unpaired surrogates encode as the U+FFFD replacement character.
 
 Stage 228 formalized Buffer `alloc` encoded fill values, asserting hex-string
 fills repeat across the buffer and truncate at the end.
+
+Stage 229 formalized Buffer `from` unknown-encoding validation, asserting
+`ERR_UNKNOWN_ENCODING` for unsupported encodings.
+
+Stage 230 formalized Buffer prototype metadata and alloc edge cases,
+asserting `parent`/`offset` are absent on the prototype and negative
+array-like lengths clamp to zero.
+
+Stage 231 formalized `crypto.randomBytes` and `randomFillSync`, asserting
+Uint8Array results, sizing, and in-place fill.
