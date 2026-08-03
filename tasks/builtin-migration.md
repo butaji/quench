@@ -256,6 +256,9 @@ self-hosted JavaScript layer.
   adding a Rust builtin.
 - [x] Correct self-hosted Array find-family semantics: callbacks visit every
   index, including holes, while retaining the initial length snapshot.
+- [x] Route self-hosted Array splice start and deleteCount through
+  `ToIntegerOrInfinity`, correctly clamping negative, fractional, and infinite
+  arguments.
 
 ## First increment
 

@@ -534,6 +534,19 @@ mod tests {
     }
 
     #[test]
+    fn self_hosted_array_splice_clamps_negative_arguments() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var a = [0, 1, 2]; var removed = a.splice(-2, -1, 8, 9); \
+                 removed.length === 0 && a.length === 5 && a[0] === 0 && a[1] === 8 && a[2] === 9 && \
+                 a.splice(1, 1 / 0).length === 4",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn object_values_returns_values() {
         let mut ctx = new_ctx();
         let r = ctx

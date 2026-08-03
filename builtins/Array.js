@@ -495,13 +495,13 @@ Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.splice called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
-  var relativeStart = start >>> 0;
-  var actualStart = relativeStart >= len ? len : relativeStart;
+  var relativeStart = ToIntegerOrInfinity(start);
+  var actualStart = relativeStart < 0 ? Math.max(len + relativeStart, 0) : Math.min(relativeStart, len);
   var actualDeleteCount;
   if (arguments.length === 1) {
     actualDeleteCount = len - actualStart;
   } else {
-    actualDeleteCount = Math.min(Math.max(deleteCount >>> 0, 0), len - actualStart);
+    actualDeleteCount = Math.min(Math.max(ToIntegerOrInfinity(deleteCount), 0), len - actualStart);
   }
   var itemCount = Math.max(arguments.length - 2, 0);
   // Gather deleted
