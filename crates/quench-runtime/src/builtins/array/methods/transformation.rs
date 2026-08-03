@@ -543,6 +543,15 @@ mod tests {
             Ok(Value::Boolean(true))
         );
     }
+
+    #[test]
+    fn array_for_each_preserves_json_receiver_tag() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var seen=false; JSON.length=1; JSON[0]=1; Array.prototype.forEach.call(JSON,function(v,i,obj){seen=Object.prototype.toString.call(obj)==='[object JSON]';}); seen"),
+            Ok(Value::Boolean(true))
+        );
+    }
 }
 
 /// Flatten helper for Array.prototype.flat

@@ -375,6 +375,7 @@ pub fn register_json(ctx: &mut Context) {
     if let Some(proto) = crate::builtins::get_object_prototype() {
         json_obj.prototype = Some(proto);
     }
+    json_obj.set("Symbol.toStringTag", Value::String("JSON".to_string()));
     let json = Rc::new(RefCell::new(json_obj));
 
     // Per ES spec, JSON.stringify and JSON.parse are:
