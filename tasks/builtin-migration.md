@@ -25,7 +25,8 @@ self-hosted JavaScript layer.
 - [~] The `__ops__` bridge is active and normal contexts enter
   `bootstrap_js_builtins` after native registration; realm lifecycle cleanup
   remains pending.
-- [ ] Object and Reflect algorithms; retain descriptor primitives in `__ops__`.
+- [~] Object and Reflect algorithms are JS-owned where practical; descriptor,
+  call, and proxy-sensitive primitives remain in `__ops__`/Rust.
 - [~] `Object.is` is JS-owned through `builtins/Object.js`; Rust retains
   canonical SameValue and descriptor/constructor primitives.
 - [~] `Object.keys` is JS-owned through the canonical enumerable-key
