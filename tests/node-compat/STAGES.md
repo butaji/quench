@@ -281,3 +281,6 @@ these small fixtures isolate the currently implemented contract.
 |   282 | `url.parse` normalization and backslash handling               | `tools/run-node-tests.sh --stage 282` |
 |   283 | `querystring.parse`/`stringify` core behavior                  | `tools/run-node-tests.sh --stage 283` |
 |   284 | `querystring.stringify` object value coercion                  | `tools/run-node-tests.sh --stage 284` |
+|   285 | `querystring` encoder options and URI errors                   | `tools/run-node-tests.sh --stage 285` |
+|   286 | `querystring` numeric coercion and `maxKeys`                   | `tools/run-node-tests.sh --stage 286` |
+|   287 | `querystring` decoding, `unescapeBuffer`, and options          | `tools/run-node-tests.sh --stage 287` |
