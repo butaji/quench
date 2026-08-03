@@ -218,3 +218,5 @@ these small fixtures isolate the currently implemented contract.
 |   208 | Buffer endian swap operations                                 | `tools/run-node-tests.sh --stage 208` |
 |   209 | Buffer BigInt read/write operations                           | `tools/run-node-tests.sh --stage 209` |
 |   210 | Buffer ArrayBuffer views and memory sharing                   | `tools/run-node-tests.sh --stage 210` |
+|   211 | Buffer `isEncoding` validation                                | `tools/run-node-tests.sh --stage 211` |
+|   212 | Buffer `copyBytesFrom` typed-array copies                     | `tools/run-node-tests.sh --stage 212` |

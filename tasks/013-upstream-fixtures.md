@@ -569,3 +569,9 @@ and unsigned 64-bit values in both byte orders.
 
 Stage 210 formalized Buffer ArrayBuffer views, asserting offset/length
 construction and shared mutable memory with the backing buffer.
+
+Stage 211 formalized Buffer `isEncoding`, accepting every supported encoding
+(both case variants) and rejecting invalid inputs.
+
+Stage 212 formalized Buffer `copyBytesFrom`, asserting element-size-aware
+byte copying with offset/length bounds and defaults.
