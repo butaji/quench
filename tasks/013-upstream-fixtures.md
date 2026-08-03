@@ -930,3 +930,6 @@ Stage 334 formalized `%j` circular JSON handling, rendering circular values as
 
 Stage 335 formalized `util.formatWithOptions` color handling across mixed
 primitive arguments.
+
+Stage 336 formalized `util.formatWithOptions` compact inspection, preserving
+compact array rendering and nested object elision.
