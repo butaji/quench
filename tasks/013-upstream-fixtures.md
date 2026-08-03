@@ -727,3 +727,17 @@ target/start/end offsets and `ERR_INVALID_ARG_TYPE` for non-numeric offsets.
 Stage 261 formalized Buffer `fill` forged-length bounds check, asserting
 `ERR_BUFFER_OUT_OF_BOUNDS` when a forged `length` exceeds the backing store
 (verified against Node).
+
+Stage 262 formalized Buffer `copyBytesFrom` element-size bounds, asserting
+byte-accurate copies from typed arrays and past-end clamping to empty.
+
+Stage 263 formalized Buffer `concat` length and truncation, asserting the
+`totalLength` cap, empty results, and Buffer typing.
+
+Stage 264 formalized Buffer inspect limit and named-property rendering,
+asserting the live `INSPECT_MAX_BYTES` truncation and own-property inspection.
+
+The `INSPECT_MAX_BYTES` contract was aligned with real Node: `Buffer`
+carries no such static (it is `undefined`), and the truncation limit is
+controlled solely by the `require("buffer").INSPECT_MAX_BYTES` accessor
+(verified against Node 26).
