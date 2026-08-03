@@ -7896,6 +7896,97 @@ globalThis.require = (specifier) => {
       compressGzip: () => (chunks) => chunks,
       decompressGzip: () => (chunks) => chunks,
     };
+  if (name === "zlib") {
+    const toBytes = (input, encoding) => {
+      if (typeof input === "string") {
+        if (encoding === "utf8" || encoding === "utf-8" || !encoding)
+          return new TextEncoder().encode(input);
+        if (encoding === "ascii") {
+          const out = new Uint8Array(input.length);
+          for (let i = 0; i < input.length; i++) out[i] = input.charCodeAt(i) & 0x7f;
+          return out;
+        }
+        return new TextEncoder().encode(input);
+      }
+      if (input && typeof input === "object" && typeof input.toJSON === "function")
+        return toBytes(input.toJSON(), encoding);
+      return NodeBuffer.from(input);
+    };
+    const toArray = (input, encoding) => {
+      const b = toBytes(input, encoding);
+      const out = new Array(b.length);
+      for (let i = 0; i < b.length; i++) out[i] = b[i];
+      return out;
+    };
+    const fromArray = (arr) => {
+      const out = new NodeBuffer(arr.length);
+      for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+      return out;
+    };
+    const handleOptions = (opts) => {
+      if (opts === undefined) return {};
+      if (typeof opts === "object") return opts;
+      return { level: opts };
+    };
+    const noopStream = () => {
+      const e = new Error("zlib streams are not supported in the in-process simulator");
+      e.code = "ERR_STREAM_NOT_SUPPORTED";
+      throw e;
+    };
+    return {
+      deflateSync: (input, opts) => {
+        const o = handleOptions(opts);
+        const bytes = toArray(input, o && o.encoding);
+        const out = o && o.gzip
+          ? globalThis.__quench_zlib_gzip(bytes)
+          : globalThis.__quench_zlib_deflate(bytes);
+        return fromArray(out);
+      },
+      deflateRawSync: (input, opts) => {
+        const bytes = toArray(input, opts && opts.encoding);
+        return fromArray(globalThis.__quench_zlib_deflate(bytes));
+      },
+      inflateSync: (input, opts) => {
+        const o = handleOptions(opts);
+        const arr = o && o.gzip
+          ? globalThis.__quench_zlib_gunzip(toArray(input))
+          : globalThis.__quench_zlib_inflate(toArray(input));
+        return fromArray(arr);
+      },
+      inflateRawSync: (input, opts) => {
+        return fromArray(globalThis.__quench_zlib_inflate(toArray(input)));
+      },
+      gzipSync: (input, opts) => {
+        return fromArray(globalThis.__quench_zlib_gzip(toArray(input, opts && opts.encoding)));
+      },
+      gunzipSync: (input, opts) => {
+        return fromArray(globalThis.__quench_zlib_gunzip(toArray(input)));
+      },
+      deflate: noopStream,
+      deflateRaw: noopStream,
+      gzip: noopStream,
+      inflate: noopStream,
+      inflateRaw: noopStream,
+      gunzip: noopStream,
+      createDeflate: noopStream,
+      createInflate: noopStream,
+      createDeflateRaw: noopStream,
+      createInflateRaw: noopStream,
+      createGzip: noopStream,
+      createGunzip: noopStream,
+      constants: globalThis.__quench_zlib_constants,
+      crc32: (data, value) => 0,
+      isZlib: () => true,
+      Z_BASE_NOTICE: 0,
+      Z_NEED_DICT: 0,
+      Z_STREAM_END: 0,
+      Z_OK: 0,
+      Z_BUF_ERROR: 0,
+      Z_MEM_ERROR: 0,
+      Z_DATA_ERROR: 0,
+      Z_VERSION_ERROR: 0,
+    };
+  }
   if (name === "timers") return globalThis.__nodeTimers;
   if (name === "timers/promises") return globalThis.__nodeTimersPromises;
   if (name === "../common" || name.endsWith("/common"))
