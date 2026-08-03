@@ -191,3 +191,4 @@ these small fixtures isolate the currently implemented contract.
 |   181 | `util.format` primitive and placeholder behavior           | `tools/run-node-tests.sh --stage 181` |
 |   182 | `util.inspect` defaults and format options                 | `tools/run-node-tests.sh --stage 182` |
 |   183 | `util.format` BigInt conversions                            | `tools/run-node-tests.sh --stage 183` |
+|   184 | `util.format` symbol numeric conversions                    | `tools/run-node-tests.sh --stage 184` |
