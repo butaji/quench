@@ -111,6 +111,39 @@ const __quenchNodeTestModule = {
   test: (_name, options, callback) =>
     (typeof options === "function" ? options : callback)()
 };
+const __quenchInternalBindingModule = {
+  internalBinding: (binding) => {
+    if (binding === "debug")
+      return {
+        getGenericUsageCount: (name) =>
+          name.includes("Uninitialized")
+            ? __nodeAllocatorCounts.uninitialized
+            : __nodeAllocatorCounts.zeroFilled
+      };
+    if (binding === "uv") return { UV_ENOENT: -2, UV_EEXIST: -17 };
+    if (binding === "js_stream")
+      return {
+        JSStream: class JSStream {
+          constructor() {
+            this._externalStream = { __quench_external: true };
+          }
+        }
+      };
+    if (binding === "util")
+      return {
+        arrayBufferViewHasBuffer: (() => {
+          const observed = new WeakSet();
+          return (value) => {
+            if (value.byteLength >= 96 || observed.has(value)) return true;
+            observed.add(value);
+            return false;
+          };
+        })(),
+        previewEntries: () => []
+      };
+    return { fstat: () => undefined };
+  }
+};
 let __quenchClusterModule;
 {
   if (!globalThis.__nodeCluster) {
@@ -262,41 +295,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "vm") return __quenchVmModule;
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
-  if (name === "internal/test/binding")
-    return {
-      internalBinding: (binding) =>
-        binding === "debug"
-          ? {
-              getGenericUsageCount: (name) =>
-                name.includes("Uninitialized")
-                  ? __nodeAllocatorCounts.uninitialized
-                  : __nodeAllocatorCounts.zeroFilled
-            }
-          : binding === "uv"
-            ? { UV_ENOENT: -2, UV_EEXIST: -17 }
-            : binding === "js_stream"
-              ? {
-                  JSStream: class JSStream {
-                    constructor() {
-                      this._externalStream = { __quench_external: true };
-                    }
-                  }
-                }
-              : binding === "util"
-                ? {
-                    arrayBufferViewHasBuffer: (() => {
-                      const observed = new WeakSet();
-                      return (value) => {
-                        if (value.byteLength >= 96 || observed.has(value))
-                          return true;
-                        observed.add(value);
-                        return false;
-                      };
-                    })(),
-                    previewEntries: () => []
-                  }
-                : { fstat: () => undefined }
-    };
+  if (name === "internal/test/binding") return __quenchInternalBindingModule;
   if (name === "internal/errors")
     return {
       codes: {
