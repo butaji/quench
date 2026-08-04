@@ -1880,6 +1880,8 @@ Stage 667 formalized process.nextTick callback argument forwarding.
 
 Stage 668 formalized writable process.exitCode behavior.
 
+Stage 669 formalized one-shot process.once listener behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
