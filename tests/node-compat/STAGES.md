@@ -916,3 +916,4 @@ these small fixtures isolate the currently implemented contract.
 |   917 | process exposes release metadata                         | `tools/run-node-tests.sh --stage 917` |
 |   918 | process exposes parent PID metadata                      | `tools/run-node-tests.sh --stage 918` |
 |   919 | process exposes environment round trips                  | `tools/run-node-tests.sh --stage 919` |
+|   920 | child-process parent PID probe                           | `tools/run-node-tests.sh --stage 920` |
