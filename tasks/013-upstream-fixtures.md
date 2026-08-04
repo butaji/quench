@@ -1688,6 +1688,9 @@ return contract.
 Stage 592 formalized the bigint form of `process.hrtime()` and its monotonic
 timestamp contract.
 
+Stage 593 formalized the callable no-op contract of
+`process.setSourceMapsEnabled()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
