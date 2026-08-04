@@ -1316,6 +1316,9 @@ Writable streams.
 
 Stage 467 formalized `Readable.from()` constructing an object-mode Readable.
 
+Stage 468 formalized timer handles exposing chainable `ref()` and `unref()`
+state, including cleared-handle state.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
