@@ -647,3 +647,4 @@ these small fixtures isolate the currently implemented contract.
 |   648 | process platform and arch expose non-empty runtime identity strings        | `tools/run-node-tests.sh --stage 648` |
 |   649 | process config exposes a variables object                                   | `tools/run-node-tests.sh --stage 649` |
 |   650 | process release exposes string metadata fields                               | `tools/run-node-tests.sh --stage 650` |
+|   651 | process allowed environment flags exposes a set-like collection              | `tools/run-node-tests.sh --stage 651` |
