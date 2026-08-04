@@ -383,6 +383,12 @@ macro_rules! run_host_context {
             eprintln!("Bootstrap JavaScript exception: {error:?}");
             error
         })?;
+        let cli_title = $source.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("// Flags:")
+                .and_then(|flags| flags.split_whitespace().find_map(|flag| flag.strip_prefix("--title=")))
+        });
+        ctx.globals().set("__quench_cli_title", cli_title)?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-00.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-01.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/process-surface-02.js").as_bytes())?;

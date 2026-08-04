@@ -145,7 +145,8 @@
     globalThis.process.versions.unicode ??= "15.1";
     globalThis.process.versions.undici ??= "6.19.8";
     globalThis.process.versions.cjs_module_lexer ??= "1.2.2";
-    globalThis.process.title ||= "node";
+    globalThis.process.title =
+      globalThis.__quench_cli_title || globalThis.process.title || "node";
     globalThis.process.getBuiltinModule ||= (name) =>
       globalThis.require(String(name).replace(/^node:/, ""));
     globalThis.process.loadEnvFile ||= () => undefined;
