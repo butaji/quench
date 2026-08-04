@@ -459,6 +459,7 @@ class NodeEventEmitter {
     return this;
   }
   listeners(event) {
+    if (event === undefined || !this._events) return [];
     const value = this._events[event];
     return value === undefined
       ? []
