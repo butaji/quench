@@ -1,6 +1,7 @@
 globalThis.Buffer = new Proxy(NodeBuffer, {
   apply(_target, _thisArg, args) {
-    if (typeof args[0] === "number") return new NodeBuffer(args[0]);
+    if (typeof args[0] === "number")
+      return new NodeBuffer(NodeBuffer._validateSize(args[0]));
     return NodeBuffer.from(...args);
   },
   construct(_target, args) {
@@ -12,7 +13,7 @@ globalThis.Buffer = new Proxy(NodeBuffer, {
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      return new NodeBuffer(args[0]);
+      return new NodeBuffer(NodeBuffer._validateSize(args[0]));
     }
     return NodeBuffer.from(...args);
   }

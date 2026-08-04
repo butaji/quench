@@ -3162,3 +3162,9 @@ the typed-array boundary and includes callable Buffer methods only.
 Upstream audit: the focused introspection stage passes; the generic-method
 fixture still reports a separate method-table assertion mismatch in the
 harness.
+
+Stage 1043 routes numeric callable and constructor Buffer allocation through
+the shared size validator. Retrospective: allocation methods already rejected
+negative and over-limit sizes, but the Proxy apply/construct paths bypassed
+that validation and reached native typed-array errors. The focused stage and
+both upstream allocation-boundary fixtures now pass.
