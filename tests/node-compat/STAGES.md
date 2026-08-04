@@ -815,3 +815,4 @@ these small fixtures isolate the currently implemented contract.
 |   816 | buffer exposes modern encoding helpers                         | `tools/run-node-tests.sh --stage 816` |
 |   817 | events exposes core emitter API                                | `tools/run-node-tests.sh --stage 817` |
 |   818 | events inspects listeners and max-listener limits               | `tools/run-node-tests.sh --stage 818` |
+|   819 | stream exposes core constructors and helpers                   | `tools/run-node-tests.sh --stage 819` |
