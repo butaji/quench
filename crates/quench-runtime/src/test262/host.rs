@@ -364,6 +364,91 @@ mod tests {
     }
 
     #[test]
+    fn dstr_array_pattern_with_null_value_throws_typeerror_object() {
+        use crate::test262::runner::execute::initialize_test_context;
+        let mut ctx = initialize_test_context(false).expect("ctx");
+        let script = r#"
+            var f = ([[x]]) => {};
+            var captured;
+            try {
+                f([null]);
+                captured = "no-throw";
+            } catch (thrown) {
+                captured = [
+                    typeof thrown === "object" && thrown !== null,
+                    thrown && thrown.constructor && thrown.constructor.name,
+                    thrown && thrown.constructor === TypeError,
+                ];
+            }
+            globalThis.__dstr_result = captured;
+        "#;
+        ctx.eval(script).expect("script must run");
+        let v = ctx.get_global("__dstr_result").expect("set");
+        let Value::Object(obj) = v else {
+            panic!("expected array, got {:?}", v);
+        };
+        let arr = obj.borrow();
+        let is_object = matches!(arr.get("0").unwrap(), Value::Boolean(true));
+        let name_val = arr.get("1").unwrap();
+        let same_ctor = matches!(arr.get("2").unwrap(), Value::Boolean(true));
+        assert!(
+            is_object,
+            "thrown must be an object (got typeof non-object)"
+        );
+        let Value::String(name) = name_val else {
+            panic!("elem 1 must be string, got {:?}", name_val);
+        };
+        assert_eq!(name, "TypeError", "thrown must be a TypeError");
+        assert!(same_ctor, "thrown.constructor must be TypeError");
+    }
+
+    #[test]
+    fn unscopables_with_blocks_property_lookup_in_arrow() {
+        use crate::test262::runner::execute::initialize_test_context;
+        let mut ctx = initialize_test_context(false).expect("ctx");
+        let script = r#"
+            var count = 0;
+            var v = 1;
+            globalThis[Symbol.unscopables] = { v: true };
+            {
+                count++;
+                var ref = (x) => {
+                    count++;
+                    with (globalThis) {
+                        count++;
+                        globalThis.__saw_v = v;
+                    }
+                };
+                ref(0);
+            }
+            globalThis.__unscop_count = count;
+        "#;
+        ctx.eval(script).expect("arrow with unscopables must run");
+        let saw = ctx.get_global("__saw_v").expect("saw_v must be set");
+        let Value::Undefined = saw else {
+            panic!(
+                "with(globalThis) under unscopables must yield undefined for v, got {:?}",
+                saw
+            );
+        };
+    }
+
+    #[test]
+    fn harness_assert_settable_in_test_context() {
+        use crate::test262::runner::execute::initialize_test_context;
+        let mut ctx = initialize_test_context(false).expect("ctx");
+        let v = ctx.get_global("assert");
+        assert!(v.is_some(), "assert must be defined");
+        let v = v.unwrap();
+        let (Value::Function(_) | Value::NativeFunction(_)) = v else {
+            panic!("assert must be a function, got {:?}", v);
+        };
+        // Try to call assert.sameValue through eval.
+        ctx.eval("assert.sameValue(1, 1);")
+            .expect("assert.sameValue must be callable");
+    }
+
+    #[test]
     fn fn_name_method_test262_case() {
         use crate::test262::harness::HarnessLoader;
         use crate::test262::runner::default_test262_dir;
