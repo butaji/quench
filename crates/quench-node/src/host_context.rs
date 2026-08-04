@@ -424,6 +424,7 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin.fd ??= 0; stdin.destroyed ??= false; stdin.readableEncoding ??= null; }")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin.closed ??= false; stdin.errored ??= null; stdin.readableAborted ??= false; stdin.autoClose ??= false; stdin.bytesRead ??= 0; }")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin.pipe ||= ((destination) => destination); stdin.unpipe ||= (() => stdin); stdin.wrap ||= (() => stdin); }")?;
+        ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { const stdin = globalThis.process.stdin; stdin.close ||= (() => stdin); stdin.pending ??= false; }")?;
         ctx.globals().set("__nodeOsInitialized", false)?;
         ctx.globals().set("__quench_script_source", $source)?;
         let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source);
