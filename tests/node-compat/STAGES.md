@@ -540,3 +540,4 @@ these small fixtures isolate the currently implemented contract.
 |   541 | util styleText applies ANSI styles and color options               | `tools/run-node-tests.sh --stage 541` |
 |   542 | util callbackify bridges promises and errors to callbacks          | `tools/run-node-tests.sh --stage 542` |
 |   543 | util transferable abort helpers validate and preserve signals     | `tools/run-node-tests.sh --stage 543` |
+|   544 | console module exposes Console and common output methods           | `tools/run-node-tests.sh --stage 544` |
