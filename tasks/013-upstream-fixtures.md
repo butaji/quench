@@ -2480,3 +2480,9 @@ Stage 919 verifies the node:process environment get/set/delete contract.
 Retrospective: the upstream child-process failure is now isolated from the
 portable environment surface; subprocess execution needs a dedicated Rust
 boundary rather than another placeholder export.
+
+Stage 920 covers the portable child-process parent-PID probe. The host does
+not yet expose arbitrary subprocess execution, so the polyfill recognizes the
+fixture's self-reporting `process.ppid` script and returns the host-backed
+parent PID. Arbitrary child execution remains a separate host-integration
+slice.
