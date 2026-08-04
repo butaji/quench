@@ -1860,6 +1860,8 @@ Stage 657 formalized the process source-map control method and state contracts.
 
 Stage 658 formalized the writable string process.title contract.
 
+Stage 659 formalized process.getBuiltinModule resolution for built-in prefixes.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
