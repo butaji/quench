@@ -84,12 +84,21 @@ const __nodeWritableComplete = (state, stream, size, callback, error) => {
   }
 };
 const __nodeReadablePushChunk = (stream, chunk) => {
+  stream._readableState.reading = false;
   if (stream._paused || stream.listenerCount("data") === 0) {
     stream._chunks.push(chunk);
     if (stream.listenerCount("readable"))
       queueMicrotask(() => stream.emit("readable"));
   } else stream.emit("data", stream._decode(chunk));
+  const length = chunk?.byteLength ?? chunk?.length ?? 0;
+  if (length < stream.readableHighWaterMark)
+    queueMicrotask(() => __nodeReadableStart(stream));
   return true;
+};
+const __nodeReadableStart = (stream) => {
+  if (stream._ended || stream._readableState.reading) return;
+  stream._readableState.reading = true;
+  stream._read?.call(stream);
 };
 const __nodeReadableReadSized = (stream, chunk, size) => {
   if (size === undefined || stream.readableObjectMode || !chunk)
@@ -116,6 +125,12 @@ const __nodeReadableReadSized = (stream, chunk, size) => {
     return stream._decode(chunk.subarray(0, size));
   }
   return undefined;
+};
+const __nodeReadableFinishRead = (stream, chunk) => {
+  if (!stream._chunks.length && stream._ended) stream._emitEnd();
+  const result = stream._decode(chunk);
+  if (!result?.byteLength && !stream._ended) __nodeReadableStart(stream);
+  return result;
 };
 class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
@@ -145,15 +160,17 @@ class NodeReadable extends NodeEventEmitter {
       this.readableFlowing = true;
       queueMicrotask(() => {
         if (!this._chunks.length && !this._ended) {
-          this._readableState.reading = true;
-          this._read?.();
+          __nodeReadableStart(this);
         }
         while (!this._paused && this._chunks.length)
           this.emit("data", this._decode(this._chunks.shift()));
         if (!this._chunks.length && this._ended) this._emitEnd();
       });
-    } else if (event === "readable" && this._chunks.length) {
-      queueMicrotask(() => this.emit("readable"));
+    } else if (event === "readable") {
+      queueMicrotask(() => {
+        if (this._chunks.length) this.emit("readable");
+        else __nodeReadableStart(this);
+      });
     }
     return this;
   }
@@ -231,7 +248,10 @@ class NodeReadable extends NodeEventEmitter {
         "stream.push() after EOF",
         "ERR_STREAM_PUSH_AFTER_EOF"
       );
-    if (chunk === null) return __nodeReadablePushEnd(this);
+    if (chunk === null) {
+      this._readableState.reading = false;
+      return __nodeReadablePushEnd(this);
+    }
     if (!this.readableObjectMode && !ArrayBuffer.isView(chunk)) {
       const error = new TypeError("chunk must be a string or buffer");
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -266,8 +286,7 @@ class NodeReadable extends NodeEventEmitter {
     const chunk = this._chunks.shift();
     const sized = __nodeReadableReadSized(this, chunk, size);
     if (sized !== undefined) return sized;
-    if (!this._chunks.length && this._ended) this._emitEnd();
-    return this._decode(chunk);
+    return __nodeReadableFinishRead(this, chunk);
   }
 
   setEncoding(encoding) {

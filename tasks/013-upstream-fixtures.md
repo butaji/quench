@@ -2911,3 +2911,14 @@ before and after attaching data flow isolates lazy stream activation.
 Stage 1006 verifies Writable/Transform `_writableState.needDrain` initialization
 and backpressure activation. Retrospective: testing a large write against a
 small high-water mark makes the state transition deterministic.
+
+Stage 1007 verifies Readable readable-event activation, high-water-mark-driven
+`reading` state, EOF reset, and reactivation after empty chunks. Retrospective:
+moving activation and post-read transitions into shared helpers keeps the
+stream methods below the complexity limit while making state transitions
+testable independently of the upstream harness.
+
+Upstream audit: `test-stream-readable-event.js` still reports an asynchronous
+harness assertion after these state transitions; the focused stage covers the
+same four transition families without conflating them with the harness's
+process-exit callback accounting.
