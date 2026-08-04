@@ -2576,3 +2576,7 @@ await an isolated job-loop fix.
 Stage 941 verifies `EventEmitter.listeners()` returns the registered listener
 and a defensive array copy. Retrospective: ordinary listener contracts can be
 validated independently of once-wrapper and pending-job behavior.
+
+Stage 942 verifies `EventEmitter.off()` is the `removeListener()` alias and
+removes ordinary listeners. Retrospective: alias identity checks catch API
+surface drift with less fixture complexity than another event sequence.

@@ -938,3 +938,4 @@ these small fixtures isolate the currently implemented contract.
 |   939 | events abort-listener argument validation                                | `tools/run-node-tests.sh --stage 939` |
 |   940 | events static symbol and rejection settings                              | `tools/run-node-tests.sh --stage 940` |
 |   941 | EventEmitter listener enumeration                                        | `tools/run-node-tests.sh --stage 941` |
+|   942 | EventEmitter off alias lifecycle                                         | `tools/run-node-tests.sh --stage 942` |
