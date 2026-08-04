@@ -125,6 +125,9 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "ToPropertyKey", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
+        if matches!(v, Value::Symbol(_)) {
+            return Ok(v);
+        }
         let key = crate::eval::ops::to_property_key(&v)?;
         Ok(Value::String(key))
     });
@@ -183,10 +186,11 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "CreateDataProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
         let val = args.get(2).cloned().unwrap_or(Value::Undefined);
         if let Value::Object(obj_rc) = &o {
             if !obj_rc.borrow().extensible {
@@ -208,10 +212,11 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "HasProperty", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
         if let Value::Object(obj_rc) = &o {
             Ok(Value::Boolean(
                 crate::eval::object::proxy_has_property(obj_rc, &key).unwrap_or(false),
@@ -230,10 +235,11 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "HasOwnProperty", |args| {
         let value = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
         if let Value::Object(object) = value {
             Ok(Value::Boolean(object.borrow().has_own(&key)))
         } else {
@@ -548,10 +554,11 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "GetOwnPropDesc", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
-        let key = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_default();
+        let key = match args.get(1) {
+            Some(Value::Symbol(symbol)) => symbol.property_key(),
+            Some(value) => crate::value::to_js_string(value),
+            None => String::new(),
+        };
         match &o {
             Value::Object(obj_rc) => {
                 let obj_ref = obj_rc.borrow();
@@ -596,9 +603,10 @@ pub fn make_ops_object() -> Value {
                     let desc_obj =
                         crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
                     let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc_obj));
-                    if let Some(v) = &flags.value {
-                        desc_rc.borrow_mut().set("value", v.clone());
-                    }
+                    desc_rc.borrow_mut().set(
+                        "value",
+                        flags.value.clone().unwrap_or_else(|| val.clone()),
+                    );
                     desc_rc
                         .borrow_mut()
                         .set("writable", Value::Boolean(flags.writable));

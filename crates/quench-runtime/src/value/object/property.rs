@@ -34,6 +34,9 @@ impl Object {
 
     /// Get own property value only (string key, no prototype chain).
     pub fn get_own_value(&self, key: &str) -> Option<Value> {
+        if let Some(value) = self.symbol_properties.get(key) {
+            return Some(value.clone());
+        }
         if let Some(value) = self.properties.get(key) {
             return Some(value.clone());
         }

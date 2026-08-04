@@ -177,3 +177,13 @@ fn test_static_async_generator_before_computed_instance_fields() {
     );
     assert!(result.is_ok(), "static async generator failed: {:?}", result);
 }
+
+#[test]
+fn test_computed_symbol_class_field_descriptor_preserves_value() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var key = Symbol(); class C { [key] = 42; } \
+         var c = new C(); Object.getOwnPropertyDescriptor(c, key).value",
+    );
+    assert_eq!(result, Ok(Value::Number(42.0)));
+}
