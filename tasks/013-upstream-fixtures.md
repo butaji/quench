@@ -1457,6 +1457,8 @@ compression status values.
 Stage 516 formalized callback-based deflate/inflate and gzip/gunzip round trips,
 callback validation, and asynchronous decompression errors.
 
+Stage 517 formalized `zlib.crc32()` for strings, buffers, and seeded checksums.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
