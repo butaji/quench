@@ -452,3 +452,4 @@ these small fixtures isolate the currently implemented contract.
 |   453 | stream writable length recovery without spurious drain         | `tools/run-node-tests.sh --stage 453` |
 |   454 | stream writable end chainability and finish event              | `tools/run-node-tests.sh --stage 454` |
 |   455 | stream write-after-end rejection and error code                | `tools/run-node-tests.sh --stage 455` |
+|   456 | stream push-after-EOF rejection and error code                 | `tools/run-node-tests.sh --stage 456` |
