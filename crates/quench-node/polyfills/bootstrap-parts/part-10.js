@@ -1,31 +1,129 @@
-globalThis.__nodeFs.promises.open = async (...args) => {
-  const handle = await __nodePromiseOpen(...args);
+const __nodeFsCollectWriteIterable = (data, options) => {
+  const chunks = [];
+  for (const chunk of data) {
+    if (
+      typeof chunk !== "string" &&
+      !(chunk instanceof Uint8Array) &&
+      !ArrayBuffer.isView(chunk)
+    ) {
+      const error = new TypeError(
+        'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return chunks.length === 1
+    ? chunks[0]
+    : NodeBuffer.concat(
+        chunks.map((chunk) =>
+          typeof chunk === "string"
+            ? NodeBuffer.from(
+                chunk,
+                typeof options === "string"
+                  ? options
+                  : options && options.encoding
+              )
+            : NodeBuffer.from(chunk)
+        )
+      );
+};
+const __nodeFsNormalizeAsyncWriteData = async (data) => {
+  if (
+    data &&
+    typeof data !== "string" &&
+    !(data instanceof Uint8Array) &&
+    !(data instanceof ArrayBuffer) &&
+    typeof data[Symbol.asyncIterator] === "function"
+  ) {
+    const chunks = [];
+    for await (const chunk of data) chunks.push(chunk);
+    data = chunks;
+  }
+  return data;
+};
+const __nodeFsNormalizeWriteData = async (data, options) => {
+  if (data && data._chunks) data = data._chunks;
+  data = await __nodeFsNormalizeAsyncWriteData(data);
+  if (
+    data &&
+    typeof data !== "string" &&
+    !(data instanceof Uint8Array) &&
+    !ArrayBuffer.isView(data) &&
+    typeof data[Symbol.iterator] === "function"
+  )
+    data = __nodeFsCollectWriteIterable(data, options);
+  return data;
+};
+const __nodeFsValidateWriteData = (data) => {
+  if (
+    typeof data !== "string" &&
+    !(data instanceof Uint8Array) &&
+    !ArrayBuffer.isView(data) &&
+    !(data instanceof ArrayBuffer)
+  ) {
+    const error = new TypeError(
+      'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+const __nodeFsHandleWriteFile = async (fd, data, options) => {
+  if (options && options.signal)
+    await new Promise((resolve) => queueMicrotask(resolve));
+  if (options && options.signal && options.signal.aborted) {
+    const error = new Error("The operation was aborted");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    throw error;
+  }
+  data = await __nodeFsNormalizeWriteData(data, options);
+  __nodeFsValidateWriteData(data);
+  return globalThis.__nodeFs.writeFileSync(
+    fd,
+    data,
+    typeof options === "string" ? { encoding: options } : options
+  );
+};
+const __nodeFsWriteArguments = (buffer, offset, length, position) => {
+  const source = typeof offset === "object" ? offset.buffer || offset : buffer;
+  const start = typeof offset === "object" ? offset.offset || 0 : offset || 0;
+  const size =
+    typeof offset === "object"
+      ? offset.length === undefined
+        ? source.length - start
+        : offset.length
+      : length === undefined
+        ? source.length - start
+        : length;
+  const at = typeof offset === "object" ? offset.position : position;
+  return { source, start, size, at };
+};
+const __nodeFsHandleWrite = (handle, buffer, offset, length, position) => {
+  const { source, start, size, at } = __nodeFsWriteArguments(
+    buffer,
+    offset,
+    length,
+    position
+  );
+  return {
+    bytesWritten: globalThis.__nodeFs.writeSync(
+      handle.fd,
+      source,
+      start,
+      size,
+      at === undefined ? null : at
+    ),
+    buffer: source
+  };
+};
+const __nodeFsAttachHandleIo = (handle) => {
   handle.write = (buffer, offset, length, position) =>
-    Promise.resolve().then(() => {
-      const start =
-        typeof offset === "object" ? offset.offset || 0 : offset || 0;
-      const source =
-        typeof offset === "object" ? offset.buffer || offset : buffer;
-      const size =
-        typeof offset === "object"
-          ? offset.length === undefined
-            ? source.length - start
-            : offset.length
-          : length === undefined
-            ? source.length - start
-            : length;
-      const at = typeof offset === "object" ? offset.position : position;
-      return {
-        bytesWritten: globalThis.__nodeFs.writeSync(
-          handle.fd,
-          source,
-          start,
-          size,
-          at === undefined ? null : at
-        ),
-        buffer: source
-      };
-    });
+    Promise.resolve().then(() =>
+      __nodeFsHandleWrite(handle, buffer, offset, length, position)
+    );
   handle.readv = (buffers, position) =>
     Promise.resolve().then(() => ({
       bytesRead: globalThis.__nodeFs.readvSync(handle.fd, buffers, position),
@@ -40,6 +138,8 @@ globalThis.__nodeFs.promises.open = async (...args) => {
       ),
       buffers
     }));
+};
+const __nodeFsAttachHandleOperations = (handle) => {
   handle.truncate = (length = 0) =>
     Promise.resolve().then(() =>
       globalThis.__nodeFs.ftruncateSync(handle.fd, length)
@@ -58,178 +158,100 @@ globalThis.__nodeFs.promises.open = async (...args) => {
     Promise.resolve().then(() =>
       globalThis.__nodeFs.readFileSync(handle.fd, options)
     );
-  handle.writeFile = async (data, options) => {
-    if (options && options.signal)
-      await new Promise((resolve) => queueMicrotask(resolve));
-    if (options && options.signal && options.signal.aborted) {
-      const error = new Error("The operation was aborted");
-      error.name = "AbortError";
-      error.code = "ABORT_ERR";
-      throw error;
-    }
-    if (data && data._chunks) data = data._chunks;
-    if (
-      data &&
-      typeof data !== "string" &&
-      !(data instanceof Uint8Array) &&
-      !(data instanceof ArrayBuffer) &&
-      typeof data[Symbol.asyncIterator] === "function"
-    ) {
-      const chunks = [];
-      for await (const chunk of data) chunks.push(chunk);
-      data = chunks;
-    }
-    if (
-      data &&
-      typeof data !== "string" &&
-      !(data instanceof Uint8Array) &&
-      !ArrayBuffer.isView(data) &&
-      typeof data[Symbol.iterator] === "function"
-    ) {
-      const chunks = [];
-      for (const chunk of data) {
-        if (
-          typeof chunk !== "string" &&
-          !(chunk instanceof Uint8Array) &&
-          !ArrayBuffer.isView(chunk)
-        ) {
-          const error = new TypeError(
-            'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
-        }
-        chunks.push(chunk);
-      }
-      data =
-        chunks.length === 1
-          ? chunks[0]
-          : NodeBuffer.concat(
-              chunks.map((chunk) =>
-                typeof chunk === "string"
-                  ? NodeBuffer.from(
-                      chunk,
-                      typeof options === "string"
-                        ? options
-                        : options && options.encoding
-                    )
-                  : NodeBuffer.from(chunk)
-              )
-            );
-    }
-    if (
-      typeof data !== "string" &&
-      !(data instanceof Uint8Array) &&
-      !ArrayBuffer.isView(data) &&
-      !(data instanceof ArrayBuffer)
-    ) {
-      const error = new TypeError(
-        'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    return globalThis.__nodeFs.writeFileSync(
-      handle.fd,
-      data,
-      typeof options === "string" ? { encoding: options } : options
-    );
-  };
+  handle.writeFile = (data, options) =>
+    __nodeFsHandleWriteFile(handle.fd, data, options);
   handle.appendFile = (data, options) =>
     Promise.resolve().then(() =>
       globalThis.__nodeFs.appendFileSync(handle.fd, data, options)
     );
   handle.close = () =>
     Promise.resolve().then(() => globalThis.__nodeFs.closeSync(handle.fd));
+};
+globalThis.__nodeFs.promises.open = async (...args) => {
+  const handle = await __nodePromiseOpen(...args);
+  __nodeFsAttachHandleIo(handle);
+  __nodeFsAttachHandleOperations(handle);
   return handle;
 };
 const __nodeOpenWithFilePosition = globalThis.__nodeFs.promises.open;
-globalThis.__nodeFs.promises.open = async (...args) => {
-  const handle = await __nodeOpenWithFilePosition(...args);
-  const previousWriteFile = handle.writeFile;
-  const previousReadFile = handle.readFile;
-  handle.pull = (transformOrOptions, maybeOptions) => {
-    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
-      const error = new Error("The file handle is not in a valid state");
-      error.code = "ERR_INVALID_STATE";
+const __nodeFsValidatePullOptions = (options) => {
+  if (options.autoClose !== undefined && typeof options.autoClose !== "boolean")
+    throw new TypeError('The "autoClose" option must be of type boolean');
+  if (
+    options.signal !== undefined &&
+    (!options.signal || typeof options.signal.aborted !== "boolean")
+  )
+    throw new TypeError('The "signal" option must be an AbortSignal');
+  for (const [name, value] of [
+    ["start", options.start],
+    ["limit", options.limit],
+    ["chunkSize", options.chunkSize]
+  ]) {
+    if (value === undefined) continue;
+    __nodeFsValidatePullNumber(name, value);
+  }
+};
+const __nodeFsValidatePullNumber = (name, value) => {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new TypeError(`The "${name}" option must be of type number`);
+  if (!Number.isInteger(value) || value < 0)
+    throw new RangeError(`The value of "${name}" is out of range`);
+};
+const __nodeFsPullBatches = (handle, options) => {
+  const source = globalThis.__nodeFs.readFileSync(handle.fd);
+  const start =
+    options.start === undefined
+      ? globalThis.__nodeFdPositions[handle.fd] || 0
+      : Number(options.start);
+  const end =
+    options.limit === undefined
+      ? source.length
+      : Math.min(source.length, start + Number(options.limit));
+  const chunkSize =
+    options.chunkSize === undefined ? 128 * 1024 : Number(options.chunkSize);
+  const batches = [];
+  for (let offset = start; offset < end; offset += chunkSize)
+    batches.push([source.subarray(offset, Math.min(end, offset + chunkSize))]);
+  if (start >= end) batches.push([]);
+  return { batches, end };
+};
+const __nodeFsPullIterator = async function* (
+  handle,
+  batches,
+  end,
+  options,
+  transform
+) {
+  try {
+    if (options.signal && options.signal.aborted) {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
       throw error;
     }
+    for (const batch of batches) yield transform ? transform(batch) : batch;
+    globalThis.__nodeFdPositions[handle.fd] = end;
+    if (options.autoClose) await handle.close();
+  } finally {
+    handle._pullLocked = false;
+  }
+};
+const __nodeFsAttachPull = (handle) => {
+  handle.pull = (transformOrOptions, maybeOptions) => {
+    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked)
+      throw new Error("The file handle is not in a valid state");
     handle._pullLocked = true;
     const transform =
       typeof transformOrOptions === "function" ? transformOrOptions : undefined;
     const options = transform ? maybeOptions || {} : transformOrOptions || {};
-    if (
-      options.autoClose !== undefined &&
-      typeof options.autoClose !== "boolean"
-    ) {
-      const error = new TypeError(
-        'The "autoClose" option must be of type boolean'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (
-      options.signal !== undefined &&
-      (!options.signal || typeof options.signal.aborted !== "boolean")
-    ) {
-      const error = new TypeError('The "signal" option must be an AbortSignal');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    for (const [name, value] of [
-      ["start", options.start],
-      ["limit", options.limit],
-      ["chunkSize", options.chunkSize]
-    ]) {
-      if (value === undefined) continue;
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        const error = new TypeError(
-          `The "${name}" option must be of type number`
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      if (!Number.isInteger(value) || value < 0) {
-        const error = new RangeError(`The value of "${name}" is out of range`);
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-    }
-    const source = globalThis.__nodeFs.readFileSync(handle.fd);
-    const start =
-      options.start === undefined
-        ? globalThis.__nodeFdPositions[handle.fd] || 0
-        : Number(options.start);
-    const end =
-      options.limit === undefined
-        ? source.length
-        : Math.min(source.length, start + Number(options.limit));
-    const chunkSize =
-      options.chunkSize === undefined ? 128 * 1024 : Number(options.chunkSize);
-    const batches = [];
-    for (let offset = start; offset < end; offset += chunkSize)
-      batches.push([
-        source.subarray(offset, Math.min(end, offset + chunkSize))
-      ]);
-    if (start >= end) batches.push([]);
+    __nodeFsValidatePullOptions(options);
+    const { batches, end } = __nodeFsPullBatches(handle, options);
     return {
-      async *[Symbol.asyncIterator]() {
-        try {
-          if (options.signal && options.signal.aborted) {
-            const error = new Error("The operation was aborted");
-            error.name = "AbortError";
-            throw error;
-          }
-          for (const batch of batches)
-            yield transform ? transform(batch) : batch;
-          globalThis.__nodeFdPositions[handle.fd] = end;
-          if (options.autoClose) await handle.close();
-        } finally {
-          handle._pullLocked = false;
-        }
-      }
+      [Symbol.asyncIterator]: () =>
+        __nodeFsPullIterator(handle, batches, end, options, transform)
     };
   };
+};
+const __nodeFsAttachPositionedWrites = (handle, previousWriteFile) => {
   handle.writeFile = async (data, options) => {
     if (typeof data === "string")
       data = NodeBuffer.from(
@@ -247,6 +269,8 @@ globalThis.__nodeFs.promises.open = async (...args) => {
     }
     return previousWriteFile(data, options);
   };
+};
+const __nodeFsAttachPositionedRead = (handle, previousReadFile) => {
   handle.readFile = async (options) => {
     if (options && options.signal)
       await new Promise((resolve) => queueMicrotask(resolve));
@@ -264,6 +288,12 @@ globalThis.__nodeFs.promises.open = async (...args) => {
       typeof options === "string" ? options : options && options.encoding;
     return encoding ? result.toString(encoding) : result;
   };
+};
+globalThis.__nodeFs.promises.open = async (...args) => {
+  const handle = await __nodeOpenWithFilePosition(...args);
+  __nodeFsAttachPull(handle);
+  __nodeFsAttachPositionedWrites(handle, handle.writeFile);
+  __nodeFsAttachPositionedRead(handle, handle.readFile);
   return handle;
 };
 let __nodePriority = 0;
