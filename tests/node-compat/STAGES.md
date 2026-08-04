@@ -572,3 +572,4 @@ these small fixtures isolate the currently implemented contract.
 |   573 | child_process exec and execFile report command failure metadata     | `tools/run-node-tests.sh --stage 573` |
 |   574 | child_process spawnSync reports synchronous launch errors           | `tools/run-node-tests.sh --stage 574` |
 |   575 | child_process synchronous exec APIs return configured output        | `tools/run-node-tests.sh --stage 575` |
+|   576 | child_process kill reports signal termination and killed state      | `tools/run-node-tests.sh --stage 576` |
