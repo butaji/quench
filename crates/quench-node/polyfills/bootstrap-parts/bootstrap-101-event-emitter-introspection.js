@@ -1,7 +1,8 @@
 globalThis.__nodeEventEmitter.prototype.eventNames = function () {
-  return Reflect.ownKeys(this._events).filter(
-    (name) => (this._events[name] || []).length > 0
-  );
+  return Reflect.ownKeys(this._events).filter((name) => {
+    const value = this._events[name];
+    return value !== undefined && (!Array.isArray(value) || value.length > 0);
+  });
 };
 globalThis.__nodeEventEmitter.prototype.off =
   globalThis.__nodeEventEmitter.prototype.removeListener;
@@ -9,7 +10,13 @@ globalThis.__nodeEventEmitter.prototype.prependListener = function (
   event,
   listener
 ) {
-  (this._events[event] ||= []).unshift(listener);
+  const current = this._events[event];
+  this._events[event] =
+    current === undefined
+      ? listener
+      : Array.isArray(current)
+        ? [listener, ...current]
+        : [listener, current];
   return this;
 };
 globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
@@ -33,7 +40,8 @@ globalThis.__nodeEventEmitter.prototype.prependOnceListener = function (
 };
 const __quenchEventsSymbols = globalThis.require("events");
 globalThis.__nodeEventEmitter.prototype.rawListeners = function (event) {
-  return [...(this._events[event] || [])];
+  const value = this._events[event];
+  return value === undefined ? [] : Array.isArray(value) ? [...value] : [value];
 };
 globalThis.__nodeEventEmitter.prototype.getMaxListeners = function () {
   return __quenchEventsSymbols.getMaxListeners(this);

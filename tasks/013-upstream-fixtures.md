@@ -2837,9 +2837,9 @@ Stage 991 verifies EventEmitter stores a single listener directly while public
 avoids conflating EventEmitter storage with the separate missing `assert.fail`
 assertion helper in the upstream fixture.
 
-Upstream audit: `test-event-emitter-listeners-side-effects.js` now reaches its
-listener assertions, but the fixture still needs the `assert.fail` compatibility
-surface before it can validate all cases.
+Upstream audit: `test-event-emitter-listeners-side-effects.js` now passes after
+the shared `assert.fail` helper was added; the remaining listener fixture work
+is covered by the raw-listener stage below.
 
 Stage 992 adds the missing `assert.fail()` assertion helper. Retrospective:
 implementing the helper at the shared assertion object fixes multiple upstream
@@ -2849,3 +2849,7 @@ Stage 993 verifies defensive EventEmitter `listeners()` behavior for missing
 internal storage and omitted event names. Retrospective: guarding the public
 query at one method boundary prevents malformed internal state from leaking as
 a TypeError.
+
+Stage 994 verifies EventEmitter raw-listener identity and event-name reporting
+with the single-listener storage optimization. Retrospective: normalizing at
+the introspection methods keeps compact storage invisible to callers.
