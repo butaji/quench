@@ -2,17 +2,35 @@ globalThis.EventTarget ||= class EventTarget {
   constructor() {
     this._listeners = {};
   }
-  addEventListener(name, listener) {
-    (this._listeners[name] ||= []).push(listener);
+  addEventListener(name, listener, options = {}) {
+    if (typeof listener !== "function") return undefined;
+    const signal = options.signal;
+    if (signal !== undefined && !(signal instanceof AbortSignal))
+      throw new TypeError("signal must be an AbortSignal");
+    if (signal?.aborted) return undefined;
+    const record = { listener, once: Boolean(options.once), signal };
+    (this._listeners[name] ||= []).push(record);
+    if (signal) {
+      record.abort = () => this.removeEventListener(name, listener);
+      signal.addEventListener("abort", record.abort, { once: true });
+    }
+    return undefined;
   }
   removeEventListener(name, listener) {
-    this._listeners[name] = (this._listeners[name] || []).filter(
-      (item) => item !== listener
-    );
+    this._listeners[name] = (this._listeners[name] || []).filter((record) => {
+      if (record.listener !== listener) return true;
+      if (record.abort)
+        record.signal?.removeEventListener("abort", record.abort);
+      return false;
+    });
   }
   dispatchEvent(event) {
-    for (const listener of this._listeners[event.type] || [])
-      listener.call(this, event);
+    for (const record of [...(this._listeners[event.type] || [])]) {
+      if (!this._listeners[event.type]?.includes(record)) continue;
+      if (record.once) this.removeEventListener(event.type, record.listener);
+      record.listener.call(this, event);
+      if (event._quenchImmediatePropagationStopped) break;
+    }
     return true;
   }
 };
