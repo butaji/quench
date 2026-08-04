@@ -833,3 +833,4 @@ these small fixtures isolate the currently implemented contract.
 |   834 | worker threads exposes core messaging API                     | `tools/run-node-tests.sh --stage 834` |
 |   835 | crypto exposes core hashing and randomness API                | `tools/run-node-tests.sh --stage 835` |
 |   836 | zlib exposes compression and stream API                       | `tools/run-node-tests.sh --stage 836` |
+|   837 | dns exposes callback and promise resolver API                 | `tools/run-node-tests.sh --stage 837` |
