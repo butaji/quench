@@ -2384,3 +2384,8 @@ Stage 901 verifies the node:crypto synchronous HKDF derivation API.
 
 Retrospective: composition over existing HMAC primitives delivered HKDF
 without expanding the Rust boundary or duplicating cryptographic byte logic.
+
+Stage 902 verifies the node:crypto synchronous PBKDF2 derivation API.
+
+Retrospective: PBKDF2 can reuse the HMAC adapter with explicit block and XOR
+steps, keeping derivation behavior readable in one compatibility layer.
