@@ -1260,6 +1260,9 @@ queue results.
 Stage 447 formalized EOF delivery after buffered data is consumed and the
 paused Readable is resumed.
 
+Stage 448 formalized Readable iterator consumption without replaying chunks
+already delivered to data listeners.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
