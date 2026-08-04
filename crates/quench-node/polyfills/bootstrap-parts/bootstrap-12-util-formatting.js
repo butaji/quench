@@ -87,16 +87,18 @@ const __nodeUtilFormatJson = (value) => {
     throw error;
   }
 };
-const __nodeUtilInspectValue = (value) => {
+const __nodeUtilInspectValue = (value, quoteStrings = false) => {
+  if (quoteStrings && typeof value === "string")
+    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
   const basic = __nodeUtilInspectBasic(value);
   if (basic !== __nodeUtilInspectNoResult) return basic;
   if (Array.isArray(value))
     return value.length
-      ? `[ ${value.map(__nodeUtilInspectValue).join(", ")} ]`
+      ? `[ ${value.map((item) => __nodeUtilInspectValue(item, quoteStrings)).join(", ")} ]`
       : "[]";
   if (typeof value === "object") {
     const entries = Object.keys(value).map(
-      (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
+      (key) => `${key}: ${__nodeUtilInspectValue(value[key], quoteStrings)}`
     );
     return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
   }
@@ -216,7 +218,7 @@ const __nodeUtilFormatObjectToken = (token, value) => {
   )
     return __nodeUtilStructured(value);
   return token === "%o" || token === "%O"
-    ? __nodeUtilInspectValue(value)
+    ? __nodeUtilInspectValue(value, token === "%O")
     : String(value);
 };
 const __nodeUtilFormatTokenValue = (token, value) => {
