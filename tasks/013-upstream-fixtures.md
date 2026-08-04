@@ -1495,6 +1495,9 @@ conversion, and version metadata.
 Stage 529 formalized the module API builtin registry, `isBuiltin()`,
 `createRequire()`, cache, and extension surfaces.
 
+Stage 530 formalized diagnostics channel subscription, publication context,
+subscriber detection, unsubscribe, and tracing-channel exposure.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
