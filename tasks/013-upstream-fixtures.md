@@ -3381,3 +3381,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added typed and range validation for the `process.cpuUsage(previous)` shape.
 - Verified the focused stage and Node's complete CPU usage fixture.
+### Stage 1100: process hrtime validation
+
+- Added array-type and tuple-length validation for `process.hrtime(previous)`.
+- Verified the focused stage and Node's complete hrtime fixture.
