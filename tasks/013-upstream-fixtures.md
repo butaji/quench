@@ -2873,3 +2873,11 @@ the compact stage isolates wrapper removal ordering from argument-count paths.
 Stage 998 verifies `EventEmitter.prototype.on.call({})` lazily initializes
 listener storage and supports repeated registration. Retrospective: testing a
 generic receiver catches hidden constructor assumptions in prototype methods.
+
+Stage 999 verifies `prependListener()` places a listener before existing
+listeners with compact single-listener storage. Retrospective: a synchronous
+two-listener order assertion isolates prepend bookkeeping from stream setup.
+
+Upstream audit: `test-event-emitter-prepend.js` currently fails in the unrelated
+NodeReadable constructor path; the EventEmitter prepend contract is covered by
+stage 999.
