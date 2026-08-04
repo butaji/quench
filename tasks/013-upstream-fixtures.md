@@ -3346,3 +3346,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added system-error name mapping and `_exceptionWithHostPort` error shaping.
 - Verified host/port, port-zero, local-address, and errno properties against Node.
+### Stage 1092: util system error map
+
+- Added `util.getSystemErrorMap`, `_errnoException`, and UV errno names.
+- Verified the focused stage and Node's `test-uv-errmap.js` fixture.
