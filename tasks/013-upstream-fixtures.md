@@ -3316,6 +3316,8 @@ Stage 1084 provides `node:test` callbacks with the shared assertion context.
 
 Stage 1085 exports `node:test` as a callable function with test aliases.
 
+Stage 1086 preserves the identity of the `util/types` module export.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,

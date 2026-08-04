@@ -155,6 +155,7 @@ const __quenchCoreStaticModules = new Map([
   ["path/posix", () => globalThis.__nodePath],
   ["path/win32", () => globalThis.__nodePath.win32],
   ["util", () => globalThis.__nodeUtil],
+  ["util/types", () => (globalThis.__nodeUtil.types ||= Object.create(null))],
   ["perf_hooks", () => globalThis.__nodePerfHooks],
   ["crypto", () => globalThis.__nodeCrypto],
   ["v8", () => ({})],

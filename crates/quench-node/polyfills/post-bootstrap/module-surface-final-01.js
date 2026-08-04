@@ -68,7 +68,15 @@ const __quenchApplyFinalModule01 = (name, originalRequire) => {
   const result = originalRequire(name);
   if (normalized === "test")
     return __quenchTestModuleFallbacks(result, originalRequire, name);
-  if (normalized === "util/types") return __quenchUtilTypesFallbacks(result);
+  if (normalized === "util") {
+    result.types ||= Object.create(null);
+    return result;
+  }
+  if (normalized === "util/types") {
+    const util = originalRequire("util");
+    util.types ||= result;
+    return __quenchUtilTypesFallbacks(util.types);
+  }
   return result;
 };
 if (globalThis.require) {
