@@ -663,3 +663,4 @@ these small fixtures isolate the currently implemented contract.
 |   664 | process memoryUsage exposes finite non-negative numeric metrics               | `tools/run-node-tests.sh --stage 664` |
 |   665 | process memoryUsage.rss exposes a finite non-negative metric                  | `tools/run-node-tests.sh --stage 665` |
 |   666 | process uptime exposes a finite non-negative monotonic seconds value          | `tools/run-node-tests.sh --stage 666` |
+|   667 | process nextTick forwards callback arguments through the scheduler            | `tools/run-node-tests.sh --stage 667` |
