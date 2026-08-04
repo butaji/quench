@@ -872,3 +872,4 @@ these small fixtures isolate the currently implemented contract.
 |   873 | util exposes modern parsing and abort helpers              | `tools/run-node-tests.sh --stage 873` |
 |   874 | url exposes URLPattern matching API                        | `tools/run-node-tests.sh --stage 874` |
 |   875 | fs exposes callback promise and sync copy API              | `tools/run-node-tests.sh --stage 875` |
+|   876 | fs exposes file watching API                               | `tools/run-node-tests.sh --stage 876` |
