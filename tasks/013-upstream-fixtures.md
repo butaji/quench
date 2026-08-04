@@ -1090,6 +1090,9 @@ Stage 388 formalized lazy URL compatibility initialization and exposure of
 Stage 389 formalized lazy OS compatibility initialization and exposure of
 `os.platform` on module access.
 
+Stage 390 formalized asynchronous `fs.close` completion and descriptor release,
+including subsequent `EBADF` behavior for the closed descriptor.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
