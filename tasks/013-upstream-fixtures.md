@@ -1829,6 +1829,9 @@ Stage 643 formalized Error input normalization for
 Stage 644 formalized argument fan-out and listener-presence return semantics
 for `process.emit`.
 
+Stage 645 formalized process-object chainability for `process.on` and
+`process.once`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
