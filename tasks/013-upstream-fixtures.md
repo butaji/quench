@@ -2592,3 +2592,7 @@ priority semantics without depending on asynchronous job execution.
 Stage 945 verifies instance `setMaxListeners()` and `getMaxListeners()`
 fluent/stateful behavior. Retrospective: instance limit APIs should be tested
 against the same default contract as their static counterparts.
+
+Stage 946 verifies `rawListeners()` for ordinary listeners and defensive
+array copying. Retrospective: separating ordinary and once-wrapper cases
+keeps listener introspection progress independently verifiable.
