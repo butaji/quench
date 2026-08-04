@@ -609,3 +609,4 @@ these small fixtures isolate the currently implemented contract.
 |   610 | process versions exposes a numeric N-API version entry                | `tools/run-node-tests.sh --stage 610` |
 |   611 | process versions exposes a semantic Acorn version entry               | `tools/run-node-tests.sh --stage 611` |
 |   612 | process versions exposes a semantic Ada version entry                  | `tools/run-node-tests.sh --stage 612` |
+|   613 | process versions exposes a timezone database version entry            | `tools/run-node-tests.sh --stage 613` |
