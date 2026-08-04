@@ -729,3 +729,4 @@ these small fixtures isolate the currently implemented contract.
 |   730 | process stdout emit reports no unhandled listeners                          | `tools/run-node-tests.sh --stage 730` |
 |   731 | process stderr emit reports no unhandled listeners                          | `tools/run-node-tests.sh --stage 731` |
 |   732 | process stdout listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 732` |
+|   733 | process stderr listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 733` |
