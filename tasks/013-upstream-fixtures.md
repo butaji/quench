@@ -2640,3 +2640,7 @@ classic scripts rather than modules with top-level await.
 Stage 952 verifies `events.on()` abort-signal rejection and listener cleanup.
 Retrospective: aborting before the first read gives a deterministic cancellation
 case and avoids coupling the contract to event scheduling.
+
+Stage 953 verifies `events.once()` argument tuple resolution and one-shot
+listener cleanup. Retrospective: asserting listener installation before emit
+and removal after resolution covers both promise wiring and lifecycle cleanup.
