@@ -1599,6 +1599,9 @@ lifecycle method across primary and worker processes.
 Stage 562 formalized the cluster `schedulingPolicy` default as
 `SCHED_RR`/round-robin scheduling.
 
+Stage 563 formalized cumulative `cluster.setupPrimary()` updates to exec,
+argument, and exec-argument settings.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
