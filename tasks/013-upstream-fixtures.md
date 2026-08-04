@@ -3078,3 +3078,12 @@ still rejecting negative values. Retrospective: probing the upstream inspect
 fixture isolated a single overly strict finite-number check; removing only
 that restriction preserved the existing type and lower-bound validation.
 The focused stage and upstream `test-buffer-inspect.js` now pass.
+
+Stage 1030 adds exact received-value diagnostics for invalid
+`Buffer.includes()` needles. Retrospective: routing this validation through the
+shared input formatter keeps search APIs consistent with `Buffer.from()` and
+`Buffer.byteLength()` while avoiding another type-description implementation.
+
+Upstream audit: the focused includes-validation stage passes; the full
+`test-buffer-includes.js` fixture still exceeds the configured harness timeout
+in a separate search-path issue.
