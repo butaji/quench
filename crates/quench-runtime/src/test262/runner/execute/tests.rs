@@ -25,6 +25,68 @@ fn initialized_context_exposes_the_main_realm_test262_error() {
 }
 
 #[test]
+fn outcome_classification_preserves_positive_and_runtime_failures() {
+    use crate::test262::metadata::{Negative, Test262Metadata};
+
+    let positive = Test262Metadata::default();
+    assert_eq!(check_outcome(&positive, Ok(()), None), TestOutcome::Pass);
+    assert!(matches!(
+        check_outcome(&positive, Err("TypeError: boom".into()), None),
+        TestOutcome::Fail { failure } if failure.message == "TypeError: boom"
+    ));
+
+    let negative = Test262Metadata {
+        negative: Some(Negative {
+            phase: "runtime".into(),
+            typ: "TypeError".into(),
+        }),
+        ..Test262Metadata::default()
+    };
+    assert_eq!(
+        check_outcome(&negative, Err("TypeError: boom".into()), None),
+        TestOutcome::Pass
+    );
+}
+
+#[test]
+fn outcome_classification_rejects_infrastructure_failures_as_expected_errors() {
+    use crate::test262::metadata::{Negative, Test262Metadata};
+
+    let negative = Test262Metadata {
+        negative: Some(Negative {
+            phase: "runtime".into(),
+            typ: "TypeError".into(),
+        }),
+        ..Test262Metadata::default()
+    };
+    assert!(matches!(
+        check_outcome(&negative, Err("timed out after 30s".into()), None),
+        TestOutcome::Fail { failure } if failure.message.starts_with("infrastructure failure")
+    ));
+}
+
+#[test]
+fn parse_syntax_error_matches_only_parse_phase_expectations() {
+    use crate::test262::metadata::{Negative, Test262Metadata};
+
+    let parse_negative = Test262Metadata {
+        negative: Some(Negative {
+            phase: "parse".into(),
+            typ: "SyntaxError".into(),
+        }),
+        ..Test262Metadata::default()
+    };
+    assert_eq!(
+        check_outcome(
+            &parse_negative,
+            Err("Parse error: invalid token".into()),
+            None
+        ),
+        TestOutcome::Pass
+    );
+}
+
+#[test]
 fn isolated_runner_matches_in_process_strictness() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::default_test262_dir;
