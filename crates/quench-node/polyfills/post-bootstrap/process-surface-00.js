@@ -20,7 +20,45 @@
       sourceUrl: "",
       headersUrl: ""
     };
-    globalThis.process.allowedNodeEnvironmentFlags = new Set();
+    const allowedFlags = new Set([
+      "--perf_basic_prof",
+      "--perf-basic-prof",
+      "--perf_basic-prof",
+      "-r",
+      "--stack-trace-limit",
+      "--inspect-brk"
+    ]);
+    const allowedFlagsHas = allowedFlags.has.bind(allowedFlags);
+    allowedFlags.has = (flag) => {
+      if (flag === "perf-basic-prof" || flag === "perf_basic-prof") return true;
+      if (flag === "perf_basic_prof" || flag === "r") return true;
+      if (flag === "inspect-brk" || flag === "--inspect_brk") return true;
+      return (
+        allowedFlagsHas(flag) ||
+        (typeof flag === "string" && flag.startsWith("--stack-trace-limit="))
+      );
+    };
+    const protectedSets = (globalThis.__quenchProtectedSets ||= new WeakSet());
+    protectedSets.add(allowedFlags);
+    if (!globalThis.__quenchProtectedSetMethods) {
+      const originalAdd = Set.prototype.add;
+      const originalDelete = Set.prototype.delete;
+      const originalClear = Set.prototype.clear;
+      Set.prototype.add = function (value) {
+        return protectedSets.has(this) ? this : originalAdd.call(this, value);
+      };
+      Set.prototype.delete = function (value) {
+        return protectedSets.has(this)
+          ? false
+          : originalDelete.call(this, value);
+      };
+      Set.prototype.clear = function () {
+        if (!protectedSets.has(this)) originalClear.call(this);
+      };
+      globalThis.__quenchProtectedSetMethods = true;
+    }
+    globalThis.process.allowedNodeEnvironmentFlags =
+      Object.freeze(allowedFlags);
     globalThis.process.execArgv = [];
     globalThis.process.argv0 = "node";
     globalThis.process.features ||= {};
