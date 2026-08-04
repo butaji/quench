@@ -1122,6 +1122,9 @@ Stage 399 formalized base64 digest encoding for SHA-256 hashes and HMAC values.
 Stage 400 formalized hash and HMAC update decoding for explicit input encodings
 such as hexadecimal strings.
 
+Stage 401 formalized `timers/promises.setTimeout` delay handling and resolved
+value propagation.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
