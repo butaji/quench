@@ -626,3 +626,4 @@ these small fixtures isolate the currently implemented contract.
 |   627 | process getBuiltinModule resolves builtins and rejects unknown names   | `tools/run-node-tests.sh --stage 627` |
 |   628 | process loadEnvFile exposes a callable harness-safe surface             | `tools/run-node-tests.sh --stage 628` |
 |   629 | process finalization exposes registration method contracts             | `tools/run-node-tests.sh --stage 629` |
+|   630 | process permission exposes conservative capability checks              | `tools/run-node-tests.sh --stage 630` |

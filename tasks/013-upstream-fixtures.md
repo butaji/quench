@@ -1784,6 +1784,9 @@ Stage 628 formalized the callable harness-safe surface of
 Stage 629 formalized the registration method contracts of
 `process.finalization`.
 
+Stage 630 formalized conservative false capability checks for
+`process.permission`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
