@@ -1246,6 +1246,9 @@ Stage 441 formalized nested writable corking and uncorking through
 
 Stage 442 formalized buffering of corked writes and their emission on uncork.
 
+Stage 443 formalized append-mode WriteStream behavior without truncating
+existing file content.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

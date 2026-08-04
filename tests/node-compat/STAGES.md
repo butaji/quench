@@ -439,3 +439,4 @@ these small fixtures isolate the currently implemented contract.
 |   440 | stream readable and writable state after destroy              | `tools/run-node-tests.sh --stage 440` |
 |   441 | stream writable cork nesting and uncork state                 | `tools/run-node-tests.sh --stage 441` |
 |   442 | stream cork buffering and uncork emission                     | `tools/run-node-tests.sh --stage 442` |
+|   443 | fs WriteStream append flags preserve existing content          | `tools/run-node-tests.sh --stage 443` |
