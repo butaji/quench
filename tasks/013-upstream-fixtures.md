@@ -1918,6 +1918,8 @@ Stage 686 formalized reversible process.chdir behavior for the current directory
 
 Stage 687 formalized the process.stdout writable stream contract.
 
+Stage 688 formalized the process.stderr writable stream contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
