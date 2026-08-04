@@ -1343,6 +1343,9 @@ multibyte string writes.
 Stage 477 formalized Readable reads combining queued buffer chunks while
 preserving remaining data.
 
+Stage 478 formalized Readable string pushes being converted to byte data with
+correct queue length and partial reads.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
