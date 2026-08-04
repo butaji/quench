@@ -360,7 +360,12 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "cluster")
     return globalThis.__nodeCluster || __quenchClusterModule;
   if (name === "internal/event_target")
-    return { kWeakHandler: Symbol("kWeakHandler") };
+    return {
+      Event,
+      EventTarget,
+      CustomEvent,
+      kWeakHandler: Symbol("kWeakHandler")
+    };
   if (name === "stream") return globalThis.__nodeStream;
   if (name === "stream/iter") return __quenchRequireStreamIter();
   if (name === "vm") return __quenchVmModule;
