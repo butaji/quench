@@ -288,7 +288,13 @@ const __nodeAssertMatchExpectedRegExp = (error, expected) => {
 const __nodeAssertMatchExpectedObject = (error, expected) => {
   if (!expected || typeof expected !== "object") return;
   for (const key of ["name", "message", "code", "operator"])
-    if (expected[key] && error[key] !== expected[key]) throw error;
+    if (
+      expected[key] &&
+      (expected[key] instanceof RegExp
+        ? !expected[key].test(String(error[key]))
+        : error[key] !== expected[key])
+    )
+      throw error;
 };
 const __nodeAssertMatchExpected = (error, expected) => {
   if (typeof expected === "function")
