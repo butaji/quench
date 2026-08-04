@@ -76,6 +76,14 @@ fn array_from_async_rejects_non_callable_mapping_for_array_like_input() {
 }
 
 #[test]
+fn array_from_async_rejects_array_like_lengths_above_array_maximum() {
+    let mut ctx = new_context();
+    ctx.eval("var result; Array.fromAsync({length:4294967296}).then(()=>result='ok', e=>result=e.name);")
+        .unwrap();
+    assert_eq!(ctx.eval("result"), Ok(Value::String("RangeError".to_string())));
+}
+
+#[test]
 fn array_from_async_awaits_non_promise_thenables() {
     let mut ctx = new_context();
     ctx.eval("var result; var v={}; var input={length:1,0:{then:function(resolve){resolve(v);}}}; Array.fromAsync(input).then(a=>{result=a[0]===v;});").unwrap();

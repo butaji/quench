@@ -95,6 +95,7 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
     }
   } else {
     var length = ToLength(items.length);
+    if (length > 4294967295) throw new RangeError("Array.fromAsync length exceeds Array maximum");
     for (var i = 0; i < length; i++) {
       var element = await Promise.resolve(items[i]);
       values.push(mapfn === undefined ? element : await mapfn.call(thisArg, element, i, items));
