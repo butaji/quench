@@ -176,7 +176,12 @@ const __quenchVmFormatStack = (
   code
     ? `${filename}:${lineOffset + 1}\n${code}\n ^\n\n${error.name}: ${error.message}\nat ${filename}:${lineOffset + 1}:${columnOffset + 7}`
     : `${filename}:${lineOffset + 1}:${columnOffset + 8}\n ^\n${error.stack}`;
-const __quenchVmRestoreProperties = (keys, previous, hiddenProcess) => {
+const __quenchVmRestoreProperties = (
+  keys,
+  previous,
+  hiddenProcess,
+  previousPrototype
+) => {
   for (const key of keys) {
     const descriptor = previous.get(key);
     if (descriptor?.configurable)
@@ -185,6 +190,7 @@ const __quenchVmRestoreProperties = (keys, previous, hiddenProcess) => {
   }
   if (hiddenProcess)
     Object.defineProperty(globalThis, "process", hiddenProcess);
+  if (previousPrototype) Object.setPrototypeOf(globalThis, previousPrototype);
 };
 const __quenchVmInstallContext = (sandbox) => {
   const keys = [
@@ -200,6 +206,9 @@ const __quenchVmInstallContext = (sandbox) => {
     !keys.includes("process") &&
     Object.getOwnPropertyDescriptor(globalThis, "process");
   if (hiddenProcess) Reflect.deleteProperty(globalThis, "process");
+  const previousPrototype = Object.getPrototypeOf(globalThis);
+  const sandboxPrototype = Object.getPrototypeOf(sandbox);
+  if (sandboxPrototype) Object.setPrototypeOf(globalThis, sandboxPrototype);
   for (const key of keys) {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
@@ -213,7 +222,13 @@ const __quenchVmInstallContext = (sandbox) => {
         timer(() => __quenchVmRunCallback(callback, sandbox, []), ...args);
     }
   }
-  return { keys, previous, originalGlobalKeys, hiddenProcess };
+  return {
+    keys,
+    previous,
+    originalGlobalKeys,
+    hiddenProcess,
+    previousPrototype
+  };
 };
 const __quenchVmRestoreNewContext = (
   original,
