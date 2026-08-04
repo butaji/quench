@@ -114,6 +114,8 @@ class NodeReadable extends NodeEventEmitter {
       throw error;
     }
     this._chunks = [];
+    this._readableState = { reading: false };
+    if (typeof options.read === "function") this._read = options.read;
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
   }
   on(event, listener) {
@@ -122,7 +124,10 @@ class NodeReadable extends NodeEventEmitter {
       this._paused = false;
       this.readableFlowing = true;
       queueMicrotask(() => {
-        if (!this._chunks.length && !this._ended) this._read?.();
+        if (!this._chunks.length && !this._ended) {
+          this._readableState.reading = true;
+          this._read?.();
+        }
         while (!this._paused && this._chunks.length)
           this.emit("data", this._decode(this._chunks.shift()));
         if (!this._chunks.length && this._ended) this._emitEnd();
