@@ -730,3 +730,4 @@ these small fixtures isolate the currently implemented contract.
 |   731 | process stderr emit reports no unhandled listeners                          | `tools/run-node-tests.sh --stage 731` |
 |   732 | process stdout listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 732` |
 |   733 | process stderr listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 733` |
+|   734 | process stdout async iterator is empty and awaitable                         | `tools/run-node-tests.sh --stage 734` |
