@@ -2766,3 +2766,7 @@ NodeEventTarget construction or listener bookkeeping.
 Stage 977 verifies NodeEventTarget object listeners receive the listener object
 as `this` and honor `once`. Retrospective: wrapping `handleEvent` explicitly
 keeps callback binding independent from native EventTarget invocation rules.
+
+Stage 978 verifies NodeEventTarget function listeners receive the target as
+`this`. Retrospective: capturing the owner before crossing the native dispatch
+boundary avoids depending on rquickjs callback receiver behavior.
