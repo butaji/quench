@@ -2140,3 +2140,5 @@ Stage 794 added process.report diagnostic object compatibility.
 Stage 795 verified process.finalization lifecycle methods.
 
 Stage 796 verified process.permission query compatibility.
+
+Stage 797 verified process.release metadata compatibility.
