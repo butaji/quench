@@ -680,3 +680,4 @@ these small fixtures isolate the currently implemented contract.
 |   681 | process umask exposes a numeric mask and reversible read behavior             | `tools/run-node-tests.sh --stage 681` |
 |   682 | process pid exposes a positive integer process identifier                     | `tools/run-node-tests.sh --stage 682` |
 |   683 | process ppid exposes a non-negative integer parent identifier                 | `tools/run-node-tests.sh --stage 683` |
+|   684 | process send exposes a boolean no-channel result                              | `tools/run-node-tests.sh --stage 684` |
