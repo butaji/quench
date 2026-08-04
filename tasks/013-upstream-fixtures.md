@@ -1445,6 +1445,9 @@ mapped IPv6, and invalid address strings.
 Stage 512 formalized `path.matchesGlob()` wildcard, recursive, question-mark,
 and cross-separator path matching.
 
+Stage 513 formalized frozen `os.constants` signal values and platform signal
+numbers.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
