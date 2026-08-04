@@ -2210,3 +2210,5 @@ Stage 829 verified the core node:tty API.
 Stage 830 verified the core node:querystring API.
 
 Stage 831 verified the node:string_decoder API.
+
+Stage 832 verified the node:diagnostics_channel API.
