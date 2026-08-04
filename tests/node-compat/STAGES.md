@@ -843,3 +843,4 @@ these small fixtures isolate the currently implemented contract.
 |   844 | v8 exposes serialization and heap inspection API              | `tools/run-node-tests.sh --stage 844` |
 |   845 | vm exposes contexts scripts and module API                    | `tools/run-node-tests.sh --stage 845` |
 |   846 | readline exposes interface and terminal API                   | `tools/run-node-tests.sh --stage 846` |
+|   847 | repl exposes interactive evaluation API                       | `tools/run-node-tests.sh --stage 847` |

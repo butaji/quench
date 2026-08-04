@@ -2240,3 +2240,5 @@ Stage 844 verifies the node:v8 serialization and heap inspection API.
 Stage 845 verifies the node:vm contexts, scripts, and module API.
 
 Stage 846 verifies the node:readline interface and terminal API.
+
+Stage 847 verifies the node:repl interactive evaluation API.
