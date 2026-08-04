@@ -3132,3 +3132,10 @@ integer range, non-integer input, and undersized-buffer bounds remain distinct.
 Retrospective: auditing both read and write validators separately caught a
 parallel implementation path that shared no helper; the focused stage and
 upstream `test-buffer-readdouble.js` now pass.
+
+Stage 1039 verifies that `Buffer.slice()` and `subarray()` return the final
+Buffer prototype while sharing backing storage. Retrospective: the first
+prototype repair accidentally copied `slice()` results; the upstream swap
+fixture made the aliasing requirement explicit, so the final layer now wraps
+views without changing their storage semantics. Upstream
+`test-buffer-swap.js` now passes.
