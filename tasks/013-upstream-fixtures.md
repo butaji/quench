@@ -1421,6 +1421,9 @@ exit completion.
 Stage 504 formalized cluster primary state and worker online/disconnect
 lifecycle controls.
 
+Stage 505 formalized cluster setup events exposing configured exec, args,
+execArgv, and silent settings.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
