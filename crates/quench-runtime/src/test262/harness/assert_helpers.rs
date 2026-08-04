@@ -54,26 +54,18 @@ pub fn assert_throws(args: Vec<Value>) -> Result<Value, JsError> {
         .map(crate::value::to_js_string)
         .unwrap_or_default();
 
-    let result = match &fn_value {
-        Value::NativeFunction(_)
-        | Value::Function(_)
-        | Value::Object(_)
-        | Value::Generator(_)
-        | Value::Class(_)
-        | Value::NativeConstructor(_) => {
-            crate::eval::call_value_with_this(fn_value.clone(), vec![], Value::Undefined)
+    let result = if fn_value.is_callable() {
+        crate::eval::call_value_with_this(fn_value.clone(), vec![], Value::Undefined)
+    } else {
+        let msg = "assert.throws: expected a function".to_string();
+        let (err_val, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "Test262Error");
+        if let Value::Object(o) = &err_val {
+            o.borrow_mut()
+                .set("name", Value::String("Test262Error".to_string()));
         }
-        _ => {
-            let msg = "assert.throws: expected a function".to_string();
-            let (err_val, js_err) =
-                crate::value::error::create_js_error_with_type(&msg, "Test262Error");
-            if let Value::Object(o) = &err_val {
-                o.borrow_mut()
-                    .set("name", Value::String("Test262Error".to_string()));
-            }
-            crate::value::set_thrown_value(err_val);
-            return Err(js_err);
-        }
+        crate::value::set_thrown_value(err_val);
+        return Err(js_err);
     };
 
     match result {
