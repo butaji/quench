@@ -527,3 +527,4 @@ these small fixtures isolate the currently implemented contract.
 |   528 | punycode converts Unicode domains and code points                 | `tools/run-node-tests.sh --stage 528` |
 |   529 | module API exposes builtins and require helpers                  | `tools/run-node-tests.sh --stage 529` |
 |   530 | diagnostics channels publish and unsubscribe subscribers         | `tools/run-node-tests.sh --stage 530` |
+|   531 | domain contexts run bind and dispose callbacks                   | `tools/run-node-tests.sh --stage 531` |
