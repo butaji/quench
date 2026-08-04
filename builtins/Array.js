@@ -288,7 +288,7 @@ Array.prototype.toLocaleString = function ArrayToLocaleString(locales, options) 
   return R;
 };
 
-Array.prototype.push = function ArrayPush() {
+Array.prototype.push = function ArrayPush(firstItem) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.push called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
@@ -333,7 +333,7 @@ Array.prototype.slice = function ArraySlice(start, end) {
 };
 
 // Array.prototype.concat (ES2025 §23.1.3.4)
-Array.prototype.concat = function ArrayConcat() {
+Array.prototype.concat = function ArrayConcat(firstItem) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.concat called on null or undefined");
   var O = ToObject(this);
   if (IsArray(O)) O.constructor;
@@ -544,11 +544,12 @@ Array.prototype.at = function ArrayAt(index) {
   return k < 0 || k >= len ? undefined : O[k];
 };
 
-Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex) {
+Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.lastIndexOf called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
   if (len === 0) return -1;
+  var fromIndex = arguments.length > 1 ? arguments[1] : undefined;
   var relativeFrom = fromIndex === undefined ? len - 1 : ToIntegerOrInfinity(fromIndex);
   var k = relativeFrom >= 0 ? Math.min(relativeFrom, len - 1) : len + relativeFrom;
   for (; k >= 0; k--) if (HasProperty(O, k) && O[k] === searchElement) return k;
@@ -602,7 +603,7 @@ Array.prototype.splice = function ArraySplice(start, deleteCount /*, ...items */
 };
 
 // Array.prototype.unshift (ES2025 §23.1.3.32)
-Array.prototype.unshift = function ArrayUnshift() {
+Array.prototype.unshift = function ArrayUnshift(firstItem) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.unshift called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
