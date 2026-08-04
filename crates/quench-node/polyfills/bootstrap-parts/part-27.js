@@ -1,3 +1,42 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithModule = globalThis.require;\nconst __quenchBuiltinModules = ["assert", "buffer", "child_process", "cluster", "crypto", "events", "fs", "http", "https", "module", "net", "os", "path", "perf_hooks", "process", "querystring", "stream", "string_decoder", "timers", "tls", "tty", "url", "util", "vm", "worker_threads", "zlib"];\nconst __quenchModule = {\n  builtinModules: __quenchBuiltinModules,\n  _cache: Object.create(null),\n  _extensions: Object.create(null),\n  createRequire: () => __quenchOriginalRequireWithModule,\n  isBuiltin: (name) => __quenchBuiltinModules.includes(String(name).replace(/^node:/, "")),\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "module") return __quenchModule;\n  return __quenchOriginalRequireWithModule(specifier);\n};\n'
-);
+const __quenchOriginalRequireWithModule = globalThis.require;
+const __quenchBuiltinModules = [
+  "assert",
+  "buffer",
+  "child_process",
+  "cluster",
+  "crypto",
+  "events",
+  "fs",
+  "http",
+  "https",
+  "module",
+  "net",
+  "os",
+  "path",
+  "perf_hooks",
+  "process",
+  "querystring",
+  "stream",
+  "string_decoder",
+  "timers",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "vm",
+  "worker_threads",
+  "zlib"
+];
+const __quenchModule = {
+  builtinModules: __quenchBuiltinModules,
+  _cache: Object.create(null),
+  _extensions: Object.create(null),
+  createRequire: () => __quenchOriginalRequireWithModule,
+  isBuiltin: (name) =>
+    __quenchBuiltinModules.includes(String(name).replace(/^node:/, ""))
+};
+globalThis.require = (specifier) => {
+  if (String(specifier).replace(/^node:/, "") === "module")
+    return __quenchModule;
+  return __quenchOriginalRequireWithModule(specifier);
+};

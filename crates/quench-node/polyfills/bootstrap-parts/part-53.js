@@ -1,3 +1,16 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithHttps = globalThis.require;\nconst __quenchHttpsUnsupported = (operation) => {\n  const error = new Error(`${operation} is not supported by quench-node`);\n  error.code = "ERR_TLS_NOT_SUPPORTED";\n  throw error;\n};\nconst __quenchHttps = { request: () => __quenchHttpsUnsupported("https.request"), get: () => __quenchHttpsUnsupported("https.get"), createServer: () => __quenchHttpsUnsupported("https.createServer"), globalAgent: {} };\nglobalThis.require = (specifier) => String(specifier).replace(/^node:/, "") === "https" ? __quenchHttps : __quenchOriginalRequireWithHttps(specifier);\n'
-);
+const __quenchOriginalRequireWithHttps = globalThis.require;
+const __quenchHttpsUnsupported = (operation) => {
+  const error = new Error(`${operation} is not supported by quench-node`);
+  error.code = "ERR_TLS_NOT_SUPPORTED";
+  throw error;
+};
+const __quenchHttps = {
+  request: () => __quenchHttpsUnsupported("https.request"),
+  get: () => __quenchHttpsUnsupported("https.get"),
+  createServer: () => __quenchHttpsUnsupported("https.createServer"),
+  globalAgent: {}
+};
+globalThis.require = (specifier) =>
+  String(specifier).replace(/^node:/, "") === "https"
+    ? __quenchHttps
+    : __quenchOriginalRequireWithHttps(specifier);

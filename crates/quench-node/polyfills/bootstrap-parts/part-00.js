@@ -1,4 +1,422 @@
-globalThis.__quench_bootstrap_fragments = [];
-globalThis.__quench_bootstrap_fragments.push(
-  '/* Small, dependency-free globals available before user code. */\nglobalThis.global = globalThis;\nglobalThis.globalThis = globalThis;\nconst __nodeNativeEval = globalThis.eval;\nglobalThis.eval = (source) => {\n  if (typeof source === "string" && source.trimStart().startsWith("%"))\n    return undefined;\n  return __nodeNativeEval(source);\n};\nconst __nodeDetachedBuffers = new WeakSet();\nconst __nodeImmutableBuffers = new WeakSet();\nconst __nodeAllocatorCounts = {\n  uninitialized: 0,\n  zeroFilled: 0,\n};\nconst __nodeNativeStructuredClone = globalThis.structuredClone;\nglobalThis.structuredClone = (value, options) => {\n  for (const item of options && options.transfer ? options.transfer : [])\n    if (item instanceof ArrayBuffer) __nodeDetachedBuffers.add(item);\n  return __nodeNativeStructuredClone\n    ? __nodeNativeStructuredClone(value, options)\n    : value;\n};\nif (typeof ArrayBuffer.prototype.transferToImmutable !== "function")\n  ArrayBuffer.prototype.transferToImmutable = function () {\n    __nodeImmutableBuffers.add(this);\n    return this;\n  };\nconst __nodeProxySet = new WeakSet();\nconst __nodeModuleNamespaces = new WeakSet();\nconst __nodeNativeProxy = globalThis.Proxy;\nglobalThis.Proxy = function (target, handlers) {\n  const proxy = new __nodeNativeProxy(target, handlers);\n  __nodeProxySet.add(proxy);\n  return proxy;\n};\nconst __nodeDataViewSet = new WeakSet();\nconst __nodeNativeDataView = globalThis.DataView;\nglobalThis.DataView = function (...args) {\n  const view = new __nodeNativeDataView(...args);\n  __nodeDataViewSet.add(view);\n  return view;\n};\nglobalThis.DataView.prototype = __nodeNativeDataView.prototype;\nconst __nodeTypedArraySets = {};\nfor (const name of [\n  "Uint8Array",\n  "Uint8ClampedArray",\n  "Int8Array",\n  "Uint16Array",\n  "Int16Array",\n  "Uint32Array",\n  "Int32Array",\n  "Float16Array",\n  "Float32Array",\n  "Float64Array",\n  "BigInt64Array",\n  "BigUint64Array",\n]) {\n  const Native = globalThis[name];\n  const set = new WeakSet();\n  __nodeTypedArraySets[name] = set;\n  const Wrapped = function (...args) {\n    const array = Reflect.construct(Native, args, new.target || Wrapped);\n    set.add(array);\n    return array;\n  };\n  Wrapped.prototype = Native.prototype;\n  Object.setPrototypeOf(Wrapped, Native);\n  globalThis[name] = Wrapped;\n}\nconst __quenchQueueMicrotask = globalThis.queueMicrotask;\nglobalThis.__quench_async_error = "";\nglobalThis.queueMicrotask = (callback) =>\n  __quenchQueueMicrotask(() => {\n    try {\n      callback();\n    } catch (error) {\n      if (!globalThis.__quench_async_error)\n        globalThis.__quench_async_error =\n          error && error.stack\n            ? `${error.name}: ${error.message}\\n${error.stack}`\n            : String(error);\n    }\n  });\n\nglobalThis.__nodeFormat = (args) =>\n  args\n    .map((value) => {\n      try {\n        return typeof value === "string" ? value : JSON.stringify(value);\n      } catch (_) {\n        return String(value);\n      }\n    })\n    .join(" ");\nglobalThis.console = globalThis.console || {};\nfor (const method of ["log", "info", "warn", "error", "debug"]) {\n  globalThis.console[method] = (...args) => {\n    const line = globalThis.__nodeFormat(args);\n    if (globalThis.process && globalThis.process.stdout && globalThis.process.stdout.write)\n      globalThis.process.stdout.write(line + "\\n");\n    else\n      globalThis.__quench_console_write(line);\n  };\n}\nglobalThis.console.dir = (value) => {\n  const line = globalThis.__nodeFormat([value]);\n  if (globalThis.process && globalThis.process.stdout && globalThis.process.stdout.write)\n    globalThis.process.stdout.write(line + "\\n");\n  else\n    globalThis.__quench_console_write(line);\n};\nglobalThis.console.assert = (condition, ...args) => {\n  if (!condition) globalThis.console.error(...args);\n};\nconst consoleTimers = {};\nconst consoleCounts = {};\nglobalThis.console.count = (label = "default") => {\n  if (typeof label === "symbol" || typeof label === "Symbol") {\n    const e = new TypeError("Count label must be a string");\n    e.code = "ERR_INVALID_ARG_TYPE";\n    throw e;\n  }\n  consoleCounts[label] = (consoleCounts[label] || 0) + 1;\n  const line = `${label}: ${consoleCounts[label]}`;\n  if (globalThis.process && globalThis.process.stdout && globalThis.process.stdout.write)\n    globalThis.process.stdout.write(line + "\\n");\n  else\n    globalThis.__quench_console_write(line);\n};\nglobalThis.console.countReset = (label = "default") => {\n  consoleCounts[label] = 0;\n};\nglobalThis.console.clear = () => undefined;\nglobalThis.console.time = (label = "default") => {\n  consoleTimers[label] = BigInt(globalThis.__quench_now_ns());\n};\nglobalThis.console.timeLog = (label = "default", ...args) => {\n  if (consoleTimers[label] === undefined) return;\n  globalThis.__quench_console_write(\n    `${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms ${globalThis.__nodeFormat(args)}`,\n  );\n};\nglobalThis.console.timeEnd = (label = "default") => {\n  if (consoleTimers[label] === undefined) return;\n  globalThis.__quench_console_write(\n    `${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms`,\n  );\n  delete consoleTimers[label];\n};\n\nglobalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);\nglobalThis.DOMException = class DOMException extends Error {\n  constructor(message = "", name = "Error") {\n    super(message);\n    this.message = message;\n    this.name = name;\n  }\n};\nglobalThis.process = {\n  env: new Proxy(\n    {},\n    {\n      get: (_, key) =>\n        typeof key === "string" ? globalThis.__quench_env_get(key) : undefined,\n      set: (_, key, value) => {\n        globalThis.__quench_env_set(String(key), String(value));\n        globalThis.__quench_env_keys = [\n          ...new Set([...globalThis.__quench_env_keys, String(key)]),\n        ];\n        return true;\n      },\n      deleteProperty: (_, key) => {\n        globalThis.__quench_env_delete(String(key));\n        globalThis.__quench_env_keys = globalThis.__quench_env_keys.filter(\n          (item) => item !== String(key),\n        );\n        return true;\n      },\n      has: (_, key) =>\n        typeof key === "string" &&\n        globalThis.__quench_env_get(key) !== undefined,\n      ownKeys: () => globalThis.__quench_env_keys,\n      getOwnPropertyDescriptor: (_, key) => ({\n        enumerable: true,\n        configurable: true,\n        value: globalThis.__quench_env_get(String(key)),\n      }),\n    },\n  ),\n  argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],\n  execPath: globalThis.__quench_exec_path,\n  pid: globalThis.__quench_pid,\n  ppid: globalThis.__quench_ppid,\n  getuid: () => globalThis.__quench_getuid,\n  geteuid: () => globalThis.__quench_geteuid,\n  getgid: () => globalThis.__quench_getgid,\n  getegid: () => globalThis.__quench_getegid,\n  platform:\n    globalThis.__quench_platform === "macos"\n      ? "darwin"\n      : globalThis.__quench_platform,\n  arch:\n    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,\n  version: "v20.0.0",\n  versions: { node: "20.0.0", v8: "0.0.0-quench", uv: "0.0.0" },\n  release: { name: "node", lts: "Quench" },\n  config: {\n    variables: {\n      v8_enable_i18n_support: false,\n      v8_enable_temporal_support: false,\n      node_shared: false,\n      node_use_ffi: false,\n    },\n  },\n  features: { inspector: false, tls: false, quic: false, dtls: false },\n  cwd: () => globalThis.__quench_cwd_get(),\n  chdir: (value) => globalThis.__quench_chdir(String(value)),\n  exitCode: 0,\n  exit: (code) => {\n    process.exitCode = code;\n  },\n  kill: (pid, signal) => {\n    if (typeof pid === "object" && pid !== null) {\n      signal = pid.signal;\n      pid = undefined;\n    }\n    const cluster = globalThis.__nodeCluster;\n    if (cluster && Number.isInteger(pid)) {\n      for (const worker of cluster.workers) {\n        if (worker.process && worker.process.pid === pid) {\n          worker.kill(signal);\n          return true;\n        }\n      }\n    }\n    return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;\n  },\n  platform:\n    globalThis.__quench_platform === "macos"\n      ? "darwin"\n      : globalThis.__quench_platform,\n  arch:\n    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,\n  uptime: () => Math.max(0, (Date.now() - __nodeStartedAt) / 1000),\n  memoryUsage: () => ({\n    rss: 0,\n    heapTotal: 0,\n    heapUsed: 0,\n    external: 0,\n    arrayBuffers: 0,\n  }),\n  resourceUsage: () => ({\n    userCPUTime: 0,\n    systemCPUTime: 0,\n    maxRSS: 0,\n    sharedMemorySize: 0,\n    unsharedDataSize: 0,\n    unsharedStackSize: 0,\n    minorPageFault: 0,\n    majorPageFault: 0,\n    swappedOut: 0,\n    fsRead: 0,\n    fsWrite: 0,\n    ipcSent: 0,\n    ipcReceived: 0,\n    signalsCount: 0,\n    voluntaryContextSwitches: 0,\n    involuntaryContextSwitches: 0,\n  }),\n  binding: (name) => {\n    const error = new Error(`No such module: ${String(name)}`);\n    error.code = "ERR_UNKNOWN_BUILTIN_MODULE";\n    throw error;\n  },\n  getBuiltinModule: (name) => {\n    try {\n      return globalThis.require(String(name));\n    } catch (_) {\n      return undefined;\n    }\n  },\n  umask: (mask) =>\n    globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),\n  nextTick: (callback, ...args) => {\n    if (typeof callback !== "function") {\n      const error = new TypeError(\n        \'The "callback" argument must be of type function\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    queueMicrotask(() => callback(...args));\n  },\n  send: (...values) => {\n    const callback = values.at(-1);\n    const hasCallback = typeof callback === "function";\n    const message = hasCallback ? values.slice(0, -1) : values;\n    const cluster = globalThis.__nodeCluster;\n    if (cluster && cluster.isWorker && cluster.worker) {\n      queueMicrotask(() => {\n        for (const value of message) cluster.worker.emit("message", value);\n      });\n      return true;\n    }\n    return false;\n  },\n  hrtime: (previous) => {\n    const ns = BigInt(globalThis.__quench_now_ns());\n    const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];\n    if (!previous) return current;\n    let seconds = current[0] - previous[0];\n    let nanos = current[1] - previous[1];\n    if (nanos < 0) {\n      seconds--;\n      nanos += 1000000000;\n    }\n    return [seconds, nanos];\n  },\n};\nprocess.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());\n\nglobalThis.setImmediate = (callback, ...args) => {\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const id = { active: true, refed: true };\n  id.ref = () => ((id.refed = true), id);\n  id.unref = () => ((id.refed = false), id);\n  id.hasRef = () => id.active && id.refed;\n  id.refresh = () => ((id.active = true), id);\n  queueMicrotask(() => {\n    if (id.active) callback(...args);\n  });\n  return id;\n};\nglobalThis.clearImmediate = (id) => {\n  if (id) id.active = false;\n};\nglobalThis.setTimeout = (callback, _delay = 0, ...args) => {\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const id = { active: true, refed: true };\n  id.ref = () => ((id.refed = true), id);\n  id.unref = () => ((id.refed = false), id);\n  id.hasRef = () => id.active && id.refed;\n  id.generation = 0;\n  const resource = globalThis.__nodeCurrentAsyncResource;\n  const schedule = () => {\n    const generation = ++id.generation;\n    queueMicrotask(() => {\n      if (id.active && generation === id.generation) {\n        if (_delay > 0)\n          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));\n        const previous = globalThis.__nodeCurrentAsyncResource;\n        globalThis.__nodeCurrentAsyncResource = resource;\n        try {\n          callback(...args);\n        } finally {\n          globalThis.__nodeCurrentAsyncResource = previous;\n        }\n      }\n    });\n  };\n  id.refresh = () => {\n    id.active = true;\n    schedule();\n    return id;\n  };\n  schedule();\n  return id;\n};\nglobalThis.clearTimeout = (id) => {\n  if (id) id.active = false;\n};\nglobalThis.setInterval = (callback, _delay = 0, ...args) => {\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const id = { active: true, refed: true };\n  id.ref = () => ((id.refed = true), id);\n  id.unref = () => ((id.refed = false), id);\n  id.hasRef = () => id.active && id.refed;\n  id.generation = 0;\n  const schedule = () => {\n    const generation = ++id.generation;\n    queueMicrotask(() => {\n      if (!id.active || generation !== id.generation) return;\n      if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));\n      callback(...args);\n      if (id.active) schedule();\n    });\n  };\n  id.refresh = () => {\n    id.active = true;\n    schedule();\n    return id;\n  };\n  schedule();\n  return id;\n};\nglobalThis.clearInterval = globalThis.clearTimeout;\nglobalThis.__nodeTimers = {\n  setTimeout,\n  clearTimeout,\n  setInterval,\n  clearInterval,\n  setImmediate,\n  clearImmediate,\n};\n'
-);
+/* Small, dependency-free globals available before user code. */
+globalThis.global = globalThis;
+globalThis.globalThis = globalThis;
+const __nodeNativeEval = globalThis.eval;
+globalThis.eval = (source) => {
+  if (typeof source === "string" && source.trimStart().startsWith("%"))
+    return undefined;
+  return __nodeNativeEval(source);
+};
+const __nodeDetachedBuffers = new WeakSet();
+const __nodeImmutableBuffers = new WeakSet();
+const __nodeAllocatorCounts = {
+  uninitialized: 0,
+  zeroFilled: 0
+};
+const __nodeNativeStructuredClone = globalThis.structuredClone;
+globalThis.structuredClone = (value, options) => {
+  for (const item of options && options.transfer ? options.transfer : [])
+    if (item instanceof ArrayBuffer) __nodeDetachedBuffers.add(item);
+  return __nodeNativeStructuredClone
+    ? __nodeNativeStructuredClone(value, options)
+    : value;
+};
+if (typeof ArrayBuffer.prototype.transferToImmutable !== "function")
+  ArrayBuffer.prototype.transferToImmutable = function () {
+    __nodeImmutableBuffers.add(this);
+    return this;
+  };
+const __nodeProxySet = new WeakSet();
+const __nodeModuleNamespaces = new WeakSet();
+const __nodeNativeProxy = globalThis.Proxy;
+globalThis.Proxy = function (target, handlers) {
+  const proxy = new __nodeNativeProxy(target, handlers);
+  __nodeProxySet.add(proxy);
+  return proxy;
+};
+const __nodeDataViewSet = new WeakSet();
+const __nodeNativeDataView = globalThis.DataView;
+globalThis.DataView = function (...args) {
+  const view = new __nodeNativeDataView(...args);
+  __nodeDataViewSet.add(view);
+  return view;
+};
+globalThis.DataView.prototype = __nodeNativeDataView.prototype;
+const __nodeTypedArraySets = {};
+for (const name of [
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int8Array",
+  "Uint16Array",
+  "Int16Array",
+  "Uint32Array",
+  "Int32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array"
+]) {
+  const Native = globalThis[name];
+  const set = new WeakSet();
+  __nodeTypedArraySets[name] = set;
+  const Wrapped = function (...args) {
+    const array = Reflect.construct(Native, args, new.target || Wrapped);
+    set.add(array);
+    return array;
+  };
+  Wrapped.prototype = Native.prototype;
+  Object.setPrototypeOf(Wrapped, Native);
+  globalThis[name] = Wrapped;
+}
+const __quenchQueueMicrotask = globalThis.queueMicrotask;
+globalThis.__quench_async_error = "";
+globalThis.queueMicrotask = (callback) =>
+  __quenchQueueMicrotask(() => {
+    try {
+      callback();
+    } catch (error) {
+      if (!globalThis.__quench_async_error)
+        globalThis.__quench_async_error =
+          error && error.stack
+            ? `${error.name}: ${error.message}\n${error.stack}`
+            : String(error);
+    }
+  });
+
+globalThis.__nodeFormat = (args) =>
+  args
+    .map((value) => {
+      try {
+        return typeof value === "string" ? value : JSON.stringify(value);
+      } catch (_) {
+        return String(value);
+      }
+    })
+    .join(" ");
+globalThis.console = globalThis.console || {};
+for (const method of ["log", "info", "warn", "error", "debug"]) {
+  globalThis.console[method] = (...args) => {
+    const line = globalThis.__nodeFormat(args);
+    if (
+      globalThis.process &&
+      globalThis.process.stdout &&
+      globalThis.process.stdout.write
+    )
+      globalThis.process.stdout.write(line + "\n");
+    else globalThis.__quench_console_write(line);
+  };
+}
+globalThis.console.dir = (value) => {
+  const line = globalThis.__nodeFormat([value]);
+  if (
+    globalThis.process &&
+    globalThis.process.stdout &&
+    globalThis.process.stdout.write
+  )
+    globalThis.process.stdout.write(line + "\n");
+  else globalThis.__quench_console_write(line);
+};
+globalThis.console.assert = (condition, ...args) => {
+  if (!condition) globalThis.console.error(...args);
+};
+const consoleTimers = {};
+const consoleCounts = {};
+globalThis.console.count = (label = "default") => {
+  if (typeof label === "symbol" || typeof label === "Symbol") {
+    const e = new TypeError("Count label must be a string");
+    e.code = "ERR_INVALID_ARG_TYPE";
+    throw e;
+  }
+  consoleCounts[label] = (consoleCounts[label] || 0) + 1;
+  const line = `${label}: ${consoleCounts[label]}`;
+  if (
+    globalThis.process &&
+    globalThis.process.stdout &&
+    globalThis.process.stdout.write
+  )
+    globalThis.process.stdout.write(line + "\n");
+  else globalThis.__quench_console_write(line);
+};
+globalThis.console.countReset = (label = "default") => {
+  consoleCounts[label] = 0;
+};
+globalThis.console.clear = () => undefined;
+globalThis.console.time = (label = "default") => {
+  consoleTimers[label] = BigInt(globalThis.__quench_now_ns());
+};
+globalThis.console.timeLog = (label = "default", ...args) => {
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(
+    `${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms ${globalThis.__nodeFormat(args)}`
+  );
+};
+globalThis.console.timeEnd = (label = "default") => {
+  if (consoleTimers[label] === undefined) return;
+  globalThis.__quench_console_write(
+    `${label}: ${Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6} ms`
+  );
+  delete consoleTimers[label];
+};
+
+globalThis.__quench_node_pids = new Set([globalThis.__quench_pid]);
+globalThis.DOMException = class DOMException extends Error {
+  constructor(message = "", name = "Error") {
+    super(message);
+    this.message = message;
+    this.name = name;
+  }
+};
+const __nodeClusterKill = (cluster, pid, signal) => {
+  if (!cluster || !Number.isInteger(pid)) return false;
+  for (const worker of cluster.workers) {
+    if (worker.process && worker.process.pid === pid) {
+      worker.kill(signal);
+      return true;
+    }
+  }
+  return false;
+};
+const __nodeProcessKill = (pid, signal) => {
+  if (typeof pid === "object" && pid !== null) {
+    signal = pid.signal;
+    pid = undefined;
+  }
+  const cluster = globalThis.__nodeCluster;
+  if (__nodeClusterKill(cluster, pid, signal)) return true;
+  return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;
+};
+globalThis.process = {
+  env: new Proxy(
+    {},
+    {
+      get: (_, key) =>
+        typeof key === "string" ? globalThis.__quench_env_get(key) : undefined,
+      set: (_, key, value) => {
+        globalThis.__quench_env_set(String(key), String(value));
+        globalThis.__quench_env_keys = [
+          ...new Set([...globalThis.__quench_env_keys, String(key)])
+        ];
+        return true;
+      },
+      deleteProperty: (_, key) => {
+        globalThis.__quench_env_delete(String(key));
+        globalThis.__quench_env_keys = globalThis.__quench_env_keys.filter(
+          (item) => item !== String(key)
+        );
+        return true;
+      },
+      has: (_, key) =>
+        typeof key === "string" &&
+        globalThis.__quench_env_get(key) !== undefined,
+      ownKeys: () => globalThis.__quench_env_keys,
+      getOwnPropertyDescriptor: (_, key) => ({
+        enumerable: true,
+        configurable: true,
+        value: globalThis.__quench_env_get(String(key))
+      })
+    }
+  ),
+  argv: [globalThis.__quench_exec_path, ...globalThis.__quench_argv.slice(1)],
+  execPath: globalThis.__quench_exec_path,
+  pid: globalThis.__quench_pid,
+  ppid: globalThis.__quench_ppid,
+  getuid: () => globalThis.__quench_getuid,
+  geteuid: () => globalThis.__quench_geteuid,
+  getgid: () => globalThis.__quench_getgid,
+  getegid: () => globalThis.__quench_getegid,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
+  version: "v20.0.0",
+  versions: { node: "20.0.0", v8: "0.0.0-quench", uv: "0.0.0" },
+  release: { name: "node", lts: "Quench" },
+  config: {
+    variables: {
+      v8_enable_i18n_support: false,
+      v8_enable_temporal_support: false,
+      node_shared: false,
+      node_use_ffi: false
+    }
+  },
+  features: { inspector: false, tls: false, quic: false, dtls: false },
+  cwd: () => globalThis.__quench_cwd_get(),
+  chdir: (value) => globalThis.__quench_chdir(String(value)),
+  exitCode: 0,
+  exit: (code) => {
+    process.exitCode = code;
+  },
+  kill: __nodeProcessKill,
+  platform:
+    globalThis.__quench_platform === "macos"
+      ? "darwin"
+      : globalThis.__quench_platform,
+  arch:
+    globalThis.__quench_arch === "aarch64" ? "arm64" : globalThis.__quench_arch,
+  uptime: () => Math.max(0, (Date.now() - __nodeStartedAt) / 1000),
+  memoryUsage: () => ({
+    rss: 0,
+    heapTotal: 0,
+    heapUsed: 0,
+    external: 0,
+    arrayBuffers: 0
+  }),
+  resourceUsage: () => ({
+    userCPUTime: 0,
+    systemCPUTime: 0,
+    maxRSS: 0,
+    sharedMemorySize: 0,
+    unsharedDataSize: 0,
+    unsharedStackSize: 0,
+    minorPageFault: 0,
+    majorPageFault: 0,
+    swappedOut: 0,
+    fsRead: 0,
+    fsWrite: 0,
+    ipcSent: 0,
+    ipcReceived: 0,
+    signalsCount: 0,
+    voluntaryContextSwitches: 0,
+    involuntaryContextSwitches: 0
+  }),
+  binding: (name) => {
+    const error = new Error(`No such module: ${String(name)}`);
+    error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
+    throw error;
+  },
+  getBuiltinModule: (name) => {
+    try {
+      return globalThis.require(String(name));
+    } catch (_) {
+      return undefined;
+    }
+  },
+  umask: (mask) =>
+    globalThis.__quench_umask(mask === undefined ? undefined : Number(mask)),
+  nextTick: (callback, ...args) => {
+    if (typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    queueMicrotask(() => callback(...args));
+  },
+  send: (...values) => {
+    const callback = values.at(-1);
+    const hasCallback = typeof callback === "function";
+    const message = hasCallback ? values.slice(0, -1) : values;
+    const cluster = globalThis.__nodeCluster;
+    if (cluster && cluster.isWorker && cluster.worker) {
+      queueMicrotask(() => {
+        for (const value of message) cluster.worker.emit("message", value);
+      });
+      return true;
+    }
+    return false;
+  },
+  hrtime: (previous) => {
+    const ns = BigInt(globalThis.__quench_now_ns());
+    const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];
+    if (!previous) return current;
+    let seconds = current[0] - previous[0];
+    let nanos = current[1] - previous[1];
+    if (nanos < 0) {
+      seconds--;
+      nanos += 1000000000;
+    }
+    return [seconds, nanos];
+  }
+};
+process.hrtime.bigint = () => BigInt(globalThis.__quench_now_ns());
+
+globalThis.setImmediate = (callback, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const id = { active: true, refed: true };
+  id.ref = () => ((id.refed = true), id);
+  id.unref = () => ((id.refed = false), id);
+  id.hasRef = () => id.active && id.refed;
+  id.refresh = () => ((id.active = true), id);
+  queueMicrotask(() => {
+    if (id.active) callback(...args);
+  });
+  return id;
+};
+globalThis.clearImmediate = (id) => {
+  if (id) id.active = false;
+};
+globalThis.setTimeout = (callback, _delay = 0, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const id = { active: true, refed: true };
+  id.ref = () => ((id.refed = true), id);
+  id.unref = () => ((id.refed = false), id);
+  id.hasRef = () => id.active && id.refed;
+  id.generation = 0;
+  const resource = globalThis.__nodeCurrentAsyncResource;
+  const schedule = () => {
+    const generation = ++id.generation;
+    queueMicrotask(() => {
+      if (id.active && generation === id.generation) {
+        if (_delay > 0)
+          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+        const previous = globalThis.__nodeCurrentAsyncResource;
+        globalThis.__nodeCurrentAsyncResource = resource;
+        try {
+          callback(...args);
+        } finally {
+          globalThis.__nodeCurrentAsyncResource = previous;
+        }
+      }
+    });
+  };
+  id.refresh = () => {
+    id.active = true;
+    schedule();
+    return id;
+  };
+  schedule();
+  return id;
+};
+globalThis.clearTimeout = (id) => {
+  if (id) id.active = false;
+};
+globalThis.setInterval = (callback, _delay = 0, ...args) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const id = { active: true, refed: true };
+  id.ref = () => ((id.refed = true), id);
+  id.unref = () => ((id.refed = false), id);
+  id.hasRef = () => id.active && id.refed;
+  id.generation = 0;
+  const schedule = () => {
+    const generation = ++id.generation;
+    queueMicrotask(() => {
+      if (!id.active || generation !== id.generation) return;
+      if (_delay > 0) globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      callback(...args);
+      if (id.active) schedule();
+    });
+  };
+  id.refresh = () => {
+    id.active = true;
+    schedule();
+    return id;
+  };
+  schedule();
+  return id;
+};
+globalThis.clearInterval = globalThis.clearTimeout;
+globalThis.__nodeTimers = {
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  setImmediate,
+  clearImmediate
+};

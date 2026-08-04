@@ -1,3 +1,77 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequire = globalThis.require;\nconst __quenchZlibConstants = Object.freeze({\n  Z_OK: 0,\n  Z_STREAM_END: 1,\n  Z_NEED_DICT: 2,\n  Z_ERRNO: -1,\n  Z_STREAM_ERROR: -2,\n  Z_DATA_ERROR: -3,\n  Z_MEM_ERROR: -4,\n  Z_BUF_ERROR: -5,\n  Z_VERSION_ERROR: -6\n});\nconst __quenchZlibCodes = Object.freeze({\n  Z_OK: 0,\n  Z_STREAM_END: 1,\n  Z_NEED_DICT: 2,\n  Z_ERRNO: -1,\n  Z_STREAM_ERROR: -2,\n  Z_DATA_ERROR: -3,\n  Z_MEM_ERROR: -4,\n  Z_BUF_ERROR: -5,\n  Z_VERSION_ERROR: -6\n});\nconst __quenchCrc32 = (input, seed = 0) => {\n  const bytes =\n    typeof input === "string" ? new TextEncoder().encode(input) : input;\n  let crc = ~seed >>> 0;\n  for (const byte of bytes) {\n    crc ^= byte;\n    for (let bit = 0; bit < 8; bit++)\n      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);\n  }\n  return ~crc >>> 0;\n};\nconst __quenchZlibCallback = (method) => (input, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError("The callback argument must be a function");\n  queueMicrotask(() => {\n    try {\n      callback(null, method(input, options));\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.require = (specifier) => {\n  const module = __quenchOriginalRequire(specifier);\n  if (String(specifier).replace(/^node:/, "") !== "zlib") return module;\n  const deflate = module.deflateSync;\n  const inflate = module.inflateSync;\n  const gzip = module.gzipSync;\n  const gunzip = module.gunzipSync;\n  return Object.assign({}, module, {\n    constants: __quenchZlibConstants,\n    codes: __quenchZlibCodes,\n    crc32: __quenchCrc32,\n    deflate: __quenchZlibCallback(deflate),\n    inflate: __quenchZlibCallback(inflate),\n    gzip: __quenchZlibCallback(gzip),\n    gunzip: __quenchZlibCallback(gunzip),\n    unzipSync: (input, options) =>\n      (input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate)(\n        input,\n        options\n      ),\n    unzip: __quenchZlibCallback((input, options) =>\n      (input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate)(\n        input,\n        options\n      )\n    )\n  });\n};\n'
-);
+const __quenchOriginalRequire = globalThis.require;
+const __quenchZlibConstants = Object.freeze({
+  Z_OK: 0,
+  Z_STREAM_END: 1,
+  Z_NEED_DICT: 2,
+  Z_ERRNO: -1,
+  Z_STREAM_ERROR: -2,
+  Z_DATA_ERROR: -3,
+  Z_MEM_ERROR: -4,
+  Z_BUF_ERROR: -5,
+  Z_VERSION_ERROR: -6
+});
+const __quenchZlibCodes = Object.freeze({
+  Z_OK: 0,
+  Z_STREAM_END: 1,
+  Z_NEED_DICT: 2,
+  Z_ERRNO: -1,
+  Z_STREAM_ERROR: -2,
+  Z_DATA_ERROR: -3,
+  Z_MEM_ERROR: -4,
+  Z_BUF_ERROR: -5,
+  Z_VERSION_ERROR: -6
+});
+const __quenchCrc32 = (input, seed = 0) => {
+  const bytes =
+    typeof input === "string" ? new TextEncoder().encode(input) : input;
+  let crc = ~seed >>> 0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++)
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return ~crc >>> 0;
+};
+const __quenchZlibCallback = (method) => (input, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError("The callback argument must be a function");
+  queueMicrotask(() => {
+    try {
+      callback(null, method(input, options));
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+globalThis.require = (specifier) => {
+  const module = __quenchOriginalRequire(specifier);
+  if (String(specifier).replace(/^node:/, "") !== "zlib") return module;
+  const deflate = module.deflateSync;
+  const inflate = module.inflateSync;
+  const gzip = module.gzipSync;
+  const gunzip = module.gunzipSync;
+  return Object.assign({}, module, {
+    constants: __quenchZlibConstants,
+    codes: __quenchZlibCodes,
+    crc32: __quenchCrc32,
+    deflate: __quenchZlibCallback(deflate),
+    inflate: __quenchZlibCallback(inflate),
+    gzip: __quenchZlibCallback(gzip),
+    gunzip: __quenchZlibCallback(gunzip),
+    unzipSync: (input, options) =>
+      (input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate)(
+        input,
+        options
+      ),
+    unzip: __quenchZlibCallback((input, options) =>
+      (input[0] === 0x1f && input[1] === 0x8b ? gunzip : inflate)(
+        input,
+        options
+      )
+    )
+  });
+};

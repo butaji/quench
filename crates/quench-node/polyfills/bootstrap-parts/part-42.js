@@ -1,3 +1,52 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithConsole = globalThis.require;\nclass __quenchConsole {\n  constructor(stdout = globalThis.process?.stdout, stderr = globalThis.process?.stderr) { this._stdout = stdout; this._stderr = stderr; }\n  log(...args) { this._stdout?.write?.(`${args.join(" ")}\\n`); }\n  info(...args) { this.log(...args); }\n  warn(...args) { this._stderr?.write?.(`${args.join(" ")}\\n`); }\n  error(...args) { this.warn(...args); }\n  table(value) { this.log(Array.isArray(value) ? value.map((item) => JSON.stringify(item)).join("\\n") : JSON.stringify(value)); }\n  trace(...args) { this.error(...args); }\n  assert(condition, ...args) { if (!condition) this.error(...args); }\n  group() {}\n  groupCollapsed() {}\n  groupEnd() {}\n}\nconst __quenchConsoleModule = { Console: __quenchConsole, _stdout: globalThis.process?.stdout, _stderr: globalThis.process?.stderr, log: (...args) => globalThis.console.log(...args), info: (...args) => globalThis.console.info(...args), warn: (...args) => globalThis.console.warn(...args), error: (...args) => globalThis.console.error(...args) };\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "console") return __quenchConsoleModule;\n  return __quenchOriginalRequireWithConsole(specifier);\n};\n'
-);
+const __quenchOriginalRequireWithConsole = globalThis.require;
+class __quenchConsole {
+  constructor(
+    stdout = globalThis.process?.stdout,
+    stderr = globalThis.process?.stderr
+  ) {
+    this._stdout = stdout;
+    this._stderr = stderr;
+  }
+  log(...args) {
+    this._stdout?.write?.(`${args.join(" ")}\n`);
+  }
+  info(...args) {
+    this.log(...args);
+  }
+  warn(...args) {
+    this._stderr?.write?.(`${args.join(" ")}\n`);
+  }
+  error(...args) {
+    this.warn(...args);
+  }
+  table(value) {
+    this.log(
+      Array.isArray(value)
+        ? value.map((item) => JSON.stringify(item)).join("\n")
+        : JSON.stringify(value)
+    );
+  }
+  trace(...args) {
+    this.error(...args);
+  }
+  assert(condition, ...args) {
+    if (!condition) this.error(...args);
+  }
+  group() {}
+  groupCollapsed() {}
+  groupEnd() {}
+}
+const __quenchConsoleModule = {
+  Console: __quenchConsole,
+  _stdout: globalThis.process?.stdout,
+  _stderr: globalThis.process?.stderr,
+  log: (...args) => globalThis.console.log(...args),
+  info: (...args) => globalThis.console.info(...args),
+  warn: (...args) => globalThis.console.warn(...args),
+  error: (...args) => globalThis.console.error(...args)
+};
+globalThis.require = (specifier) => {
+  if (String(specifier).replace(/^node:/, "") === "console")
+    return __quenchConsoleModule;
+  return __quenchOriginalRequireWithConsole(specifier);
+};

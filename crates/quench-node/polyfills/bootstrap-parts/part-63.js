@@ -1,3 +1,21 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchClusterDefaultsRequire = globalThis.require;\nconst __quenchClusterDefaults = __quenchClusterDefaultsRequire("cluster");\nconst __quenchSetupWithCumulativeSettings = __quenchClusterDefaults.setupPrimary;\n__quenchClusterDefaults.setupPrimary = (options = {}) => { const current = __quenchClusterDefaults.settings || {}; const defaults = Object.keys(current).length === 0 ? { args: globalThis.process?.argv?.slice(2) || [], exec: globalThis.process?.argv?.[1], execArgv: globalThis.process?.execArgv || [], silent: false } : {}; return __quenchSetupWithCumulativeSettings({ ...defaults, ...current, ...options }); };\n'
-);
+const __quenchClusterDefaultsRequire = globalThis.require;
+const __quenchClusterDefaults = __quenchClusterDefaultsRequire("cluster");
+const __quenchSetupWithCumulativeSettings =
+  __quenchClusterDefaults.setupPrimary;
+const __quenchClusterInitialSettings = (current) =>
+  Object.keys(current).length === 0
+    ? {
+        args: globalThis.process?.argv?.slice(2) || [],
+        exec: globalThis.process?.argv?.[1],
+        execArgv: globalThis.process?.execArgv || [],
+        silent: false
+      }
+    : {};
+__quenchClusterDefaults.setupPrimary = (options = {}) => {
+  const current = __quenchClusterDefaults.settings || {};
+  return __quenchSetupWithCumulativeSettings({
+    ...__quenchClusterInitialSettings(current),
+    ...current,
+    ...options
+  });
+};

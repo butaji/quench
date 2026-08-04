@@ -1,3 +1,372 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'for (const method of [\n  "on",\n  "addListener",\n  "once",\n  "emit",\n  "removeListener",\n  "off",\n  "removeAllListeners",\n  "listeners",\n  "listenerCount",\n]) {\n  globalThis.process[method] = NodeEventEmitter.prototype[method];\n}\nglobalThis.__nodeEventEmitter.once = (emitter, event) =>\n  new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));\nglobalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {\n  const queue = [];\n  let wake;\n  let aborted = false;\n  let abortError = null;\n  const listener = (...args) => {\n    if (aborted) return;\n    queue.push(args);\n    if (wake) {\n      wake();\n      wake = undefined;\n    }\n  };\n  emitter.on(event, listener);\n  if (options && options.signal) {\n    if (options.signal.aborted) {\n      throw new DOMException("The operation was aborted.", "AbortError");\n    }\n    const onAbort = () => {\n      aborted = true;\n      abortError = new DOMException("The operation was aborted.", "AbortError");\n      if (wake) {\n        wake();\n        wake = undefined;\n      }\n    };\n    options.signal.addEventListener("abort", onAbort);\n    try {\n      while (true) {\n        if (aborted) throw abortError;\n        if (!queue.length)\n          await new Promise((resolve) => {\n            wake = resolve;\n          });\n        if (aborted) throw abortError;\n        yield queue.shift();\n      }\n    } finally {\n      options.signal.removeEventListener("abort", onAbort);\n      emitter.off(event, listener);\n    }\n  }\n  while (true) {\n    if (!queue.length)\n      await new Promise((resolve) => {\n        wake = resolve;\n      });\n    yield queue.shift();\n  }\n};\nclass NodeReadable extends NodeEventEmitter {\n  constructor(options = {}) {\n    super();\n    this.destroyed = false;\n    this.readable = true;\n    this.readableObjectMode = options.objectMode === true;\n    this._paused = false;\n    this.readableFlowing = null;\n    this.readableEnded = false;\n    this.readableEncoding = null;\n    this._chunks = [];\n    this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;\n  }\n  on(event, listener) {\n    super.on(event, listener);\n    if (event === "data") {\n      this._paused = false;\n      this.readableFlowing = true;\n      queueMicrotask(() => {\n        while (!this._paused && this._chunks.length)\n          this.emit("data", this._decode(this._chunks.shift()));\n        if (!this._chunks.length && this._ended) this._emitEnd();\n      });\n    } else if (event === "readable" && this._chunks.length) {\n      queueMicrotask(() => this.emit("readable"));\n    }\n    return this;\n  }\n  destroy(error, callback) {\n    if (this.destroyed) return this;\n    this.destroyed = true;\n    this.readable = false;\n    if (error) this.emit("error", error);\n    queueMicrotask(() => {\n      this.emit("close");\n      if (callback) callback(error);\n    });\n    return this;\n  }\n  static from(iterable) {\n    const stream = new NodeReadable({ objectMode: true });\n    stream._sourceChunks = Array.from(iterable);\n    stream._index = 0;\n    stream._pump = () => {\n      while (!stream._paused && stream._index < stream._sourceChunks.length)\n        stream.emit("data", stream._sourceChunks[stream._index++]);\n      if (!stream._paused && stream._index === stream._sourceChunks.length) {\n        stream._ended = true;\n        stream.readableEnded = true;\n        stream.emit("end");\n      }\n    };\n    queueMicrotask(stream._pump);\n    return stream;\n  }\n  pipe(destination) {\n    this.on("data", (chunk) => {\n      if (destination.write(chunk) === false) {\n        this.pause();\n        destination.once("drain", () => this.resume());\n      }\n    });\n    this.on("end", () => destination.end());\n    return destination;\n  }\n  pause() {\n    this._paused = true;\n    this.readableFlowing = false;\n    return this;\n  }\n  resume() {\n    this._paused = false;\n    this.readableFlowing = true;\n    queueMicrotask(() => {\n      while (!this._paused && this.listenerCount("data") && this._chunks.length)\n        this.emit("data", this._chunks.shift());\n      if (!this._ended) this._pump?.();\n      else if (!this._chunks.length) this._emitEnd();\n    });\n    return this;\n  }\n  isPaused() {\n    return this._paused;\n  }\n  get readableLength() {\n    return this._chunks.reduce(\n      (length, chunk) => length + (chunk?.byteLength ?? chunk?.length ?? 1),\n      0,\n    );\n  }\n  push(chunk) {\n    if (this.destroyed && chunk !== null) {\n      const error = new Error("Cannot call push after a stream was destroyed");\n      error.code = "ERR_STREAM_DESTROYED";\n      throw error;\n    }\n    if (this._ended && chunk !== null) {\n      const error = new Error("stream.push() after EOF");\n      error.code = "ERR_STREAM_PUSH_AFTER_EOF";\n      throw error;\n    }\n    if (chunk === null) {\n      this._ended = true;\n      if (!this._chunks.length) {\n        if (this.listenerCount("data")) queueMicrotask(() => this._emitEnd());\n        else this._emitEnd();\n      }\n      return false;\n    }\n    if (!this.readableObjectMode && typeof chunk === "string")\n      chunk = NodeBuffer.from(chunk);\n    if (this._paused || this.listenerCount("data") === 0) {\n      this._chunks.push(chunk);\n      if (this.listenerCount("readable"))\n        queueMicrotask(() => this.emit("readable"));\n    } else this.emit("data", this._decode(chunk));\n    return true;\n  }\n  unshift(chunk) {\n    if (this.readableEnded && chunk !== null) {\n      const error = new Error("stream.unshift() after end event");\n      error.code = "ERR_STREAM_UNSHIFT_AFTER_END_EVENT";\n      throw error;\n    }\n    if (chunk === null) {\n      this._ended = true;\n      if (!this._chunks.length) this._emitEnd();\n      return this;\n    }\n    if (!this.readableObjectMode && typeof chunk === "string")\n      chunk = NodeBuffer.from(chunk);\n    if (this._paused || this.listenerCount("data") === 0)\n      this._chunks.unshift(chunk);\n    else this.emit("data", chunk);\n    return this;\n  }\n  read(size) {\n    if (!this._chunks || this._chunks.length === 0) return null;\n    if (size !== undefined && size <= 0) return null;\n    const chunk = this._chunks.shift();\n    if (\n      size !== undefined &&\n      !this.readableObjectMode &&\n      chunk &&\n      chunk.length < size\n    ) {\n      const parts = [chunk];\n      let length = chunk.length;\n      while (this._chunks.length && length < size) {\n        const next = this._chunks.shift();\n        const remaining = size - length;\n        if (next.length > remaining) {\n          parts.push(next.subarray(0, remaining));\n          this._chunks.unshift(next.subarray(remaining));\n          length = size;\n        } else {\n          parts.push(next);\n          length += next.length;\n        }\n      }\n      if (parts.length > 1) return this._decode(NodeBuffer.concat(parts));\n    }\n    if (size !== undefined && chunk && chunk.length > size) {\n      this._chunks.unshift(chunk.subarray(size));\n      return this._decode(chunk.subarray(0, size));\n    }\n    if (!this._chunks.length && this._ended) this._emitEnd();\n    return this._decode(chunk);\n  }\n\n  setEncoding(encoding) {\n    encoding = String(encoding).toLowerCase();\n    if (!NodeBuffer.isEncoding(encoding)) {\n      const error = new TypeError(`Unknown encoding: ${encoding}`);\n      error.code = "ERR_UNKNOWN_ENCODING";\n      throw error;\n    }\n    this.readableEncoding = encoding;\n    return this;\n  }\n\n  _decode(chunk) {\n    return this.readableEncoding && ArrayBuffer.isView(chunk)\n      ? NodeBuffer.from(chunk).toString(this.readableEncoding)\n      : chunk;\n  }\n\n  _emitEnd() {\n    if (this.readableEnded) return;\n    this.readableEnded = true;\n    this.emit("end");\n  }\n\n  async *[Symbol.asyncIterator]() {\n    while (this._chunks && this._chunks.length) yield this._chunks.shift();\n  }\n}\nclass NodeWritable extends NodeEventEmitter {\n  constructor(options = {}) {\n    super();\n    this.destroyed = false;\n    this.writable = true;\n    this.writableObjectMode = options.objectMode === true;\n    this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;\n    this.writableLength = 0;\n    this.writableNeedDrain = false;\n    this.writableEnded = false;\n    this.writableFinished = false;\n    this.writableCorked = 0;\n    this._corkedChunks = [];\n  }\n  destroy(error, callback) {\n    if (this.destroyed) return this;\n    this.destroyed = true;\n    this.writable = false;\n    if (error) this.emit("error", error);\n    queueMicrotask(() => {\n      this.emit("close");\n      if (callback) callback(error);\n    });\n    return this;\n  }\n  cork() {\n    this.writableCorked++;\n  }\n  uncork() {\n    if (this.writableCorked > 0) this.writableCorked--;\n    if (this.writableCorked === 0) {\n      for (const chunk of this._corkedChunks) this.emit("data", chunk);\n      this._corkedChunks = [];\n    }\n  }\n  write(chunk, encoding, callback) {\n    if (typeof encoding === "function") callback = encoding;\n    if (this.destroyed) {\n      const error = new Error("Cannot call write after a stream was destroyed");\n      error.code = "ERR_STREAM_DESTROYED";\n      queueMicrotask(() => {\n        if (callback) callback(error);\n        else this.emit("error", error);\n      });\n      return false;\n    }\n    if (this.writableEnded) {\n      const error = new Error("write after end");\n      error.code = "ERR_STREAM_WRITE_AFTER_END";\n      queueMicrotask(() => {\n        if (callback) callback(error);\n        else this.emit("error", error);\n      });\n      return false;\n    }\n    const size =\n      typeof chunk === "string"\n        ? NodeBuffer.byteLength(chunk, encoding || "utf8")\n        : chunk?.byteLength || 1;\n    this.writableLength += size;\n    if (this.writableCorked > 0) this._corkedChunks.push(chunk);\n    else this.emit("data", chunk);\n    queueMicrotask(() => {\n      this.writableLength = Math.max(0, this.writableLength - size);\n      if (callback) callback();\n      if (\n        this.writableNeedDrain &&\n        this.writableLength < this.writableHighWaterMark\n      ) {\n        this.writableNeedDrain = false;\n        this.emit("drain");\n      }\n    });\n    const writable = this.writableLength < this.writableHighWaterMark;\n    this.writableNeedDrain = !writable;\n    return writable;\n  }\n  end(chunk, encoding, callback) {\n    if (typeof encoding === "function") callback = encoding;\n    if (chunk !== undefined)\n      this.write(chunk, typeof encoding === "function" ? undefined : encoding);\n    this.writableEnded = true;\n    queueMicrotask(() => {\n      this.writableFinished = true;\n      this.writable = false;\n      this.emit("finish");\n      if (callback) callback();\n    });\n    return this;\n  }\n}\nclass NodeTransform extends NodeWritable {\n  constructor(options = {}) {\n    super();\n    this._transform = options.transform;\n  }\n  push(chunk) {\n    if (chunk !== undefined) this.emit("data", chunk);\n    return chunk !== null;\n  }\n  write(chunk, encoding, callback) {\n    if (this._transform)\n      this._transform.call(this, chunk, encoding, () => callback && callback());\n    else super.write(chunk, encoding, callback);\n    return true;\n  }\n}\nconst __nodeStreamExports = {\n  Readable: NodeReadable,\n  Writable: NodeWritable,\n  Transform: NodeTransform,\n  PassThrough: NodeTransform,\n};\nglobalThis.__nodeStreamInitialized = false;\nglobalThis.__nodeStream = new Proxy(__nodeStreamExports, {\n  get: (target, key) => {\n    globalThis.__nodeStreamInitialized = true;\n    return target[key];\n  },\n});\n'
-);
+for (const method of [
+  "on",
+  "addListener",
+  "once",
+  "emit",
+  "removeListener",
+  "off",
+  "removeAllListeners",
+  "listeners",
+  "listenerCount"
+]) {
+  globalThis.process[method] = NodeEventEmitter.prototype[method];
+}
+const __nodeWritableWriteError = (stream, callback, error) => {
+  queueMicrotask(() => {
+    if (callback) callback(error);
+    else stream.emit("error", error);
+  });
+  return false;
+};
+globalThis.__nodeEventEmitter.once = (emitter, event) =>
+  new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));
+globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
+  const queue = [];
+  let wake;
+  let aborted = false;
+  const listener = (...args) => {
+    if (aborted) return;
+    queue.push(args);
+    if (wake) (wake(), (wake = undefined));
+  };
+  emitter.on(event, listener);
+  const signal = options?.signal;
+  if (signal?.aborted)
+    throw new DOMException("The operation was aborted.", "AbortError");
+  const onAbort = () => {
+    aborted = true;
+    if (wake) (wake(), (wake = undefined));
+  };
+  signal?.addEventListener("abort", onAbort);
+  try {
+    while (true) {
+      if (aborted)
+        throw new DOMException("The operation was aborted.", "AbortError");
+      if (!queue.length) await new Promise((resolve) => (wake = resolve));
+      yield queue.shift();
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    emitter.off(event, listener);
+  }
+};
+const __nodeReadablePushError = (message, code) => {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+};
+const __nodeReadablePushEnd = (stream) => {
+  stream._ended = true;
+  if (!stream._chunks.length) {
+    if (stream.listenerCount("data")) queueMicrotask(() => stream._emitEnd());
+    else stream._emitEnd();
+  }
+  return false;
+};
+const __nodeReadablePushChunk = (stream, chunk) => {
+  if (stream._paused || stream.listenerCount("data") === 0) {
+    stream._chunks.push(chunk);
+    if (stream.listenerCount("readable"))
+      queueMicrotask(() => stream.emit("readable"));
+  } else stream.emit("data", stream._decode(chunk));
+  return true;
+};
+const __nodeReadableReadSized = (stream, chunk, size) => {
+  if (size === undefined || stream.readableObjectMode || !chunk)
+    return undefined;
+  if (chunk.length < size) {
+    const parts = [chunk];
+    let length = chunk.length;
+    while (stream._chunks.length && length < size) {
+      const next = stream._chunks.shift();
+      const remaining = size - length;
+      if (next.length > remaining) {
+        parts.push(next.subarray(0, remaining));
+        stream._chunks.unshift(next.subarray(remaining));
+        length = size;
+      } else {
+        parts.push(next);
+        length += next.length;
+      }
+    }
+    if (parts.length > 1) return stream._decode(NodeBuffer.concat(parts));
+  }
+  if (chunk.length > size) {
+    stream._chunks.unshift(chunk.subarray(size));
+    return stream._decode(chunk.subarray(0, size));
+  }
+  return undefined;
+};
+class NodeReadable extends NodeEventEmitter {
+  constructor(options = {}) {
+    super();
+    this.destroyed = false;
+    this.readable = true;
+    this.readableObjectMode = options.objectMode === true;
+    this._paused = false;
+    this.readableFlowing = null;
+    this.readableEnded = false;
+    this.readableEncoding = null;
+    this._chunks = [];
+    this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+  }
+  on(event, listener) {
+    super.on(event, listener);
+    if (event === "data") {
+      this._paused = false;
+      this.readableFlowing = true;
+      queueMicrotask(() => {
+        while (!this._paused && this._chunks.length)
+          this.emit("data", this._decode(this._chunks.shift()));
+        if (!this._chunks.length && this._ended) this._emitEnd();
+      });
+    } else if (event === "readable" && this._chunks.length) {
+      queueMicrotask(() => this.emit("readable"));
+    }
+    return this;
+  }
+  destroy(error, callback) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.readable = false;
+    if (error) this.emit("error", error);
+    queueMicrotask(() => {
+      this.emit("close");
+      if (callback) callback(error);
+    });
+    return this;
+  }
+  static from(iterable) {
+    const stream = new NodeReadable({ objectMode: true });
+    stream._sourceChunks = Array.from(iterable);
+    stream._index = 0;
+    stream._pump = () => {
+      while (!stream._paused && stream._index < stream._sourceChunks.length)
+        stream.emit("data", stream._sourceChunks[stream._index++]);
+      if (!stream._paused && stream._index === stream._sourceChunks.length) {
+        stream._ended = true;
+        stream.readableEnded = true;
+        stream.emit("end");
+      }
+    };
+    queueMicrotask(stream._pump);
+    return stream;
+  }
+  pipe(destination) {
+    this.on("data", (chunk) => {
+      if (destination.write(chunk) === false) {
+        this.pause();
+        destination.once("drain", () => this.resume());
+      }
+    });
+    this.on("end", () => destination.end());
+    return destination;
+  }
+  pause() {
+    this._paused = true;
+    this.readableFlowing = false;
+    return this;
+  }
+  resume() {
+    this._paused = false;
+    this.readableFlowing = true;
+    queueMicrotask(() => {
+      while (!this._paused && this.listenerCount("data") && this._chunks.length)
+        this.emit("data", this._chunks.shift());
+      if (!this._ended) this._pump?.();
+      else if (!this._chunks.length) this._emitEnd();
+    });
+    return this;
+  }
+  isPaused() {
+    return this._paused;
+  }
+  get readableLength() {
+    return this._chunks.reduce(
+      (length, chunk) => length + (chunk?.byteLength ?? chunk?.length ?? 1),
+      0
+    );
+  }
+  push(chunk) {
+    if (this.destroyed && chunk !== null)
+      return __nodeReadablePushError(
+        "Cannot call push after a stream was destroyed",
+        "ERR_STREAM_DESTROYED"
+      );
+    if (this._ended && chunk !== null)
+      return __nodeReadablePushError(
+        "stream.push() after EOF",
+        "ERR_STREAM_PUSH_AFTER_EOF"
+      );
+    if (chunk === null) return __nodeReadablePushEnd(this);
+    if (!this.readableObjectMode && typeof chunk === "string")
+      chunk = NodeBuffer.from(chunk);
+    return __nodeReadablePushChunk(this, chunk);
+  }
+  unshift(chunk) {
+    if (this.readableEnded && chunk !== null) {
+      const error = new Error("stream.unshift() after end event");
+      error.code = "ERR_STREAM_UNSHIFT_AFTER_END_EVENT";
+      throw error;
+    }
+    if (chunk === null) {
+      this._ended = true;
+      if (!this._chunks.length) this._emitEnd();
+      return this;
+    }
+    if (!this.readableObjectMode && typeof chunk === "string")
+      chunk = NodeBuffer.from(chunk);
+    if (this._paused || this.listenerCount("data") === 0)
+      this._chunks.unshift(chunk);
+    else this.emit("data", chunk);
+    return this;
+  }
+  read(size) {
+    if (!this._chunks || this._chunks.length === 0) return null;
+    if (size !== undefined && size <= 0) return null;
+    const chunk = this._chunks.shift();
+    const sized = __nodeReadableReadSized(this, chunk, size);
+    if (sized !== undefined) return sized;
+    if (!this._chunks.length && this._ended) this._emitEnd();
+    return this._decode(chunk);
+  }
+
+  setEncoding(encoding) {
+    encoding = String(encoding).toLowerCase();
+    if (!NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
+    this.readableEncoding = encoding;
+    return this;
+  }
+
+  _decode(chunk) {
+    return this.readableEncoding && ArrayBuffer.isView(chunk)
+      ? NodeBuffer.from(chunk).toString(this.readableEncoding)
+      : chunk;
+  }
+
+  _emitEnd() {
+    if (this.readableEnded) return;
+    this.readableEnded = true;
+    this.emit("end");
+  }
+
+  async *[Symbol.asyncIterator]() {
+    while (this._chunks && this._chunks.length) yield this._chunks.shift();
+  }
+}
+class NodeWritable extends NodeEventEmitter {
+  constructor(options = {}) {
+    super();
+    this.destroyed = false;
+    this.writable = true;
+    this.writableObjectMode = options.objectMode === true;
+    this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
+    this.writableLength = 0;
+    this.writableNeedDrain = false;
+    this.writableEnded = false;
+    this.writableFinished = false;
+    this.writableCorked = 0;
+    this._corkedChunks = [];
+  }
+  destroy(error, callback) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.writable = false;
+    if (error) this.emit("error", error);
+    queueMicrotask(() => {
+      this.emit("close");
+      if (callback) callback(error);
+    });
+    return this;
+  }
+  cork() {
+    this.writableCorked++;
+  }
+  uncork() {
+    if (this.writableCorked > 0) this.writableCorked--;
+    if (this.writableCorked === 0) {
+      for (const chunk of this._corkedChunks) this.emit("data", chunk);
+      this._corkedChunks = [];
+    }
+  }
+  write(chunk, encoding, callback) {
+    if (typeof encoding === "function") callback = encoding;
+    if (this.destroyed) {
+      const error = new Error("Cannot call write after a stream was destroyed");
+      error.code = "ERR_STREAM_DESTROYED";
+      return __nodeWritableWriteError(this, callback, error);
+    }
+    if (this.writableEnded) {
+      const error = new Error("write after end");
+      error.code = "ERR_STREAM_WRITE_AFTER_END";
+      return __nodeWritableWriteError(this, callback, error);
+    }
+    const size =
+      typeof chunk === "string"
+        ? NodeBuffer.byteLength(chunk, encoding || "utf8")
+        : chunk?.byteLength || 1;
+    this.writableLength += size;
+    if (this.writableCorked > 0) this._corkedChunks.push(chunk);
+    else this.emit("data", chunk);
+    queueMicrotask(() => {
+      this.writableLength = Math.max(0, this.writableLength - size);
+      if (callback) callback();
+      if (
+        this.writableNeedDrain &&
+        this.writableLength < this.writableHighWaterMark
+      ) {
+        this.writableNeedDrain = false;
+        this.emit("drain");
+      }
+    });
+    const writable = this.writableLength < this.writableHighWaterMark;
+    this.writableNeedDrain = !writable;
+    return writable;
+  }
+  end(chunk, encoding, callback) {
+    if (typeof encoding === "function") callback = encoding;
+    if (chunk !== undefined)
+      this.write(chunk, typeof encoding === "function" ? undefined : encoding);
+    this.writableEnded = true;
+    queueMicrotask(() => {
+      this.writableFinished = true;
+      this.writable = false;
+      this.emit("finish");
+      if (callback) callback();
+    });
+    return this;
+  }
+}
+class NodeTransform extends NodeWritable {
+  constructor(options = {}) {
+    super();
+    this._transform = options.transform;
+  }
+  push(chunk) {
+    if (chunk !== undefined) this.emit("data", chunk);
+    return chunk !== null;
+  }
+  write(chunk, encoding, callback) {
+    if (this._transform)
+      this._transform.call(this, chunk, encoding, () => callback && callback());
+    else super.write(chunk, encoding, callback);
+    return true;
+  }
+}
+const __nodeStreamExports = {
+  Readable: NodeReadable,
+  Writable: NodeWritable,
+  Transform: NodeTransform,
+  PassThrough: NodeTransform
+};
+globalThis.__nodeStreamInitialized = false;
+globalThis.__nodeStream = new Proxy(__nodeStreamExports, {
+  get: (target, key) => {
+    globalThis.__nodeStreamInitialized = true;
+    return target[key];
+  }
+});

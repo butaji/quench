@@ -1,3 +1,85 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeTimersPromises = {\n  setTimeout: (_delay = 0, value, options = {}) =>\n    new Promise((resolve, reject) =>\n      queueMicrotask(() => {\n        if (options && options.signal && options.signal.aborted) {\n          const error = new Error("The operation was aborted");\n          error.name = "AbortError";\n          error.code = "ABORT_ERR";\n          reject(error);\n          return;\n        }\n        if (Number(_delay) > 0)\n          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));\n        resolve(value);\n      }),\n    ),\n  setImmediate: (value, options = {}) =>\n    new Promise((resolve, reject) =>\n      queueMicrotask(() => {\n        if (options && options.signal && options.signal.aborted) {\n          const error = new Error("The operation was aborted");\n          error.name = "AbortError";\n          error.code = "ABORT_ERR";\n          reject(error);\n          return;\n        }\n        resolve(value);\n      }),\n    ),\n  setInterval: async function* (_delay = 0, value, options = {}) {\n    while (true) {\n      if (options && options.signal && options.signal.aborted) {\n        const error = new Error("The operation was aborted");\n        error.name = "AbortError";\n        error.code = "ABORT_ERR";\n        throw error;\n      }\n      if (Number(_delay) > 0)\n        globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));\n      else await new Promise((resolve) => queueMicrotask(resolve));\n      yield value;\n    }\n  },\n};\n\nconst processListeners = {};\nprocess.stdout ||= { isTTY: false };\nprocess.stderr ||= { isTTY: false };\nprocess.on = (event, listener) => {\n  (processListeners[event] ||= []).push(listener);\n  return process;\n};\nprocess.once = (event, listener) => {\n  const once = (...args) => {\n    process.removeListener(event, once);\n    listener(...args);\n  };\n  return process.on(event, once);\n};\nprocess.removeListener = (event, listener) => {\n  processListeners[event] = (processListeners[event] || []).filter(\n    (item) => item !== listener,\n  );\n  return process;\n};\nprocess.removeAllListeners = (event) => {\n  if (event) delete processListeners[event];\n  else\n    Object.keys(processListeners).forEach(\n      (key) => delete processListeners[key],\n    );\n};\nprocess.emit = (event, ...args) => {\n  const listeners = processListeners[event] || [];\n  listeners.forEach((listener) => listener(...args));\n  return listeners.length > 0;\n};\nprocess.emitWarning = (warning, options = {}) => {\n  const message = warning instanceof Error ? warning.message : String(warning);\n  process.emit("warning", {\n    name: options.name || "Warning",\n    message,\n    code: options.code,\n  });\n};\n\n'
-);
+globalThis.__nodeTimersPromises = {
+  setTimeout: (_delay = 0, value, options = {}) =>
+    new Promise((resolve, reject) =>
+      queueMicrotask(() => {
+        if (options && options.signal && options.signal.aborted) {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          error.code = "ABORT_ERR";
+          reject(error);
+          return;
+        }
+        if (Number(_delay) > 0)
+          globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+        resolve(value);
+      })
+    ),
+  setImmediate: (value, options = {}) =>
+    new Promise((resolve, reject) =>
+      queueMicrotask(() => {
+        if (options && options.signal && options.signal.aborted) {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          error.code = "ABORT_ERR";
+          reject(error);
+          return;
+        }
+        resolve(value);
+      })
+    ),
+  setInterval: async function* (_delay = 0, value, options = {}) {
+    while (true) {
+      if (options && options.signal && options.signal.aborted) {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        throw error;
+      }
+      if (Number(_delay) > 0)
+        globalThis.__quench_sleep_ms(Math.max(0, Number(_delay)));
+      else await new Promise((resolve) => queueMicrotask(resolve));
+      yield value;
+    }
+  }
+};
+
+const processListeners = {};
+process.stdout ||= { isTTY: false };
+process.stderr ||= { isTTY: false };
+process.on = (event, listener) => {
+  (processListeners[event] ||= []).push(listener);
+  return process;
+};
+process.once = (event, listener) => {
+  const once = (...args) => {
+    process.removeListener(event, once);
+    listener(...args);
+  };
+  return process.on(event, once);
+};
+process.removeListener = (event, listener) => {
+  processListeners[event] = (processListeners[event] || []).filter(
+    (item) => item !== listener
+  );
+  return process;
+};
+process.removeAllListeners = (event) => {
+  if (event) delete processListeners[event];
+  else
+    Object.keys(processListeners).forEach(
+      (key) => delete processListeners[key]
+    );
+};
+process.emit = (event, ...args) => {
+  const listeners = processListeners[event] || [];
+  listeners.forEach((listener) => listener(...args));
+  return listeners.length > 0;
+};
+process.emitWarning = (warning, options = {}) => {
+  const message = warning instanceof Error ? warning.message : String(warning);
+  process.emit("warning", {
+    name: options.name || "Warning",
+    message,
+    code: options.code
+  });
+};
