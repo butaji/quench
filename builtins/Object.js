@@ -173,7 +173,7 @@ Object.getPrototypeOf = function ObjectGetPrototypeOf(O) {
 // Object.setPrototypeOf (ES2025 §20.1.2.18)
 Object.setPrototypeOf = function ObjectSetPrototypeOf(O, proto) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
-  if (proto !== null && typeof proto !== 'object') throw ThrowTypeError("proto must be an object or null");
+  if (proto !== null && typeof proto !== 'object' && typeof proto !== 'function') throw ThrowTypeError("proto must be an object or null");
   if (!SetPrototypeOf(O, proto)) throw ThrowTypeError("Cannot set prototype of object");
   return O;
 };

@@ -43,6 +43,13 @@ fn symbol_call_inside_constructor_does_not_see_outer_new_target() {
 }
 
 #[test]
+fn set_prototype_of_accepts_function_prototype_values() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx.eval("class C extends Object { constructor() { try { super(true); } catch (e) { globalThis.caught = e; } } } Object.setPrototypeOf(C, parseInt); try { new C(); } catch (e) {} typeof caught");
+    assert_eq!(value, Ok(Value::String("object".into())));
+}
+
+#[test]
 fn call_through_with_environment_uses_with_object_as_this() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
