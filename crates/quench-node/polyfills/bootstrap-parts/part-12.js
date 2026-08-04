@@ -114,6 +114,25 @@ globalThis.__nodeUtil = {
       }
       return String(value);
     };
+    const formatNamedArray = (value) => {
+      const hasIndexedValues = Object.keys(value).some((key) =>
+        /^\d+$/.test(key)
+      );
+      const items = hasIndexedValues
+        ? Array.from({ length: value.length }, (_, index) =>
+            Object.prototype.hasOwnProperty.call(value, index)
+              ? inspect(value[index])
+              : `<${value.length} empty items>`
+          )
+        : [`<${value.length} empty items>`];
+      const extras = Object.keys(value)
+        .filter((key) => !/^\d+$/.test(key))
+        .map((key) => `${key}: ${inspect(value[key])}`);
+      return `${value.constructor.name}(${value.length}) [ ${[
+        ...items,
+        ...extras
+      ].join(", ")} ]`;
+    };
     const stringValue = (value) => {
       if (value && typeof value === "object") {
         if (value instanceof Date) return inspect(value);
@@ -131,25 +150,8 @@ globalThis.__nodeUtil = {
             entries.length ? ` ${entries.join(", ")} ` : ""
           }}`;
         }
-        if (Array.isArray(value) && value.constructor?.name !== "Array") {
-          const hasIndexedValues = Object.keys(value).some((key) =>
-            /^\d+$/.test(key)
-          );
-          const items = hasIndexedValues
-            ? Array.from({ length: value.length }, (_, index) =>
-                Object.prototype.hasOwnProperty.call(value, index)
-                  ? inspect(value[index])
-                  : `<${value.length} empty items>`
-              )
-            : [`<${value.length} empty items>`];
-          const extras = Object.keys(value)
-            .filter((key) => !/^\d+$/.test(key))
-            .map((key) => `${key}: ${inspect(value[key])}`);
-          return `${value.constructor.name}(${value.length}) [ ${[
-            ...items,
-            ...extras
-          ].join(", ")} ]`;
-        }
+        if (Array.isArray(value) && value.constructor?.name !== "Array")
+          return formatNamedArray(value);
         if (
           typeof value.toString === "function" &&
           value.toString !== Object.prototype.toString
