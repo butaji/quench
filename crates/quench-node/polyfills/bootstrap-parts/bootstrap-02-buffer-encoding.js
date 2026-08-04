@@ -159,7 +159,9 @@ const __nodeBufferArrayBufferRange = (value, encoding, length) => {
 };
 const __nodeBufferFromArrayBuffer = (value, encoding, length) => {
   const range = __nodeBufferArrayBufferRange(value, encoding, length);
-  return new NodeBuffer(value, range.offset, range.size);
+  return length === undefined
+    ? new NodeBuffer(value, range.offset)
+    : new NodeBuffer(value, range.offset, range.size);
 };
 const __nodeBufferFromHex = (value) => {
   const output = new NodeBuffer(Math.floor(value.length / 2));
