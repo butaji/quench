@@ -921,3 +921,4 @@ these small fixtures isolate the currently implemented contract.
 |   924 | process source-map enablement validation                | `tools/run-node-tests.sh --stage 924` |
 |   925 | process ref and unref hooks                            | `tools/run-node-tests.sh --stage 925` |
 |   926 | os signal constants                                    | `tools/run-node-tests.sh --stage 926` |
+|   927 | os fast host information surface                      | `tools/run-node-tests.sh --stage 927` |
