@@ -364,6 +364,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
       Event,
       EventTarget,
       CustomEvent,
+      NodeEventTarget,
       kWeakHandler: Symbol("kWeakHandler")
     };
   if (name === "stream") return globalThis.__nodeStream;
