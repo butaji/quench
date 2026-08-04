@@ -1081,6 +1081,9 @@ the initialization state only when the crypto implementation is requested.
 Stage 386 formalized lazy stream initialization, ensuring the stream module
 loads its implementation only when requested.
 
+Stage 387 formalized `fs.closeSync` rejection of unknown descriptors with
+`EBADF` and the `close` syscall metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
