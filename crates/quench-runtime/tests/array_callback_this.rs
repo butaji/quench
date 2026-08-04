@@ -93,3 +93,13 @@ fn array_from_calls_custom_constructor_for_iterables() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_from_constructs_before_iterating() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var calls=0; function C(){calls++;throw new Error('sentinel');} try { Array.from.call(C,{[Symbol.iterator](){return undefined;}}); false; } catch (e) { calls===1; }")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}

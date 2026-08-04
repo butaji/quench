@@ -52,6 +52,7 @@ Array.from = function ArrayFrom(items) {
   if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
   var mappedFromIterator = false;
   var usingIterator = false;
+  var result;
   if (IsArray(items) && mapfn !== undefined) {
     var arrayResult = new Array(0);
     var arrayLength = ToLength(items.length);
@@ -65,6 +66,7 @@ Array.from = function ArrayFrom(items) {
   var iteratorMethod = items[Symbol.iterator];
   if (typeof iteratorMethod === 'function') {
     usingIterator = true;
+    result = IsConstructor(this) ? new this() : new Array(0);
     mappedFromIterator = mapfn !== undefined;
     var iterator = iteratorMethod.call(items);
     var step;
@@ -81,7 +83,7 @@ Array.from = function ArrayFrom(items) {
     var length = ToLength(object.length);
     for (var i = 0; i < length; i++) values.push(object[i]);
   }
-  var result = IsConstructor(this) ? (usingIterator ? new this() : new this(values.length)) : new Array(values.length);
+  if (result === undefined) result = IsConstructor(this) ? new this(values.length) : new Array(values.length);
   for (var i = 0; i < values.length; i++) CreateDataProperty(result, i, mappedFromIterator ? values[i] : mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i));
   return result;
 };
