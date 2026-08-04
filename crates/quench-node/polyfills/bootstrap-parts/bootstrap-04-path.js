@@ -391,7 +391,7 @@ globalThis.__nodeTmpdir = {
 };
 class NodeEventEmitter {
   constructor(options = {}) {
-    this._events = {};
+    this._events = Object.create(null);
     this.captureRejections =
       options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
   }
@@ -454,4 +454,4 @@ class NodeEventEmitter {
   }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
-globalThis.process._events = {};
+globalThis.process._events = Object.create(null);
