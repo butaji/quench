@@ -1418,6 +1418,9 @@ signals as the send queue fills.
 Stage 503 formalized child processes launched with eval code reporting normal
 exit completion.
 
+Stage 504 formalized cluster primary state and worker online/disconnect
+lifecycle controls.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
