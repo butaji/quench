@@ -159,8 +159,10 @@ const __quenchChildProcessModule = () => {
 globalThis.__quench_require_part_00 = (name, specifier) => {
   const base = __quenchRequireCoreBase(name);
   if (base !== undefined) return base;
-  if (name === "http") {
-    if (globalThis.__nodeHttp) return globalThis.__nodeHttp;
+};
+let __quenchHttpModule;
+{
+  if (!globalThis.__nodeHttp) {
     const servers = new Map();
     const makeResponse = () => {
       const response = new globalThis.__nodeEventEmitter();
@@ -270,8 +272,13 @@ globalThis.__quench_require_part_00 = (name, specifier) => {
         http.get(target, typeof options === "function" ? options : callback)
     };
     globalThis.__nodeHttp = http;
-    return http;
+    __quenchHttpModule = http;
   }
+}
+globalThis.__quench_require_part_00 = (name, specifier) => {
+  const base = __quenchRequireCoreBase(name);
+  if (base !== undefined) return base;
+  if (name === "http") return globalThis.__nodeHttp || __quenchHttpModule;
   if (name === "child_process")
     return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
 };
