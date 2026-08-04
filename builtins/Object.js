@@ -20,6 +20,16 @@ var GetOwnPropDesc = ops.GetOwnPropDesc;
 var OwnKeys = ops.OwnKeys;
 var CreateObject = ops.CreateObject;
 var ToPropertyKey = ops.ToPropertyKey;
+
+function EnumerableStringOwnKeys(O) {
+  var keys = EnumerableOwnKeys(O);
+  var strings = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (typeof keys[i] !== 'symbol') strings.push(keys[i]);
+  }
+  return strings;
+}
+
 Object.prototype.toLocaleString = function ObjectToLocaleString() {
   return this.toString();
 };
@@ -79,13 +89,13 @@ Object.is = function ObjectIs(value1, value2) {
 
 // Object.keys (ES2025 §20.1.2.17)
 Object.keys = function ObjectKeys(O) {
-  return EnumerableOwnKeys(ToObject(O));
+  return EnumerableStringOwnKeys(ToObject(O));
 };
 
 // Object.values (ES2025 §20.1.2.23)
 Object.values = function ObjectValues(O) {
   var obj = ToObject(O);
-  var keys = EnumerableOwnKeys(obj);
+  var keys = EnumerableStringOwnKeys(obj);
   var len = keys.length;
   var values = new Array(len);
   for (var i = 0; i < len; i++) values[i] = obj[keys[i]];
@@ -95,7 +105,7 @@ Object.values = function ObjectValues(O) {
 // Object.entries (ES2025 §20.1.2.5)
 Object.entries = function ObjectEntries(O) {
   var obj = ToObject(O);
-  var keys = EnumerableOwnKeys(obj);
+  var keys = EnumerableStringOwnKeys(obj);
   var len = keys.length;
   var entries = new Array(len);
   for (var i = 0; i < len; i++) entries[i] = [keys[i], obj[keys[i]]];

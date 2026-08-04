@@ -179,6 +179,16 @@ fn test_static_async_generator_before_computed_instance_fields() {
 }
 
 #[test]
+fn test_object_keys_excludes_enumerable_symbol_properties() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var key = Symbol(); var value = {}; value[key] = 1; \
+         value.a = 2; Object.keys(value).length",
+    );
+    assert_eq!(result, Ok(Value::Number(1.0)));
+}
+
+#[test]
 fn test_computed_symbol_class_field_descriptor_preserves_value() {
     let mut ctx = Context::new().unwrap();
     let result = ctx.eval(
