@@ -268,10 +268,12 @@ globalThis.__nodeUtil = {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    return value.replace(
-      /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
-      ""
-    );
+    return value
+      .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g, "")
+      .replace(
+        /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
+        ""
+      );
   },
   promisify:
     (fn) =>
