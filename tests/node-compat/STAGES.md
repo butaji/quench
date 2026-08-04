@@ -494,3 +494,4 @@ these small fixtures isolate the currently implemented contract.
 |   495 | async resource state propagates through timers                   | `tools/run-node-tests.sh --stage 495` |
 |   496 | async resource bind preserves receiver and metadata              | `tools/run-node-tests.sh --stage 496` |
 |   497 | buffer legacy encoding methods are exposed                       | `tools/run-node-tests.sh --stage 497` |
+|   498 | buffer prototype surface omits underscored methods                | `tools/run-node-tests.sh --stage 498` |
