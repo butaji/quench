@@ -1802,6 +1802,9 @@ Stage 634 formalized the complete numeric metric shape of
 Stage 635 formalized the numeric resident-set accessor
 `process.memoryUsage.rss()`.
 
+Stage 636 formalized the non-negative monotonic seconds contract of
+`process.uptime()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
