@@ -3228,3 +3228,15 @@ by Node; checking argument availability before suppression fixes both forms.
 
 The upstream util-format fixture now advances past `%c` and exposes a separate
 extra-argument string-inspection mismatch.
+
+Stage 1053 keeps extra arguments on the non-string-first `util.format()` path
+from receiving the array index as the inspection mode. Retrospective: passing
+`__nodeUtilInspectValue` directly to `Array.map` made the index truthy and
+quoted strings accidentally; an explicit one-argument callback preserves plain
+string rendering. The same stage preserves signed zero when it is appended as
+an extra numeric argument.
+
+Stage 1054 preserves the `n` suffix for BigInt values appended after a
+non-string format argument. Retrospective: generic inspection used `String()`
+for all primitive numbers, which drops BigInt's source notation; handling
+BigInt before the generic fallback keeps appended values Node-compatible.

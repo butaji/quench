@@ -51,6 +51,13 @@ const __nodeUtilInspectBasic = (value) => {
   if (typeof value === "function") return __nodeUtilInspectFunction(value);
   return __nodeUtilInspectNoResult;
 };
+const __nodeUtilInspectPrimitive = (value, quoteStrings) => {
+  if (quoteStrings && typeof value === "string")
+    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  if (Object.is(value, -0)) return "-0";
+  if (typeof value === "bigint") return `${value}n`;
+  return undefined;
+};
 const __nodeUtilSpecialNumber = (token, value) =>
   typeof value === "symbol" ||
   Object.prototype.toString.call(value) === "[object Symbol]" ||
@@ -88,8 +95,8 @@ const __nodeUtilFormatJson = (value) => {
   }
 };
 const __nodeUtilInspectValue = (value, quoteStrings = false) => {
-  if (quoteStrings && typeof value === "string")
-    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  const primitive = __nodeUtilInspectPrimitive(value, quoteStrings);
+  if (primitive !== undefined) return primitive;
   const basic = __nodeUtilInspectBasic(value);
   if (basic !== __nodeUtilInspectNoResult) return basic;
   if (Array.isArray(value))
@@ -279,7 +286,7 @@ globalThis.__nodeUtil = {
   format: (...args) => {
     if (!args.length) return "";
     if (typeof args[0] !== "string")
-      return args.map(__nodeUtilInspectValue).join(" ");
+      return args.map((value) => __nodeUtilInspectValue(value)).join(" ");
     let index = 1;
     return (
       args[0].replace(/%[sdifjoOc%]/g, (token) => {
