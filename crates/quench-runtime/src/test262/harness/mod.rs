@@ -604,7 +604,6 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
         "temporalHelpers.js",
         "tcoHelper.js",
         "promiseHelper.js",
-        "nativeFunctionMatcher.js",
         "assertRelativeDateMs.js",
         "compareIterator.js",
         "testIntl.js",
