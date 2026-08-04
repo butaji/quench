@@ -1,5 +1,28 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1130: process object brand
+
+- Fixture: `test-vm-basic.js` run-in-this-context contract
+- Added Node’s observable `Symbol.toStringTag` brand to the process object.
+- Retrospective: small global identity mismatches belong in the shared process
+  surface, not in VM-specific evaluation code.
+
+## Stage 1129: VM context global isolation
+
+- Fixture: `test-vm-basic.js` contextified-sandbox contract
+- Hid and restored the host `process` descriptor around `runInContext()` and
+  its callback re-entry path.
+- Retrospective: share realm-isolation helpers across VM entry points while
+  keeping each entry point’s focused regression independently runnable.
+
+## Stage 1128: VM new-context global isolation
+
+- Fixture: `test-vm-basic.js` new-context contract
+- Hid the host `process` global while evaluating a new context, preserving the
+  standard built-ins and restoring the host descriptor afterward.
+- Retrospective: compare each VM realm entry point independently; the same
+  global-isolation rule must be applied separately to `runInContext`.
+
 ## Stage 1127: VM Script option validation
 
 - Fixture: `test-vm-options-validation.js`

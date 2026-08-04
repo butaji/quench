@@ -65,10 +65,63 @@ const __quenchVmFormatStack = (
   code
     ? `${filename}:${lineOffset + 1}\n${code}\n ^\n\n${error.name}: ${error.message}\nat ${filename}:${lineOffset + 1}:${columnOffset + 7}`
     : `${filename}:${lineOffset + 1}:${columnOffset + 8}\n ^\n${error.stack}`;
+const __quenchVmRestoreProperties = (keys, previous, hiddenProcess) => {
+  for (const key of keys) {
+    const descriptor = previous.get(key);
+    if (descriptor?.configurable)
+      Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
+  }
+  if (hiddenProcess)
+    Object.defineProperty(globalThis, "process", hiddenProcess);
+};
+const __quenchVmInstallContext = (sandbox) => {
+  const keys = Object.getOwnPropertyNames(sandbox);
+  const previous = new Map();
+  const originalGlobalKeys = new Set(Object.getOwnPropertyNames(globalThis));
+  const hiddenProcess =
+    !keys.includes("process") &&
+    Object.getOwnPropertyDescriptor(globalThis, "process");
+  if (hiddenProcess) Reflect.deleteProperty(globalThis, "process");
+  for (const key of keys) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
+    if (!previous.get(key) || previous.get(key).configurable)
+      Object.defineProperty(globalThis, key, descriptor);
+    if (key === "setTimeout" && typeof descriptor.value === "function") {
+      const timer = descriptor.value;
+      globalThis.setTimeout = (callback, ...args) =>
+        timer(() => __quenchVmRunCallback(callback, sandbox, []), ...args);
+    }
+  }
+  return { keys, previous, originalGlobalKeys, hiddenProcess };
+};
+const __quenchVmRestoreNewContext = (
+  original,
+  keys,
+  preservesHostGlobals,
+  hidesProcess
+) => {
+  if (hidesProcess && original.has("process"))
+    Object.defineProperty(globalThis, "process", original.get("process"));
+  if (!preservesHostGlobals) {
+    for (const key of Object.getOwnPropertyNames(globalThis))
+      if (!original.has(key)) Reflect.deleteProperty(globalThis, key);
+    for (const [key, descriptor] of original)
+      Object.defineProperty(globalThis, key, descriptor);
+    return;
+  }
+  for (const key of keys) {
+    if (original.has(key))
+      Object.defineProperty(globalThis, key, original.get(key));
+    else Reflect.deleteProperty(globalThis, key);
+  }
+};
 const __quenchVmRunInNewContext = (code, sandbox, options) => {
   if (!__quenchVmIsObject(sandbox))
     __quenchVmTypeError("The context argument must be an object");
   const keys = Object.getOwnPropertyNames(sandbox);
+  const hidesProcess = !keys.includes("process");
   const preservesHostGlobals = keys.some(
     (key) => typeof sandbox[key] === "function"
   );
@@ -78,6 +131,7 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
       Object.getOwnPropertyDescriptor(globalThis, key)
     ])
   );
+  if (hidesProcess) Reflect.deleteProperty(globalThis, "process");
   try {
     for (const key of keys) globalThis[key] = sandbox[key];
     const result = __quenchVmEvaluateContext(code, sandbox, options, {
@@ -87,17 +141,11 @@ const __quenchVmRunInNewContext = (code, sandbox, options) => {
     });
     return result;
   } finally {
-    if (!preservesHostGlobals) {
-      for (const key of Object.getOwnPropertyNames(globalThis))
-        if (!original.has(key)) Reflect.deleteProperty(globalThis, key);
-      for (const [key, descriptor] of original)
-        Object.defineProperty(globalThis, key, descriptor);
-    } else {
-      for (const key of keys) {
-        if (original.has(key))
-          Object.defineProperty(globalThis, key, original.get(key));
-        else Reflect.deleteProperty(globalThis, key);
-      }
-    }
+    __quenchVmRestoreNewContext(
+      original,
+      keys,
+      preservesHostGlobals,
+      hidesProcess
+    );
   }
 };
