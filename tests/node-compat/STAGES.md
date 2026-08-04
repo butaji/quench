@@ -408,3 +408,4 @@ these small fixtures isolate the currently implemented contract.
 |   409 | process platform, memory, and resource metadata              | `tools/run-node-tests.sh --stage 409` |
 |   410 | process.binding unknown module error                         | `tools/run-node-tests.sh --stage 410` |
 |   411 | process.getBuiltinModule known and unknown modules           | `tools/run-node-tests.sh --stage 411` |
+|   412 | perf_hooks timerify thrown error preservation                 | `tools/run-node-tests.sh --stage 412` |

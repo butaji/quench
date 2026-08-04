@@ -1155,6 +1155,9 @@ with Node’s “No such module” error wording.
 Stage 411 formalized `process.getBuiltinModule` resolution for known modules
 and undefined results for unknown names.
 
+Stage 412 formalized `perf_hooks.timerify` wrapper error propagation and
+observer lifecycle handling.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
