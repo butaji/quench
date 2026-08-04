@@ -2695,3 +2695,7 @@ static setting keeps the precedence test isolated from later fixtures.
 Stage 965 verifies `errorMonitor` callback ordering and error identity.
 Retrospective: recording both callbacks in one synchronous emission makes the
 ordering guarantee explicit without relying on microtask timing.
+
+Stage 966 verifies the default `EventEmitterAsyncResource` resource name.
+Retrospective: checking the no-options constructor separately from explicit
+name propagation catches accidental dependence on caller-provided metadata.
