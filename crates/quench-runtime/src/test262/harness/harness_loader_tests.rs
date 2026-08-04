@@ -465,3 +465,10 @@ fn test_harness_loader_load_fn_global_object() {
         "fnGlobalObject.js should contain fnGlobalObject"
     );
 }
+
+#[test]
+fn injected_assert_uses_test262_javascript_definition() {
+    let assert_js = make_loader().load("assert.js").unwrap();
+    assert!(assert_js.contains("function assert(mustBeTrue, message)"));
+    assert_eq!(assert_js.contains("assert.sameValue = function"), true);
+}

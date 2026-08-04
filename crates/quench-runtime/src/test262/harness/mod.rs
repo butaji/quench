@@ -654,49 +654,6 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
         let _ = nf.set_property("_compare", Value::Undefined);
     }
     let _ = assert_fn.set_property("deepEqual", deep_equal_fn);
-    ctx.set_global(
-        "assert".to_string(),
-        Value::NativeFunction(std::rc::Rc::clone(&assert_fn)),
-    );
-    ctx.set_global(
-        "compareArray".to_string(),
-        make_native(assert_helpers::assert_compare_array),
-    );
-
-    // STEP 2a: assert.js is not loaded as a JS file (see STEP 3 note), so the
-    // helper functions it would define on `assert` are added here. Bodies are
-    // adapted from tests/test262/harness/assert.js (switch fall-through
-    // flattened into independent conditions).
-    const ASSERT_JS_HELPERS: &str = r#"
-assert._isSameValue = function (a, b) {
-  if (a === b) {
-    return a !== 0 || 1 / a === 1 / b;
-  }
-  return a !== a && b !== b;
-};
-assert._formatIdentityFreeValue = function (value) {
-  var t = value === null ? 'null' : typeof value;
-  if (t === 'string') return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
-  if (t === 'bigint') return String(value) + "n";
-  if (t === 'number' && value === 0 && 1 / value === -Infinity) return '-0';
-  if (t === 'number' || t === 'boolean' || t === 'undefined' || t === 'null') return String(value);
-};
-assert._toString = function (value) {
-  var basic = assert._formatIdentityFreeValue(value);
-  if (basic) return basic;
-  try {
-    return String(value);
-  } catch (err) {
-    if (err.name === 'TypeError') {
-      return Object.prototype.toString.call(value);
-    }
-    throw err;
-  }
-};
-"#;
-    ctx.eval(ASSERT_JS_HELPERS)
-        .map_err(|e| format!("assert helper shim failed to evaluate: {:?}", e))?;
-
     // STEP 2b: Inject $262 with agent stub BEFORE loading harness files.
     // atomicsHelper.js and testAtomics.js reference $262.agent.
     host262::inject_stub_agent(ctx);
@@ -708,6 +665,8 @@ assert._toString = function (value) {
     // NOTE: asyncHelpers.js is NOT loaded here - it defines $DONE which should
     // only exist for async tests. It will be loaded separately when needed.
     for js_file in [
+        "assert.js",
+        "deepEqual.js",
         "propertyHelper.js",
         "nativeErrors.js",
         // deepEqual.js is NOT loaded here. The native assert_deep_equal
