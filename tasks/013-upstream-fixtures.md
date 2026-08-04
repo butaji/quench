@@ -2714,3 +2714,7 @@ Stage 968 verifies `events.once()` delivery for EventTargets and rejection of
 invalid options. Retrospective: separating validation and listener selection
 helpers preserved the linter limits while exposing the shared EventEmitter and
 EventTarget contract in one focused stage.
+
+Stage 969 verifies `Event` constructor flags and cancelability. Retrospective:
+using one cancelable and one fixed event keeps default-value behavior explicit
+without depending on the incomplete upstream WPT helper import.
