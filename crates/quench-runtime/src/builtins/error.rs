@@ -55,6 +55,11 @@ pub fn register_error(ctx: &mut Context) {
 fn create_error_proto(name: &str) -> Object {
     let mut proto = Object::new(ObjectKind::Ordinary);
     proto.set("name", Value::String(name.to_string()));
+    // Per ES §19.5.6.3.2 / §20.5.8.3.2 (and analogues for each NativeError
+    // subclass), the initial value of NativeError.prototype.message is the
+    // empty String. Without this, the prototype's message reads back as
+    // `undefined` and the propertyHelper.js / assert.sameValue checks fail.
+    proto.set("message", Value::String(String::new()));
     proto
 }
 

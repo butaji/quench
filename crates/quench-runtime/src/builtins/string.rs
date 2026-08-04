@@ -15,6 +15,13 @@ use methods::install_string_methods;
 // Thread-local storage for String.prototype (created once, shared)
 thread_local! {
     static STRING_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+    static STRING_ITERATOR_PROTOTYPE: RefCell<Option<Rc<RefCell<Object>>>> = const { RefCell::new(None) };
+}
+
+/// Get the StringIteratorPrototype so the bootstrap layer can re-parent it
+/// onto the JS-self-hosted %IteratorPrototype% after Array.js / Iterator.js load.
+pub fn get_string_iterator_prototype() -> Option<Rc<RefCell<Object>>> {
+    STRING_ITERATOR_PROTOTYPE.with(|p| p.borrow().clone())
 }
 
 /// Get the String.prototype object
@@ -151,6 +158,7 @@ pub(crate) fn register_string_iterator(string_proto: &Rc<RefCell<Object>>) {
     };
     let iterator_proto = Rc::new(RefCell::new(Object::new(ObjectKind::Ordinary)));
     iterator_proto.borrow_mut().prototype = crate::builtins::iterator::get_iterator_prototype();
+    STRING_ITERATOR_PROTOTYPE.with(|p| *p.borrow_mut() = Some(Rc::clone(&iterator_proto)));
     iterator_proto.borrow_mut().define(
         &tag_key.property_key(),
         Value::String("String Iterator".into()),

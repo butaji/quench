@@ -335,6 +335,20 @@ fn normalize_intrinsic_prototypes(ctx: &Context) {
             }
         }
     }
+    // After JS bootstrap, the %IteratorPrototype% is the JS-self-hosted
+    // Iterator.prototype object. Re-parent the Rust-side %StringIteratorPrototype%
+    // onto it so ArrayIteratorPrototype (also inherited from Iterator.prototype)
+    // and StringIteratorPrototype share the same parent — required by the
+    // test262 ancestry tests.
+    if let Some(str_iter_proto) = crate::builtins::string::get_string_iterator_prototype() {
+        if let Some(iter_proto_value) = ctx.get_global("Iterator") {
+            if let crate::value::Value::NativeFunction(nf) = iter_proto_value {
+                if let Some(crate::value::Value::Object(parent)) = nf.get_property("prototype") {
+                    str_iter_proto.borrow_mut().prototype = Some(parent);
+                }
+            }
+        }
+    }
 }
 
 fn normalize_prototype(prototype: &Rc<RefCell<crate::value::Object>>) {
