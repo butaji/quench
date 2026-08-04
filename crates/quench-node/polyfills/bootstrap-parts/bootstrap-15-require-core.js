@@ -74,11 +74,45 @@ let __quenchAsyncHooksModule;
     })
   };
 }
-const __quenchEventsOnce = (emitter, event, options = {}) =>
-  new Promise((resolve, reject) => {
+const __quenchOnceTypeError = (message) => {
+  const error = new TypeError(`${message} [ERR_INVALID_ARG_TYPE]`);
+  error.code = "ERR_INVALID_ARG_TYPE";
+  return error;
+};
+const __quenchValidateOnceOptions = (emitter, options) => {
+  if (options === null || typeof options !== "object")
+    throw __quenchOnceTypeError("The options argument must be an object");
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal))
+    throw __quenchOnceTypeError("The signal option must be an AbortSignal");
+  if (
+    typeof emitter.addEventListener !== "function" &&
+    typeof emitter.on !== "function"
+  )
+    throw __quenchOnceTypeError(
+      "The emitter must be an EventEmitter or EventTarget"
+    );
+};
+const __quenchOnceListeners = (emitter) => {
+  const isEventTarget = typeof emitter.addEventListener === "function";
+  const add = isEventTarget ? "addEventListener" : "on";
+  const remove = isEventTarget ? "removeEventListener" : "off";
+  return {
+    isEventTarget,
+    add: emitter[add].bind(emitter),
+    remove: emitter[remove].bind(emitter)
+  };
+};
+const __quenchEventsOnce = (emitter, event, options = {}) => {
+  try {
+    __quenchValidateOnceOptions(emitter, options);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  const listeners = __quenchOnceListeners(emitter);
+  return new Promise((resolve, reject) => {
     const cleanup = () => {
-      emitter.off(event, onEvent);
-      emitter.off("error", onError);
+      listeners.remove(event, onEvent);
+      if (!listeners.isEventTarget) listeners.remove("error", onError);
       options.signal?.removeEventListener("abort", onAbort);
     };
     const onEvent = (...args) => {
@@ -93,11 +127,12 @@ const __quenchEventsOnce = (emitter, event, options = {}) =>
       cleanup();
       reject(new DOMException("The operation was aborted.", "AbortError"));
     };
-    emitter.on(event, onEvent);
-    emitter.on("error", onError);
+    listeners.add(event, onEvent);
+    if (!listeners.isEventTarget) listeners.add("error", onError);
     if (options.signal?.aborted) onAbort();
     else options.signal?.addEventListener("abort", onAbort, { once: true });
   });
+};
 const __quenchCoreStaticModules = new Map([
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
