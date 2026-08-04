@@ -1,8 +1,12 @@
 {
   if (globalThis.process) {
-    globalThis.process.emitWarning = (message, name = "Warning") => {
-      const warning = new Error(String(message));
-      warning.name = String(name);
+    globalThis.process.emitWarning = (message, options = {}) => {
+      const warning =
+        message instanceof Error ? message : new Error(String(message));
+      const settings =
+        typeof options === "string" ? { name: options } : options || {};
+      warning.name = String(settings.name || "Warning");
+      if (settings.code !== undefined) warning.code = settings.code;
       globalThis.process.emit("warning", warning);
       return warning;
     };
