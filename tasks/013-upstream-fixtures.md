@@ -1820,6 +1820,9 @@ Stage 640 formalized event-specific clearing with
 Stage 641 formalized targeted callback removal with
 `process.removeListener`.
 
+Stage 642 formalized warning metadata preservation for
+`process.emitWarning`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

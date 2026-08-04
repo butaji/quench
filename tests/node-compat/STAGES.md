@@ -638,3 +638,4 @@ these small fixtures isolate the currently implemented contract.
 |   639 | process once delivers one event and removes its listener                  | `tools/run-node-tests.sh --stage 639` |
 |   640 | process removeAllListeners clears only the selected event                 | `tools/run-node-tests.sh --stage 640` |
 |   641 | process removeListener removes only the targeted callback                | `tools/run-node-tests.sh --stage 641` |
+|   642 | process emitWarning preserves warning name, message, and code             | `tools/run-node-tests.sh --stage 642` |
