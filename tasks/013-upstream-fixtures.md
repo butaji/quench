@@ -2142,3 +2142,5 @@ Stage 795 verified process.finalization lifecycle methods.
 Stage 796 verified process.permission query compatibility.
 
 Stage 797 verified process.release metadata compatibility.
+
+Stage 798 verified process.getBuiltinModule loading behavior.
