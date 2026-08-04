@@ -2258,3 +2258,5 @@ Stage 853 verifies the node:punycode Unicode domain conversion API.
 Stage 854 verifies the node:domain legacy error context API.
 
 Stage 855 verifies the node:inspector debugging session API.
+
+Stage 856 verifies the node:test runner and lifecycle API.
