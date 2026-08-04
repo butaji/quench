@@ -515,3 +515,4 @@ these small fixtures isolate the currently implemented contract.
 |   516 | zlib asynchronous callbacks round trip and report errors         | `tools/run-node-tests.sh --stage 516` |
 |   517 | zlib crc32 computes strings, buffers, and seeds                   | `tools/run-node-tests.sh --stage 517` |
 |   518 | zlib unzip detects deflate and gzip formats                      | `tools/run-node-tests.sh --stage 518` |
+|   519 | StringDecoder preserves split UTF-8 sequences                    | `tools/run-node-tests.sh --stage 519` |
