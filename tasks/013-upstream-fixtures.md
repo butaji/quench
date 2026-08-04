@@ -2333,3 +2333,8 @@ Stage 891 verifies the node:crypto algorithm inventory.
 
 Retrospective: inventory stages now assert useful contents in addition to
 callable exports, which catches native-but-empty rquickjs surfaces earlier.
+
+Stage 892 verifies the node:crypto Web Crypto digest API.
+
+Retrospective: async compatibility fixtures should settle promises through
+callbacks so the harness can drain rquickjs pending jobs deterministically.
