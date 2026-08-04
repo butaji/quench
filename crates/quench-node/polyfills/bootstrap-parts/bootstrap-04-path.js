@@ -172,7 +172,9 @@ globalThis.__nodePath = {
     return parts.join("/") || (input.startsWith("/") ? "/" : ".");
   },
   extname: (value) => {
-    const name = globalThis.__nodePath.basename(__nodePathArg(value));
+    const input = __nodePathArg(value).replace(/\/+$/, "");
+    const name = globalThis.__nodePath.basename(input);
+    if (name === "." || name === "..") return "";
     const i = name.lastIndexOf(".");
     return i > 0 ? name.slice(i) : "";
   },
@@ -327,7 +329,9 @@ const __nodeWinPath = {
     return input.slice(0, index + (keepSeparator ? 1 : 0)) || "\\";
   },
   extname(value) {
-    const base = __nodeWinPath.basename(__nodePathArg(value));
+    const input = __nodePathArg(value).replace(/[\\/]+$/, "");
+    const base = __nodeWinPath.basename(input);
+    if (base === "." || base === "..") return "";
     const index = base.lastIndexOf(".");
     return index > 0 ? base.slice(index) : "";
   }
