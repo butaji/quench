@@ -87,7 +87,10 @@ const __quenchVmModule = {
       globalThis[key] = sandbox[key];
     }
     try {
-      return (0, eval)(String(code));
+      const result = (0, eval)(String(code));
+      if (typeof result === "function")
+        Object.setPrototypeOf(result, Object.create(Function.prototype));
+      return result;
     } finally {
       for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
     }
