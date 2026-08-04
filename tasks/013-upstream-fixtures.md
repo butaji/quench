@@ -1521,6 +1521,9 @@ Stage 537 formalized `trace_events` rejecting unsupported builtin loads with
 Stage 538 formalized `wasi` rejecting unsupported builtin loads with
 `ERR_UNKNOWN_BUILTIN_MODULE`.
 
+Stage 539 formalized unsupported inspector and inspector/promises loads with
+`ERR_UNKNOWN_BUILTIN_MODULE`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
