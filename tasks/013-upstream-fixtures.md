@@ -2108,3 +2108,5 @@ Stage 778 aligned process.stdout Socket type and writable buffer size.
 Stage 779 aligned process.stderr Socket type and writable buffer size.
 
 Stage 780 added async disposal protocol support to process stdout and stderr.
+
+Stage 781 verified promise returns from process stdout and stderr async disposal.
