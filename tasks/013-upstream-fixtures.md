@@ -1226,6 +1226,9 @@ Stage 434 formalized synchronous `process.nextTick` callback validation with
 Stage 435 formalized synchronous callback validation for timeout, immediate,
 and interval scheduling APIs.
 
+Stage 436 formalized timer handle reference control through `ref`, `unref`, and
+`hasRef`, including cleared-handle state.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
