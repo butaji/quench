@@ -1249,6 +1249,9 @@ Stage 442 formalized buffering of corked writes and their emission on uncork.
 Stage 443 formalized append-mode WriteStream behavior without truncating
 existing file content.
 
+Stage 444 formalized Readable `push` chunk delivery, end signaling, and the
+`push(null)` return state.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
