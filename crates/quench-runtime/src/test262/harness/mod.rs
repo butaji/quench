@@ -515,20 +515,6 @@ fn donotevaluate(_args: Vec<Value>) -> Result<Value, JsError> {
     Err(js_err)
 }
 
-/// assert.notUnreachable - throws if reached
-fn assert_not_unreachable(_args: Vec<Value>) -> Result<Value, JsError> {
-    let (err_val, js_err) = crate::value::error::create_js_error_with_type(
-        "assert.notUnreachable: unreachable code was executed",
-        "Test262Error",
-    );
-    if let Value::Object(o) = &err_val {
-        o.borrow_mut()
-            .set("name", Value::String("Test262Error".to_string()));
-    }
-    crate::value::set_thrown_value(err_val);
-    Err(js_err)
-}
-
 /// detachArrayBuffer helper
 #[allow(dead_code)]
 fn detach_buffer(args: Vec<Value>) -> Result<Value, JsError> {
@@ -586,82 +572,11 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     });
     ctx.set_global("__quenchSameValue".to_string(), same_value_fn);
 
-    // STEP 2: Create assert with native methods FIRST, before loading JS harness files.
-    // Properties set by JS files (like deepEqual.js) will be added to this same object.
-    let assert_fn = std::rc::Rc::new(crate::value::NativeFunction::new(|args: Vec<Value>| {
-        let must_be_true = args.first().cloned().unwrap_or(Value::Undefined);
-        let message = args
-            .get(1)
-            .map(crate::value::to_js_string)
-            .unwrap_or_else(|| {
-                let dbg = crate::value::to_js_string(&must_be_true);
-                format!("Expected true but got {}", dbg)
-            });
-        if must_be_true != Value::Boolean(true) {
-            let (err_val, js_err) =
-                crate::value::error::create_js_error_with_type(&message, "Test262Error");
-            if let Value::Object(o) = &err_val {
-                o.borrow_mut()
-                    .set("name", Value::String("Test262Error".to_string()));
-            }
-            crate::value::set_thrown_value(err_val);
-            return Err(js_err);
-        }
-        Ok(Value::Undefined)
-    }));
-    // Set native properties FIRST (will be overwritten by JS harness if needed)
-    let _ = assert_fn.set_property("sameValue", make_native(assert_helpers::assert_same_value));
-    let _ = assert_fn.set_property("throws", make_native(assert_helpers::assert_throws));
-    let _ = assert_fn.set_property(
-        "compareArray",
-        make_native(assert_helpers::assert_compare_array),
-    );
-    let _ = assert_fn.set_property("notUnreachable", make_native(assert_not_unreachable));
-    let _ = assert_fn.set_property(
-        "notSameValue",
-        make_native(|args: Vec<Value>| {
-            let actual = args.first().cloned().unwrap_or(Value::Undefined);
-            let unexpected = args.get(1).cloned().unwrap_or(Value::Undefined);
-            if crate::value::same_value(&actual, &unexpected) {
-                let msg = args
-                    .get(2)
-                    .map(crate::value::to_js_string)
-                    .unwrap_or_default();
-                let msg = format!(
-                    "Expected SameValue(«{}», «{}») to be false. {}",
-                    crate::value::to_js_string(&actual),
-                    crate::value::to_js_string(&unexpected),
-                    msg
-                );
-                let (err_val, js_err) =
-                    crate::value::error::create_js_error_with_type(&msg, "Test262Error");
-                if let Value::Object(o) = &err_val {
-                    o.borrow_mut()
-                        .set("name", Value::String("Test262Error".to_string()));
-                }
-                crate::value::set_thrown_value(err_val);
-                return Err(js_err);
-            }
-            Ok(Value::Undefined)
-        }),
-    );
-    // Set native deepEqual with stub properties that JS code expects.
-    // The JS harness file deepEqual.js will overwrite these with real implementations.
-    let deep_equal_fn = make_native(deep_equal::assert_deep_equal);
-    if let Value::NativeFunction(ref nf) = deep_equal_fn {
-        // These are stubs that the JS code will override
-        let _ = nf.set_property("format", Value::Undefined);
-        let _ = nf.set_property("_compare", Value::Undefined);
-    }
-    let _ = assert_fn.set_property("deepEqual", deep_equal_fn);
-    // STEP 2b: Inject $262 with agent stub BEFORE loading harness files.
+    // STEP 2: Inject $262 with agent stub BEFORE loading harness files.
     // atomicsHelper.js and testAtomics.js reference $262.agent.
     host262::inject_stub_agent(ctx);
 
-    // STEP 3: Load JS harness files (many will fail until more builtins exist).
-    // NOTE: We skip assert.js and create assert as a native Object instead.
-    // This avoids a subtle bug where setting properties on a cloned ValueFunction
-    // doesn't affect the original function stored in the environment.
+    // STEP 3: Load JS harness files.
     // NOTE: asyncHelpers.js is NOT loaded here - it defines $DONE which should
     // only exist for async tests. It will be loaded separately when needed.
     for js_file in [
@@ -669,18 +584,10 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
         "deepEqual.js",
         "propertyHelper.js",
         "nativeErrors.js",
-        // deepEqual.js is NOT loaded here. The native assert_deep_equal
-        // (deep_equal.rs) handles deep structural comparison because
-        // Quench's runtime doesn't have all the primitives the upstream JS
-        // version needs yet (Reflect.ownKeys, Map, Set, TypedArrays, etc.).
-        // The upstream file is spec-correct — load it once the runtime is
-        // complete. See docs/test-harness-overrides.md.
         "fnGlobalObject.js",
         // isConstructor.js is NOT loaded here. The upstream JS file
         // (identical to the local copy) uses Reflect.construct and is
-        // spec-correct — keep the native is_constructor() because it's
-        // already used by builtins code. Remove once builtins route
-        // through JS only. See docs/test-harness-overrides.md, R23.
+        // Native helper used by the harness.
         "compareArray.js",
         // detachArrayBuffer.js is NOT loaded here. Its inline test expects
         // $262.detachArrayBuffer to be undefined (ReferenceError on call),
