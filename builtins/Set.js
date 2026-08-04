@@ -20,24 +20,24 @@ Set.prototype.forEach = function SetForEach(callbackfn, thisArg) {
 // Set.prototype.add (ES2025 §24.2.3.1)
 Set.prototype.add = function SetAdd(value) {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.add called on null or undefined");
-  _nativeAdd.call(this, value);
+  this.__add(value);
   return this;
 };
 
 // Set.prototype.has (ES2025 §24.2.3.7)
 Set.prototype.has = function SetHas(value) {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.has called on null or undefined");
-  return _nativeHas.call(this, value);
+  return this.__has(value);
 };
 
 // Set.prototype.delete (ES2025 §24.2.3.4)
 Set.prototype.delete = function SetDelete(value) {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.delete called on null or undefined");
-  return _nativeDelete.call(this, value);
+  return this.__delete(value);
 };
 
 // Set.prototype.clear (ES2025 §24.2.3.2)
 Set.prototype.clear = function SetClear() {
   if (this === null || this === undefined) throw ThrowTypeError("Set.prototype.clear called on null or undefined");
-  return _nativeClear.call(this);
+  return this.__clear();
 };

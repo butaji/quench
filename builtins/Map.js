@@ -25,32 +25,32 @@ Map.prototype.forEach = function MapForEach(callbackfn, thisArg) {
 // Map.prototype.get (ES2025 §24.1.3.6)
 Map.prototype.get = function MapGet(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.get called on null or undefined");
-  return _nativeGet.call(this, key);
+  return this.__get(key);
 };
 
 // Map.prototype.set (ES2025 §24.1.3.9)
 Map.prototype.set = function MapSet(key, value) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.set called on null or undefined");
-  _nativeSet.call(this, key, value);
+  this.__set(key, value);
   return this;
 };
 
 // Map.prototype.has (ES2025 §24.1.3.7)
 Map.prototype.has = function MapHas(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.has called on null or undefined");
-  return _nativeHas.call(this, key);
+  return this.__has(key);
 };
 
 // Map.prototype.delete (ES2025 §24.1.3.3)
 Map.prototype.delete = function MapDelete(key) {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.delete called on null or undefined");
-  return _nativeDelete.call(this, key);
+  return this.__delete(key);
 };
 
 // Map.prototype.clear (ES2025 §24.1.3.2)
 Map.prototype.clear = function MapClear() {
   if (this === null || this === undefined) throw ThrowTypeError("Map.prototype.clear called on null or undefined");
-  return _nativeClear.call(this);
+  return this.__clear();
 };
 
 Map.groupBy = function MapGroupBy(items, callbackfn) {

@@ -337,6 +337,26 @@ mod tests {
     }
 
     #[test]
+    fn map_accepts_primitive_keys() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var m = new Map([[1, 'a'], ['b', true]]); [m.get(1), m.get('b')].join(',')")
+                .unwrap(),
+            Value::String("a,true".to_string())
+        );
+    }
+
+    #[test]
+    fn set_constructor_populates_from_array() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("var s = new Set([1, 'a', true]); [s.size, s.has(1), s.has('a'), s.has(true)].join(',')")
+                .unwrap(),
+            Value::String("3,true,true,true".to_string())
+        );
+    }
+
+    #[test]
     fn test_set_nan_value() {
         let mut ctx = Context::new().unwrap();
         ctx.eval("var s = new Set(); s.add(NaN); s.add(NaN);")
