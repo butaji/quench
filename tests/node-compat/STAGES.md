@@ -713,3 +713,4 @@ these small fixtures isolate the currently implemented contract.
 |   714 | process stdout listenerCount reports the lightweight listener state            | `tools/run-node-tests.sh --stage 714` |
 |   715 | process stderr listenerCount reports the lightweight listener state            | `tools/run-node-tests.sh --stage 715` |
 |   716 | process stdout eventNames reports the lightweight listener state              | `tools/run-node-tests.sh --stage 716` |
+|   717 | process stderr eventNames reports the lightweight listener state              | `tools/run-node-tests.sh --stage 717` |
