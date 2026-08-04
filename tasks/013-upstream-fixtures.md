@@ -1596,6 +1596,9 @@ events; the existing cluster process bridge already covered this lifecycle.
 Stage 561 formalized cluster worker `isDead()` state and the `destroy()`
 lifecycle method across primary and worker processes.
 
+Stage 562 formalized the cluster `schedulingPolicy` default as
+`SCHED_RR`/round-robin scheduling.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
