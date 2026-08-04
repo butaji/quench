@@ -752,3 +752,4 @@ these small fixtures isolate the currently implemented contract.
 |   753 | process stderr writableCorked starts at zero                               | `tools/run-node-tests.sh --stage 753` |
 |   754 | process stdout pending reports no pending operation                        | `tools/run-node-tests.sh --stage 754` |
 |   755 | process stderr pending reports no pending operation                        | `tools/run-node-tests.sh --stage 755` |
+|   756 | process stdout writableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 756` |
