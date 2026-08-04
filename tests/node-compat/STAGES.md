@@ -683,3 +683,4 @@ these small fixtures isolate the currently implemented contract.
 |   684 | process send exposes a boolean no-channel result                              | `tools/run-node-tests.sh --stage 684` |
 |   685 | process cwd exposes a non-empty current working directory string              | `tools/run-node-tests.sh --stage 685` |
 |   686 | process chdir accepts the current directory and preserves cwd                 | `tools/run-node-tests.sh --stage 686` |
+|   687 | process stdout exposes a writable stream-like object                         | `tools/run-node-tests.sh --stage 687` |
