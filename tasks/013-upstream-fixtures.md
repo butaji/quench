@@ -1564,6 +1564,9 @@ Stage 551 formalized `process.report.getReport()` metadata and the default
 `reportOnSignal` setting; the existing process-report polyfill already covered
 this surface.
 
+Stage 552 formalized `fs.promises.glob()` async-iterable matching with a cwd;
+the existing filesystem polyfill already covered the basic pattern behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
