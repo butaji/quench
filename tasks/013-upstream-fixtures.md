@@ -2840,3 +2840,7 @@ assertion helper in the upstream fixture.
 Upstream audit: `test-event-emitter-listeners-side-effects.js` now reaches its
 listener assertions, but the fixture still needs the `assert.fail` compatibility
 surface before it can validate all cases.
+
+Stage 992 adds the missing `assert.fail()` assertion helper. Retrospective:
+implementing the helper at the shared assertion object fixes multiple upstream
+fixtures without adding test-specific behavior.

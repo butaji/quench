@@ -198,6 +198,8 @@ globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
   }
 };
 globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
+globalThis.__nodeAssert.fail = (message = "Failed") =>
+  __nodeAssertionFailure(message);
 const __nodeAssertNormalizeView = (value, seen) => {
   const values = [];
   let length = 0;
