@@ -7,7 +7,9 @@ EventTarget.prototype.addEventListener = function (name, listener, options) {
 };
 const __quenchEventEmitter = globalThis.__nodeEventEmitter;
 __quenchEventEmitter.prototype.listenerCount = function (event, listener) {
-  const values = this._events[event] || [];
+  const value = this._events[event];
+  const values =
+    value === undefined ? [] : Array.isArray(value) ? value : [value];
   return listener === undefined
     ? values.length
     : values.filter((item) => item === listener || item.listener === listener)
