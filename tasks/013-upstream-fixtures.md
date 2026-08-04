@@ -3254,3 +3254,28 @@ ASCII character. Retrospective: the runtime TextDecoder produced incorrect
 code points for raw byte input, so validation is now isolated in a named
 decoder layer; the full upstream malformed-sequence matrix still has a later
 timeout requiring further refinement.
+
+Stage 1057 adds explicit UTF-16LE/UCS-2 code-unit decoding for StringDecoder.
+Retrospective: the runtime TextDecoder exposed raw zero bytes for this
+encoding, so the decoder now handles complete little-endian pairs directly and
+retains an odd trailing byte until `end()`. The focused UCS-2 stage passes.
+
+Stage 1058 tracks pending UTF-8 state in a Buffer-backed `lastChar` and updates
+`lastNeed`/`lastTotal`. Retrospective: a generic typed-array placeholder lacked
+Node’s `equals()` method and exposed stale state; updating state at the decoder
+boundary makes the documented fields useful without Rust-side changes.
+
+Stage 1059 normalizes non-Uint8Array views through their byte ranges before
+decoding. Retrospective: `Array.from(DataView)` is empty even when the view has
+bytes, so StringDecoder must explicitly construct a Uint8Array over the view’s
+offset and length.
+
+Stage 1060 adds the offset-aware `StringDecoder.text()` helper. Retrospective:
+the compatibility surface included this undocumented convenience method even
+though normal decoding uses `write()`; handling offsets before slicing avoids
+passing an empty or invalid view into the decoder.
+
+Stage 1061 retains a trailing UTF-16 high surrogate until the corresponding
+low-surrogate bytes arrive. Retrospective: emitting each complete code unit
+immediately split surrogate pairs across writes; retaining only the final high
+surrogate preserves streaming semantics without changing ordinary UCS-2 data.
