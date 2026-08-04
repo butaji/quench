@@ -151,7 +151,7 @@ const __nodeBufferFillPattern = (value, encoding) => {
 const __nodeBufferCompareValidate = (target, values) => {
   if (!(target instanceof Uint8Array)) {
     const error = new TypeError(
-      'The "target" argument must be an instance of Buffer or Uint8Array'
+      `The "target" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(target)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -335,7 +335,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   equals(other) {
     if (!(other instanceof Uint8Array)) {
       const error = new TypeError(
-        'The "otherBuffer" argument must be an instance of Buffer or Uint8Array'
+        `The "otherBuffer" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(other)}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
