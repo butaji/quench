@@ -656,3 +656,4 @@ these small fixtures isolate the currently implemented contract.
 |   657 | process source-map controls expose callable and boolean contracts             | `tools/run-node-tests.sh --stage 657` |
 |   658 | process title exposes a writable string value                                | `tools/run-node-tests.sh --stage 658` |
 |   659 | process getBuiltinModule resolves built-ins with and without node prefix     | `tools/run-node-tests.sh --stage 659` |
+|   660 | process permission has exposes a boolean capability result                    | `tools/run-node-tests.sh --stage 660` |
