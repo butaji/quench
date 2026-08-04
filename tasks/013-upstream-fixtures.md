@@ -3229,6 +3229,13 @@ by Node; checking argument availability before suppression fixes both forms.
 The upstream util-format fixture now advances past `%c` and exposes a separate
 extra-argument string-inspection mismatch.
 
+Stage 1055 makes `StringDecoder` callable on an existing receiver while
+retaining its class-backed methods. Retrospective: exposing the implementation
+class directly made `StringDecoder.call(object)` fail before initialization;
+the wrapper constructs state once, transfers it to the receiver, and shares the
+same prototype. The focused stage covers the upstream callable-constructor
+contract.
+
 Stage 1053 keeps extra arguments on the non-string-first `util.format()` path
 from receiving the array index as the inspection mode. Retrospective: passing
 `__nodeUtilInspectValue` directly to `Array.map` made the index truthy and
