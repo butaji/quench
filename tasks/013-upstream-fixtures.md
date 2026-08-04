@@ -2817,3 +2817,8 @@ Stage 987 verifies `events.getEventListeners()` returns normalized callback
 identities for EventTargets and suppresses duplicate registrations.
 Retrospective: normalizing at the introspection boundary preserves the native
 EventTarget deduplication contract without changing dispatch storage.
+
+Stage 988 verifies `events.addAbortListener()` disposable return values,
+delivery, and disposal. Retrospective: the focused CommonJS stage isolates API
+behavior while the upstream `.mjs` fixture remains outside the classic-script
+harness module-format boundary.
