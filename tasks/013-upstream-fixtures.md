@@ -1703,6 +1703,9 @@ Stage 597 formalized the stable Node metadata fields exposed by
 Stage 598 formalized the Set contract of
 `process.allowedNodeEnvironmentFlags`.
 
+Stage 599 formalized the default empty runtime-argument array exposed by
+`process.execArgv`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
