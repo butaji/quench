@@ -576,6 +576,16 @@ mod tests {
     }
 
     #[test]
+    fn function_call_preserves_explicit_this_for_javascript_functions() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("var f = function() { return this.value; }; f.call({ value: 7 }) === 7")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+
+    #[test]
     fn boxed_number_converts_to_its_primitive_value() {
         let mut ctx = new_ctx();
         let r = ctx.eval("Number(new Number(0)) === 0").unwrap();
