@@ -880,3 +880,4 @@ these small fixtures isolate the currently implemented contract.
 |   881 | os exposes platform and user environment API               | `tools/run-node-tests.sh --stage 881` |
 |   882 | process exposes builtin loading helpers                    | `tools/run-node-tests.sh --stage 882` |
 |   883 | stream exposes Web Stream adapter helpers                  | `tools/run-node-tests.sh --stage 883` |
+|   884 | stream promises exposes pipeline helpers                   | `tools/run-node-tests.sh --stage 884` |
