@@ -561,3 +561,4 @@ these small fixtures isolate the currently implemented contract.
 |   562 | cluster schedulingPolicy defaults to round-robin scheduling        | `tools/run-node-tests.sh --stage 562` |
 |   563 | cluster setupPrimary cumulatively updates execution settings       | `tools/run-node-tests.sh --stage 563` |
 |   564 | cluster setupPrimary defaults mirror process execution settings    | `tools/run-node-tests.sh --stage 564` |
+|   565 | cluster legacy setupMaster and isMaster aliases remain compatible    | `tools/run-node-tests.sh --stage 565` |

@@ -1605,6 +1605,9 @@ argument, and exec-argument settings.
 Stage 564 formalized `cluster.setupPrimary()` defaults for arguments, exec,
 execArgv, and the non-silent setting.
 
+Stage 565 formalized the legacy `cluster.setupMaster`/`setupPrimary` and
+`cluster.isMaster`/`isPrimary` aliases.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
