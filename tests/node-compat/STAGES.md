@@ -436,3 +436,4 @@ these small fixtures isolate the currently implemented contract.
 |   437 | stream isPaused pause and resume state                        | `tools/run-node-tests.sh --stage 437` |
 |   438 | stream writableNeedDrain backpressure and drain clearing       | `tools/run-node-tests.sh --stage 438` |
 |   439 | stream readable and writable completion flags                | `tools/run-node-tests.sh --stage 439` |
+|   440 | stream readable and writable state after destroy              | `tools/run-node-tests.sh --stage 440` |
