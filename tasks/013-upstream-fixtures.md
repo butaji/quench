@@ -1709,6 +1709,8 @@ Stage 599 formalized the default empty runtime-argument array exposed by
 Stage 600 formalized the Node-compatible runtime identifier exposed by
 `process.argv0`.
 
+Stage 601 formalized the object contract exposed by `process.features`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
