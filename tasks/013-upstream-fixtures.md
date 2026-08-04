@@ -1553,6 +1553,9 @@ Stage 547 formalized `os.homedir()`, `os.tmpdir()`, and the core fields of
 Stage 548 formalized process uptime, memory-usage fields, and CPU-usage fields;
 the existing process host integration already covered these metrics.
 
+Stage 549 formalized key `fs.constants` flags and their frozen-object contract;
+the existing filesystem polyfill already provided this surface.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
