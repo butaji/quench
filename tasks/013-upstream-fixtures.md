@@ -1205,6 +1205,9 @@ close.
 Stage 428 formalized WriteStream descriptor cleanup, leaving `fd` null after
 close.
 
+Stage 429 formalized process exit event delivery, listener ordering, and the
+default zero exit code.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
