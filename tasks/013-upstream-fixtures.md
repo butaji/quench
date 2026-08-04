@@ -2670,3 +2670,8 @@ Stage 959 verifies `events.errorMonitor` observes the original error before the
 ordinary error listener. Retrospective: the symbol must be published after the
 events module initializes, so the emitter uses an explicit shared symbol rather
 than assuming a global-symbol identity.
+
+Stage 960 verifies `EventEmitterAsyncResource` event delivery, resource
+exposure, and name propagation. Retrospective: keeping the fixture synchronous
+tests the resource-backed dispatch contract without conflating it with async
+listener scheduling.
