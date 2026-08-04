@@ -446,7 +446,7 @@ impl ClassValue {
         if name == "length" || name == "name" || name == "prototype" {
             return true;
         }
-        if self.get_static_field(name).is_some() {
+        if self.static_properties_cell.borrow().contains_key(name) {
             return true;
         }
         let eval_env = self

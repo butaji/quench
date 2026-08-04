@@ -630,6 +630,21 @@ pub fn make_ops_object() -> Value {
                     desc,
                 ))))
             }
+            Value::Class(class) => {
+                if !class.has_static_own_property(&key) {
+                    return Ok(Value::Undefined);
+                }
+                let is_field = class.static_properties_cell.borrow().contains_key(&key);
+                let mut desc = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                desc.set(
+                    "value",
+                    class.get_static_field(&key).unwrap_or(Value::Undefined),
+                );
+                desc.set("writable", Value::Boolean(true));
+                desc.set("enumerable", Value::Boolean(is_field));
+                desc.set("configurable", Value::Boolean(true));
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(desc))))
+            }
             _ => Ok(Value::Undefined),
         }
     });

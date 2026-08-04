@@ -145,3 +145,15 @@ fn test_class_instance_and_static_fields() {
     assert!(result.is_ok(), "Combined fields failed: {:?}", result);
     assert_eq!(result.unwrap(), Value::Number(30.0));
 }
+
+#[test]
+fn test_class_static_fields_are_own_properties() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static value = 1; static empty; } \
+         Object.prototype.hasOwnProperty.call(C, 'value') && \
+         Object.prototype.hasOwnProperty.call(C, 'empty') && \
+         !Object.prototype.hasOwnProperty.call(new C(), 'value')",
+    );
+    assert_eq!(result, Ok(Value::Boolean(true)));
+}
