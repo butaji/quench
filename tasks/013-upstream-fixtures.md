@@ -1984,3 +1984,5 @@ Stage 716 added lightweight process.stdout eventNames support.
 Stage 717 added lightweight process.stderr eventNames support.
 
 Stage 718 added the Node-default process.stdout max-listener limit.
+
+Stage 719 added the Node-default process.stderr max-listener limit.
