@@ -50,9 +50,6 @@ Array.from = function ArrayFrom(items) {
   var mapfn = arguments.length > 1 ? arguments[1] : undefined;
   var thisArg = arguments.length > 2 ? arguments[2] : undefined;
   if (mapfn !== undefined && typeof mapfn !== 'function') throw ThrowTypeError("mapfn is not a function");
-  var mappedFromIterator = false;
-  var usingIterator = false;
-  var result;
   if (IsArray(items) && mapfn !== undefined) {
     var arrayResult = new Array(0);
     var arrayLength = ToLength(items.length);
@@ -65,29 +62,34 @@ Array.from = function ArrayFrom(items) {
     arrayResult.length = arrayResultIndex;
     return arrayResult;
   }
-  var values = [];
   var iteratorMethod = items[Symbol.iterator];
   if (typeof iteratorMethod === 'function') {
-    usingIterator = true;
-    result = IsConstructor(this) ? new this() : new Array(0);
-    mappedFromIterator = mapfn !== undefined;
+    var result = IsConstructor(this) ? new this() : new Array(0);
     var iterator = iteratorMethod.call(items);
-    var step;
-    while (!(step = iterator.next()).done) {
-      var value = step.value;
-      if (mappedFromIterator) {
-        try { value = mapfn.call(thisArg, value, values.length); }
-        catch (error) { if (typeof iterator.return === 'function') iterator.return.call(iterator); throw error; }
+    var index = 0;
+    try {
+      var step;
+      while (!(step = iterator.next()).done) {
+        var value = step.value;
+        if (mapfn !== undefined) value = mapfn.call(thisArg, value, index);
+        CreateDataProperty(result, index++, value);
       }
-      values.push(value);
+    } catch (error) {
+      if (typeof iterator.return === 'function') iterator.return.call(iterator);
+      throw error;
     }
-  } else {
-    var object = ToObject(items);
-    var length = ToLength(object.length);
-    for (var i = 0; i < length; i++) values.push(object[i]);
+    result.length = index;
+    return result;
   }
-  if (result === undefined) result = IsConstructor(this) ? new this(values.length) : new Array(values.length);
-  for (var i = 0; i < values.length; i++) CreateDataProperty(result, i, mappedFromIterator ? values[i] : mapfn === undefined ? values[i] : mapfn.call(thisArg, values[i], i));
+  var object = ToObject(items);
+  var length = ToLength(object.length);
+  var result = IsConstructor(this) ? new this(length) : new Array(length);
+  for (var i = 0; i < length; i++) {
+    var value = object[i];
+    if (mapfn !== undefined) value = mapfn.call(thisArg, value, i);
+    CreateDataProperty(result, i, value);
+  }
+  result.length = length;
   return result;
 };
 

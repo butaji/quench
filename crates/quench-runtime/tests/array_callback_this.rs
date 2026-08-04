@@ -105,6 +105,16 @@ fn array_from_constructs_before_iterating() {
 }
 
 #[test]
+fn array_from_closes_iterator_when_result_property_creation_fails() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var closed=0; function C(){Object.defineProperty(this,'0',{writable:true,configurable:false});} var x={[Symbol.iterator](){return {next(){return {done:false,value:1};},return(){closed++;}};}}; try { Array.from.call(C,x); } catch (e) {} closed===1")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn array_from_skips_elements_deleted_by_mapping_callback() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
