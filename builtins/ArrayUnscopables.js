@@ -1,4 +1,4 @@
-var arrayUnscopables = __ops__.CreateObject(Object.prototype);
+var arrayUnscopables = __ops__.CreateObject(null);
 arrayUnscopables.copyWithin = true;
 arrayUnscopables.entries = true;
 arrayUnscopables.fill = true;
@@ -6,6 +6,8 @@ arrayUnscopables.find = true;
 arrayUnscopables.findIndex = true;
 arrayUnscopables.flat = true;
 arrayUnscopables.flatMap = true;
+arrayUnscopables.findLast = true;
+arrayUnscopables.findLastIndex = true;
 arrayUnscopables.includes = true;
 arrayUnscopables.keys = true;
 arrayUnscopables.toReversed = true;

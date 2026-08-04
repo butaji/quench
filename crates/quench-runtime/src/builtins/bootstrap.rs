@@ -762,6 +762,17 @@ mod tests {
     }
 
     #[test]
+    fn array_unscopables_has_null_prototype_and_last_methods() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var u = Array.prototype[Symbol.unscopables]; Object.getPrototypeOf(u) === null && u.findLast === true && u.findLastIndex === true",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_flat_map_reads_length_before_callback_validation() {
         let mut ctx = new_ctx();
         let r = ctx
