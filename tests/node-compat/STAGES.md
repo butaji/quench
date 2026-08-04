@@ -487,3 +487,4 @@ these small fixtures isolate the currently implemented contract.
 |   488 | crypto randomFillSync validates buffer and range                  | `tools/run-node-tests.sh --stage 488` |
 |   489 | querystring rejects lone surrogate encoding                      | `tools/run-node-tests.sh --stage 489` |
 |   490 | querystring preserves Unicode values                              | `tools/run-node-tests.sh --stage 490` |
+|   491 | querystring.parse uses writable unescape hook                    | `tools/run-node-tests.sh --stage 491` |
