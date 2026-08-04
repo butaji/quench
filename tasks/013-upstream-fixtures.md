@@ -2044,3 +2044,5 @@ Stage 746 aligned process.stdout readableHighWaterMark with local Node.
 Stage 747 aligned process.stderr readableHighWaterMark with local Node.
 
 Stage 748 aligned process.stdout readableLength with local Node.
+
+Stage 749 aligned process.stderr readableLength with local Node.
