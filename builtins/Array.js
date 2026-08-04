@@ -131,7 +131,12 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
-  var A = new Array(len);
+  var C = O.constructor;
+  if (C !== null && typeof C === 'object') {
+    C = C[Symbol.species];
+    if (C === null || C === undefined) C = undefined;
+  }
+  var A = C === undefined ? new Array(len) : new C(len);
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
       CreateDataProperty(A, k, callbackfn.call(thisArg, O[k], k, O));

@@ -73,3 +73,13 @@ fn array_filter_constructs_species_result() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_map_constructs_species_result() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var C=function(){this.marker=7;}; var a=[]; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.map(()=>1); r.marker===7")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
