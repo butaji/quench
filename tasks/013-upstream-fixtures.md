@@ -3215,3 +3215,8 @@ BigInt values for both `%d` and `%i` in `util.format`. Retrospective: a
 special-case added to preserve symbol behavior incorrectly bypassed JavaScript's
 signed-zero conversion, while BigInt handling covered only `%d`; keeping the
 special cases aligned with Node's numeric tokens fixes both paths.
+
+Stage 1051 quotes string properties during `%O` object inspection.
+Retrospective: the shared inspection primitive returned raw strings, which was
+correct for plain string formatting but not object inspection; quoting at the
+inspection boundary keeps `%s` and `%O` behavior distinct.
