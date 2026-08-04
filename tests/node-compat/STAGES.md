@@ -467,3 +467,4 @@ these small fixtures isolate the currently implemented contract.
 |   468 | timer handle ref and unref state                                | `tools/run-node-tests.sh --stage 468` |
 |   469 | timer handle refresh is chainable                                | `tools/run-node-tests.sh --stage 469` |
 |   470 | timer refresh after clear reactivates once                       | `tools/run-node-tests.sh --stage 470` |
+|   471 | interval refresh after clear reactivates once                    | `tools/run-node-tests.sh --stage 471` |
