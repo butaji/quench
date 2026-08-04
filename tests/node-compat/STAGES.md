@@ -383,3 +383,4 @@ these small fixtures isolate the currently implemented contract.
 |   384 | crypto module bootstrap and randomUUID availability            | `tools/run-node-tests.sh --stage 384` |
 |   385 | lazy crypto bootstrap state initialization                     | `tools/run-node-tests.sh --stage 385` |
 |   386 | lazy stream bootstrap state initialization                     | `tools/run-node-tests.sh --stage 386` |
+|   387 | fs close invalid descriptor EBADF metadata                     | `tools/run-node-tests.sh --stage 387` |
