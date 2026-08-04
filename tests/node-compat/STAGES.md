@@ -373,3 +373,4 @@ these small fixtures isolate the currently implemented contract.
 |   374 | crypto hash Buffer input and hex digest                          | `tools/run-node-tests.sh --stage 374` |
 |   375 | crypto random byte generation and filling                       | `tools/run-node-tests.sh --stage 375` |
 |   376 | fs ENOENT error metadata                                         | `tools/run-node-tests.sh --stage 376` |
+|   377 | fs invalid path argument validation                              | `tools/run-node-tests.sh --stage 377` |

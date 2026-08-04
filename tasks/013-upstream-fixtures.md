@@ -1052,6 +1052,9 @@ with in-place Buffer return semantics.
 Stage 376 formalized filesystem ENOENT errors, including open syscall metadata
 for missing paths.
 
+Stage 377 formalized filesystem path argument validation and invalid-argument
+error metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
