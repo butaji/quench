@@ -89,6 +89,10 @@ const __nodeQuerystringAddValue = (result, key, value) => {
         ? result[key].concat(value)
         : [result[key], value];
 };
+const __nodeQuerystringMaxKeys = (options) => {
+  if (!options || options.maxKeys === undefined) return 1000;
+  return options.maxKeys === 0 ? Infinity : Number(options.maxKeys);
+};
 const __nodeQuerystringExports = {
   escape: __nodeQuerystringEscape,
   unescape: (value) =>
@@ -145,12 +149,7 @@ const __nodeQuerystringExports = {
     if (input == null || input === "") return result;
     const separator = sep == null ? "&" : String(sep);
     const equals = eq == null ? "=" : String(eq);
-    const maxKeys =
-      options && options.maxKeys !== undefined
-        ? options.maxKeys === 0
-          ? Infinity
-          : Number(options.maxKeys)
-        : 1000;
+    const maxKeys = __nodeQuerystringMaxKeys(options);
     String(input)
       .split(separator)
       .slice(0, maxKeys)
