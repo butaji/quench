@@ -323,18 +323,18 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   }
 
   toString(encoding = "utf8", start = 0, end = this.length) {
+    encoding = String(encoding).toLowerCase();
+    if (!NodeBuffer.isEncoding(encoding)) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     if (start !== 0 || end !== this.length) {
       const range = __nodeBufferStringRange(this.length, start, end);
       const first = range.start;
       const last = range.end;
       if (last <= first) return "";
       return this.subarray(first, Math.max(first, last)).toString(encoding);
-    }
-    encoding = String(encoding).toLowerCase();
-    if (!NodeBuffer.isEncoding(encoding)) {
-      const error = new TypeError(`Unknown encoding: ${encoding}`);
-      error.code = "ERR_UNKNOWN_ENCODING";
-      throw error;
     }
     return __nodeBufferEncodedString(this, encoding);
   }
