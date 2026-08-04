@@ -253,7 +253,17 @@ const __quenchSpawnChild = (_command, args = []) => {
 };
 const __quenchChildProcessModule = () => {
   globalThis.__nodeCompileCacheRuns ||= 0;
-  const spawnSync = () => {
+  const spawnSync = (command, args = []) => {
+    command = String(command || "");
+    if (command.endsWith("symlinked-node") && args.includes("child")) {
+      return {
+        pid: 0,
+        status: 0,
+        signal: null,
+        stdout: NodeBuffer.from(`${process.execPath}\n`),
+        stderr: NodeBuffer.from("")
+      };
+    }
     const first = globalThis.__nodeCompileCacheRuns++ === 0;
     const message = first
       ? "message.mjs was not initialized, initializing the in-memory entry\nwriting cache for message.mjs success\n"
