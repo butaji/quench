@@ -6,6 +6,43 @@ const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
   if (maximum === undefined) return { minimum: 0, maximum: minimum, callback };
   return { minimum, maximum, callback };
 };
+const __nodeCryptoValidatePbkdf2Types = (password, salt) => {
+  if (typeof password !== "string" && !(password instanceof Uint8Array))
+    throw new TypeError(
+      'The "password" argument must be of type string or an instance of Buffer'
+    );
+  if (typeof salt !== "string" && !(salt instanceof Uint8Array))
+    throw new TypeError(
+      'The "salt" argument must be of type string or an instance of Buffer'
+    );
+};
+const __nodeCryptoValidatePbkdf2Numbers = (iterations, keylen) => {
+  if (
+    !Number.isInteger(iterations) ||
+    iterations <= 0 ||
+    iterations > 0x7fffffff
+  )
+    throw new RangeError('The value of "iterations" is out of range');
+  if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff)
+    throw new RangeError('The value of "keylen" is out of range');
+};
+const __nodeCryptoValidatePbkdf2Digest = (digest) => {
+  if (typeof digest !== "string")
+    throw new TypeError('The "digest" argument must be of type string');
+  if (digest.toLowerCase() !== "sha256")
+    throw new Error(`Unsupported digest: ${digest}`);
+};
+const __nodeCryptoValidatePbkdf2 = (
+  password,
+  salt,
+  iterations,
+  keylen,
+  digest
+) => {
+  __nodeCryptoValidatePbkdf2Types(password, salt);
+  __nodeCryptoValidatePbkdf2Numbers(iterations, keylen);
+  __nodeCryptoValidatePbkdf2Digest(digest);
+};
 const __createNodeCrypto = () => ({
   getHashes: () => ["sha256"],
   getCiphers: () => [],
@@ -129,43 +166,7 @@ const __createNodeCrypto = () => ({
     }
   },
   pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
-    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "password" argument must be of type string or an instance of Buffer'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "salt" argument must be of type string or an instance of Buffer'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (
-      !Number.isInteger(iterations) ||
-      iterations <= 0 ||
-      iterations > 0x7fffffff
-    ) {
-      const error = new RangeError('The value of "iterations" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
-      const error = new RangeError('The value of "keylen" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (typeof digest !== "string") {
-      const error = new TypeError(
-        'The "digest" argument must be of type string'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (digest.toLowerCase() !== "sha256")
-      throw new Error(`Unsupported digest: ${digest}`);
+    __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
     const passwordBytes =
       typeof password === "string"
         ? new NodeTextEncoder().encode(password)
