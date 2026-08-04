@@ -16,6 +16,17 @@ const __nodeUtilInspectBuffer = (value) => {
     return `${rendered.slice(0, -1)}${rendered.endsWith("Buffer >") ? "" : ", "}${properties.join(", ")}>`;
   return rendered;
 };
+const __nodeUtilFormatNumeric = (value) => {
+  const rendered = String(value);
+  if (!globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator)
+    return rendered;
+  const [mantissa, exponent] = rendered.split("e");
+  const sign = mantissa.startsWith("-") ? "-" : "";
+  const unsigned = sign ? mantissa.slice(1) : mantissa;
+  const [whole, fraction] = unsigned.split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, "_");
+  return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
+};
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
@@ -66,17 +77,6 @@ globalThis.__nodeUtil = {
       ),
   format: (...args) => {
     if (!args.length) return "";
-    const numeric = (value) => {
-      const rendered = String(value);
-      if (!globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator)
-        return rendered;
-      const [mantissa, exponent] = rendered.split("e");
-      const sign = mantissa.startsWith("-") ? "-" : "";
-      const unsigned = sign ? mantissa.slice(1) : mantissa;
-      const [whole, fraction] = unsigned.split(".");
-      const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, "_");
-      return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
-    };
     const inspect = (value) => {
       if (value === null) return "null";
       if (value === undefined) return "undefined";
@@ -200,15 +200,15 @@ globalThis.__nodeUtil = {
         const value = args[index++];
         if (token === "%s")
           return typeof value === "bigint"
-            ? `${numeric(value)}n`
+            ? `${__nodeUtilFormatNumeric(value)}n`
             : typeof value === "number"
               ? Object.is(value, -0)
                 ? "-0"
-                : numeric(value)
+                : __nodeUtilFormatNumeric(value)
               : stringValue(value);
         if (token === "%d" || token === "%f") {
           if (typeof value === "bigint" && token === "%d")
-            return `${numeric(value)}n`;
+            return `${__nodeUtilFormatNumeric(value)}n`;
           if (
             typeof value === "symbol" ||
             Object.prototype.toString.call(value) === "[object Symbol]"
@@ -229,7 +229,7 @@ globalThis.__nodeUtil = {
           } catch (_) {
             number = NaN;
           }
-          return Object.is(number, -0) ? "-0" : numeric(number);
+          return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
         }
         if (token === "%i") {
           if (typeof value === "bigint") return `${numeric(value)}n`;
@@ -239,7 +239,7 @@ globalThis.__nodeUtil = {
           } catch (_) {
             number = NaN;
           }
-          return Object.is(number, -0) ? "-0" : numeric(number);
+          return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
         }
         if (token === "%j") {
           const seen = new WeakSet();
