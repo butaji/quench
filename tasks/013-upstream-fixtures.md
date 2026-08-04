@@ -1840,6 +1840,8 @@ Stage 647 formalized string coercion and deletion semantics for
 Stage 648 formalized non-empty runtime identity strings for
 `process.platform` and `process.arch`.
 
+Stage 649 formalized the process.config.variables object contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
