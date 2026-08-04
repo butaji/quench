@@ -1976,3 +1976,5 @@ Stage 712 added the standard process.stdout addListener alias.
 Stage 713 added the standard process.stderr addListener alias.
 
 Stage 714 added lightweight process.stdout listenerCount support.
+
+Stage 715 added lightweight process.stderr listenerCount support.

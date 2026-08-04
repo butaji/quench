@@ -711,3 +711,4 @@ these small fixtures isolate the currently implemented contract.
 |   712 | process stdout addListener returns the stream for chaining                    | `tools/run-node-tests.sh --stage 712` |
 |   713 | process stderr addListener returns the stream for chaining                    | `tools/run-node-tests.sh --stage 713` |
 |   714 | process stdout listenerCount reports the lightweight listener state            | `tools/run-node-tests.sh --stage 714` |
+|   715 | process stderr listenerCount reports the lightweight listener state            | `tools/run-node-tests.sh --stage 715` |
