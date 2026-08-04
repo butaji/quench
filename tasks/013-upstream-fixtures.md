@@ -1152,6 +1152,9 @@ of `memoryUsage` and `resourceUsage` results.
 Stage 410 formalized `process.binding` rejection of unknown internal modules
 with Node’s “No such module” error wording.
 
+Stage 411 formalized `process.getBuiltinModule` resolution for known modules
+and undefined results for unknown names.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

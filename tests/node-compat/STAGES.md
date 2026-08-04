@@ -407,3 +407,4 @@ these small fixtures isolate the currently implemented contract.
 |   408 | timers/promises immediate AbortSignal cancellation           | `tools/run-node-tests.sh --stage 408` |
 |   409 | process platform, memory, and resource metadata              | `tools/run-node-tests.sh --stage 409` |
 |   410 | process.binding unknown module error                         | `tools/run-node-tests.sh --stage 410` |
+|   411 | process.getBuiltinModule known and unknown modules           | `tools/run-node-tests.sh --stage 411` |
