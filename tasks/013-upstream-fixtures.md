@@ -2648,3 +2648,7 @@ and removal after resolution covers both promise wiring and lifecycle cleanup.
 Stage 954 verifies `events.once()` rejection from an `error` event and cleanup
 of the pending listener. Retrospective: retaining the exact error object in the
 assertion catches accidental wrapping across the promise boundary.
+
+Stage 955 verifies `events.once()` abort-signal rejection and cleanup.
+Retrospective: testing cancellation before emission isolates signal handling
+from event ordering and confirms no listener remains attached.
