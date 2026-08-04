@@ -1111,6 +1111,9 @@ hashes while returning cipher capability arrays.
 Stage 396 formalized constant-time buffer comparison results and the Node length
 error for unequal `timingSafeEqual` inputs.
 
+Stage 397 formalized synchronous and callback `crypto.randomInt` range behavior,
+including rejection of empty ranges.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
