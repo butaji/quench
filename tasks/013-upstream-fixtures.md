@@ -2932,3 +2932,11 @@ a host callback or special-case test code.
 Upstream audit: `test-stream-readable-hwm-0.js` now passes. The broader
 `test-stream-readable-event.js` fixture still has one unmet callback count in
 its multi-case process-exit accounting and remains tracked separately.
+
+Stage 1009 verifies Writable custom-destroy invocation, retained error state,
+and deferred close ordering. Retrospective: routing both default and custom
+destroy paths through one completion helper keeps lifecycle ordering uniform
+and avoids duplicating error/close bookkeeping in the stream class.
+
+Upstream audit: `test-stream-writable-destroy.js` still exercises additional
+native state fields and repeated-destroy behavior beyond this focused slice.
