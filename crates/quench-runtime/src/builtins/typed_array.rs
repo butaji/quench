@@ -471,6 +471,26 @@ mod tests {
     }
 
     #[test]
+    fn every_typed_array_constructor_name_is_visible_to_javascript() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        for name in [
+            "Int8Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Int16Array",
+            "Uint16Array",
+            "Int32Array",
+            "Uint32Array",
+            "Float32Array",
+            "Float64Array",
+        ] {
+            let result = ctx.eval(&format!("{}.name === '{}'", name, name));
+            assert_eq!(result, Ok(Value::Boolean(true)), "{} name mismatch", name);
+        }
+    }
+
+    #[test]
     fn typed_array_constructor_is_callable() {
         let ctx = &mut Context::new().unwrap();
         register_typed_arrays(ctx);

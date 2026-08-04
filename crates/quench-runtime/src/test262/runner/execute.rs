@@ -208,6 +208,24 @@ fn build_script(
 
 /// Default stack for per-test worker threads (avoids overflow on deep class tests).
 const TEST_THREAD_STACK: usize = 64 * 1024 * 1024;
+const DEEP_TEST_THREAD_STACK: usize = 1024 * 1024 * 1024;
+
+fn worker_stack_size(script: &str, test_path: &Path) -> usize {
+    if script.len() > 20_000
+        || script.contains("UnicodeIDStart")
+        || script.contains("testTypedArrayConversions")
+        || test_path
+            .to_string_lossy()
+            .contains("nativeFunctionMatcher")
+        || test_path
+            .to_string_lossy()
+            .contains("testTypedArray-conversions")
+    {
+        DEEP_TEST_THREAD_STACK
+    } else {
+        TEST_THREAD_STACK
+    }
+}
 
 fn run_with_timeout(
     script: &str,
@@ -408,7 +426,7 @@ fn run_with_timeout(
     let tp = test_path.to_owned();
     let (tx, rx) = mpsc::channel();
     let spawn = std::thread::Builder::new()
-        .stack_size(TEST_THREAD_STACK)
+        .stack_size(worker_stack_size(&script, &tp))
         .spawn(move || {
             let is_async = meta.flags.iter().any(|f| f == "async");
             let result = execute_script(&script, is_module, is_async, &tp);

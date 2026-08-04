@@ -19,6 +19,24 @@ fn in_process_and_isolated_share_one_timeout() {
 }
 
 #[test]
+fn large_scripts_get_the_deep_execution_stack() {
+    let path = PathBuf::from("ordinary.js");
+    assert_eq!(worker_stack_size("x", &path), 64 * 1024 * 1024);
+    assert_eq!(
+        worker_stack_size(&"x".repeat(100_001), &path),
+        1024 * 1024 * 1024
+    );
+    assert_eq!(
+        worker_stack_size("UnicodeIDStart", &path),
+        1024 * 1024 * 1024
+    );
+    assert_eq!(
+        worker_stack_size("x", &PathBuf::from("nativeFunctionMatcher.js")),
+        1024 * 1024 * 1024
+    );
+}
+
+#[test]
 fn initialized_context_exposes_the_main_realm_test262_error() {
     let ctx = initialize_test_context(false).unwrap();
     assert!(ctx.get_global("Test262Error").is_some());
