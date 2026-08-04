@@ -788,3 +788,4 @@ these small fixtures isolate the currently implemented contract.
 |   789 | process exposes low-level binding methods                          | `tools/run-node-tests.sh --stage 789` |
 |   790 | process exposes debug and scheduling helper methods                | `tools/run-node-tests.sh --stage 790` |
 |   791 | process exposes ref and unref helpers                              | `tools/run-node-tests.sh --stage 791` |
+|   792 | process features expose Node capability flags                    | `tools/run-node-tests.sh --stage 792` |
