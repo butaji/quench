@@ -3390,3 +3390,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Added Node-shaped ENOENT metadata for missing `process.chdir` paths.
 - Normalized macOS `/private/tmp` cwd aliases and validated argument types.
 - Verified the focused stage and upstream chdir fixtures.
+### Stage 1102: process execPath symlink probes
+
+- Normalized synthetic `spawnSync` output for symlinked execPath child probes.
+- Verified the focused probe and upstream `test-process-execpath.js` fixture.
