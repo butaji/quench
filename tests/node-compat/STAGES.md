@@ -559,3 +559,4 @@ these small fixtures isolate the currently implemented contract.
 |   560 | cluster workers report connected state across fork lifecycle       | `tools/run-node-tests.sh --stage 560` |
 |   561 | cluster workers expose isDead and destroy lifecycle methods        | `tools/run-node-tests.sh --stage 561` |
 |   562 | cluster schedulingPolicy defaults to round-robin scheduling        | `tools/run-node-tests.sh --stage 562` |
+|   563 | cluster setupPrimary cumulatively updates execution settings       | `tools/run-node-tests.sh --stage 563` |
