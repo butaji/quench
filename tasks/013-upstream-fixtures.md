@@ -1682,6 +1682,9 @@ termination behavior.
 Stage 590 formalized `process.getActiveResourcesInfo()` and its array return
 contract.
 
+Stage 591 formalized `process.availableMemory()` and its non-negative numeric
+return contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
