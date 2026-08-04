@@ -941,3 +941,4 @@ these small fixtures isolate the currently implemented contract.
 |   942 | EventEmitter off alias lifecycle                                         | `tools/run-node-tests.sh --stage 942` |
 |   943 | EventEmitter remove-all-listeners cleanup                                | `tools/run-node-tests.sh --stage 943` |
 |   944 | EventEmitter prepend-listener ordering                                   | `tools/run-node-tests.sh --stage 944` |
+|   945 | EventEmitter instance max-listener APIs                                  | `tools/run-node-tests.sh --stage 945` |
