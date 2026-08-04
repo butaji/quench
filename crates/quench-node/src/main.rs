@@ -43,6 +43,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-core.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-network.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-cluster.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-15-vm-context.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-compression.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-dispatch.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-16-zlib.js"),

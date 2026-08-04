@@ -125,7 +125,7 @@ const __quenchVmInstallContext = (sandbox) => {
   }
   return { keys, previous, originalGlobalKeys };
 };
-const __quenchVmFormatError = (error, options) => {
+const __quenchVmFormatError = (error, options, code) => {
   const match = /'([^']+)' is read-only/.exec(error.message || "");
   if (match)
     error.message = `Cannot assign to read only property '${match[1]}'`;
@@ -135,7 +135,13 @@ const __quenchVmFormatError = (error, options) => {
       typeof options === "object" ? options.lineOffset || 0 : 0;
     const columnOffset =
       typeof options === "object" ? options.columnOffset || 0 : 0;
-    error.stack = `${filename}:${lineOffset + 1}:${columnOffset + 8}\n ^\n${error.stack}`;
+    error.stack = __quenchVmFormatStack(
+      error,
+      filename,
+      lineOffset,
+      columnOffset,
+      code
+    );
   }
 };
 const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
@@ -144,7 +150,11 @@ const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
     __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
     return result;
   } catch (error) {
-    __quenchVmFormatError(error, options);
+    __quenchVmFormatError(
+      error,
+      options,
+      state.formatCode ? String(code) : null
+    );
     throw error;
   }
 };
@@ -176,8 +186,10 @@ const __quenchVmModule = {
     runInContext(context, options) {
       return __quenchVmRunInContext(this.code, context, options);
     }
-    runInNewContext(context = {}) {
-      return __quenchVmModule.runInNewContext(this.code, context);
+    runInNewContext(context = {}, options) {
+      if (!(this instanceof __quenchVmModule.Script))
+        throw new TypeError("this.runInContext is not a function");
+      return __quenchVmRunInNewContext(this.code, context, options);
     }
   },
   createScript: (code) => new __quenchVmModule.Script(code),
@@ -196,23 +208,8 @@ const __quenchVmModule = {
     return sandbox;
   },
   runInThisContext: (code) => (0, eval)(String(code)),
-  runInNewContext: (code, sandbox = {}) => {
-    if (!__quenchVmIsObject(sandbox))
-      __quenchVmTypeError("The context argument must be an object");
-    const previous = {};
-    for (const key of Object.keys(sandbox)) {
-      previous[key] = globalThis[key];
-      globalThis[key] = sandbox[key] === sandbox ? globalThis : sandbox[key];
-    }
-    try {
-      const result = (0, eval)(String(code));
-      if (typeof result === "function")
-        Object.setPrototypeOf(result, Object.create(Function.prototype));
-      return result;
-    } finally {
-      for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
-    }
-  },
+  runInNewContext: (code, sandbox = {}, options) =>
+    __quenchVmRunInNewContext(code, sandbox, options),
   runInContext: (code, sandbox, options) =>
     __quenchVmRunInContext(code, sandbox, options)
 };

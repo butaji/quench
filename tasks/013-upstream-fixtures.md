@@ -1,5 +1,14 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1124: VM Script new-context execution
+
+- Fixture: `test-vm-new-script-new-context.js`
+- Added a named VM context helper that snapshots host globals, forwards sandbox
+  changes, and restores temporary bindings after `Script.runInNewContext()`.
+- Retrospective: isolate the smallest upstream contract first; the broader
+  `runInNewContext` fixture still needs separate handling for external function
+  callbacks and remains intentionally outside this stage.
+
 ## Stage 1123: VM expose-gc hook
 
 - Fixtures: `test-vm-create-and-run-in-context.js`,
