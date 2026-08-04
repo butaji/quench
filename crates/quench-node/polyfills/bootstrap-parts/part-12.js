@@ -27,6 +27,26 @@ const __nodeUtilFormatNumeric = (value) => {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, "_");
   return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
 };
+const __nodeUtilInspectNoResult = Symbol("inspect-no-result");
+const __nodeUtilInspectBasic = (value) => {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (
+    typeof SharedArrayBuffer !== "undefined" &&
+    value instanceof SharedArrayBuffer
+  )
+    return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error)
+    return Object.prototype.hasOwnProperty.call(value, "stack")
+      ? value.stack || `${value.name}: ${value.message}`
+      : `[${value.name}: ${value.message}]`;
+  if (typeof value === "string") return value;
+  if (typeof value === "symbol") return String(value);
+  if (typeof value === "function")
+    return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
+  return __nodeUtilInspectNoResult;
+};
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
@@ -78,23 +98,8 @@ globalThis.__nodeUtil = {
   format: (...args) => {
     if (!args.length) return "";
     const inspect = (value) => {
-      if (value === null) return "null";
-      if (value === undefined) return "undefined";
-      if (
-        typeof SharedArrayBuffer !== "undefined" &&
-        value instanceof SharedArrayBuffer
-      )
-        return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
-      if (value instanceof Date) return value.toISOString();
-      if (value instanceof Error) {
-        if (!Object.prototype.hasOwnProperty.call(value, "stack"))
-          return `[${value.name}: ${value.message}]`;
-        return value.stack || `${value.name}: ${value.message}`;
-      }
-      if (typeof value === "string") return value;
-      if (typeof value === "symbol") return String(value);
-      if (typeof value === "function")
-        return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
+      const basic = __nodeUtilInspectBasic(value);
+      if (basic !== __nodeUtilInspectNoResult) return basic;
       if (Array.isArray(value))
         return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
       if (typeof value === "object") {
