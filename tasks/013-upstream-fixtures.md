@@ -2338,3 +2338,8 @@ Stage 892 verifies the node:crypto Web Crypto digest API.
 
 Retrospective: async compatibility fixtures should settle promises through
 callbacks so the harness can drain rquickjs pending jobs deterministically.
+
+Stage 893 verifies the node:crypto synchronous random fill API.
+
+Retrospective: synchronous byte APIs can preserve the native buffer identity
+with a small fallback, keeping the host boundary free of another byte hook.
