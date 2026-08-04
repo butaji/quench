@@ -80,3 +80,5 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
 };
+NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
+  NodeBuffer.prototype.inspect;

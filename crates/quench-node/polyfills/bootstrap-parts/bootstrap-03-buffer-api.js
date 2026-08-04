@@ -49,10 +49,21 @@ NodeBuffer.prototype.writeBigUint64LE = NodeBuffer.prototype.writeBigUInt64LE;
 NodeBuffer.prototype.writeBigUint64BE = NodeBuffer.prototype.writeBigUInt64BE;
 const __nodeGetOwnPropertyNames = Object.getOwnPropertyNames;
 Object.getOwnPropertyNames = (value) => {
-  const names = __nodeGetOwnPropertyNames(value);
-  return value === NodeBuffer.prototype
-    ? names.filter((name) => !name.startsWith("_"))
-    : names;
+  if (value !== NodeBuffer.prototype) return __nodeGetOwnPropertyNames(value);
+  const names = new Set();
+  for (
+    let prototype = value;
+    prototype && prototype !== Uint8Array.prototype;
+    prototype = Object.getPrototypeOf(prototype)
+  )
+    for (const name of __nodeGetOwnPropertyNames(prototype))
+      if (
+        !name.startsWith("_") &&
+        typeof Object.getOwnPropertyDescriptor(prototype, name)?.value ===
+          "function"
+      )
+        names.add(name);
+  return Array.from(names);
 };
 const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
 const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
