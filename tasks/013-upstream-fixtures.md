@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1135: VM compileFunction context extensions
+
+- Fixture: `test-vm-basic.js` context-extension contract
+- Added visible extension bindings and validation for extension arrays and
+  extension object entries.
+- Retrospective: direct probes can confirm exact diagnostics even when the
+  larger fixture’s assertion wrapper reports a misleading failure location.
+
 ## Stage 1134: common string argument formatting
 
 - Fixture: `test-vm-basic.js` invalid-options diagnostics
