@@ -1655,6 +1655,9 @@ mapping for a spawned command.
 Stage 581 formalized the legacy return contracts of child-process `ref()` and
 `unref()`.
 
+Stage 582 formalized Buffer output selection for `child_process.exec()` with
+the `encoding: "buffer"` option.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
