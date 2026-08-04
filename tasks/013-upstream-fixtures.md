@@ -2971,5 +2971,6 @@ Retrospective: the failure was a layering issue, not a stream issue; checking
 both byte content and prototype-level rendering isolated it with one shared
 Buffer fix.
 
-Upstream audit: `test-stream-readable-default-encoding.js` now passes in full;
-the earlier stage-1003 Buffer rendering caveat is resolved.
+Upstream audit: `test-stream-readable-default-encoding.js` and
+`test-buffer-badhex.js` now pass in full; the earlier stage-1003 Buffer
+rendering caveat is resolved.
