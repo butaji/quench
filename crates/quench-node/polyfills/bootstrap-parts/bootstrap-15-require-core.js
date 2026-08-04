@@ -136,19 +136,30 @@ const __quenchEventsOnce = (emitter, event, options = {}) => {
 const __quenchCoreStaticModules = new Map([
   [
     "internal/util",
-    () => ({
-      sleep(milliseconds) {
-        if (typeof milliseconds !== "number")
-          throw new TypeError('The "msec" argument must be of type number');
-        if (
-          !Number.isFinite(milliseconds) ||
-          !Number.isInteger(milliseconds) ||
-          milliseconds < 0 ||
-          milliseconds > 0xffffffff
-        )
-          throw new RangeError('The value of "msec" is out of range');
-      }
-    })
+    () => {
+      const warnedExperimentalFeatures = new Set();
+      return {
+        emitExperimentalWarning(feature) {
+          if (warnedExperimentalFeatures.has(feature)) return;
+          warnedExperimentalFeatures.add(feature);
+          globalThis.process.emitWarning(
+            `${feature} is an experimental feature. This feature could change at any time`,
+            { name: "ExperimentalWarning" }
+          );
+        },
+        sleep(milliseconds) {
+          if (typeof milliseconds !== "number")
+            throw new TypeError('The "msec" argument must be of type number');
+          if (
+            !Number.isFinite(milliseconds) ||
+            !Number.isInteger(milliseconds) ||
+            milliseconds < 0 ||
+            milliseconds > 0xffffffff
+          )
+            throw new RangeError('The value of "msec" is out of range');
+        }
+      };
+    }
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],

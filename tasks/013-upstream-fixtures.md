@@ -3324,3 +3324,7 @@ Stage 1063 normalizes all typed-array views through their underlying bytes,
 including Uint16Array and Uint32Array inputs. Retrospective: treating only
 non-Uint8 views specially still passed element values directly to UTF-8
 decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
+### Stage 1087: internal util experimental warning
+
+- Added `internal/util.emitExperimentalWarning` with per-feature deduplication.
+- Verified the focused stage and Node's `test-util-emit-experimental-warning.js`.
