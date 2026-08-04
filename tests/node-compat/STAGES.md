@@ -458,3 +458,4 @@ these small fixtures isolate the currently implemented contract.
 |   459 | stream readableEnded changes only after end                     | `tools/run-node-tests.sh --stage 459` |
 |   460 | stream readable event exposes queued data                        | `tools/run-node-tests.sh --stage 460` |
 |   461 | stream late readable listener drains queued data                 | `tools/run-node-tests.sh --stage 461` |
+|   462 | stream readableLength tracks partial buffer reads                 | `tools/run-node-tests.sh --stage 462` |
