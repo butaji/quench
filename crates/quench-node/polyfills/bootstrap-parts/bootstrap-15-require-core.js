@@ -71,22 +71,22 @@ let __quenchAsyncHooksModule;
   };
 }
 const __quenchCoreStaticModules = new Map([
-  ["assert", () => globalThis.__nodeAssert],
-  ["path", () => globalThis.__nodePath],
-  ["path/posix", () => globalThis.__nodePath],
-  ["util", () => globalThis.__nodeUtil],
-  ["perf_hooks", () => globalThis.__nodePerfHooks],
-  ["crypto", () => globalThis.__nodeCrypto],
-  ["v8", () => ({})],
+  ["assert", globalThis.__nodeAssert],
+  ["path", globalThis.__nodePath],
+  ["path/posix", globalThis.__nodePath],
+  ["util", globalThis.__nodeUtil],
+  ["perf_hooks", globalThis.__nodePerfHooks],
+  ["crypto", globalThis.__nodeCrypto],
+  ["v8", {}],
   [
     "events",
-    () => ({
+    {
       EventEmitter: globalThis.__nodeEventEmitter,
       once: globalThis.__nodeEventEmitter.once,
       on: globalThis.__nodeEventEmitter.on
-    })
+    }
   ],
-  ["async_hooks", () => __quenchAsyncHooksModule]
+  ["async_hooks", __quenchAsyncHooksModule]
 ]);
 const __quenchRequireCoreBase = (name) => {
   if (name === "os") {
@@ -102,8 +102,7 @@ const __quenchRequireCoreBase = (name) => {
     globalThis.__nodeUrlInitialized = true;
     return globalThis.__nodeUrlModule;
   }
-  const factory = __quenchCoreStaticModules.get(name);
-  return factory ? factory() : undefined;
+  return __quenchCoreStaticModules.get(name);
 };
 const __quenchSpawnChild = (_command, args = []) => {
   const child = new globalThis.__nodeEventEmitter();
