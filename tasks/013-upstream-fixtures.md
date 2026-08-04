@@ -1131,6 +1131,9 @@ and `toJSON` availability.
 Stage 403 formalized user-timing marks, measures, entry metadata, and mark
 clearing through `perf_hooks.performance`.
 
+Stage 404 formalized performance entry queries by name and type, aggregate entry
+listing, and named measure clearing.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
