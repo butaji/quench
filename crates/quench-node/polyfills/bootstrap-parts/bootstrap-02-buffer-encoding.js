@@ -296,7 +296,7 @@ class NodeBuffer extends Uint8Array {
     const output = __nodeBufferFromObject(value);
     if (output) return output;
     const error = new TypeError(
-      "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object"
+      `The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.${__nodeBufferFromReceived(value)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
