@@ -569,3 +569,4 @@ these small fixtures isolate the currently implemented contract.
 |   570 | child_process spawn exposes streams and process metadata             | `tools/run-node-tests.sh --stage 570` |
 |   571 | child_process emits spawn, exit, and close lifecycle events          | `tools/run-node-tests.sh --stage 571` |
 |   572 | child_process reports spawn failures with enriched ENOENT errors     | `tools/run-node-tests.sh --stage 572` |
+|   573 | child_process exec and execFile report command failure metadata     | `tools/run-node-tests.sh --stage 573` |
