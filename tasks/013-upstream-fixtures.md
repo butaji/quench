@@ -2549,3 +2549,8 @@ Stage 935 adds invalid-target validation for static `events.listenerCount()`.
 Retrospective: static facades need explicit target validation because
 forwarding a missing method otherwise leaks an implementation-specific
 TypeError.
+
+Stage 936 adds argument and target validation for static
+`events.setMaxListeners()`. Retrospective: validating before touching the
+WeakMap keeps invalid calls deterministic and avoids partial updates when a
+later target is rejected.
