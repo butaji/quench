@@ -418,3 +418,4 @@ these small fixtures isolate the currently implemented contract.
 |   419 | fs statSync missing path ENOENT metadata                       | `tools/run-node-tests.sh --stage 419` |
 |   420 | crypto hash and HMAC copy state branching                     | `tools/run-node-tests.sh --stage 420` |
 |   421 | crypto finalized hash and HMAC operation errors               | `tools/run-node-tests.sh --stage 421` |
+|   422 | fs WriteStream open, end, and close lifecycle                 | `tools/run-node-tests.sh --stage 422` |
