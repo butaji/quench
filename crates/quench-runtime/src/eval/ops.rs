@@ -635,11 +635,20 @@ pub fn make_ops_object() -> Value {
                     return Ok(Value::Undefined);
                 }
                 let is_field = class.static_properties_cell.borrow().contains_key(&key);
+                let value = if is_field {
+                    class.get_static_field(&key).unwrap_or(Value::Undefined)
+                } else if class.has_static_method(&key) {
+                    class
+                        .get_class_def_env()
+                        .and_then(|env| {
+                            crate::eval::member::eval_class_member(class, &key, &env).ok()
+                        })
+                        .unwrap_or(Value::Undefined)
+                } else {
+                    Value::Undefined
+                };
                 let mut desc = crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
-                desc.set(
-                    "value",
-                    class.get_static_field(&key).unwrap_or(Value::Undefined),
-                );
+                desc.set("value", value);
                 desc.set("writable", Value::Boolean(true));
                 desc.set("enumerable", Value::Boolean(is_field));
                 desc.set("configurable", Value::Boolean(true));

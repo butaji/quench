@@ -476,6 +476,16 @@ impl ClassValue {
         false
     }
 
+    pub fn has_static_method(&self, name: &str) -> bool {
+        let Some(env) = self.get_class_def_env() else {
+            return false;
+        };
+        self.static_methods.iter().any(|(key, ..)| {
+            crate::eval::class::helpers::prop_key_to_string(key, &env, false)
+                .is_ok_and(|key_name| key_name == name)
+        })
+    }
+
     /// Set a static property on this class, invoking a setter if one exists.
     pub fn set_static_property(
         &self,

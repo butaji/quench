@@ -157,3 +157,23 @@ fn test_class_static_fields_are_own_properties() {
     );
     assert_eq!(result, Ok(Value::Boolean(true)));
 }
+
+#[test]
+fn test_class_static_generator_method_is_callable() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "class C { static *method() { yield 42; } } \
+         C.method().next().value",
+    );
+    assert_eq!(result, Ok(Value::Number(42.0)));
+}
+
+#[test]
+fn test_static_async_generator_before_computed_instance_fields() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval(
+        "var key = 'b'; class C { static async *method() { return 42; } [key] = 42; } \
+         C.method().next().value",
+    );
+    assert!(result.is_ok(), "static async generator failed: {:?}", result);
+}
