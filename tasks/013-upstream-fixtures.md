@@ -1415,6 +1415,9 @@ and null signal for normal termination.
 Stage 502 formalized forked child IPC sends returning boolean backpressure
 signals as the send queue fills.
 
+Stage 503 formalized child processes launched with eval code reporting normal
+exit completion.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
