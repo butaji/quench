@@ -124,6 +124,11 @@ const __nodeWindowsDirnameKeep = (input, uncRoot, index) => {
   if (/^[A-Za-z]:\\/.test(input) && index === 2) return true;
   return uncRoot.startsWith("\\\\") && index === uncRoot.length - 1;
 };
+const __nodeWindowsRelativeRoot = (input) => {
+  if (!input.startsWith("\\\\")) return __nodeWindowsRoot(input);
+  const server = input.split("\\")[2];
+  return server ? `\\\\${server}` : "\\\\";
+};
 globalThis.__nodePath = {
   sep: "/",
   delimiter: ":",
@@ -264,15 +269,18 @@ const __nodeWinPath = {
     return __nodeWinPath.normalize(parts.map(__nodePathArg).join("\\"));
   },
   relative(from, to) {
-    const a = __nodeWinPath
-      .normalize(__nodePathArg(from))
-      .split("\\")
-      .filter(Boolean);
-    const b = __nodeWinPath
-      .normalize(__nodePathArg(to))
-      .split("\\")
-      .filter(Boolean);
-    while (a.length && a[0].toLowerCase() === b[0].toLowerCase()) {
+    const fromInput = __nodePathArg(from).replace(/\//g, "\\");
+    const toInput = __nodePathArg(to).replace(/\//g, "\\");
+    const fromPath = __nodeWinPath.normalize(fromInput);
+    const toPath = __nodeWinPath.normalize(toInput);
+    if (
+      __nodeWindowsRelativeRoot(fromInput) !==
+      __nodeWindowsRelativeRoot(toInput)
+    )
+      return toInput;
+    const a = fromPath.split("\\").filter(Boolean);
+    const b = toPath.split("\\").filter(Boolean);
+    while (a.length && b.length && a[0].toLowerCase() === b[0].toLowerCase()) {
       a.shift();
       b.shift();
     }
