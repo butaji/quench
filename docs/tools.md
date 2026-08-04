@@ -6,11 +6,18 @@ commands, not copied status or milestones.
 
 ## Normal workflow
 
+There is one canonical conformance command: the filtered nextest invocation
+below runs the single staged harness test, which owns per-file execution and
+the digest. The shell tools only select a stage, capture output, or format
+that result; they do not maintain a second coverage counter. `cargo run
+--bin run-test` is reserved for one-test diagnosis, and `run-each.sh` is the
+crash-isolated fallback.
+
 ```bash
 # Fast unit-test suite (requires cargo-nextest)
 cargo nextest run -p quench-runtime
 
-# Fast Test262 harness smoke/run (the staged test is one harness test)
+# Test262 harness (the staged test is one harness test; the harness runs files)
 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
 # Run one test
@@ -28,7 +35,7 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test
 # Fast digest invocation; output remains the Test262 SSOT
 TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
-# Survive a process crash or stack overflow
+# Crash-isolated fallback for a stage (slower, useful after a runtime crash)
 TEST262_STAGE=N bash tools/run-each.sh
 
 # Run every stage in order
