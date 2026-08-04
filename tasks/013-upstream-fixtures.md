@@ -2474,3 +2474,9 @@ Stage 918 verifies the node:process parent PID metadata contract.
 
 Retrospective: upstream child-process PPID propagation is tracked separately
 from the host process metadata because it requires spawn environment wiring.
+
+Stage 919 verifies the node:process environment get/set/delete contract.
+
+Retrospective: the upstream child-process failure is now isolated from the
+portable environment surface; subprocess execution needs a dedicated Rust
+boundary rather than another placeholder export.
