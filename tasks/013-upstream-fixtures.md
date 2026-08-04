@@ -3306,6 +3306,8 @@ Stage 1074 adds platform-aware `matchesGlob` and validates its string inputs.
 
 Stage 1075 adds identity POSIX and namespaced Windows path conversion.
 
+Stage 1078 matches `formatWithOptions` inspect-options validation diagnostics.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,
