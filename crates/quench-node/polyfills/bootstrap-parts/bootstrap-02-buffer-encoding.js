@@ -128,6 +128,9 @@ const __nodeBufferInvalidOffset = (offset, limit) =>
   offset < 0 || offset > limit;
 const __nodeBufferInvalidLength = (size, offset, limit) =>
   size < 0 || offset + size > limit;
+const __nodeBufferIsArrayBuffer = (value) => {
+  return value instanceof ArrayBuffer;
+};
 const __nodeBufferArrayBufferRange = (value, encoding, length) => {
   let offset = Number(encoding);
   if (!Number.isFinite(offset)) offset = Number.isNaN(offset) ? 0 : offset;
@@ -285,7 +288,7 @@ class NodeBuffer extends Uint8Array {
 
   static from(value, encoding, length) {
     encoding = __nodeBufferValidateEncoding(value, encoding);
-    if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer)
+    if (__nodeBufferIsArrayBuffer(value) || value instanceof SharedArrayBuffer)
       return __nodeBufferFromArrayBuffer(value, encoding, length);
     const primitive = __nodeBufferFromPrimitive(value, encoding);
     if (primitive) return primitive;
