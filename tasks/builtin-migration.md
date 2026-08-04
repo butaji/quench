@@ -1,9 +1,11 @@
 # Rust-to-JS Builtin Migration
 
-Goal: keep Rust limited to the interpreter core, canonical `__ops__`, and
-performance-sensitive or crate-backed primitives. Put ECMAScript algorithms,
-prototype methods, constructor wiring, and property descriptors in the
-self-hosted JavaScript layer.
+Goal: keep Rust limited to the interpreter core, canonical `__ops__`, storage
+and native-memory primitives, engine integration, performance-sensitive or
+crate-backed primitives, and explicitly documented lower-LOC direct bindings.
+Every observable ECMAScript algorithm, public method, constructor behavior,
+prototype method, and property descriptor that can be expressed over
+`__ops__` belongs in the self-hosted JavaScript layer.
 
 ## Rules
 
@@ -48,7 +50,9 @@ ownership record, not an escape hatch for algorithm duplication.
 
 - [~] The `__ops__` bridge is active and normal contexts enter
   `bootstrap_js_builtins` after native registration; realm lifecycle cleanup
-  remains pending.
+  remains pending. This bootstrap is the migration boundary: Rust may expose
+  primitives, but JavaScript owns the observable builtin algorithm wherever
+  the algorithm can be expressed through `__ops__`.
 - [~] Bootstrap normalizes own properties on intrinsic prototypes to the
   spec-required non-enumerable default after self-hosted JS installation.
 - [~] The same bootstrap boundary marks self-hosted intrinsic methods as

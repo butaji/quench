@@ -42,15 +42,17 @@ relevant test262 stage.
   argument values. Redefining `arguments.length` now expands indexed access
   with `undefined` values for concat and related array-like consumers.
 
-- **R22 — Migrate all builtins to JS.** The migration is tracked in
+- **R22 — Migrate all builtin algorithms to JS.** The migration is tracked in
   `tasks/builtin-migration.md`; `bootstrap_js_builtins` is active for normal
   contexts. Continue one family at a time on top of canonical `__ops__`,
   measure the relevant Test262 stage during the later polish pass, and remove
-  duplicate Rust registrations only when JS adds an algorithm or validation.
-  Rust remains for interpreter core, performance-sensitive storage/scheduling,
-  crate-backed primitives, and lower-LOC direct bindings. A JS file that only
-  forwards a call to one Rust primitive is not a migration target; keep that
-  binding in Rust and record the exception in `tasks/builtin-migration.md`.
+  duplicate Rust registrations only after JavaScript owns the observable
+  algorithm, validation, coercion, ordering, or descriptor behavior.
+  Rust remains for interpreter/core operations, canonical `__ops__`, storage
+  and native memory, performance-sensitive work, crate-backed primitives,
+  engine integration, and explicitly documented lower-LOC direct bindings.
+  A JS file that only forwards a call to one Rust primitive is not a
+  migration; keep that binding in Rust and record the exception.
 
 - **R23 — Thread-local reduction.** 48 `thread_local!` slots vs the
   shrink-to-zero principle. Targets: strict mode (`interpreter.rs:290`,

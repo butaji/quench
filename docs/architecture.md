@@ -42,8 +42,12 @@ queue in `tasks/refactor-plan.md` (R18+).
 
 - **Builtin migration is active.** Normal context initialization now loads the
   self-hosted JS builtin layer after Rust registration. Rust implementations
-  are being removed family by family; only core, performance-sensitive, and
-  crate-backed primitives remain. Migration status is tracked in
+  are being removed family by family. The required end state is that every
+  observable ECMAScript algorithm, public method, constructor behavior,
+  prototype method, and descriptor authored over `__ops__` is JavaScript-owned;
+  Rust retains only the core, native-memory, performance-sensitive,
+  crate-backed, engine-integration, and explicitly documented lower-LOC
+  direct-binding exceptions. Migration status is tracked in
   `tasks/builtin-migration.md`; conformance polish follows the migration pass.
 - **Builtin ownership rule:** every algorithm, public method, constructor
   wiring, and property descriptor that can be authored in `builtins/*.js`
@@ -118,10 +122,14 @@ Every `.prototype.*`, intrinsic iterator prototype, `Object.*`,
 `include_str!`; parsed once per `Realm` by `bootstrap.rs`.
 
 Migration rule: a public builtin algorithm belongs in this JS layer whenever
-it can be expressed over `__ops__`. Rust remains only for core/performance,
-native-memory, crate-backed, or engine-integration work, and for direct
+it can be expressed over `__ops__`. This includes observable coercion,
+validation, ordering, iteration, constructor, prototype, and descriptor
+behavior. Rust remains only for interpreter/core operations, canonical
+`__ops__` primitives, storage and native-memory operations, performance-
+sensitive work, crate-backed functionality, engine integration, and direct
 bindings whose JS wrapper would be a one-line proxy or would increase total
-maintained LOC. Each exception is recorded in `tasks/builtin-migration.md`.
+maintained LOC. Each exception is recorded in `tasks/builtin-migration.md` or
+`tasks/builtin-direct-bindings.txt`.
 
 ## `__ops__` — the only Rust↔JS bridge for spec ops
 

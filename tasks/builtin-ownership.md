@@ -1,8 +1,13 @@
 # Builtin ownership guardrail
 
-Each builtin algorithm has one owner. Spec algorithms belong in `builtins/*.js`;
-Rust is reserved for the core, performance-sensitive primitives, and explicit
-one-line proxy bindings listed in `tasks/builtin-direct-bindings.txt`.
+Each builtin operation has one owner. Observable ECMAScript algorithms,
+including public methods, constructor behavior, prototype behavior, coercion,
+validation, ordering, iteration, and descriptors, belong in `builtins/*.js`
+whenever they can use `__ops__`. Rust is reserved for interpreter/core
+operations, canonical `__ops__` primitives, storage and native memory,
+performance-sensitive or crate-backed primitives, engine integration, and
+explicit lower-LOC direct bindings listed in
+`tasks/builtin-direct-bindings.txt`.
 
 Rust-owned public builtin methods must carry an adjacent `@builtin-rust Name`
 marker. A JS prototype assignment with the same name then fails the ownership
