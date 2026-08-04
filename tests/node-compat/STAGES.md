@@ -806,3 +806,4 @@ these small fixtures isolate the currently implemented contract.
 |   807 | module exposes loader hook methods                              | `tools/run-node-tests.sh --stage 807` |
 |   808 | module detects standard builtin names                           | `tools/run-node-tests.sh --stage 808` |
 |   809 | module exposes static Module helpers                            | `tools/run-node-tests.sh --stage 809` |
+|   810 | module exposes static loader state                              | `tools/run-node-tests.sh --stage 810` |
