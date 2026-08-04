@@ -2270,3 +2270,5 @@ Stage 859 verifies the node:sqlite synchronous database API.
 Stage 860 verifies the node:http2 client and server API.
 
 Stage 861 verifies the node:sys legacy formatting and type API.
+
+Stage 862 verifies the node:test/reporters standard reporter factories.

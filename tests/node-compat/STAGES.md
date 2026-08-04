@@ -858,3 +858,4 @@ these small fixtures isolate the currently implemented contract.
 |   859 | sqlite exposes synchronous database API                     | `tools/run-node-tests.sh --stage 859` |
 |   860 | http2 exposes HTTP/2 client and server API                   | `tools/run-node-tests.sh --stage 860` |
 |   861 | sys exposes legacy formatting and type API                  | `tools/run-node-tests.sh --stage 861` |
+|   862 | test reporters exposes standard reporter factories          | `tools/run-node-tests.sh --stage 862` |
