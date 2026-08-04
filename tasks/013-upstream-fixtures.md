@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1140: VM Script cached data
+
+- Fixtures: `test-vm-cached-data.js`, `test-vm-createcacheddata.js`
+- Added `Script.createCachedData()`, production metadata, and source-based cache
+  rejection for matching and mismatched scripts.
+- Retrospective: share the deterministic source snapshot used by
+  `compileFunction` rather than introducing an engine-specific bytecode layer.
+
 ## Stage 1139: VM compileFunction cache rejection
 
 - Fixture: `test-vm-basic.js` cached-data rejection contract

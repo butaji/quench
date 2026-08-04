@@ -14,6 +14,23 @@ const __quenchVmInvalidTypeSuffix = (value) =>
     : typeof value === "object"
       ? ` Received an instance of ${value.constructor?.name || "Object"}`
       : ` Received type ${typeof value} (${typeof value === "string" ? `'${value}'` : String(value)})`;
+const __quenchVmCacheMatches = (data, code) => {
+  const bytes = ArrayBuffer.isView(data)
+    ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    : data;
+  return NodeBuffer.from(bytes).toString() === code;
+};
+const __quenchVmApplyScriptCache = (script, options) => {
+  if (options?.produceCachedData) {
+    script.cachedDataProduced = true;
+    script.cachedData = NodeBuffer.from(script.code);
+  }
+  if (options?.cachedData)
+    script.cachedDataRejected = !__quenchVmCacheMatches(
+      options.cachedData,
+      script.code
+    );
+};
 const __quenchVmValidateOffset = (options, key) => {
   if (options[key] === undefined) return;
   if (typeof options[key] !== "number")
