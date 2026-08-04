@@ -2132,3 +2132,5 @@ Stage 790 added process debug and scheduling helper methods.
 Stage 791 added process ref and unref helper methods.
 
 Stage 792 aligned process.features capability flags with local Node.
+
+Stage 793 added process.config metadata compatibility.
