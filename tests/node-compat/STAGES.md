@@ -586,3 +586,4 @@ these small fixtures isolate the currently implemented contract.
 |   587 | child_process fork send validates unsupported callback arguments     | `tools/run-node-tests.sh --stage 587` |
 |   588 | child_process fork reports normal child exit status                  | `tools/run-node-tests.sh --stage 588` |
 |   589 | child_process exposes destroy and Symbol.dispose termination         | `tools/run-node-tests.sh --stage 589` |
+|   590 | process exposes active-resource information as an array               | `tools/run-node-tests.sh --stage 590` |
