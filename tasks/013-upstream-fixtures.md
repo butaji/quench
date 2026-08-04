@@ -1442,6 +1442,9 @@ exit/disconnect state.
 Stage 511 formalized `net.isIPv4()` and `net.isIP()` handling for IPv4, IPv6,
 mapped IPv6, and invalid address strings.
 
+Stage 512 formalized `path.matchesGlob()` wildcard, recursive, question-mark,
+and cross-separator path matching.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
