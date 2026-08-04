@@ -782,6 +782,15 @@ mod tests {
     }
 
     #[test]
+    fn array_to_string_falls_back_for_non_callable_join() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("Array.prototype.toString.call(true) === '[object Boolean]'")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx

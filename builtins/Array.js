@@ -527,7 +527,9 @@ Array.prototype.sort = function ArraySort(comparefn) {
 };
 
 Array.prototype.toString = function ArrayToString() {
-  return this.join();
+  var O = ToObject(this);
+  var join = O.join;
+  return IsCallable(join) ? join.call(O) : Object.prototype.toString.call(O);
 };
 
 Array.prototype.at = function ArrayAt(index) {
