@@ -356,15 +356,17 @@ fn proto_fill(args: Vec<Value>) -> Result<Value, JsError> {
     let Value::Object(obj_rc) = this else {
         return Err(JsError::new("TypeError: fill called on non-object"));
     };
-    let mut obj = obj_rc.borrow_mut();
-
     // Get fill value
     let fill_val = args.first().cloned().unwrap_or(Value::Undefined);
 
     // Fill all elements
-    let len = obj.elements.len();
+    let len = obj_rc
+        .borrow()
+        .get("length")
+        .map(|value| to_number(&value) as usize)
+        .unwrap_or(0);
     for i in 0..len {
-        obj.elements[i] = fill_val.clone();
+        obj_rc.borrow_mut().set(&i.to_string(), fill_val.clone());
     }
 
     Ok(Value::Undefined)
@@ -488,6 +490,23 @@ mod tests {
             let result = ctx.eval(&format!("{}.name === '{}'", name, name));
             assert_eq!(result, Ok(Value::Boolean(true)), "{} name mismatch", name);
         }
+    }
+
+    #[test]
+    fn typed_array_conversion_constructor_and_fill_are_available_after_bootstrap() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024 * 1024)
+            .spawn(|| {
+                let mut ctx =
+                    crate::test262::runner::execute::initialize_test_context(false).unwrap();
+                assert_eq!(
+                    ctx.eval("var sample = new Float64Array([0]); sample.fill(127); sample[0]"),
+                    Ok(Value::Number(127.0))
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
