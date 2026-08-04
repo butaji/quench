@@ -732,3 +732,4 @@ these small fixtures isolate the currently implemented contract.
 |   733 | process stderr listeners reports the lightweight listener state              | `tools/run-node-tests.sh --stage 733` |
 |   734 | process stdout async iterator is empty and awaitable                         | `tools/run-node-tests.sh --stage 734` |
 |   735 | process stderr async iterator is empty and awaitable                         | `tools/run-node-tests.sh --stage 735` |
+|   736 | process stdout destroy is non-destructive and chainable                      | `tools/run-node-tests.sh --stage 736` |
