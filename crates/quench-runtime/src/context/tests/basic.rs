@@ -20,6 +20,13 @@ fn test_globals() {
     assert_eq!(ctx.get_global("test"), Some(Value::Number(42.0)));
 }
 
+#[test]
+fn global_property_assignment_updates_global_property() {
+    let mut ctx = Context::new().unwrap();
+    let result = ctx.eval("globalThis.shared = 2; globalThis.shared === 2;");
+    assert_eq!(result, Ok(Value::Boolean(true)));
+}
+
 #[cfg(test)]
 #[test]
 fn test_eval_simple() {
