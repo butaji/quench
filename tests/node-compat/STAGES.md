@@ -654,3 +654,4 @@ these small fixtures isolate the currently implemented contract.
 |   655 | process getActiveResourcesInfo returns resource-name strings                | `tools/run-node-tests.sh --stage 655` |
 |   656 | process availableMemory returns a finite non-negative number                 | `tools/run-node-tests.sh --stage 656` |
 |   657 | process source-map controls expose callable and boolean contracts             | `tools/run-node-tests.sh --stage 657` |
+|   658 | process title exposes a writable string value                                | `tools/run-node-tests.sh --stage 658` |
