@@ -1196,6 +1196,9 @@ Stage 424 formalized ReadStream text encoding options and `bytesRead` tracking.
 Stage 425 formalized synchronous rejection of inverted ReadStream ranges with
 `ERR_OUT_OF_RANGE`.
 
+Stage 426 formalized WriteStream encoding options, byte accounting, and output
+content validation.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
