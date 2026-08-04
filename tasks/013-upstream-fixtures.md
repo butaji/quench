@@ -2963,3 +2963,13 @@ an explicit contract instead of weakening the invalid-chunk path.
 Upstream audit: `test-stream-readable-default-encoding.js` reaches the
 remaining Buffer hexadecimal rendering mismatch already tracked for stage
 1003; the focused stage checks encoded bytes directly.
+
+Stage 1013 fixes that Buffer mismatch by ensuring `Buffer.from()` returns the
+compatibility subclass with its polyfilled `toString()` implementation, and by
+rendering hex bytes without relying on unsupported numeric radix behavior.
+Retrospective: the failure was a layering issue, not a stream issue; checking
+both byte content and prototype-level rendering isolated it with one shared
+Buffer fix.
+
+Upstream audit: `test-stream-readable-default-encoding.js` now passes in full;
+the earlier stage-1003 Buffer rendering caveat is resolved.
