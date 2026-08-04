@@ -2580,3 +2580,7 @@ validated independently of once-wrapper and pending-job behavior.
 Stage 942 verifies `EventEmitter.off()` is the `removeListener()` alias and
 removes ordinary listeners. Retrospective: alias identity checks catch API
 surface drift with less fixture complexity than another event sequence.
+
+Stage 943 verifies targeted and global `removeAllListeners()` cleanup,
+including empty event-name bookkeeping. Retrospective: checking both scoped
+and global cleanup catches state leaks without involving once wrappers.
