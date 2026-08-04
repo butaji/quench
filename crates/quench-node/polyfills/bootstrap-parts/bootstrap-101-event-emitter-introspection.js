@@ -43,6 +43,7 @@ globalThis.__nodeEventEmitter.prototype.setMaxListeners = function (limit) {
   return this;
 };
 __quenchEventsSymbols.errorMonitor ||= Symbol("events.errorMonitor");
+globalThis.__nodeErrorMonitorSymbol = __quenchEventsSymbols.errorMonitor;
 __quenchEventsSymbols.captureRejections ??= false;
 __quenchEventsSymbols.EventEmitter.captureRejections =
   __quenchEventsSymbols.captureRejections;

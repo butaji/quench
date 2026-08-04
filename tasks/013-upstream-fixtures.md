@@ -2665,3 +2665,8 @@ masking missing symbol-based dispatch.
 Stage 958 verifies the static `EventEmitter.captureRejections` default is
 inherited by new instances. Retrospective: temporarily changing the static
 default and restoring it in the fixture avoids cross-test global-state leaks.
+
+Stage 959 verifies `events.errorMonitor` observes the original error before the
+ordinary error listener. Retrospective: the symbol must be published after the
+events module initializes, so the emitter uses an explicit shared symbol rather
+than assuming a global-symbol identity.
