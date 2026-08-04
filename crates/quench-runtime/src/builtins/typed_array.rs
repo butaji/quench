@@ -503,6 +503,14 @@ mod tests {
                     ctx.eval("var sample = new Float64Array([0]); sample.fill(127); sample[0]"),
                     Ok(Value::Number(127.0))
                 );
+                assert_eq!(
+                    ctx.eval("var ctors = [Float64Array, Float32Array, Int32Array, Uint8ClampedArray]; var out = []; for (var i = 0; i < ctors.length; i++) { var sample = new ctors[i]([0]); sample.fill(127); out.push(sample[0]); } out.join(',')"),
+                    Ok(Value::String("127,127,127,127".to_string()))
+                );
+                assert_eq!(
+                    ctx.eval("var ctors = [Float64Array, Float32Array, Int32Array, Uint8ClampedArray]; var out = []; for (var i = 0; i < ctors.length; i++) out.push(ctors[i].name.slice(0, -5)); out.join(',')"),
+                    Ok(Value::String("Float64,Float32,Int32,Uint8Clamped".to_string()))
+                );
             })
             .unwrap()
             .join()

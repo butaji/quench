@@ -3,6 +3,7 @@ var _charAt = String.prototype.__charAt;
 var _charCodeAt = String.prototype.__charCodeAt;
 var _codePointAt = String.prototype.__codePointAt;
 var _at = String.prototype.__at;
+var _slice = String.prototype.__slice;
 var _indexOf = String.prototype.__indexOf;
 var _lastIndexOf = String.prototype.__lastIndexOf;
 var _toUpperCase = String.prototype.__toUpperCase;
@@ -127,7 +128,7 @@ String.prototype.substring = function StringSubstring(start, end) {
     from = to;
     to = swap;
   }
-  return string.slice(from, to);
+  return _slice.call(string, from, to);
 };
 
 String.prototype.slice = function StringSlice(start, end) {
@@ -138,7 +139,7 @@ String.prototype.slice = function StringSlice(start, end) {
   var last = end === undefined ? length : Number(end);
   var to = last !== last || last === 0 ? 0 : last === Infinity ? length : last === -Infinity ? 0 : last < 0 ? Math.max(length + Math.ceil(last), 0) : Math.min(Math.floor(last), length);
   if (to < from) return '';
-  return string.slice(from, to);
+  return _slice.call(string, from, to);
 };
 
 String.prototype.split = function StringSplit(separator, limit) {

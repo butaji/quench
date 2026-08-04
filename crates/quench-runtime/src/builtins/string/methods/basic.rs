@@ -53,6 +53,19 @@ fn code_point_at_impl(args: &[Value], s: &str) -> Value {
     Value::Number(code_point as f64)
 }
 
+fn slice_impl(args: &[Value], s: &str) -> Value {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    let len = units.len() as i64;
+    let start = args.first().map(to_number).unwrap_or(0.0) as i64;
+    let end = args.get(1).map(to_number).unwrap_or(len as f64) as i64;
+    let from = start.clamp(-len, len).max(0) + if start < 0 { len } else { 0 };
+    let to = end.clamp(-len, len).max(0) + if end < 0 { len } else { 0 };
+    if to <= from {
+        return Value::String(String::new());
+    }
+    Value::String(String::from_utf16_lossy(&units[from as usize..to as usize]))
+}
+
 pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
     let proto_clone = Rc::clone(proto);
     proto_clone.borrow_mut().set(
@@ -78,6 +91,15 @@ pub fn install_basic_methods(proto: &Rc<RefCell<Object>>) {
         Value::NativeFunction(Rc::new(NativeFunction::new(
             move |args| match super::this_js_string() {
                 Some(s) => Ok(code_point_at_impl(&args, &s)),
+                _ => Ok(Value::Undefined),
+            },
+        ))),
+    );
+    proto_clone.borrow_mut().set(
+        "__slice",
+        Value::NativeFunction(Rc::new(NativeFunction::new(
+            move |args| match super::this_js_string() {
+                Some(s) => Ok(slice_impl(&args, &s)),
                 _ => Ok(Value::Undefined),
             },
         ))),
