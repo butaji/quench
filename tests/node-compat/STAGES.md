@@ -756,3 +756,4 @@ these small fixtures isolate the currently implemented contract.
 |   757 | process stderr writableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 757` |
 |   758 | process stdout readableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 758` |
 |   759 | process stderr readableObjectMode is disabled                              | `tools/run-node-tests.sh --stage 759` |
+|   760 | process stdout stdio methods are present and chainable                     | `tools/run-node-tests.sh --stage 760` |
