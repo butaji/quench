@@ -2420,3 +2420,8 @@ Stage 908 verifies the node:module builtin inventory.
 
 Retrospective: extending a shared decorator must preserve its adjacent
 helpers; the regression sweep caught a dropped `_resolveFilename` fallback.
+
+Stage 909 verifies the node:module builtin predicate normalization.
+
+Retrospective: builtin predicates need spec-level distinction between bare
+legacy names and `node:`-qualified names, even when both load the same API.

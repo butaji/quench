@@ -905,3 +905,4 @@ these small fixtures isolate the currently implemented contract.
 |   906 | crypto hash exposes default Buffer digest                 | `tools/run-node-tests.sh --stage 906` |
 |   907 | process exposes builtin module lookup                    | `tools/run-node-tests.sh --stage 907` |
 |   908 | module exposes complete builtin inventory                 | `tools/run-node-tests.sh --stage 908` |
+|   909 | module exposes builtin predicate normalization             | `tools/run-node-tests.sh --stage 909` |
