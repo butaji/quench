@@ -870,3 +870,4 @@ these small fixtures isolate the currently implemented contract.
 |   871 | crypto exposes Web Crypto compatibility API                 | `tools/run-node-tests.sh --stage 871` |
 |   872 | timers promises exposes complete promise timer API          | `tools/run-node-tests.sh --stage 872` |
 |   873 | util exposes modern parsing and abort helpers              | `tools/run-node-tests.sh --stage 873` |
+|   874 | url exposes URLPattern matching API                        | `tools/run-node-tests.sh --stage 874` |
