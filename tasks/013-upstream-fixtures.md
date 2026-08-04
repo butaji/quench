@@ -1376,6 +1376,9 @@ non-function callback arguments.
 Stage 488 formalized `crypto.randomFillSync()` validating buffer input and
 offset/length ranges.
 
+Stage 489 formalized `querystring.stringify()` rejecting lone surrogates with
+the expected URI error.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
