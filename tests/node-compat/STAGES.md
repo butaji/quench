@@ -621,3 +621,4 @@ these small fixtures isolate the currently implemented contract.
 |   622 | process versions exposes a semantic simdutf version entry              | `tools/run-node-tests.sh --stage 622` |
 |   623 | process versions exposes a Unicode data version entry                  | `tools/run-node-tests.sh --stage 623` |
 |   624 | process versions exposes a semantic Undici version entry               | `tools/run-node-tests.sh --stage 624` |
+|   625 | process versions exposes a semantic CJS lexer version entry            | `tools/run-node-tests.sh --stage 625` |
