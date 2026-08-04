@@ -543,7 +543,7 @@ Array.prototype.lastIndexOf = function ArrayLastIndexOf(searchElement, fromIndex
 
 Array.prototype.toSorted = function ArrayToSorted(comparefn) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.toSorted called on null or undefined");
-  var result = this.slice();
+  var result = Array.prototype.slice.call(this);
   return result.sort(comparefn);
 };
 
