@@ -3284,3 +3284,8 @@ Stage 1062 validates StringDecoder encodings and input views. Retrospective:
 the permissive wrapper coerced unknown encodings and null input into strings or
 empty byte arrays; validating before conversion matches Node’s error codes and
 keeps the byte normalization path focused on actual views.
+
+Stage 1063 normalizes all typed-array views through their underlying bytes,
+including Uint16Array and Uint32Array inputs. Retrospective: treating only
+non-Uint8 views specially still passed element values directly to UTF-8
+decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
