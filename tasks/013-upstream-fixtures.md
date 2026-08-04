@@ -2126,3 +2126,5 @@ Stage 787 added process active handle and request inspection helpers.
 Stage 788 added process control method surface compatibility.
 
 Stage 789 added process low-level binding method compatibility.
+
+Stage 790 added process debug and scheduling helper methods.
