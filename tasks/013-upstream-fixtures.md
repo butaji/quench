@@ -3312,6 +3312,8 @@ Stage 1081 completes `util.inherits` super-constructor and constructor metadata.
 
 Stage 1083 exposes `internal/util.sleep` with type and range validation.
 
+Stage 1084 provides `node:test` callbacks with the shared assertion context.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,
