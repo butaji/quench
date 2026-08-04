@@ -51,7 +51,7 @@ cargo clippy -p quench-runtime --all-targets
 
 # Diagnostic tools (see docs/tools.md)
 cargo run --bin run-test -- <test.js>        # single-test runner with metadata
-TEST262_DIGEST=1 TEST262_STAGE=N cargo test   # collect ALL failures, grouped by error
+TEST262_DIGEST=1 TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture   # collect ALL failures, grouped by error
 TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 bash tools/run-each.sh                        # process-isolated (survives crashes)
 
@@ -119,7 +119,7 @@ Cycle (in order):
    `crates/quench-runtime/tests/`) asserting the exact behavior. Mirror
    `src/eval/string_methods.rs`, `src/builtins/map.rs`. For JS builtins
    the test lives in Rust and wraps the JS via `Context::eval`.
-2. **Watch it fail** — `cargo test -p quench-runtime <name>` fails with
+2. **Watch it fail** — `cargo nextest run -p quench-runtime -E 'test(<name>)'` fails with
    the same symptom as the test262 case. If not, delete the test; you
    do not understand the bug yet.
 3. **Fix** — minimal change to `src/` or `builtins/*.js` or
@@ -187,7 +187,7 @@ Strategic rules:
   in the same PR that notices. A struct field written but never read is
   deleted in the same PR. `#[allow(dead_code)]` is a `TODO(delete)`
   marker — a diff that adds one without deleting the symbol in the same
-  diff is rejected. Fixture: `cargo test` + `cargo clippy --all-targets`
+  diff is rejected. Fixture: `cargo nextest run` + `cargo clippy --all-targets`
   clean; `cargo +nightly udeps` or `grep` across `src/`.
 - **Builtins throw, never panic.** `JsError::from("TypeError: …")` and
   `panic!`/`unwrap()`/`expect()` in `builtins/` or `eval/` are forbidden

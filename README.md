@@ -21,7 +21,7 @@ cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(te
 ## test262 Runner — 122 stages, no skips, no checkpoints
 
 `ssot` is the canonical shorthand for the `test-run` workflow (status and run are one flow):
-`TEST262_STAGE=<N> TEST262_DIGEST=1 cargo test -p quench-runtime --test test262`.
+`TEST262_STAGE=<N> TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture`.
 If a stage is not 100% in the test runner output, it is not done.
 `test-run` is a compatibility wrapper and maps to the same SSOT flow.
 

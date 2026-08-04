@@ -109,14 +109,15 @@ fi
 RUN_RC=$?
 set -e
 
-PY_PAYLOAD="$(cat "$TMP_OUTPUT" | python3 - "$RUN_RC" "$STAGE" <<'PY'
+PY_PAYLOAD="$(python3 - "$RUN_RC" "$STAGE" "$TMP_OUTPUT" <<'PY'
 import json
 import re
 import sys
 
-text = sys.stdin.read()
 run_rc = int(sys.argv[1])
 stage = int(sys.argv[2])
+with open(sys.argv[3], encoding="utf-8") as report:
+    text = report.read()
 
 def as_int(value):
     return int(value) if value is not None else 0
