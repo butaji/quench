@@ -95,7 +95,8 @@ const __quenchVmRunCallback = (callback, sandbox, args) => {
     __quenchVmRestoreProperties(
       state.keys,
       state.previous,
-      state.hiddenProcess
+      state.hiddenProcess,
+      state.previousPrototype
     );
   }
 };
@@ -153,7 +154,8 @@ const __quenchVmRunInContext = (code, sandbox, options) => {
     __quenchVmRestoreProperties(
       state.keys,
       state.previous,
-      state.hiddenProcess
+      state.hiddenProcess,
+      state.previousPrototype
     );
   }
 };
