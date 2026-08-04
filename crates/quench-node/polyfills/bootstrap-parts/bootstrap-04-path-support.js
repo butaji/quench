@@ -40,6 +40,9 @@ globalThis.__nodeCommon = {
   },
   invalidArgTypeHelper: (input) => {
     if (input == null) return ` Received ${input}`;
+    if (typeof input === "string") return ` Received type string ('${input}')`;
+    if (typeof input === "object")
+      return ` Received an instance of ${input.constructor?.name || "Object"}`;
     let rendered;
     try {
       rendered = String(input);

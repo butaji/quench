@@ -8,6 +8,12 @@ const __quenchVmRangeError = (message) => {
   error.code = "ERR_OUT_OF_RANGE";
   throw error;
 };
+const __quenchVmInvalidTypeSuffix = (value) =>
+  value === null
+    ? " Received null"
+    : typeof value === "object"
+      ? ` Received an instance of ${value.constructor?.name || "Object"}`
+      : ` Received type ${typeof value} (${typeof value === "string" ? `'${value}'` : String(value)})`;
 const __quenchVmValidateOffset = (options, key) => {
   if (options[key] === undefined) return;
   if (typeof options[key] !== "number")
@@ -43,6 +49,67 @@ const __quenchVmValidateScriptFields = (options) => {
     !ArrayBuffer.isView(options.cachedData)
   )
     __quenchVmTypeError("The cachedData option must be a Buffer");
+};
+const __quenchVmValidateContextOptions = (options, allowFilename) => {
+  if (options === undefined) return;
+  if (allowFilename && typeof options === "string") return;
+  if (options === null || typeof options !== "object" || Array.isArray(options))
+    __quenchVmTypeError(
+      `The "options" argument must be of type object.${__quenchVmInvalidTypeSuffix(options)}`
+    );
+  for (const key of ["name", "origin", "contextName", "contextOrigin"])
+    if (options[key] !== undefined && typeof options[key] !== "string")
+      __quenchVmTypeError(
+        `The "options.${key}" property must be of type string. Received null`
+      );
+};
+const __quenchVmValidateCompileFields = (options) => {
+  if (options.filename === null)
+    __quenchVmTypeError(
+      'The "options.filename" property must be of type string. Received null'
+    );
+  if (options.columnOffset === null)
+    __quenchVmTypeError(
+      'The "options.columnOffset" property must be of type number. Received null'
+    );
+  if (options.lineOffset === null)
+    __quenchVmTypeError(
+      'The "options.lineOffset" property must be of type number. Received null'
+    );
+  if (options.cachedData === null)
+    __quenchVmTypeError(
+      'The "options.cachedData" property must be an instance of Buffer, TypedArray, or DataView. Received null'
+    );
+  if (options.produceCachedData === null)
+    __quenchVmTypeError(
+      'The "options.produceCachedData" property must be of type boolean. Received null'
+    );
+  if (options.parsingContext !== undefined)
+    __quenchVmTypeError(
+      `The "options.parsingContext" property must be an instance of Context.${__quenchVmInvalidTypeSuffix(options.parsingContext)}`
+    );
+};
+const __quenchVmValidateExtensions = (extensions) => {
+  if (!Array.isArray(extensions))
+    __quenchVmTypeError(
+      'The "options.contextExtensions" property must be an instance of Array. Received null'
+    );
+  for (const [index, extension] of extensions.entries())
+    if (extension === null || typeof extension !== "object")
+      __quenchVmTypeError(
+        `The "options.contextExtensions[${index}]" property must be of type object.${__quenchVmInvalidTypeSuffix(extension)}`
+      );
+};
+const __quenchVmValidateCompileOptions = (options) => {
+  if (options === undefined) return;
+  if (options === null || typeof options !== "object" || Array.isArray(options))
+    __quenchVmTypeError(
+      `The "options" argument must be of type object.${__quenchVmInvalidTypeSuffix(options)}`
+    );
+  __quenchVmValidateCompileFields(options);
+  if (options.contextExtensions !== undefined) {
+    __quenchVmValidateExtensions(options.contextExtensions);
+  }
 };
 const __quenchVmValidateScriptOptions = (options) => {
   if (options === undefined) return;
@@ -118,6 +185,7 @@ const __quenchVmRestoreNewContext = (
   }
 };
 const __quenchVmRunInNewContext = (code, sandbox, options) => {
+  __quenchVmValidateContextOptions(options, true);
   if (!__quenchVmIsObject(sandbox))
     __quenchVmTypeError("The context argument must be an object");
   const keys = Object.getOwnPropertyNames(sandbox);
