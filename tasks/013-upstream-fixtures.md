@@ -2204,3 +2204,5 @@ Stage 826 verified the core node:url API.
 Stage 827 verified node:timers callback and promise APIs.
 
 Stage 828 verified the core node:console API.
+
+Stage 829 verified the core node:tty API.
