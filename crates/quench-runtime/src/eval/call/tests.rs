@@ -28,6 +28,13 @@ fn implicit_global_assignment_creates_enumerable_property() {
 }
 
 #[test]
+fn object_methods_are_not_constructable() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx.eval("var obj = { method() {} }; try { new obj.method(); false; } catch (e) { e instanceof TypeError; }");
+    assert_eq!(value, Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn call_through_with_environment_uses_with_object_as_this() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
