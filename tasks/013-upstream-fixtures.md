@@ -2232,3 +2232,5 @@ Stage 840 verifies the node:net TCP client and server core API.
 Stage 841 verifies the node:dgram UDP socket API.
 
 Stage 842 verifies the node:tls secure transport API.
+
+Stage 843 verifies the node:child_process process creation API.
