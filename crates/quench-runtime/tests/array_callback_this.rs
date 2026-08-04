@@ -123,3 +123,13 @@ fn array_flat_map_constructs_species_result() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_flat_does_not_call_nested_flat_methods() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var calls=[]; var nested=new Proxy([1],{get(t,p){calls.push(p);return Reflect.get(t,p);}}); [nested].flat(); calls.indexOf('flat')===-1")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}

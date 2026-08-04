@@ -656,6 +656,16 @@ Array.prototype.shift = function ArrayShift() {
   return first;
 };
 
+function FlattenArrayInto(target, source, sourceLen, depth) {
+  for (var i = 0; i < sourceLen; i++) {
+    if (!HasProperty(source, i)) continue;
+    var value = source[i];
+    if (depth > 0 && IsArray(value)) FlattenArrayInto(target, value, ToLength(value.length), depth - 1);
+    else CreateDataProperty(target, target.length, value);
+  }
+  return target;
+}
+
 // Array.prototype.flat (ES2025 §23.1.3.13)
 Array.prototype.flat = function ArrayFlat() {
   "use strict";
@@ -664,19 +674,11 @@ Array.prototype.flat = function ArrayFlat() {
   var len = ToLength(O.length);
   var depth = arguments.length === 0 ? undefined : arguments[0];
   var d = depth === undefined ? 1 : ToIntegerOrInfinity(depth);
-  var result = [];
-  var resultIndex = 0;
-  for (var i = 0; i < len; i++) {
-    if (HasProperty(O, i)) {
-      if (d > 0 && IsArray(O[i])) {
-        var sub = O[i].flat(d - 1);
-        for (var j = 0; j < sub.length; j++) CreateDataProperty(result, resultIndex++, sub[j]);
-      } else {
-        CreateDataProperty(result, resultIndex++, O[i]);
-      }
-    }
-  }
-  return result;
+  var C = O.constructor;
+  if (C !== null && typeof C === 'object') C = C[Symbol.species];
+  if (C === null || C === undefined) C = undefined;
+  var result = C === undefined ? [] : new C(0);
+  return FlattenArrayInto(result, O, len, d);
 };
 
 // Array.prototype.flatMap (ES2025 §23.1.3.14)
