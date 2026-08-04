@@ -3,9 +3,11 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 jobs=${QUENCH_NODE_STAGE_JOBS:-${JOBS:-4}}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-30}
 failures=$(mktemp)
 trap 'rm -f "$failures"' EXIT HUP INT TERM
 export root failures
+export timeout_seconds
 
 cargo build -q --manifest-path "$root/Cargo.toml" -p quench-node
 runner="$root/target/debug/quench-node"
@@ -20,7 +22,16 @@ done | xargs -n 1 -P "$jobs" sh -c '
   if [ "$stage" -ge 169 ] && [ "$stage" -le 174 ]; then
     flags="--experimental-stream-iter"
   fi
-  if ! "$runner" $flags --stage "$stage" >/dev/null 2>&1; then
+  run_stage() {
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "$timeout_seconds" "$runner" $flags --stage "$stage"
+    elif command -v gtimeout >/dev/null 2>&1; then
+      gtimeout "$timeout_seconds" "$runner" $flags --stage "$stage"
+    else
+      perl -e "alarm shift; exec \\@ARGV" "$timeout_seconds" "$runner" $flags --stage "$stage"
+    fi
+  }
+  if ! run_stage >/dev/null 2>&1; then
     printf "%s\\n" "$stage" >>"$failures"
   fi
 '
