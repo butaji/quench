@@ -820,3 +820,4 @@ these small fixtures isolate the currently implemented contract.
 |   821 | util exposes core formatting and helper API                     | `tools/run-node-tests.sh --stage 821` |
 |   822 | os exposes core platform and resource API                      | `tools/run-node-tests.sh --stage 822` |
 |   823 | os exposes modern parallelism and priority API                  | `tools/run-node-tests.sh --stage 823` |
+|   824 | path exposes core parsing and joining API                       | `tools/run-node-tests.sh --stage 824` |
