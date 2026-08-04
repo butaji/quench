@@ -834,3 +834,4 @@ these small fixtures isolate the currently implemented contract.
 |   835 | crypto exposes core hashing and randomness API                | `tools/run-node-tests.sh --stage 835` |
 |   836 | zlib exposes compression and stream API                       | `tools/run-node-tests.sh --stage 836` |
 |   837 | dns exposes callback and promise resolver API                 | `tools/run-node-tests.sh --stage 837` |
+|   838 | http exposes client and server core API                       | `tools/run-node-tests.sh --stage 838` |
