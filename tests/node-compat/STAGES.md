@@ -415,3 +415,4 @@ these small fixtures isolate the currently implemented contract.
 |   416 | fs appendFile synchronous data validation                      | `tools/run-node-tests.sh --stage 416` |
 |   417 | fs appendFileSync binary Buffer preservation                   | `tools/run-node-tests.sh --stage 417` |
 |   418 | fs appendFileSync hex and base64 string encodings              | `tools/run-node-tests.sh --stage 418` |
+|   419 | fs statSync missing path ENOENT metadata                       | `tools/run-node-tests.sh --stage 419` |
