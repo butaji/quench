@@ -195,7 +195,7 @@ pub fn make_ops_object() -> Value {
             if obj_rc
                 .borrow()
                 .get_descriptor(&key)
-                .is_some_and(|descriptor| !descriptor.writable)
+                .is_some_and(|descriptor| !descriptor.writable || !descriptor.configurable)
             {
                 return Ok(Value::Boolean(false));
             }
@@ -956,6 +956,19 @@ mod tests {
             .eval(
                 "var CreateDataProperty = __ops__.CreateDataProperty; \
                  var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: false }); \
+                 !CreateDataProperty(o, 'x', 2) && o.x === 1",
+            )
+            .unwrap();
+        assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_create_data_property_rejects_non_configurable_property() {
+        let mut ctx = crate::Context::new().unwrap();
+        let result = ctx
+            .eval(
+                "var CreateDataProperty = __ops__.CreateDataProperty; \
+                 var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: true, configurable: false }); \
                  !CreateDataProperty(o, 'x', 2) && o.x === 1",
             )
             .unwrap();
