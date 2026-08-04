@@ -511,3 +511,4 @@ these small fixtures isolate the currently implemented contract.
 |   512 | path matchesGlob handles wildcard and path patterns               | `tools/run-node-tests.sh --stage 512` |
 |   513 | os constants expose frozen signal values                         | `tools/run-node-tests.sh --stage 513` |
 |   514 | zlib synchronous compression round trips and options             | `tools/run-node-tests.sh --stage 514` |
+|   515 | zlib constants and codes expose frozen status values             | `tools/run-node-tests.sh --stage 515` |
