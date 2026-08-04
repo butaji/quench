@@ -164,20 +164,40 @@ pub(crate) fn register_string_iterator(string_proto: &Rc<RefCell<Object>>) {
     let next = NativeFunction::new(move |_args| {
         let this_val = crate::builtins::get_native_this().unwrap_or(Value::Undefined);
         let Value::Object(object) = this_val else {
-            return Err(JsError::new("TypeError: not a String Iterator"));
+            let msg = "TypeError: not a String Iterator";
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
         };
         let Some(Value::Object(state)) = object.borrow().get_own("\0stringIteratorState") else {
-            return Err(JsError::new("TypeError: not a String Iterator"));
+            let msg = "TypeError: not a String Iterator";
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
         };
         let mut index = match state.borrow().get("index") {
             Some(Value::Number(index)) => index as usize,
-            _ => return Err(JsError::new("TypeError: not a String Iterator")),
+            _ => {
+                let msg = "TypeError: not a String Iterator";
+                let (err, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
+            }
         };
         let chars = match state.borrow().get("string") {
             Some(Value::String(string)) => {
                 crate::value::wtf8::wtf8_for_of_iterate_preserving_pairs(&string)
             }
-            _ => return Err(JsError::new("TypeError: not a String Iterator")),
+            _ => {
+                let msg = "TypeError: not a String Iterator";
+                let (err, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
+            }
         };
         let mut result = Object::new(ObjectKind::Ordinary);
         if let Some(character) = chars.get(index) {
