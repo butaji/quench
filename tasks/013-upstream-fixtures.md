@@ -2469,3 +2469,8 @@ Stage 917 verifies the node:process release metadata contract.
 
 Retrospective: runtime metadata varies by build; focused contracts should
 assert stable fields observed in the local oracle instead of optional fields.
+
+Stage 918 verifies the node:process parent PID metadata contract.
+
+Retrospective: upstream child-process PPID propagation is tracked separately
+from the host process metadata because it requires spawn environment wiring.
