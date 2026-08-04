@@ -678,3 +678,4 @@ these small fixtures isolate the currently implemented contract.
 |   679 | process hrtime exposes a two-component high-resolution tuple                  | `tools/run-node-tests.sh --stage 679` |
 |   680 | process hrtime.bigint exposes a non-negative nanosecond BigInt                 | `tools/run-node-tests.sh --stage 680` |
 |   681 | process umask exposes a numeric mask and reversible read behavior             | `tools/run-node-tests.sh --stage 681` |
+|   682 | process pid exposes a positive integer process identifier                     | `tools/run-node-tests.sh --stage 682` |
