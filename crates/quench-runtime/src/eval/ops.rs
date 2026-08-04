@@ -240,10 +240,14 @@ pub fn make_ops_object() -> Value {
             Some(value) => crate::value::to_js_string(value),
             None => String::new(),
         };
-        if let Value::Object(object) = value {
-            Ok(Value::Boolean(object.borrow().has_own(&key)))
-        } else {
-            Ok(Value::Boolean(false))
+        match value {
+            Value::Object(object) => Ok(Value::Boolean(object.borrow().has_own(&key))),
+            Value::Function(function) => Ok(Value::Boolean(
+                (!function.is_property_deleted(&key)
+                    && matches!(key.as_str(), "name" | "length"))
+                    || function.get_property(&key).is_some(),
+            )),
+            _ => Ok(Value::Boolean(false)),
         }
     });
 
@@ -629,6 +633,13 @@ pub fn make_ops_object() -> Value {
                 }
             }
             Value::Function(function) => {
+                if key == "prototype"
+                    && (function.is_arrow
+                        || function.is_method
+                        || (function.is_async && !function.is_generator))
+                {
+                    return Ok(Value::Undefined);
+                }
                 if function.is_property_deleted(&key) {
                     return Ok(Value::Undefined);
                 }
