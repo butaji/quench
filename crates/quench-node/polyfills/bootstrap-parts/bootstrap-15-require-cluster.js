@@ -86,11 +86,6 @@ const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
 const __quenchVmContexts = new WeakSet();
 const __quenchVmIsObject = (value) =>
   value !== null && (typeof value === "object" || typeof value === "function");
-const __quenchVmTypeError = (message) => {
-  const error = new TypeError(message);
-  error.code = "ERR_INVALID_ARG_TYPE";
-  throw error;
-};
 const __quenchVmRunCallback = (callback, sandbox, args) => {
   const state = __quenchVmInstallContext(sandbox);
   try {
@@ -180,15 +175,22 @@ const __quenchVmRunInContext = (code, sandbox, options) => {
 };
 const __quenchVmModule = {
   Script: class Script {
-    constructor(code) {
+    constructor(code, options) {
+      __quenchVmValidateScriptOptions(options);
       this.code = String(code);
     }
     runInContext(context, options) {
+      __quenchVmValidateScriptOptions(options);
       return __quenchVmRunInContext(this.code, context, options);
+    }
+    runInThisContext(options) {
+      __quenchVmValidateScriptOptions(options);
+      return (0, eval)(this.code);
     }
     runInNewContext(context = {}, options) {
       if (!(this instanceof __quenchVmModule.Script))
         throw new TypeError("this.runInContext is not a function");
+      __quenchVmValidateScriptOptions(options);
       return __quenchVmRunInNewContext(this.code, context, options);
     }
   },
