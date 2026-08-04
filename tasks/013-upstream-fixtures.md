@@ -2268,3 +2268,5 @@ Stage 858 verifies the node:util/types specialized type predicates.
 Stage 859 verifies the node:sqlite synchronous database API.
 
 Stage 860 verifies the node:http2 client and server API.
+
+Stage 861 verifies the node:sys legacy formatting and type API.
