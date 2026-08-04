@@ -861,3 +861,4 @@ these small fixtures isolate the currently implemented contract.
 |   862 | test reporters exposes standard reporter factories          | `tools/run-node-tests.sh --stage 862` |
 |   863 | inspector promises exposes async debugging API              | `tools/run-node-tests.sh --stage 863` |
 |   864 | process report exposes diagnostic report API                | `tools/run-node-tests.sh --stage 864` |
+|   865 | stream web exposes Web Streams constructors and helpers    | `tools/run-node-tests.sh --stage 865` |
