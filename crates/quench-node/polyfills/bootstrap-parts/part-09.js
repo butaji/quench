@@ -1,4 +1,4 @@
-globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+const __nodeFsReadStreamOptions = (options) => {
   const start = options.start === undefined ? 0 : Number(options.start);
   const end = options.end === undefined ? undefined : Number(options.end);
   if (!Number.isInteger(start) || start < 0) {
@@ -11,6 +11,17 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
+  return { start, end };
+};
+const __nodeFsReadStreamClose = (stream) => {
+  if (stream.fd !== null) {
+    globalThis.__nodeFs.closeSync(stream.fd);
+    stream.fd = null;
+  }
+  stream.emit("close");
+};
+globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+  const { start, end } = __nodeFsReadStreamOptions(options);
   const stream = new NodeReadable(options);
   const path = nodePathValue(value);
   stream.path = path;
@@ -30,13 +41,7 @@ globalThis.__nodeFs.createReadStream = (value, options = {}) => {
       }
       stream.push(null);
       if (options.autoClose !== false)
-        stream.once("end", () => {
-          if (stream.fd !== null) {
-            globalThis.__nodeFs.closeSync(stream.fd);
-            stream.fd = null;
-          }
-          stream.emit("close");
-        });
+        stream.once("end", () => __nodeFsReadStreamClose(stream));
     } catch (error) {
       stream.emit("error", error);
     }
@@ -190,38 +195,28 @@ globalThis.__nodeFs.readFile = (value, options, callback) => {
     callback(null, data);
   });
 };
-globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
-  if (typeof options === "function") callback = options;
+const __nodeFsValidateMkdtemp = (prefix, options, callback) => {
   if (
     options !== undefined &&
     typeof options !== "function" &&
     typeof options !== "string" &&
     (typeof options !== "object" || options === null)
-  ) {
-    const error = new TypeError(
-      'The "options" argument must be a string or an object'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
+  )
+    throw new TypeError('The "options" argument must be a string or an object');
   if (
     typeof prefix !== "string" &&
     !(prefix instanceof Uint8Array) &&
     !(prefix instanceof globalThis.__nodeURL)
-  ) {
-    const error = new TypeError(
+  )
+    throw new TypeError(
       'The "prefix" argument must be of type string or an instance of Buffer or URL'
     );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  if (typeof callback !== "function") {
-    const error = new TypeError(
-      'The "callback" argument must be of type function'
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+};
+globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
+  if (typeof options === "function") callback = options;
+  __nodeFsValidateMkdtemp(prefix, options, callback);
   queueMicrotask(() => {
     try {
       callback(null, globalThis.__nodeFs.mkdtempSync(prefix));
@@ -255,6 +250,38 @@ globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
     callback(null);
   });
 };
+const __nodeFsPromisedReadOptions = (buffer, offset, length, position) => {
+  if (!offset || typeof offset !== "object")
+    return { target: buffer, start: offset, size: length, at: position };
+  const options = offset;
+  const target = options.buffer || NodeBuffer.alloc(16384);
+  const start = options.offset == null ? 0 : options.offset;
+  const size =
+    options.length === undefined ? target.length - start : options.length;
+  const at = options.position;
+  return { target, start, size, at };
+};
+const __nodeFsPromisedRead = (fd, buffer, offset, length, position) => {
+  const { target, start, size, at } = __nodeFsPromisedReadOptions(
+    buffer,
+    offset,
+    length,
+    position
+  );
+  if (target.length === 0 && Number(size) > 0) {
+    const error = new TypeError("The buffer is empty");
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  const bytesRead = globalThis.__nodeFs.readSync(
+    fd,
+    target,
+    start || 0,
+    size === undefined ? target.length : size,
+    at === undefined ? null : at
+  );
+  return { bytesRead, buffer: target };
+};
 globalThis.__nodeFs.promises = {
   open: (value, flags = "r", mode) =>
     new Promise((resolve, reject) =>
@@ -265,35 +292,9 @@ globalThis.__nodeFs.promises = {
               fd,
               close: () => Promise.resolve(),
               read: (buffer, offset, length, position) =>
-                Promise.resolve().then(() => {
-                  let target = buffer;
-                  let start = offset;
-                  let size = length;
-                  let at = position;
-                  if (offset && typeof offset === "object") {
-                    const options = offset;
-                    target = options.buffer || NodeBuffer.alloc(16384);
-                    start = options.offset == null ? 0 : options.offset;
-                    size =
-                      options.length === undefined
-                        ? target.length - start
-                        : options.length;
-                    at = options.position;
-                  }
-                  if (target.length === 0 && Number(size) > 0) {
-                    const error = new TypeError("The buffer is empty");
-                    error.code = "ERR_INVALID_ARG_VALUE";
-                    throw error;
-                  }
-                  const bytesRead = globalThis.__nodeFs.readSync(
-                    fd,
-                    target,
-                    start || 0,
-                    size === undefined ? target.length : size,
-                    at === undefined ? null : at
-                  );
-                  return { bytesRead, buffer: target };
-                })
+                Promise.resolve().then(() =>
+                  __nodeFsPromisedRead(fd, buffer, offset, length, position)
+                )
             })
       )
     ),
