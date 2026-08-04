@@ -2290,3 +2290,5 @@ Stage 869 verifies the node:worker_threads environment and transfer helpers.
 Stage 870 verifies the node:fs callback and promise glob API.
 
 Stage 871 verifies the node:crypto Web Crypto compatibility API.
+
+Stage 872 verifies the node:timers/promises complete promise timer API.
