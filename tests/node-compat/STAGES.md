@@ -641,3 +641,4 @@ these small fixtures isolate the currently implemented contract.
 |   642 | process emitWarning preserves warning name, message, and code             | `tools/run-node-tests.sh --stage 642` |
 |   643 | process emitWarning normalizes Error input to warning metadata             | `tools/run-node-tests.sh --stage 643` |
 |   644 | process emit fans out arguments and reports listener presence              | `tools/run-node-tests.sh --stage 644` |
+|   645 | process on and once return the process object for chaining                  | `tools/run-node-tests.sh --stage 645` |
