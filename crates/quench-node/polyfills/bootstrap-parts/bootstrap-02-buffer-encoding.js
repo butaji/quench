@@ -437,14 +437,14 @@ class NodeBuffer extends Uint8Array {
   static compare(left, right) {
     if (!(left instanceof Uint8Array)) {
       const error = new TypeError(
-        'The "buf1" argument must be an instance of Buffer or Uint8Array'
+        `The "buf1" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(left)}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
     if (!(right instanceof Uint8Array)) {
       const error = new TypeError(
-        'The "buf2" argument must be an instance of Buffer or Uint8Array'
+        `The "buf2" argument must be an instance of Buffer or Uint8Array.${__nodeBufferConcatReceived(right)}`
       );
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
