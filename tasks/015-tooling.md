@@ -24,6 +24,8 @@ surrounding tooling should:
   `QUENCH_NODE_TEST_TIMEOUT_SECONDS` so hanging upstream leak tests are
   reported as failures instead of blocking the corpus audit.
 - `tools/check-focused-stages.sh` — runs all focused stages.
+- `tools/check-focused-stages-parallel.sh` — runs focused stages in parallel
+  with the same per-stage timeout.
 - `tools/compat-coverage.sh` — emits counts (focused stages, up-stream
   fixtures, parallel fixtures).
 - `tools/lint-stage-numbers.sh` — rejects gaps in the focused stage sequence.
