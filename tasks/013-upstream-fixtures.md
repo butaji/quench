@@ -1649,6 +1649,9 @@ arity for forked child-process compatibility.
 Stage 579 formalized child-process stdio stream event methods and chainable
 UTF-8 encoding configuration.
 
+Stage 580 formalized child-process stdout data/end events and environment
+mapping for a spawned command.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
