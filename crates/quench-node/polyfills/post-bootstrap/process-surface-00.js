@@ -1,5 +1,6 @@
 {
   if (globalThis.process) {
+    globalThis.gc ||= () => undefined;
     globalThis.process.emitWarning = (message, options = {}) => {
       const warning =
         message instanceof Error ? message : new Error(String(message));
