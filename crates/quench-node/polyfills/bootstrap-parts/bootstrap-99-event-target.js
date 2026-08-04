@@ -3,12 +3,13 @@ globalThis.EventTarget ||= class EventTarget {
     this._listeners = {};
   }
   addEventListener(name, listener, options = {}) {
+    const passive = Boolean(options.passive);
     if (typeof listener !== "function") return undefined;
     const signal = options.signal;
     if (signal !== undefined && !(signal instanceof AbortSignal))
       throw new TypeError("signal must be an AbortSignal");
     if (signal?.aborted) return undefined;
-    const record = { listener, once: Boolean(options.once), signal };
+    const record = { listener, once: Boolean(options.once), passive, signal };
     (this._listeners[name] ||= []).push(record);
     if (signal) {
       record.abort = () => this.removeEventListener(name, listener);
@@ -28,7 +29,9 @@ globalThis.EventTarget ||= class EventTarget {
     for (const record of [...(this._listeners[event.type] || [])]) {
       if (!this._listeners[event.type]?.includes(record)) continue;
       if (record.once) this.removeEventListener(event.type, record.listener);
+      event._quenchPassive = record.passive;
       record.listener.call(this, event);
+      event._quenchPassive = false;
       if (event._quenchImmediatePropagationStopped) break;
     }
     return true;
@@ -44,16 +47,50 @@ globalThis.Event ||= class Event {
     this._quenchImmediatePropagationStopped = false;
   }
   preventDefault() {
-    if (this.cancelable) this.defaultPrevented = true;
+    if (this.cancelable && !this._quenchPassive) this.defaultPrevented = true;
   }
   stopImmediatePropagation() {
     this._quenchImmediatePropagationStopped = true;
   }
 };
+const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;
+const __quenchEventTargetRemove = EventTarget.prototype.removeEventListener;
+const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;
+const __quenchPassiveListeners = new WeakMap();
+EventTarget.prototype.addEventListener = function (name, listener, options) {
+  const passive = Boolean(options?.passive);
+  if (!passive || typeof listener !== "function")
+    return __quenchEventTargetAdd.call(this, name, listener, options);
+  const wrapper = (event) => {
+    event._quenchPassive = true;
+    listener.call(this, event);
+    event._quenchPassive = false;
+  };
+  let listeners = __quenchPassiveListeners.get(this);
+  if (!listeners) __quenchPassiveListeners.set(this, (listeners = new Map()));
+  listeners.set(listener, wrapper);
+  return __quenchEventTargetAdd.call(this, name, wrapper, options);
+};
+EventTarget.prototype.removeEventListener = function (name, listener, options) {
+  const wrapper = __quenchPassiveListeners.get(this)?.get(listener) || listener;
+  __quenchPassiveListeners.get(this)?.delete(listener);
+  return __quenchEventTargetRemove.call(this, name, wrapper, options);
+};
+EventTarget.prototype.dispatchEvent = function (event) {
+  const result = __quenchEventTargetDispatch.call(this, event);
+  return result && !event.defaultPrevented;
+};
 if (globalThis.Event && !Event.prototype.stopImmediatePropagation)
   Event.prototype.stopImmediatePropagation = function () {
     this._quenchImmediatePropagationStopped = true;
   };
+if (globalThis.Event && !Event.prototype.__quenchPassivePreventDefault) {
+  const originalPreventDefault = Event.prototype.preventDefault;
+  Event.prototype.preventDefault = function () {
+    if (!this._quenchPassive) originalPreventDefault.call(this);
+  };
+  Event.prototype.__quenchPassivePreventDefault = true;
+}
 if (globalThis.AbortSignal && !AbortSignal.prototype.__quenchEventArgument) {
   const originalAddEventListener = AbortSignal.prototype.addEventListener;
   AbortSignal.prototype.addEventListener = function (type, listener, options) {

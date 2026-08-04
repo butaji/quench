@@ -2723,3 +2723,7 @@ Stage 970 verifies EventTarget `once` listeners, abort-signal removal, and
 listener validation. Retrospective: storing listener records makes dispatch
 snapshot behavior and mid-dispatch removal testable without adding host-side
 event machinery.
+
+Stage 971 verifies passive listener cancellation suppression and dispatch return
+values. Retrospective: wrapping the native boundary only for passive listeners
+keeps the Rust host minimal while restoring the observable DOM contract.
