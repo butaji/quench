@@ -901,3 +901,4 @@ these small fixtures isolate the currently implemented contract.
 |   902 | crypto exposes synchronous PBKDF2 derivation              | `tools/run-node-tests.sh --stage 902` |
 |   903 | crypto exposes FIPS mode state controls                  | `tools/run-node-tests.sh --stage 903` |
 |   904 | crypto exposes asynchronous PBKDF2 derivation             | `tools/run-node-tests.sh --stage 904` |
+|   905 | crypto exposes asynchronous HKDF derivation               | `tools/run-node-tests.sh --stage 905` |
