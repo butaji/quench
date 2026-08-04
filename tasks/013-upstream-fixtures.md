@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1142: VM restricted global declarations
+
+- Fixture: `test-vm-global-restricted-property.js`
+- Added SyntaxError handling for lexical declarations that collide with
+  non-configurable context globals.
+- Retrospective: a narrow source preflight covers this ECMAScript global
+  declaration invariant without adding a second evaluator.
+
 ## Stage 1141: VM context symbol keys
 
 - Fixture: `test-vm-ownkeys.js`
