@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1116: VM context validation
+
+- Fixture: `test-vm-create-context-arg.js`
+- Added `ERR_INVALID_ARG_TYPE` validation for primitive VM contexts while
+  preserving object and array contexts.
+- Retrospective: validating at `createContext()` keeps downstream VM methods
+  free of repeated type checks.
+
 ## Stage 1115: VM function realm identity
 
 - Fixture: `test-util-promisify.js`
