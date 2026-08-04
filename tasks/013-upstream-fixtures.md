@@ -1108,6 +1108,9 @@ Stage 394 formalized experimental `node:stream/iter` gating through the
 Stage 395 formalized crypto capability enumeration, advertising supported
 hashes while returning cipher capability arrays.
 
+Stage 396 formalized constant-time buffer comparison results and the Node length
+error for unequal `timingSafeEqual` inputs.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
