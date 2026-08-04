@@ -919,3 +919,4 @@ these small fixtures isolate the currently implemented contract.
 |   920 | child-process parent PID probe                           | `tools/run-node-tests.sh --stage 920` |
 |   921 | upstream process parent PID fixture                     | `tools/run-node-tests.sh --stage 921` |
 |   924 | process source-map enablement validation                | `tools/run-node-tests.sh --stage 924` |
+|   925 | process ref and unref hooks                            | `tools/run-node-tests.sh --stage 925` |
