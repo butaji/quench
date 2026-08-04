@@ -16,8 +16,13 @@ surrounding tooling should:
 
 ## Existing tools (keep, audit)
 
-- `tools/run-node-tests.sh` — runs a single up-stream fixture.
+- `tools/run-node-tests.sh` — runs a single up-stream fixture or directory.
+  It terminates runs after 30 seconds by default; override with
+  `QUENCH_NODE_TEST_TIMEOUT_SECONDS`.
 - `tools/measure-node-tests.sh` — measures pass rate over a directory.
+  Each fixture has a 10-second timeout by default; override it with
+  `QUENCH_NODE_TEST_TIMEOUT_SECONDS` so hanging upstream leak tests are
+  reported as failures instead of blocking the corpus audit.
 - `tools/check-focused-stages.sh` — runs all focused stages.
 - `tools/compat-coverage.sh` — emits counts (focused stages, up-stream
   fixtures, parallel fixtures).
@@ -93,9 +98,10 @@ The repository now enforces these limits for every non-vendored `.js` and
 - complexity no higher than 10 (`complexity` in ESLint and
   `clippy::cognitive_complexity`)
 
-Run `tools/lint-all.sh` locally (or the language-specific scripts). The same
-checks run in `.github/workflows/lint.yml`. Existing oversized bootstrap and host files are
-reported as failures and must be decomposed in subsequent slices.
+Run `tools/lint-all.sh` locally (or the language-specific scripts). GitHub CI
+is intentionally absent; local verification is the repository gate. Existing
+oversized bootstrap and host files are reported as failures and must be
+decomposed in subsequent slices.
 
 ## Status
 

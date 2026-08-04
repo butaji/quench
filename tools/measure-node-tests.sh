@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 dir=${1:-"$root/tests/node/test"}
 binary=${QUENCH_NODE_BIN:-"$root/target/debug/quench-node"}
+timeout_seconds=${QUENCH_NODE_TEST_TIMEOUT_SECONDS:-10}
 
 if [ ! -x "$binary" ]; then
   cargo build --quiet --manifest-path "$root/Cargo.toml" -p quench-node
@@ -15,9 +16,20 @@ failed=0
 skipped=0
 started=$(date +%s)
 
+run_fixture() {
+  file=$1
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" "$binary" "$file"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$timeout_seconds" "$binary" "$file"
+  else
+    perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" "$binary" "$file"
+  fi
+}
+
 while IFS= read -r file; do
   total=$((total + 1))
-  if "$binary" "$file" >/dev/null 2>&1; then
+  if run_fixture "$file" >/dev/null 2>&1; then
     passed=$((passed + 1))
   else
     failed=$((failed + 1))
