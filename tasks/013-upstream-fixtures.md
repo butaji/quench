@@ -3385,3 +3385,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added array-type and tuple-length validation for `process.hrtime(previous)`.
 - Verified the focused stage and Node's complete hrtime fixture.
+### Stage 1101: process chdir errors
+
+- Added Node-shaped ENOENT metadata for missing `process.chdir` paths.
+- Verified the focused stage and upstream chdir error-message fixture.
