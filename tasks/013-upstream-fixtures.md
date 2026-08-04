@@ -3120,3 +3120,9 @@ variable-width writes use Node's distinct `< 2 ** N` wording and grouped large
 values, while fixed-width writes use inclusive upper bounds; keeping those
 formatters in their respective validation layers matched the full upstream
 `test-buffer-writeuint.js` fixture.
+
+Stage 1037 matches `writeDouble*()` offset errors, distinguishing integer
+range failures, non-integer offsets, and genuinely undersized buffers. The
+retrospective extends the numeric-validation approach from stages 1034–1036:
+error classification must consider both the input value and the available
+buffer width. Upstream `test-buffer-writedouble.js` now passes.
