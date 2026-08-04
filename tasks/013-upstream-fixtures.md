@@ -2524,3 +2524,10 @@ Stage 928 records the verified `os.homedir()` fallback contract. The host
 binding already returns a non-empty home directory when environment variables
 are unavailable, matching the upstream fixture without additional runtime
 code.
+
+Stage 930 added static events max-listener APIs with cached module state and
+WeakMap-backed limits.
+
+Stage 931 adds `events.getEventListeners()`, returning defensive copies from
+the existing emitter and EventTarget listener stores with Node's invalid-target
+error code.
