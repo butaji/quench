@@ -105,6 +105,16 @@ fn array_from_constructs_before_iterating() {
 }
 
 #[test]
+fn array_from_skips_elements_deleted_by_mapping_callback() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var a=[0,1,2,3,4,5]; var r=Array.from(a,function(v){a.pop();return v;}); r.length===3&&r.join(',')==='0,1,2'")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn array_flat_map_constructs_species_result() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(

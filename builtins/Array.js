@@ -56,10 +56,13 @@ Array.from = function ArrayFrom(items) {
   if (IsArray(items) && mapfn !== undefined) {
     var arrayResult = new Array(0);
     var arrayLength = ToLength(items.length);
+    var arrayResultIndex = 0;
     for (var arrayIndex = 0; arrayIndex < arrayLength; arrayIndex++) {
-      CreateDataProperty(arrayResult, arrayIndex, mapfn.call(thisArg, items[arrayIndex], arrayIndex));
+      if (HasProperty(items, arrayIndex)) {
+        CreateDataProperty(arrayResult, arrayResultIndex++, mapfn.call(thisArg, items[arrayIndex], arrayIndex));
+      }
     }
-    arrayResult.length = arrayLength;
+    arrayResult.length = arrayResultIndex;
     return arrayResult;
   }
   var values = [];
