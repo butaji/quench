@@ -2018,3 +2018,5 @@ Stage 733 added lightweight process.stderr listeners support.
 Stage 734 added an empty awaitable process.stdout async iterator.
 
 Stage 735 added an empty awaitable process.stderr async iterator.
+
+Stage 736 added non-destructive, chainable process.stdout destroy support.
