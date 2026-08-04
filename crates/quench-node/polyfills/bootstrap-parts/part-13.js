@@ -338,6 +338,9 @@ const __nodeLegacyUrlPathParts = (parsed, host) => {
   const search = parsed.search || null;
   return { pathname, search };
 };
+const __nodeLegacyUrlValue = (value) => value || null;
+const __nodeLegacyUrlPathValue = (pathname, search) =>
+  pathname ? `${pathname}${search || ""}` : null;
 const __nodeLegacyUrlParts = (input, parsed) => {
   const protocol = parsed.protocol.toLowerCase();
   const { auth, host } = __nodeLegacyUrlAuthority(input);
@@ -345,17 +348,17 @@ const __nodeLegacyUrlParts = (input, parsed) => {
   const port = host.match(/:(\d+)$/)?.[1] || null;
   const { pathname, search } = __nodeLegacyUrlPathParts(parsed, host);
   return {
-    protocol: protocol || null,
-    slashes: protocol ? true : null,
+    protocol: __nodeLegacyUrlValue(protocol),
+    slashes: Boolean(protocol) || null,
     auth,
-    host: host || null,
+    host: __nodeLegacyUrlValue(host),
     port,
-    hostname: hostname || null,
+    hostname: __nodeLegacyUrlValue(hostname),
     hash: parsed.hash || null,
     search,
     query: search ? search.slice(1) : null,
-    pathname: pathname || null,
-    path: pathname ? `${pathname}${search || ""}` : null,
+    pathname: __nodeLegacyUrlValue(pathname),
+    path: __nodeLegacyUrlPathValue(pathname, search),
     href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
   };
 };
@@ -367,15 +370,21 @@ const __nodeLegacyUrlFormatString = (value) => {
     return value;
   }
 };
+const __nodeLegacyUrlFormatSearch = (value) => {
+  if (value.search !== undefined) return value.search;
+  if (value.query === undefined) return "";
+  return typeof value.query === "string" ? `?${value.query}` : "";
+};
+const __nodeLegacyUrlFormatPrefix = (protocol, value, host) =>
+  protocol && (value.slashes || host) ? `${protocol}//` : protocol;
+const __nodeLegacyUrlFormatPath = (value, host) =>
+  value.pathname || (host ? "/" : "");
 const __nodeLegacyUrlFormatObject = (value) => {
   const protocol = value.protocol || "";
   const host = value.host || value.hostname || "";
-  const prefix =
-    protocol && (value.slashes || host) ? `${protocol}//` : protocol;
-  const pathname = value.pathname || (host ? "/" : "");
-  let search = value.search;
-  if (search === undefined && value.query !== undefined)
-    search = typeof value.query === "string" ? `?${value.query}` : "";
+  const prefix = __nodeLegacyUrlFormatPrefix(protocol, value, host);
+  const pathname = __nodeLegacyUrlFormatPath(value, host);
+  const search = __nodeLegacyUrlFormatSearch(value);
   return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;
 };
 const __nodeUrlModuleExports = {
