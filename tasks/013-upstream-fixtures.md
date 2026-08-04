@@ -2795,3 +2795,7 @@ availability from the internal module export covered by the earlier stages.
 Upstream audit: `test-eventtarget-memoryleakwarning.js` reaches warning-count
 validation after MessageChannel support; warning emission and `expectWarning`
 matching remain a separate harness task.
+
+Stage 983 verifies that closing a MessagePort suppresses queued messages.
+Retrospective: testing closure before posting avoids timing races while still
+covering the port-entanglement lifecycle boundary.
