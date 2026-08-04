@@ -193,6 +193,17 @@ const __quenchInternalFsUtilsModule = {
     return values[flags];
   }
 };
+const __quenchRequireClusterInternal = (name) => {
+  if (name === "internal/test/binding") return __quenchInternalBindingModule;
+  if (name === "internal/errors") return __quenchInternalErrorsModule;
+  if (name === "internal/buffer") return __quenchInternalBufferModule;
+  if (name === "internal/fs/utils") return __quenchInternalFsUtilsModule;
+  if (name === "zlib/iter")
+    return {
+      compressGzip: () => (chunks) => chunks,
+      decompressGzip: () => (chunks) => chunks
+    };
+};
 let __quenchClusterModule;
 {
   if (!globalThis.__nodeCluster) {
@@ -344,13 +355,5 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "vm") return __quenchVmModule;
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
-  if (name === "internal/test/binding") return __quenchInternalBindingModule;
-  if (name === "internal/errors") return __quenchInternalErrorsModule;
-  if (name === "internal/buffer") return __quenchInternalBufferModule;
-  if (name === "internal/fs/utils") return __quenchInternalFsUtilsModule;
-  if (name === "zlib/iter")
-    return {
-      compressGzip: () => (chunks) => chunks,
-      decompressGzip: () => (chunks) => chunks
-    };
+  return __quenchRequireClusterInternal(name);
 };
