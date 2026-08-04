@@ -16,6 +16,25 @@ globalThis.EventTarget ||= class EventTarget {
     return true;
   }
 };
+if (globalThis.Event && !Event.prototype.stopImmediatePropagation)
+  Event.prototype.stopImmediatePropagation = function () {
+    this._quenchImmediatePropagationStopped = true;
+  };
+if (globalThis.AbortSignal && !AbortSignal.prototype.__quenchEventArgument) {
+  const originalAddEventListener = AbortSignal.prototype.addEventListener;
+  AbortSignal.prototype.addEventListener = function (type, listener, options) {
+    if (typeof listener !== "function")
+      return originalAddEventListener.call(this, type, listener, options);
+    return originalAddEventListener.call(
+      this,
+      type,
+      (event) =>
+        listener.call(this, event || { stopImmediatePropagation() {} }),
+      options
+    );
+  };
+  AbortSignal.prototype.__quenchEventArgument = true;
+}
 const __quenchEventsOriginalRequire = globalThis.require;
 let __quenchEventsModule;
 const __quenchEventsTargetValid = (target) =>
