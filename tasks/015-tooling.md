@@ -105,7 +105,8 @@ decomposed in subsequent slices.
 
 ## Status
 
-In progress. Item 5 remains an immediate next slice; Prettier is now pinned in
+In progress. The slice template now seeds an exit-event assertion. Prettier is
+now pinned in
 `package.json` with a local staged-file hook installed by
 `tools/install-hooks.sh`, and the host callback contract template is available
 as `tools/host-callback-contract.md`.
