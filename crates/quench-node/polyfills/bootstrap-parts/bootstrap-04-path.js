@@ -239,7 +239,11 @@ const __nodeWinPath = {
   delimiter: ";",
   isAbsolute(value) {
     const input = __nodePathArg(value);
-    return /^[A-Za-z]:[\\/]/.test(input) || input.startsWith("\\\\");
+    return (
+      /^[A-Za-z]:[\\/]/.test(input) ||
+      input.startsWith("/") ||
+      input.startsWith("\\")
+    );
   },
   normalize(value) {
     const input = __nodePathArg(value).replace(/\//g, "\\");
