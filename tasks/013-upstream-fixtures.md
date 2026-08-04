@@ -2922,3 +2922,13 @@ Upstream audit: `test-stream-readable-event.js` still reports an asynchronous
 harness assertion after these state transitions; the focused stage covers the
 same four transition families without conflating them with the harness's
 process-exit callback accounting.
+
+Stage 1008 verifies the zero-high-water-mark Readable path: attaching a
+`readable` listener activates `_read`, and pushing EOF with no buffered data
+still emits the readable notification before `end`. Retrospective: modeling
+EOF notification ordering explicitly fixed the zero-buffer case without adding
+a host callback or special-case test code.
+
+Upstream audit: `test-stream-readable-hwm-0.js` now passes. The broader
+`test-stream-readable-event.js` fixture still has one unmet callback count in
+its multi-case process-exit accounting and remains tracked separately.
