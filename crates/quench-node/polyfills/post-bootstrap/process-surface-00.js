@@ -21,8 +21,11 @@
       globalThis.setTimeout = (callback, delay, ...args) => {
         let timer;
         const wrappedCallback = (...callbackArgs) => {
-          activeTimers.delete(timer);
-          return callback(...callbackArgs);
+          try {
+            return callback(...callbackArgs);
+          } finally {
+            activeTimers.delete(timer);
+          }
         };
         timer = originalSetTimeout(wrappedCallback, delay, ...args);
         activeTimers.set(timer, "Timeout");
@@ -36,7 +39,7 @@
     if (typeof originalSetInterval === "function") {
       globalThis.setInterval = (callback, delay, ...args) => {
         const timer = originalSetInterval(callback, delay, ...args);
-        activeTimers.set(timer, "Interval");
+        activeTimers.set(timer, "Timeout");
         return timer;
       };
       globalThis.clearInterval = (timer) => {
