@@ -2554,3 +2554,7 @@ Stage 936 adds argument and target validation for static
 `events.setMaxListeners()`. Retrospective: validating before touching the
 WeakMap keeps invalid calls deterministic and avoids partial updates when a
 later target is rejected.
+
+Stage 937 adds target validation for static `events.getMaxListeners()`.
+Retrospective: paired getter/setter facades should share the same accepted
+target model so invalid values cannot silently read a default.
