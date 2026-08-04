@@ -406,28 +406,27 @@ mod tests {
     fn unscopables_with_blocks_property_lookup_in_arrow() {
         use crate::test262::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");
+        // The arrow function has its own `var v = x` after the with block;
+        // var hoisting makes v DeclaredOnly at function entry. Inside the
+        // with(globalThis), looking up `v` while v is in unscopables must
+        // skip the with-object AND find the (uninitialized) DeclaredOnly
+        // arrow-scope binding, yielding undefined.
         let script = r#"
-            var count = 0;
             var v = 1;
             globalThis[Symbol.unscopables] = { v: true };
-            {
-                count++;
-                var ref = (x) => {
-                    count++;
-                    with (globalThis) {
-                        count++;
-                        globalThis.__saw_v = v;
-                    }
-                };
-                ref(0);
-            }
-            globalThis.__unscop_count = count;
+            var ref = (x) => {
+                with (globalThis) {
+                    globalThis.__saw_v = v;
+                }
+                var v = x;
+            };
+            ref(0);
         "#;
         ctx.eval(script).expect("arrow with unscopables must run");
         let saw = ctx.get_global("__saw_v").expect("saw_v must be set");
         let Value::Undefined = saw else {
             panic!(
-                "with(globalThis) under unscopables must yield undefined for v, got {:?}",
+                "with(globalThis) under unscopables must yield undefined for v (DeclaredOnly), got {:?}",
                 saw
             );
         };

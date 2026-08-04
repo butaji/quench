@@ -112,7 +112,23 @@ pub fn hoist_functions(statements: &[Statement], env: &Rc<RefCell<Environment>>)
                 func.strict = strict || check_use_strict_directive(body);
                 // Set VarKind::Var so delete on function decls returns false
                 env.borrow_mut().declare_var(name.clone(), VarKind::Var);
-                env.borrow_mut().define(name.clone(), Value::Function(func));
+                let func_value = Value::Function(func);
+                env.borrow_mut()
+                    .define(name.clone(), func_value.clone());
+                // Top-level function declarations also live on the global
+                // object so member access through `globalThis.x` (and via
+                // `with(globalThis) { x }`) sees the binding. Without this,
+                // eval_func_decl's later early-return on already-existing
+                // Function binding would skip set_on_global_this, leaving
+                // harness functions like `assert` invisible to member access.
+                let is_top_level = env.borrow().get_parent().is_none();
+                if is_top_level && env.borrow().scopes.len() == 1 {
+                    crate::eval::statement::set_on_global_this(
+                        env,
+                        name,
+                        func_value,
+                    );
+                }
             }
             // ES2015+ strict mode: function declarations in blocks are
             // block-scoped (hoisted via Let by eval_block), not hoisted
