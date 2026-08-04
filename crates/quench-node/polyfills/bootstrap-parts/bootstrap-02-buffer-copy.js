@@ -73,7 +73,7 @@ const __nodeBufferConcatValidate = (list, totalLength) => {
       totalLength < 0)
   ) {
     const message = Number.isInteger(totalLength)
-      ? `The value of "length" is out of range. It must be >= 0 && <= 2147483647. Received ${totalLength}`
+      ? `The value of "length" is out of range. It must be >= 0 && <= 9007199254740991. Received ${totalLength}`
       : `The value of "length" is out of range. It must be an integer. Received ${totalLength}`;
     const error = new RangeError(message);
     error.code = "ERR_OUT_OF_RANGE";

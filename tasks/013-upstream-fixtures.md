@@ -3013,3 +3013,10 @@ families keeps validation behavior precise without changing copy semantics.
 Stage 1020 corrects primitive string descriptions in `Buffer.concat()` item
 errors. Retrospective: type-description formatting is centralized, so each
 fixture-specific mismatch can be fixed without increasing concat complexity.
+Stage 1021 verifies the complete invalid-list `Buffer.concat()` error matrix,
+including primitive descriptions and quoted strings. Comparing local Node and
+quench output also corrected the negative-length upper-bound diagnostic to
+Node's `kMaxLength` value, `9007199254740991`. The focused stage passes. The
+upstream fixture reaches its assertion block but the current harness reports
+the invalid-list assertion as an uncaught exception, so the remaining work is
+in harness/assertion behavior rather than the focused polyfill contract.
