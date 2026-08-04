@@ -3020,3 +3020,14 @@ Node's `kMaxLength` value, `9007199254740991`. The focused stage passes. The
 upstream fixture reaches its assertion block but the current harness reports
 the invalid-list assertion as an uncaught exception, so the remaining work is
 in harness/assertion behavior rather than the focused polyfill contract.
+
+Stage 1022 verifies that all public Buffer allocators construct the final
+compatibility subclass, preserving methods added by later Buffer layers.
+Retrospective: the failing upstream methods were present on the final
+prototype but absent from allocator results; checking the prototype boundary
+found that inherited static methods still used the original class constructor.
+The focused stage now passes after overriding the three allocator variants.
+
+Upstream audit: Buffer copy, compare, and equals fixtures now reach separate
+range and cross-layer validation mismatches that remain outside this focused
+allocator contract.
