@@ -657,9 +657,14 @@ fn make_function_prototype() -> Rc<RefCell<Object>> {
             use crate::builtins::get_native_this;
             match get_native_this() {
                 Some(Value::Function(f)) => Ok(Value::String(f.source_text())),
-                Some(Value::NativeFunction(_)) | Some(Value::NativeConstructor(_)) => {
-                    Ok(Value::String("[Function]".to_string()))
-                }
+                Some(Value::NativeFunction(f)) => Ok(Value::String(format!(
+                    "function {}(){{[native code]}}",
+                    f.name
+                ))),
+                Some(Value::NativeConstructor(f)) => Ok(Value::String(format!(
+                    "function {}(){{[native code]}}",
+                    f.name()
+                ))),
                 Some(Value::Generator(_)) | Some(Value::Class(_)) => {
                     Ok(Value::String("[Function]".to_string()))
                 }
@@ -1078,6 +1083,15 @@ mod tests {
         assert_eq!(
             value,
             Value::String("true|false|[Symbol.hasInstance]|1|false|false|true".into())
+        );
+    }
+
+    #[test]
+    fn native_function_to_string_uses_native_function_grammar() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("Function.prototype.toString.call(Array)"),
+            Ok(Value::String("function Array(){[native code]}".to_string()))
         );
     }
 
