@@ -516,3 +516,4 @@ these small fixtures isolate the currently implemented contract.
 |   517 | zlib crc32 computes strings, buffers, and seeds                   | `tools/run-node-tests.sh --stage 517` |
 |   518 | zlib unzip detects deflate and gzip formats                      | `tools/run-node-tests.sh --stage 518` |
 |   519 | StringDecoder preserves split UTF-8 sequences                    | `tools/run-node-tests.sh --stage 519` |
+|   520 | tls surface exposes defaults and unsupported connect behavior      | `tools/run-node-tests.sh --stage 520` |
