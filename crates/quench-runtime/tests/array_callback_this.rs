@@ -83,3 +83,13 @@ fn array_map_constructs_species_result() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_from_calls_custom_constructor_for_iterables() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var calls=0,args; function C(){calls++;args=arguments;} Array.from.call(C,{[Symbol.iterator](){return {next(){return {done:true};}};}}); calls===1&&args.length===0")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
