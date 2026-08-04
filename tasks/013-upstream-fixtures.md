@@ -2617,3 +2617,8 @@ checkpoint loop.
 Retrospective: numeric bootstrap fragment names hid API ownership during lint
 refactors. Descriptive, order-prefixed names preserve evaluation order while
 making targeted review and subsystem decomposition substantially faster.
+
+Retrospective: stateful require modules are safest when initialized in
+top-level blocks and exposed through short routing functions. This preserves
+shared initialization order while allowing the strict function-size rule to
+measure routing separately from implementation.
