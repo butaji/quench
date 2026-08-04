@@ -3146,3 +3146,9 @@ Retrospective: testing the public methods and prototype chain together exposed
 the class-expression binding issue; the final allocation layer now owns both
 the helpers and public dispatch, including Node's `2n ** Nn` overflow wording.
 Upstream `test-buffer-bigint64.js` now passes.
+
+Stage 1041 refines the legacy numeric Buffer constructor: a lone numeric
+argument allocates, while a numeric argument with an encoding is rejected with
+Node's exact invalid-argument message. Retrospective: the earlier constructor
+fix handled only the argument type, and the upstream `test-buffer-new.js`
+fixture exposed the significance of argument count as a separate contract.
