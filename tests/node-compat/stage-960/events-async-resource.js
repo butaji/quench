@@ -7,7 +7,8 @@ emitter.on("ready", (value) => {
 });
 emitter.emit("ready", 42);
 
-if (received !== 42) throw new Error("async resource emitter should emit events");
+if (received !== 42)
+  throw new Error("async resource emitter should emit events");
 if (!emitter.asyncResource)
   throw new Error("async resource emitter should expose its resource");
 if (emitter.asyncResource.type !== "stage-960")
