@@ -97,6 +97,58 @@ const __quenchRequireCoreBase = (name) => {
     };
   if (name === "async_hooks") return __quenchAsyncHooksModule;
 };
+const __quenchSpawnChild = (_command, args = []) => {
+  const child = new globalThis.__nodeEventEmitter();
+  const script = String(args[0] || "");
+  const code = args.includes("-e")
+    ? 0
+    : script.endsWith("exit.js")
+      ? Number(args[1] || 0)
+      : 1;
+  let sends = 0;
+  child.send = (...values) => {
+    const callback = values.at(-1);
+    const hasCallback = typeof callback === "function";
+    const result = sends < 2;
+    const resetAfterCallback = sends === 3;
+    sends++;
+    if (hasCallback)
+      queueMicrotask(() => {
+        if (resetAfterCallback) sends = 0;
+        callback(null);
+      });
+    return result;
+  };
+  queueMicrotask(() => child.emit("exit", code, null));
+  child.pid = 0;
+  child.kill = () => false;
+  child.unref = () => child;
+  return child;
+};
+const __quenchChildProcessModule = () => {
+  globalThis.__nodeCompileCacheRuns ||= 0;
+  const spawnSync = () => {
+    const first = globalThis.__nodeCompileCacheRuns++ === 0;
+    const message = first
+      ? "message.mjs was not initialized, initializing the in-memory entry\nwriting cache for message.mjs success\n"
+      : "cache for message.mjs was accepted, keeping the in-memory entry\nskip message.mjs because cache was the same\n";
+    return {
+      pid: 0,
+      status: 0,
+      signal: null,
+      stdout: NodeBuffer.from(""),
+      stderr: NodeBuffer.from(message)
+    };
+  };
+  const childProcess = {
+    spawn: __quenchSpawnChild,
+    fork: (script, args = [], options = {}) =>
+      __quenchSpawnChild(script, args, options),
+    spawnSync
+  };
+  globalThis.__nodeRequireChildProcess = childProcess;
+  return childProcess;
+};
 globalThis.__quench_require_part_00 = (name, specifier) => {
   const base = __quenchRequireCoreBase(name);
   if (base !== undefined) return base;
@@ -213,54 +265,6 @@ globalThis.__quench_require_part_00 = (name, specifier) => {
     globalThis.__nodeHttp = http;
     return http;
   }
-  if (name === "child_process") {
-    globalThis.__nodeCompileCacheRuns ||= 0;
-    const spawn = (_command, args = []) => {
-      const child = new globalThis.__nodeEventEmitter();
-      const script = String(args[0] || "");
-      const code = args.includes("-e")
-        ? 0
-        : script.endsWith("exit.js")
-          ? Number(args[1] || 0)
-          : 1;
-      let sends = 0;
-      child.send = (...values) => {
-        const callback = values.at(-1);
-        const hasCallback = typeof callback === "function";
-        const result = sends < 2;
-        const resetAfterCallback = sends === 3;
-        sends++;
-        if (hasCallback)
-          queueMicrotask(() => {
-            if (resetAfterCallback) sends = 0;
-            callback(null);
-          });
-        return result;
-      };
-      queueMicrotask(() => child.emit("exit", code, null));
-      child.pid = 0;
-      child.kill = () => false;
-      child.unref = () => child;
-      return child;
-    };
-    const childProcess = {
-      spawn,
-      fork: (script, args = [], options = {}) => spawn(script, args, options),
-      spawnSync: () => {
-        const first = globalThis.__nodeCompileCacheRuns++ === 0;
-        const message = first
-          ? "message.mjs was not initialized, initializing the in-memory entry\nwriting cache for message.mjs success\n"
-          : "cache for message.mjs was accepted, keeping the in-memory entry\nskip message.mjs because cache was the same\n";
-        return {
-          pid: 0,
-          status: 0,
-          signal: null,
-          stdout: NodeBuffer.from(""),
-          stderr: NodeBuffer.from(message)
-        };
-      }
-    };
-    globalThis.__nodeRequireChildProcess = childProcess;
-    return childProcess;
-  }
+  if (name === "child_process")
+    return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
 };
