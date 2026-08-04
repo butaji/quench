@@ -411,3 +411,4 @@ these small fixtures isolate the currently implemented contract.
 |   412 | perf_hooks timerify thrown error preservation                 | `tools/run-node-tests.sh --stage 412` |
 |   413 | fs FileHandle read position and readFile continuation          | `tools/run-node-tests.sh --stage 413` |
 |   414 | fs FileHandle readFile string encoding                         | `tools/run-node-tests.sh --stage 414` |
+|   415 | fs readFileSync file descriptor input                         | `tools/run-node-tests.sh --stage 415` |

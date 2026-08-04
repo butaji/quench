@@ -1164,6 +1164,9 @@ Stage 413 formalized `FileHandle` position tracking across `read` and
 Stage 414 formalized `FileHandle.readFile` encoding conversion for remaining
 file content.
 
+Stage 415 formalized `fs.readFileSync` support for open file descriptors and
+string encoding conversion.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
