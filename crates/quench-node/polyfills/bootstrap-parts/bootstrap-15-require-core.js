@@ -70,7 +70,7 @@ let __quenchAsyncHooksModule;
     })
   };
 }
-globalThis.__quench_require_part_00 = (name, specifier) => {
+const __quenchRequireCoreBase = (name) => {
   if (name === "assert") return globalThis.__nodeAssert;
   if (name === "path" || name === "path/posix") return globalThis.__nodePath;
   if (name === "util") return globalThis.__nodeUtil;
@@ -96,6 +96,10 @@ globalThis.__quench_require_part_00 = (name, specifier) => {
       on: globalThis.__nodeEventEmitter.on
     };
   if (name === "async_hooks") return __quenchAsyncHooksModule;
+};
+globalThis.__quench_require_part_00 = (name, specifier) => {
+  const base = __quenchRequireCoreBase(name);
+  if (base !== undefined) return base;
   if (name === "http") {
     if (globalThis.__nodeHttp) return globalThis.__nodeHttp;
     const servers = new Map();
