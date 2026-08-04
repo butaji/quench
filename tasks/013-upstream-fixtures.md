@@ -2036,3 +2036,5 @@ Stage 742 added the positive process.stdout writableHighWaterMark default.
 Stage 743 added the positive process.stderr writableHighWaterMark default.
 
 Stage 744 aligned process.stdout readable-state properties with local Node.
+
+Stage 745 aligned process.stderr readable-state properties with local Node.
