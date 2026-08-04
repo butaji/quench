@@ -161,6 +161,10 @@ const __quenchVmModule = {
     constructor(code, options) {
       __quenchVmValidateScriptOptions(options);
       this.code = String(code);
+      __quenchVmApplyScriptCache(this, options);
+    }
+    createCachedData() {
+      return NodeBuffer.from(this.code);
     }
     runInContext(context, options) {
       __quenchVmValidateScriptOptions(options);
