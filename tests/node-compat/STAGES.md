@@ -392,3 +392,4 @@ these small fixtures isolate the currently implemented contract.
 |   393 | lazy querystring bootstrap and stringify availability         | `tools/run-node-tests.sh --stage 393` |
 |   394 | experimental stream/iter feature flag gating                  | `tools/run-node-tests.sh --stage 394` |
 |   395 | crypto advertised hash and cipher capabilities               | `tools/run-node-tests.sh --stage 395` |
+|   396 | crypto timingSafeEqual comparison and length errors           | `tools/run-node-tests.sh --stage 396` |
