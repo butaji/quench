@@ -2803,3 +2803,8 @@ covering the port-entanglement lifecycle boundary.
 Stage 984 verifies basic MessageChannel delivery through `onmessage` and
 `postMessage`. Retrospective: awaiting the receiving promise directly tests
 delivery ordering without relying on a fixed timer delay.
+
+Stage 985 verifies worker_threads MessageChannel exports and MessagePort
+`ref()`/`unref()`/`hasRef()` lifecycle behavior. Retrospective: exposing the
+existing JS port implementation through the module surface avoids duplicating
+transport logic in Rust.

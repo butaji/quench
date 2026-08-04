@@ -166,12 +166,30 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     this._peer = null;
     this._started = false;
     this._closed = false;
+    this._refed = false;
   }
   start() {
     this._started = true;
   }
   close() {
     this._closed = true;
+    this.dispatchEvent(new Event("close"));
+  }
+  ref() {
+    this._refed = true;
+    return this;
+  }
+  unref() {
+    this._refed = false;
+    return this;
+  }
+  hasRef() {
+    return this._refed;
+  }
+  on(name, listener) {
+    if (name === "message") this._refed = true;
+    this.addEventListener(name, listener);
+    return this;
   }
   postMessage(value) {
     if (this._closed || !this._peer || this._peer._closed) return;
