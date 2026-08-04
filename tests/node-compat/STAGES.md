@@ -613,3 +613,4 @@ these small fixtures isolate the currently implemented contract.
 |   614 | process versions exposes a semantic Brotli version entry              | `tools/run-node-tests.sh --stage 614` |
 |   615 | process versions exposes a semantic nbytes version entry              | `tools/run-node-tests.sh --stage 615` |
 |   616 | process versions exposes a locale-data CLDR version entry              | `tools/run-node-tests.sh --stage 616` |
+|   617 | process versions exposes a semantic ICU version entry                  | `tools/run-node-tests.sh --stage 617` |
