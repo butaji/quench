@@ -5,6 +5,10 @@ const __nodeBufferAllocate = (size, fill, encoding) => {
 };
 const __NodeBufferBase04 = NodeBuffer;
 NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
+  static copyBytesFrom(view, offset = 0, length) {
+    const result = __NodeBufferBase04.copyBytesFrom(view, offset, length);
+    return NodeBuffer.from(result);
+  }
   static of(...values) {
     return new NodeBuffer(values);
   }

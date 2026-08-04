@@ -3,6 +3,7 @@ const { Buffer } = require("buffer");
 
 for (const [value, received] of [
   [{}, "Received an instance of Object"],
+  [{ __proto__: null }, "Received [Object: null prototype] {}"],
   [new Boolean(true), "Received an instance of Boolean"],
   [Symbol(), "Received type symbol (Symbol())"],
   [5n, "Received type bigint (5n)"],
