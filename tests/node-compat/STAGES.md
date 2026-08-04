@@ -553,3 +553,4 @@ these small fixtures isolate the currently implemented contract.
 |   554 | dgram UDP sockets bind, send packets, close, and expose unref       | `tools/run-node-tests.sh --stage 554` |
 |   555 | https exposes TLS boundary methods and a global agent              | `tools/run-node-tests.sh --stage 555` |
 |   556 | http2 exposes constants and reports unsupported operations          | `tools/run-node-tests.sh --stage 556` |
+|   557 | node:test reporters reports an unknown builtin module              | `tools/run-node-tests.sh --stage 557` |
