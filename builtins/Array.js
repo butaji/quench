@@ -464,7 +464,6 @@ Array.prototype.values = function ArrayValues() {
 
 // Array.prototype.entries (ES2025 §23.1.3.7)
 Array.prototype.entries = function ArrayEntries() {
-  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.entries called on null or undefined");
   var O = ToObject(this);
   return ArrayIterator(O, 2);
@@ -486,7 +485,6 @@ Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
 };
 
 Array.prototype.copyWithin = function ArrayCopyWithin(target, start, end) {
-  "use strict";
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.copyWithin called on null or undefined");
   var O = ToObject(this);
   var len = ToLength(O.length);
