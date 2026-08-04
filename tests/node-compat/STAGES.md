@@ -552,3 +552,4 @@ these small fixtures isolate the currently implemented contract.
 |   553 | dns servers, resolver, lookup callback, and promises are supported | `tools/run-node-tests.sh --stage 553` |
 |   554 | dgram UDP sockets bind, send packets, close, and expose unref       | `tools/run-node-tests.sh --stage 554` |
 |   555 | https exposes TLS boundary methods and a global agent              | `tools/run-node-tests.sh --stage 555` |
+|   556 | http2 exposes constants and reports unsupported operations          | `tools/run-node-tests.sh --stage 556` |
