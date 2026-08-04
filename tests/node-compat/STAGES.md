@@ -605,3 +605,4 @@ these small fixtures isolate the currently implemented contract.
 |   606 | process versions exposes a semantic libuv version entry               | `tools/run-node-tests.sh --stage 606` |
 |   607 | process versions exposes a semantic OpenSSL version entry             | `tools/run-node-tests.sh --stage 607` |
 |   608 | process versions exposes a semantic zlib version entry                | `tools/run-node-tests.sh --stage 608` |
+|   609 | process versions exposes a numeric native modules ABI entry           | `tools/run-node-tests.sh --stage 609` |
