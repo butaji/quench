@@ -116,6 +116,7 @@ class NodeReadable extends NodeEventEmitter {
       this._paused = false;
       this.readableFlowing = true;
       queueMicrotask(() => {
+        if (!this._chunks.length && !this._ended) this._read?.();
         while (!this._paused && this._chunks.length)
           this.emit("data", this._decode(this._chunks.shift()));
         if (!this._chunks.length && this._ended) this._emitEnd();
@@ -125,6 +126,7 @@ class NodeReadable extends NodeEventEmitter {
     }
     return this;
   }
+  _read() {}
   destroy(error, callback) {
     if (this.destroyed) return this;
     this.destroyed = true;
