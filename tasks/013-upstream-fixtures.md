@@ -2945,3 +2945,12 @@ Stage 1010 verifies that a repeated `destroy()` call remains a no-op while
 still delivering its callback asynchronously. Retrospective: checking the
 already-destroyed branch directly exposed a missing callback path that a
 single-destroy lifecycle test could not detect.
+
+Stage 1011 verifies that `Readable.unshift()` accepts and applies an explicit
+string encoding while retaining Buffer delivery. Retrospective: an initial
+attempt to alter push scheduling was rejected after the harness's API-boundary
+microtask behavior made ordering unreliable; the final slice changes only the
+missing encoding argument and avoids destabilizing existing flow behavior.
+
+Upstream audit: `test-stream-readable-unshift.js` still covers broader
+multi-chunk ordering and stream-encoding interactions beyond this slice.

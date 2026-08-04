@@ -280,7 +280,7 @@ class NodeReadable extends NodeEventEmitter {
       chunk = NodeBuffer.from(chunk, this.readableDefaultEncoding);
     return __nodeReadablePushChunk(this, chunk);
   }
-  unshift(chunk) {
+  unshift(chunk, encoding) {
     if (this.readableEnded && chunk !== null) {
       const error = new Error("stream.unshift() after end event");
       error.code = "ERR_STREAM_UNSHIFT_AFTER_END_EVENT";
@@ -292,7 +292,7 @@ class NodeReadable extends NodeEventEmitter {
       return this;
     }
     if (!this.readableObjectMode && typeof chunk === "string")
-      chunk = NodeBuffer.from(chunk);
+      chunk = NodeBuffer.from(chunk, encoding || this.readableDefaultEncoding);
     if (this._paused || this.listenerCount("data") === 0)
       this._chunks.unshift(chunk);
     else this.emit("data", chunk);
