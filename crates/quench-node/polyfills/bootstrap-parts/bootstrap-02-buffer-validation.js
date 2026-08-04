@@ -6,7 +6,9 @@ const __nodeBufferValidateIntegerValue = (value, min, max) => {
     value < min ||
     value > max
   ) {
-    const error = new RangeError('The value of "value" is out of range');
+    const error = new RangeError(
+      `The value of "value" is out of range. It must be >= ${min} and <= ${max}. Received ${value}`
+    );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }

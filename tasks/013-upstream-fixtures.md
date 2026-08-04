@@ -3114,3 +3114,9 @@ contract to variable-width integer byte lengths and offsets. Retrospective:
 comparing each Node error family prevented a generic range error from masking
 which numeric validation rule failed; the upstream `test-buffer-readint.js`
 fixture now passes completely.
+
+Stage 1036 adds exact integer-write value-range coverage. Retrospective:
+variable-width writes use Node's distinct `< 2 ** N` wording and grouped large
+values, while fixed-width writes use inclusive upper bounds; keeping those
+formatters in their respective validation layers matched the full upstream
+`test-buffer-writeuint.js` fixture.
