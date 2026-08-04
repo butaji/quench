@@ -419,3 +419,4 @@ these small fixtures isolate the currently implemented contract.
 |   420 | crypto hash and HMAC copy state branching                     | `tools/run-node-tests.sh --stage 420` |
 |   421 | crypto finalized hash and HMAC operation errors               | `tools/run-node-tests.sh --stage 421` |
 |   422 | fs WriteStream open, end, and close lifecycle                 | `tools/run-node-tests.sh --stage 422` |
+|   423 | fs ReadStream data delivery and close lifecycle               | `tools/run-node-tests.sh --stage 423` |
