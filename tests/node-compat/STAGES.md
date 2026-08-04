@@ -567,3 +567,4 @@ these small fixtures isolate the currently implemented contract.
 |   568 | cluster worker processes expose IPC connection methods             | `tools/run-node-tests.sh --stage 568` |
 |   569 | child_process exec APIs expose callbacks and synchronous variants   | `tools/run-node-tests.sh --stage 569` |
 |   570 | child_process spawn exposes streams and process metadata             | `tools/run-node-tests.sh --stage 570` |
+|   571 | child_process emits spawn, exit, and close lifecycle events          | `tools/run-node-tests.sh --stage 571` |
