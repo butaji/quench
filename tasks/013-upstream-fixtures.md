@@ -2435,3 +2435,9 @@ Stage 911 verifies the node:process umask validation and tracking API.
 
 Retrospective: running the upstream fixture immediately after the focused
 stage caught numeric-versus-octal state handling that the narrow test omitted.
+
+Stage 912 verifies the node:process UID and GID setter argument contract.
+
+Retrospective: separate argument validation from credential resolution so
+platform-specific identity behavior can be added without weakening the base
+contract.
