@@ -2234,3 +2234,5 @@ Stage 841 verifies the node:dgram UDP socket API.
 Stage 842 verifies the node:tls secure transport API.
 
 Stage 843 verifies the node:child_process process creation API.
+
+Stage 844 verifies the node:v8 serialization and heap inspection API.
