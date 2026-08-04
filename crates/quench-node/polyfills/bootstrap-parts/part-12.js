@@ -28,6 +28,14 @@ const __nodeUtilFormatNumeric = (value) => {
   return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
 };
 const __nodeUtilInspectNoResult = Symbol("inspect-no-result");
+const __nodeUtilInspectSharedBuffer = (value) =>
+  `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
+const __nodeUtilInspectError = (value) =>
+  Object.prototype.hasOwnProperty.call(value, "stack")
+    ? value.stack || `${value.name}: ${value.message}`
+    : `[${value.name}: ${value.message}]`;
+const __nodeUtilInspectFunction = (value) =>
+  `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
 const __nodeUtilInspectBasic = (value) => {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
@@ -35,16 +43,12 @@ const __nodeUtilInspectBasic = (value) => {
     typeof SharedArrayBuffer !== "undefined" &&
     value instanceof SharedArrayBuffer
   )
-    return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
+    return __nodeUtilInspectSharedBuffer(value);
   if (value instanceof Date) return value.toISOString();
-  if (value instanceof Error)
-    return Object.prototype.hasOwnProperty.call(value, "stack")
-      ? value.stack || `${value.name}: ${value.message}`
-      : `[${value.name}: ${value.message}]`;
+  if (value instanceof Error) return __nodeUtilInspectError(value);
   if (typeof value === "string") return value;
   if (typeof value === "symbol") return String(value);
-  if (typeof value === "function")
-    return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
+  if (typeof value === "function") return __nodeUtilInspectFunction(value);
   return __nodeUtilInspectNoResult;
 };
 globalThis.__nodeUtil = {
