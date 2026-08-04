@@ -1,5 +1,28 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1139: VM compileFunction cache rejection
+
+- Fixture: `test-vm-basic.js` cached-data rejection contract
+- Exposed `cachedDataRejected` for matching and mismatched source inputs.
+- Retrospective: a deterministic source snapshot is sufficient for the harness
+  contract while avoiding a Rust bytecode cache implementation.
+
+## Stage 1138: VM compileFunction cached data
+
+- Fixture: `test-vm-basic.js` cached-data contract
+- Added observable `cachedDataProduced` and non-empty cached-data output, with
+  cached-data input accepted by compiled functions.
+- Retrospective: implement the API-visible cache metadata first while keeping
+  execution independent of engine-specific bytecode formats.
+
+## Stage 1137: VM compileFunction error stacks
+
+- Fixture: `test-vm-basic.js` compile-function error locations
+- Normalized compiled-function error stacks with Node-style first lines and
+  `lineOffset`/`columnOffset` handling.
+- Retrospective: normalize host error stacks at the polyfill boundary while
+  preserving the original error object and metadata.
+
 ## Stage 1136: VM compileFunction parsing context
 
 - Fixture: `test-vm-basic.js` valid `parsingContext` contract
