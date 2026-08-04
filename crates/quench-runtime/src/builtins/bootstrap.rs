@@ -809,6 +809,15 @@ mod tests {
     }
 
     #[test]
+    fn array_iterator_stays_done_after_later_push() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("var a = []; var it = a.values(); a.push(1); it.next(); it.next(); a.push(2); it.next().done === true")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx

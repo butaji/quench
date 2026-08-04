@@ -430,8 +430,9 @@ Array.prototype.reduceRight = function ArrayReduceRight(callbackfn /*, initialVa
 function ArrayIteratorNext() {
   var O = this._array;
   var index = this._index;
+  if (this._done) return { value: undefined, done: true };
   var len = ToLength(O.length);
-  if (index >= len) return { value: undefined, done: true };
+  if (index >= len) { this._done = true; return { value: undefined, done: true }; }
   this._index = index + 1;
   if (this._kind === 0) return { value: index, done: false };
   var value = O[index];
@@ -440,7 +441,7 @@ function ArrayIteratorNext() {
 }
 
 function ArrayIterator(O, kind) {
-  var iterator = { _array: O, _index: 0, _kind: kind };
+  var iterator = { _array: O, _index: 0, _kind: kind, _done: false };
   iterator.next = ArrayIteratorNext;
   iterator[Symbol.iterator] = function() { return this; };
   return iterator;
