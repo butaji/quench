@@ -3,7 +3,9 @@
 const assert = require("assert");
 
 for (const name of ["node:sqlite", "sqlite"]) {
-  assert.throws(() => require(name), { code: "ERR_UNKNOWN_BUILTIN_MODULE" });
+  const sqlite = require(name);
+  assert.strictEqual(typeof sqlite.DatabaseSync, "function");
+  assert.strictEqual(typeof sqlite.StatementSync, "function");
 }
 
-console.log("sqlite error passed");
+console.log("sqlite api passed");
