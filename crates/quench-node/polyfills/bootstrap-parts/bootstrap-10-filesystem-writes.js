@@ -393,7 +393,7 @@ const __nodeOsExports = {
       SIGINFO: 29,
       SIGSYS: 12
     }),
-    errno: Object.freeze({ ENOENT: -2, EACCES: -13 }),
+    errno: Object.freeze({ ENOENT: 2, EACCES: 13 }),
     priority: Object.freeze({
       PRIORITY_LOW: 19,
       PRIORITY_BELOW_NORMAL: 10,

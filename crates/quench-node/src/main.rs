@@ -36,6 +36,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-10-filesystem-writes.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-11-performance.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-12-util-formatting.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-12-util-errors.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-13-util-colors.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-14-crypto.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-core.js"),
