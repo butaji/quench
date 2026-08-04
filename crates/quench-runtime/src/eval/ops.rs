@@ -286,10 +286,20 @@ pub fn make_ops_object() -> Value {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         match &o {
             Value::Object(obj_rc) => {
-                let keys: Vec<String> = obj_rc.borrow().properties.keys().cloned().collect();
-                let arr = crate::value::object::Object::new_array_from(
-                    keys.into_iter().map(Value::String).collect(),
-                );
+                let object = obj_rc.borrow();
+                let mut keys: Vec<Value> = crate::value::object::own_keys(&object)
+                    .into_iter()
+                    .map(Value::String)
+                    .collect();
+                keys.extend(object.symbol_properties.keys().filter_map(|key| {
+                    let (desc, id) = key.split_once('\0')?;
+                    Some(Value::Symbol(std::rc::Rc::new(crate::value::Symbol {
+                        desc: (!desc.is_empty()).then(|| std::rc::Rc::from(desc)),
+                        global: false,
+                        id: id.parse().ok()?,
+                    })))
+                }));
+                let arr = crate::value::object::Object::new_array_from(keys);
                 Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
                     arr,
                 ))))
@@ -1052,6 +1062,25 @@ mod tests {
             .eval("__ops__.GetPrototypeOf(() => {}) === Function.prototype")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_own_keys_includes_symbol_properties() {
+        let mut ctx = crate::Context::new().unwrap();
+        let mut object = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
+        object.set_symbol("x\01", Value::Number(1.0));
+        ctx.set_global(
+            "symbol_object".into(),
+            Value::Object(std::rc::Rc::new(std::cell::RefCell::new(object))),
+        );
+        let r = ctx
+            .eval("[__ops__.OwnKeys(symbol_object).length, typeof __ops__.OwnKeys(symbol_object)[0]]")
+            .unwrap();
+        let Value::Object(values) = r else {
+            panic!("expected result array");
+        };
+        assert_eq!(values.borrow().elements[0], Value::Number(1.0));
+        assert_eq!(values.borrow().elements[1], Value::String("symbol".into()));
     }
 
     #[test]
