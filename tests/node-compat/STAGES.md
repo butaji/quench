@@ -425,3 +425,4 @@ these small fixtures isolate the currently implemented contract.
 |   426 | fs WriteStream encoding options and bytesWritten               | `tools/run-node-tests.sh --stage 426` |
 |   427 | fs ReadStream close descriptor release                        | `tools/run-node-tests.sh --stage 427` |
 |   428 | fs WriteStream close descriptor release                       | `tools/run-node-tests.sh --stage 428` |
+|   429 | process exit event ordering and zero exit code                 | `tools/run-node-tests.sh --stage 429` |
