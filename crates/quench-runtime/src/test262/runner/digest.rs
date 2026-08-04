@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use crate::test262::harness::HarnessLoader;
 use crate::test262::host::{TestFailure, TestOutcome};
@@ -31,6 +32,7 @@ pub fn run_stage_digest(
     tests: &[PathBuf],
     flags: &RunnerFlags,
 ) -> DigestResult {
+    let started = std::time::Instant::now();
     let count = tests.len();
     if !flags.quick {
         println!(
@@ -73,6 +75,7 @@ pub fn run_stage_digest(
         count,
         groups: &groups,
         skip_reasons: &skip_reasons,
+        duration_ms: elapsed_millis(started.elapsed()),
     };
     print_digest(&digest_out);
 
@@ -86,6 +89,10 @@ pub fn run_stage_digest(
                 .map(|(p, f)| (p.clone(), f.message.clone())),
         },
     }
+}
+
+fn elapsed_millis(duration: Duration) -> u128 {
+    duration.as_millis()
 }
 
 fn record_outcome(
@@ -292,6 +299,7 @@ struct DigestOutput<'a> {
     count: usize,
     groups: &'a [GroupEntry],
     skip_reasons: &'a BTreeMap<String, usize>,
+    duration_ms: u128,
 }
 
 fn print_digest(out: &DigestOutput<'_>) {
@@ -304,6 +312,7 @@ fn print_digest(out: &DigestOutput<'_>) {
         "failed": failed_total,
         "skipped": out.skipped,
         "total": out.count,
+        "duration_ms": out.duration_ms,
         "skips": out.skip_reasons.iter().map(|(r, n)| {
             serde_json::json!({"reason": r, "count": n})
         }).collect::<Vec<_>>(),
@@ -518,6 +527,11 @@ fn label(path: &Path, strict: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elapsed_millis_reports_subsecond_precision() {
+        assert_eq!(elapsed_millis(std::time::Duration::from_millis(1234)), 1234);
+    }
 
     #[test]
     fn record_outcome_tracks_pass_fail_and_skip_separately() {
