@@ -2992,3 +2992,8 @@ of the focused slice.
 Upstream audit: `test-buffer-arraybuffer.js` still reaches the spoofed
 ArrayBuffer brand-check case; ordinary shared ArrayBuffer conversion now has a
 focused passing contract.
+
+Stage 1017 verifies offset and length arguments for shared ArrayBuffer-backed
+Buffers, including mutation through the selected range. Retrospective:
+splitting offset semantics from brand validation gives a deterministic stage
+without hiding the unresolved native getter boundary.
