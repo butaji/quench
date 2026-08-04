@@ -2128,3 +2128,5 @@ Stage 788 added process control method surface compatibility.
 Stage 789 added process low-level binding method compatibility.
 
 Stage 790 added process debug and scheduling helper methods.
+
+Stage 791 added process ref and unref helper methods.
