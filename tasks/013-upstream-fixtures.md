@@ -1409,6 +1409,9 @@ Stage 499 formalized the Buffer inspect hook formatting generic typed arrays.
 Stage 500 formalized Buffer float writes rejecting fractional and out-of-range
 offsets with precise `ERR_OUT_OF_RANGE` messages.
 
+Stage 501 formalized child-process exit events reporting the numeric exit code
+and null signal for normal termination.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
