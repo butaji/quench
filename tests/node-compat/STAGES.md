@@ -582,3 +582,4 @@ these small fixtures isolate the currently implemented contract.
 |   583 | child_process inherits environment variables for spawned commands    | `tools/run-node-tests.sh --stage 583` |
 |   584 | child_process emits spawn before exit and stream close events        | `tools/run-node-tests.sh --stage 584` |
 |   585 | child_process stdio streams expose readable and writable state       | `tools/run-node-tests.sh --stage 585` |
+|   586 | process.send validates callbacks and unsupported handle arguments    | `tools/run-node-tests.sh --stage 586` |
