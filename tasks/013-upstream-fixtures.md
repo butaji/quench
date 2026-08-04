@@ -2395,3 +2395,8 @@ Stage 903 verifies the node:crypto FIPS mode state controls.
 Retrospective: configuration-only APIs can remain process-local in the
 polyfill, avoiding host-global state for a compatibility surface that is not
 backed by rquickjs.
+
+Stage 904 verifies the node:crypto asynchronous PBKDF2 derivation API.
+
+Retrospective: callback APIs can wrap verified synchronous primitives in a
+microtask, preserving Node’s async delivery without another native hook.
