@@ -2134,3 +2134,5 @@ Stage 791 added process ref and unref helper methods.
 Stage 792 aligned process.features capability flags with local Node.
 
 Stage 793 added process.config metadata compatibility.
+
+Stage 794 added process.report diagnostic object compatibility.
