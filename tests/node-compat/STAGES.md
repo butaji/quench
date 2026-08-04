@@ -623,3 +623,4 @@ these small fixtures isolate the currently implemented contract.
 |   624 | process versions exposes a semantic Undici version entry               | `tools/run-node-tests.sh --stage 624` |
 |   625 | process versions exposes a semantic CJS lexer version entry            | `tools/run-node-tests.sh --stage 625` |
 |   626 | process title identifies the Node-compatible runtime                   | `tools/run-node-tests.sh --stage 626` |
+|   627 | process getBuiltinModule resolves builtins and rejects unknown names   | `tools/run-node-tests.sh --stage 627` |
