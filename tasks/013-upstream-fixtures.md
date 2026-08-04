@@ -1459,6 +1459,9 @@ callback validation, and asynchronous decompression errors.
 
 Stage 517 formalized `zlib.crc32()` for strings, buffers, and seeded checksums.
 
+Stage 518 formalized sync and async `zlib.unzip()` handling both deflate and
+gzip data formats.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
