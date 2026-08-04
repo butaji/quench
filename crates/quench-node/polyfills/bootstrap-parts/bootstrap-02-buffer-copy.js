@@ -22,6 +22,13 @@ const __nodeBufferCopy = (
   target.set(bytes, targetStart);
   return count;
 };
+const __nodeBufferCopyRangeError = (name, rule, value) => {
+  const error = new RangeError(
+    `The value of "${name}" is out of range. It must be ${rule}. Received ${value}`
+  );
+  error.code = "ERR_OUT_OF_RANGE";
+  return error;
+};
 const __nodeBufferCopyValidate = (source, target) => {
   if (!(source instanceof Uint8Array)) {
     const error = new TypeError(
@@ -250,16 +257,16 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
     targetStart = __nodeBufferCopyNumber(targetStart);
     sourceStart = __nodeBufferCopyNumber(sourceStart);
     sourceEnd = __nodeBufferCopyNumber(sourceEnd);
-    if (targetStart < 0 || sourceStart < 0 || sourceEnd < 0) {
-      const error = new RangeError("The value is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (sourceStart > this.length) {
-      const error = new RangeError("The value of sourceStart is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
+    if (targetStart < 0)
+      throw __nodeBufferCopyRangeError("targetStart", ">= 0", targetStart);
+    if (sourceStart < 0 || sourceStart > this.length)
+      throw __nodeBufferCopyRangeError(
+        "sourceStart",
+        `>= 0 && <= ${this.length}`,
+        sourceStart
+      );
+    if (sourceEnd < 0)
+      throw __nodeBufferCopyRangeError("sourceEnd", ">= 0", sourceEnd);
     return __nodeBufferCopy(
       this,
       __nodeBufferCopyTarget(target),

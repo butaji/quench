@@ -5,6 +5,9 @@ const __nodeBufferAllocate = (size, fill, encoding) => {
 };
 const __NodeBufferBase04 = NodeBuffer;
 NodeBuffer = class NodeBuffer extends __NodeBufferBase04 {
+  static of(...values) {
+    return new NodeBuffer(values);
+  }
   static alloc(size, fill = 0, encoding) {
     return __nodeBufferAllocate(size, fill, encoding);
   }
