@@ -80,11 +80,31 @@ const __quenchCoreStaticModules = new Map([
   ["v8", () => ({})],
   [
     "events",
-    () => ({
-      EventEmitter: globalThis.__nodeEventEmitter,
-      once: globalThis.__nodeEventEmitter.once,
-      on: globalThis.__nodeEventEmitter.on
-    })
+    () => {
+      const EventEmitterAsyncResource = class
+        extends globalThis.__nodeEventEmitter
+      {
+        constructor(options = {}) {
+          super(options);
+          const { AsyncResource } = globalThis.require("async_hooks");
+          this.asyncResource = new AsyncResource(
+            options.name || "EventEmitterAsyncResource"
+          );
+        }
+        emit(event, ...args) {
+          return this.asyncResource.runInAsyncScope(
+            () => super.emit(event, ...args),
+            this
+          );
+        }
+      };
+      return {
+        EventEmitter: globalThis.__nodeEventEmitter,
+        EventEmitterAsyncResource,
+        once: globalThis.__nodeEventEmitter.once,
+        on: globalThis.__nodeEventEmitter.on
+      };
+    }
   ],
   ["async_hooks", () => __quenchAsyncHooksModule]
 ]);
