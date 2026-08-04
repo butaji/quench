@@ -2040,3 +2040,5 @@ Stage 744 aligned process.stdout readable-state properties with local Node.
 Stage 745 aligned process.stderr readable-state properties with local Node.
 
 Stage 746 aligned process.stdout readableHighWaterMark with local Node.
+
+Stage 747 aligned process.stderr readableHighWaterMark with local Node.
