@@ -2907,3 +2907,7 @@ scheduling and Buffer encoding.
 Stage 1005 verifies Readable constructor `read` callbacks and
 `_readableState.reading` initialization/update. Retrospective: observing state
 before and after attaching data flow isolates lazy stream activation.
+
+Stage 1006 verifies Writable/Transform `_writableState.needDrain` initialization
+and backpressure activation. Retrospective: testing a large write against a
+small high-water mark makes the state transition deterministic.
