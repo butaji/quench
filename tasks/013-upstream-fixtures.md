@@ -1575,6 +1575,9 @@ Stage 554 formalized the basic `dgram` UDP4 socket lifecycle, address family,
 send callback, close, and `unref()` surface; the existing datagram bridge
 already covered this behavior.
 
+Stage 555 formalized the `https` module boundary, including TLS-not-supported
+errors for network methods and the global agent surface.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
