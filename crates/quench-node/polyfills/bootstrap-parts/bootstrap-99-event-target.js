@@ -80,7 +80,7 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     super();
     this._nodeListeners = {};
   }
-  addListener(name, listener, options) {
+  addListener(name, listener, options, nodeStyle = true) {
     const owner = this;
     const callback =
       typeof listener === "function"
@@ -93,13 +93,14 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     (this._nodeListeners[name] ||= []).push({
       listener,
       callback,
-      once: Boolean(options?.once)
+      once: Boolean(options?.once),
+      nodeStyle
     });
     super.addEventListener(name, callback, options);
     return this;
   }
   addEventListener(name, listener, options) {
-    return this.addListener(name, listener, options);
+    return this.addListener(name, listener, options, false);
   }
   on(name, listener, options) {
     return this.addListener(name, listener, options);
@@ -147,11 +148,15 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   emit(name, ...args) {
     if (!name)
       throw new TypeError("The event name is required [ERR_INVALID_ARG_TYPE]");
-    const event =
-      args[0] instanceof Event
-        ? args[0]
-        : new CustomEvent(name, { detail: args[0] });
-    return this.dispatchEvent(event);
+    const event = args[0] instanceof Event ? args[0] : new Event(name);
+    let delivered = false;
+    for (const record of [...(this._nodeListeners[name] || [])]) {
+      if (record.nodeStyle) record.listener(...args);
+      else record.callback(event);
+      delivered = true;
+      if (record.once) this.removeListener(name, record.listener);
+    }
+    return delivered;
   }
 };
 const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;

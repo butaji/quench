@@ -2770,3 +2770,7 @@ keeps callback binding independent from native EventTarget invocation rules.
 Stage 978 verifies NodeEventTarget function listeners receive the target as
 `this`. Retrospective: capturing the owner before crossing the native dispatch
 boundary avoids depending on rquickjs callback receiver behavior.
+
+Stage 979 verifies NodeEventTarget `emit()` separates EventTarget Event payloads
+from Node-style raw listener arguments. Retrospective: an explicit listener
+kind flag avoids ambiguous argument adaptation at the shared dispatch boundary.
