@@ -394,3 +394,4 @@ these small fixtures isolate the currently implemented contract.
 |   395 | crypto advertised hash and cipher capabilities               | `tools/run-node-tests.sh --stage 395` |
 |   396 | crypto timingSafeEqual comparison and length errors           | `tools/run-node-tests.sh --stage 396` |
 |   397 | crypto randomInt ranges validation and callback               | `tools/run-node-tests.sh --stage 397` |
+|   398 | crypto randomFill offset range and buffer return              | `tools/run-node-tests.sh --stage 398` |
