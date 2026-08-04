@@ -3094,3 +3094,10 @@ parent-property fixture exposed a difference between the callable Buffer API
 and its constructor trap; matching both paths keeps legacy construction local
 to the public API layer.
 The focused stage and upstream `test-buffer-parent-property.js` now pass.
+
+Stage 1032 verifies `Buffer.toString()` validates the encoding before applying
+start/end ranges, including invalid numeric/null encodings and object-based
+encoding coercion. Retrospective: the ranged early return bypassed an existing
+encoding check; moving validation to the method boundary fixed both paths with
+one shared implementation.
+The focused stage and upstream `test-buffer-tostring-range.js` now pass.
