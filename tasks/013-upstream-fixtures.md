@@ -3367,3 +3367,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Made `process.env` reject symbol keys and symbol values while preserving
   symbol reads, membership, deletion, and object-tag behavior.
 - Verified the focused contract and Node's `test-process-env-symbols.js` fixture.
+### Stage 1097: process environment descriptors
+
+- Added descriptor validation for `process.env`, rejecting accessors and
+  non-configurable/non-writable/non-enumerable data descriptors.
+- Verified the focused stage and Node's descriptor fixture.
