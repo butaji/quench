@@ -3037,3 +3037,14 @@ comparison and equality methods. Retrospective: the upstream failures were
 diagnostic-contract mismatches, and reusing the centralized received-value
 formatter fixed both static and instance APIs without duplicating type logic.
 The focused stage and the upstream compare/equality fixtures now pass.
+
+Stage 1024 matches the named range-error contracts for `Buffer.copy()`.
+Retrospective: testing each invalid range against local Node isolated the
+parameter-specific wording while retaining the existing integer coercion.
+
+Stage 1025 verifies that `Buffer.of()` also constructs the final compatibility
+subclass, including copying into a typed-array target. Retrospective: after
+the range contract passed, the upstream fixture exposed another inherited
+static constructor; keeping all final constructors in the dedicated
+allocation layer made the fix local and reusable. The upstream copy fixture
+now passes completely.
