@@ -1864,6 +1864,8 @@ Stage 659 formalized process.getBuiltinModule resolution for built-in prefixes.
 
 Stage 660 formalized the boolean process.permission.has capability contract.
 
+Stage 661 formalized finite non-negative process.resourceUsage metrics.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
