@@ -2058,3 +2058,5 @@ Stage 753 aligned process.stderr writableCorked with local Node.
 Stage 754 aligned process.stdout pending with local Node.
 
 Stage 755 aligned process.stderr pending with local Node.
+
+Stage 756 aligned process.stdout writableObjectMode with local Node.
