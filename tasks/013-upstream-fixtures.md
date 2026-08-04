@@ -3180,3 +3180,12 @@ resizes through its shared view. Retrospective: passing an explicit computed
 length froze the typed-array view; omitting that length for the unbounded form
 preserves native resizable-buffer tracking while explicit lengths remain
 bounded. Upstream `test-buffer-resizable.js` now passes.
+
+Stage 1046 restores Node's small-allocation Buffer pool. Retrospective: the
+pool must be created in the earlier copy layer, where the original base typed
+array is available; constructing through the later subclass during bootstrap
+caused a startup recursion. Pooled views are promoted to the final Buffer
+prototype only after their bytes are copied.
+
+Upstream `test-buffer-pool-untransferable.js` now passes its shared-storage
+assertion; transfer blocking remains a separate MessageChannel contract.
