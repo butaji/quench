@@ -99,7 +99,7 @@ const __nodeReadableReadSized = (stream, chunk, size) => {
 };
 class NodeReadable extends NodeEventEmitter {
   constructor(options = {}) {
-    super();
+    super(options);
     this.destroyed = false;
     this.readable = true;
     this.readableObjectMode = options.objectMode === true;
@@ -288,6 +288,7 @@ class NodeWritable extends NodeEventEmitter {
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
+    this._writableState = { needDrain: false };
     this.writableEnded = false;
     this.writableFinished = false;
     this.writableCorked = 0;
@@ -341,11 +342,13 @@ class NodeWritable extends NodeEventEmitter {
         this.writableLength < this.writableHighWaterMark
       ) {
         this.writableNeedDrain = false;
+        this._writableState.needDrain = false;
         this.emit("drain");
       }
     });
     const writable = this.writableLength < this.writableHighWaterMark;
     this.writableNeedDrain = !writable;
+    this._writableState.needDrain = this.writableNeedDrain;
     return writable;
   }
   end(chunk, encoding, callback) {
@@ -364,7 +367,7 @@ class NodeWritable extends NodeEventEmitter {
 }
 class NodeTransform extends NodeWritable {
   constructor(options = {}) {
-    super();
+    super(options);
     this._transform = options.transform;
   }
   push(chunk) {
@@ -372,9 +375,11 @@ class NodeTransform extends NodeWritable {
     return chunk !== null;
   }
   write(chunk, encoding, callback) {
-    if (this._transform)
+    if (this._transform) {
+      const size = typeof chunk === "string" ? NodeBuffer.byteLength(chunk) : 1;
+      this._writableState.needDrain = size >= this.writableHighWaterMark;
       this._transform.call(this, chunk, encoding, () => callback && callback());
-    else super.write(chunk, encoding, callback);
+    } else super.write(chunk, encoding, callback);
     return true;
   }
 }
