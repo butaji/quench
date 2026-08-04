@@ -701,3 +701,4 @@ these small fixtures isolate the currently implemented contract.
 |   702 | process stdout end returns the stream for chaining                            | `tools/run-node-tests.sh --stage 702` |
 |   703 | process stderr end returns the stream for chaining                            | `tools/run-node-tests.sh --stage 703` |
 |   704 | process stdout cork and uncork are callable and chainable                     | `tools/run-node-tests.sh --stage 704` |
+|   705 | process stderr cork and uncork are callable and chainable                     | `tools/run-node-tests.sh --stage 705` |
