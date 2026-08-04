@@ -855,3 +855,4 @@ these small fixtures isolate the currently implemented contract.
 |   856 | test exposes test runner and lifecycle API                  | `tools/run-node-tests.sh --stage 856` |
 |   857 | process exposes modern memory and resource API              | `tools/run-node-tests.sh --stage 857` |
 |   858 | util types exposes specialized type predicates              | `tools/run-node-tests.sh --stage 858` |
+|   859 | sqlite exposes synchronous database API                     | `tools/run-node-tests.sh --stage 859` |
