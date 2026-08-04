@@ -1229,6 +1229,9 @@ and interval scheduling APIs.
 Stage 436 formalized timer handle reference control through `ref`, `unref`, and
 `hasRef`, including cleared-handle state.
 
+Stage 437 formalized readable stream pause/resume observability through
+`isPaused`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
