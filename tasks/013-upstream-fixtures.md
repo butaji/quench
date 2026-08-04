@@ -3031,3 +3031,9 @@ The focused stage now passes after overriding the three allocator variants.
 Upstream audit: Buffer copy, compare, and equals fixtures now reach separate
 range and cross-layer validation mismatches that remain outside this focused
 allocator contract.
+
+Stage 1023 adds exact typed-array and invalid-value coverage for Buffer
+comparison and equality methods. Retrospective: the upstream failures were
+diagnostic-contract mismatches, and reusing the centralized received-value
+formatter fixed both static and instance APIs without duplicating type logic.
+The focused stage and the upstream compare/equality fixtures now pass.
