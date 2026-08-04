@@ -2572,3 +2572,7 @@ Stage 940 verifies the deterministic `events.errorMonitor` and
 `captureRejections` static exports. Retrospective: static identity contracts
 provide useful compatibility coverage while promise-based EventEmitter paths
 await an isolated job-loop fix.
+
+Stage 941 verifies `EventEmitter.listeners()` returns the registered listener
+and a defensive array copy. Retrospective: ordinary listener contracts can be
+validated independently of once-wrapper and pending-job behavior.
