@@ -105,11 +105,22 @@ const __quenchVmModule = {
     }
   }
 };
+const __quenchTrackTestResult = (result) => {
+  if (!result?.then) return result;
+  (globalThis.__quench_test_promises ||= []).push(result);
+  result.catch((error) => {
+    if (!globalThis.__quench_async_error)
+      globalThis.__quench_async_error = String(error?.stack || error);
+  });
+  return result;
+};
 const __quenchNodeTestModule = {
-  describe: (_name, callback) => callback(),
-  it: (_name, callback) => callback(),
+  describe: (_name, callback) => __quenchTrackTestResult(callback()),
+  it: (_name, callback) => __quenchTrackTestResult(callback()),
   test: (_name, options, callback) =>
-    (typeof options === "function" ? options : callback)()
+    __quenchTrackTestResult(
+      (typeof options === "function" ? options : callback)()
+    )
 };
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {

@@ -16,6 +16,15 @@ globalThis.EventTarget ||= class EventTarget {
     return true;
   }
 };
+globalThis.Event ||= class Event {
+  constructor(type) {
+    this.type = String(type);
+    this._quenchImmediatePropagationStopped = false;
+  }
+  stopImmediatePropagation() {
+    this._quenchImmediatePropagationStopped = true;
+  }
+};
 if (globalThis.Event && !Event.prototype.stopImmediatePropagation)
   Event.prototype.stopImmediatePropagation = function () {
     this._quenchImmediatePropagationStopped = true;
