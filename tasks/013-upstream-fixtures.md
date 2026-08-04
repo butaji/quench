@@ -3005,3 +3005,7 @@ complexity limit and makes subsequent error-contract slices cheaper.
 
 Upstream audit: `test-buffer-concat.js` still has a remaining exact assertion
 boundary in the legacy module path; the focused invalid-item contract passes.
+
+Stage 1019 adds Node-style distinction between non-integer and negative
+`Buffer.concat()` length errors. Retrospective: separating the two message
+families keeps validation behavior precise without changing copy semantics.
