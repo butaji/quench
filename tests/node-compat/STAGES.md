@@ -767,3 +767,4 @@ these small fixtures isolate the currently implemented contract.
 |   768 | process stdin isPaused reports an active input flow                    | `tools/run-node-tests.sh --stage 768` |
 |   769 | process stdin exposes stdio lifecycle methods                         | `tools/run-node-tests.sh --stage 769` |
 |   770 | process stdin exposes local stream state                              | `tools/run-node-tests.sh --stage 770` |
+|   771 | process stdin exposes stream lifecycle state                          | `tools/run-node-tests.sh --stage 771` |
