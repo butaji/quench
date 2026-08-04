@@ -2343,3 +2343,9 @@ Stage 893 verifies the node:crypto synchronous random fill API.
 
 Retrospective: synchronous byte APIs can preserve the native buffer identity
 with a small fallback, keeping the host boundary free of another byte hook.
+
+Stage 894 verifies the node:crypto bounded random integer API.
+
+Retrospective: a full parallel sweep exposed a pre-existing filesystem-stage
+flake; rerunning the isolated stage and sweep passed, so future gates should
+retain both isolated diagnostics and the parallel regression check.
