@@ -1632,6 +1632,9 @@ metadata and the original spawn arguments.
 Stage 573 formalized `exec` and `execFile` command-failure codes, paths,
 commands, and spawn-argument metadata.
 
+Stage 574 formalized `spawnSync()` launch-failure status, signal, error, and
+spawn-argument metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
