@@ -2652,3 +2652,7 @@ assertion catches accidental wrapping across the promise boundary.
 Stage 955 verifies `events.once()` abort-signal rejection and cleanup.
 Retrospective: testing cancellation before emission isolates signal handling
 from event ordering and confirms no listener remains attached.
+
+Stage 956 adds `EventEmitter` capture-rejection behavior for async listeners.
+Retrospective: handling promise rejection in `emit()` with a microtask keeps
+error delivery asynchronous while preserving the original error object.
