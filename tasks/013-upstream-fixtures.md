@@ -2425,3 +2425,8 @@ Stage 909 verifies the node:module builtin predicate normalization.
 
 Retrospective: builtin predicates need spec-level distinction between bare
 legacy names and `node:`-qualified names, even when both load the same API.
+
+Stage 910 verifies the node:process thread CPU usage argument contract.
+
+Retrospective: sampling upstream fixtures before staging exposed validation
+gaps that simple export-presence checks would not catch.
