@@ -2369,3 +2369,8 @@ Stage 898 verifies the node:crypto canonical SHA-256 digest contract.
 
 Retrospective: use the locally installed Node runtime to obtain canonical
 cryptographic vectors, avoiding hand-authored expected values.
+
+Stage 899 verifies the node:crypto canonical HMAC SHA-256 digest contract.
+
+Retrospective: keyed digest vectors reuse the same local-Node oracle workflow
+as hashes, keeping cryptographic regressions precise without extra host code.
