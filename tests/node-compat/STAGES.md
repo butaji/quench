@@ -869,3 +869,4 @@ these small fixtures isolate the currently implemented contract.
 |   870 | fs exposes callback and promise glob API                    | `tools/run-node-tests.sh --stage 870` |
 |   871 | crypto exposes Web Crypto compatibility API                 | `tools/run-node-tests.sh --stage 871` |
 |   872 | timers promises exposes complete promise timer API          | `tools/run-node-tests.sh --stage 872` |
+|   873 | util exposes modern parsing and abort helpers              | `tools/run-node-tests.sh --stage 873` |
