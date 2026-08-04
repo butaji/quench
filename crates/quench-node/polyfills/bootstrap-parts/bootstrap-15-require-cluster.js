@@ -144,6 +144,55 @@ const __quenchInternalBindingModule = {
     return { fstat: () => undefined };
   }
 };
+const __quenchInternalErrorsModule = {
+  codes: {
+    ERR_OUT_OF_RANGE: class ERR_OUT_OF_RANGE extends RangeError {},
+    ERR_IPC_CHANNEL_CLOSED: class ERR_IPC_CHANNEL_CLOSED extends Error {
+      constructor() {
+        super("Channel closed");
+        this.code = "ERR_IPC_CHANNEL_CLOSED";
+      }
+    }
+  }
+};
+const __quenchInternalBufferModule = {
+  utf8Write: (buffer, string, offset = 0, length = buffer.length - offset) =>
+    buffer.write(string, offset, length, "utf8")
+};
+const __quenchInternalFsUtilsModule = {
+  stringToFlags: (flags) => {
+    const values = {
+      r: 0,
+      "r+": 2,
+      rs: 1052674,
+      "rs+": 1052674,
+      sr: 1052674,
+      "sr+": 1052674,
+      w: 577,
+      "w+": 578,
+      wx: 705,
+      xw: 705,
+      "wx+": 706,
+      "xw+": 706,
+      a: 1089,
+      "a+": 1090,
+      ax: 1217,
+      xa: 1217,
+      "ax+": 1218,
+      "xa+": 1218,
+      as: 1051713,
+      sa: 1051713,
+      "as+": 1051714,
+      "sa+": 1051714
+    };
+    if (typeof flags !== "string" || values[flags] === undefined) {
+      const error = new TypeError(`Unknown file open flag: ${flags}`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    return values[flags];
+  }
+};
 let __quenchClusterModule;
 {
   if (!globalThis.__nodeCluster) {
@@ -296,62 +345,9 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "worker_threads") return { isMainThread: true };
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   if (name === "internal/test/binding") return __quenchInternalBindingModule;
-  if (name === "internal/errors")
-    return {
-      codes: {
-        ERR_OUT_OF_RANGE: class ERR_OUT_OF_RANGE extends RangeError {},
-        ERR_IPC_CHANNEL_CLOSED: class ERR_IPC_CHANNEL_CLOSED extends Error {
-          constructor() {
-            super("Channel closed");
-            this.code = "ERR_IPC_CHANNEL_CLOSED";
-          }
-        }
-      }
-    };
-  if (name === "internal/buffer")
-    return {
-      utf8Write: (
-        buffer,
-        string,
-        offset = 0,
-        length = buffer.length - offset
-      ) => buffer.write(string, offset, length, "utf8")
-    };
-  if (name === "internal/fs/utils")
-    return {
-      stringToFlags: (flags) => {
-        const values = {
-          r: 0,
-          "r+": 2,
-          rs: 1052674,
-          "rs+": 1052674,
-          sr: 1052674,
-          "sr+": 1052674,
-          w: 577,
-          "w+": 578,
-          wx: 705,
-          xw: 705,
-          "wx+": 706,
-          "xw+": 706,
-          a: 1089,
-          "a+": 1090,
-          ax: 1217,
-          xa: 1217,
-          "ax+": 1218,
-          "xa+": 1218,
-          as: 1051713,
-          sa: 1051713,
-          "as+": 1051714,
-          "sa+": 1051714
-        };
-        if (typeof flags !== "string" || values[flags] === undefined) {
-          const error = new TypeError(`Unknown file open flag: ${flags}`);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
-        }
-        return values[flags];
-      }
-    };
+  if (name === "internal/errors") return __quenchInternalErrorsModule;
+  if (name === "internal/buffer") return __quenchInternalBufferModule;
+  if (name === "internal/fs/utils") return __quenchInternalFsUtilsModule;
   if (name === "zlib/iter")
     return {
       compressGzip: () => (chunks) => chunks,
