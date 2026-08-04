@@ -44,6 +44,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-15-require-dispatch.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-16-zlib.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-17-string-decoder.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-17-string-decoder-utf8.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-18-tls.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-19-tty.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-20-zlib-streams.js"),
