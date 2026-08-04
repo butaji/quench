@@ -405,3 +405,4 @@ these small fixtures isolate the currently implemented contract.
 |   406 | timers/promises AbortSignal cancellation error               | `tools/run-node-tests.sh --stage 406` |
 |   407 | timers/promises interval AbortSignal cancellation            | `tools/run-node-tests.sh --stage 407` |
 |   408 | timers/promises immediate AbortSignal cancellation           | `tools/run-node-tests.sh --stage 408` |
+|   409 | process platform, memory, and resource metadata              | `tools/run-node-tests.sh --stage 409` |

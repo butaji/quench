@@ -1146,6 +1146,9 @@ no value yielded after cancellation and matching abort metadata.
 Stage 408 formalized AbortSignal cancellation for `timers/promises.setImmediate`
 with matching abort metadata.
 
+Stage 409 formalized process platform and architecture metadata plus the shapes
+of `memoryUsage` and `resourceUsage` results.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
