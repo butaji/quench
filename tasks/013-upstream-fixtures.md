@@ -3328,3 +3328,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `internal/util.emitExperimentalWarning` with per-feature deduplication.
 - Verified the focused stage and Node's `test-util-emit-experimental-warning.js`.
+### Stage 1088: util deprecate code validation
+
+- Added `util.deprecate` with invalid-code validation and one-time warning behavior.
+- Verified the focused stage and Node's invalid-code fixture.
