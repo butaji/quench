@@ -2534,3 +2534,6 @@ error code.
 
 Stage 932 adds `EventEmitter.eventNames()` using `Reflect.ownKeys`, preserving
 both string and symbol event names while excluding removed listeners.
+
+Stage 933 confirms the broader upstream EventEmitter list fixture now passes
+after Stage 932; no additional runtime code was required.
