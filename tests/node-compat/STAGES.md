@@ -592,3 +592,4 @@ these small fixtures isolate the currently implemented contract.
 |   593 | process source-map toggling is callable and returns undefined         | `tools/run-node-tests.sh --stage 593` |
 |   594 | process emitWarning is callable and returns undefined                  | `tools/run-node-tests.sh --stage 594` |
 |   595 | process debugPort is numeric and writable                              | `tools/run-node-tests.sh --stage 595` |
+|   596 | process sourceMapsEnabled exposes a boolean default                     | `tools/run-node-tests.sh --stage 596` |
