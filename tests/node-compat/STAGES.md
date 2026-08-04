@@ -898,3 +898,4 @@ these small fixtures isolate the currently implemented contract.
 |   899 | crypto HMAC exposes canonical SHA-256 digest              | `tools/run-node-tests.sh --stage 899` |
 |   900 | crypto exposes usable secret key objects                 | `tools/run-node-tests.sh --stage 900` |
 |   901 | crypto exposes synchronous HKDF derivation                | `tools/run-node-tests.sh --stage 901` |
+|   902 | crypto exposes synchronous PBKDF2 derivation              | `tools/run-node-tests.sh --stage 902` |
