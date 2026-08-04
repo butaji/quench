@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1145: VM Proxy constructor forwarding
+
+- Fixture: `test-vm-proxies.js`
+- Forwarded a context’s own `Proxy` constructor when explicitly assigned into
+  an otherwise empty new-context sandbox.
+- Retrospective: built-in constructors need explicit realm-aware forwarding;
+  generic global-name filtering intentionally omits them.
+
 ## Stage 1144: VM inherited prototype properties
 
 - Fixture: `test-vm-symbols.js`
