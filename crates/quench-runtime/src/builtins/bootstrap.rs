@@ -1206,6 +1206,15 @@ mod tests {
     }
 
     #[test]
+    fn array_map_generic_receiver_returns_array() {
+        let mut ctx = new_ctx();
+        let result = ctx
+            .eval("Array.prototype.map.call({length: 1, 0: 'a'}, function(value) { return value; }).join(',')")
+            .unwrap();
+        assert_eq!(result, Value::String("a".to_string()));
+    }
+
+    #[test]
     fn array_filter_filters() {
         let mut ctx = new_ctx();
         let r = ctx

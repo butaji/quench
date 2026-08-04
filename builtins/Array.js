@@ -140,7 +140,7 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
-  var C = O.constructor;
+  var C = IsArray(O) ? O.constructor : undefined;
   if (C !== null && typeof C === 'object') {
     C = C[Symbol.species];
     if (C === null || C === undefined) C = undefined;
