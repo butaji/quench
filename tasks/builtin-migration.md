@@ -251,6 +251,10 @@ entry when the wrapper would be larger than the retained binding.
 - [~] Error, Function, and RegExp public methods are JS-owned where wrappers
   exist; Rust retains constructors, call mechanics, compiled matching, and
   error storage. Proxy and remaining constructors/prototypes are pending.
+- [x] `Error.prototype.toString` is fully JS-owned; Rust retains only error
+  construction, prototype storage, and thrown-error integration. The hidden
+  duplicate Rust formatter was removed because the JS implementation contains
+  the observable algorithm rather than acting as a one-line proxy.
 - [x] Remove duplicate Rust registrations and dormant JS wrappers.
 - [~] `Object.prototype.hasOwnProperty` is JS-owned over canonical own
   descriptors; Rust keeps only a hidden compatibility helper for core paths.

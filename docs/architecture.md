@@ -117,6 +117,12 @@ Every `.prototype.*`, intrinsic iterator prototype, `Object.*`,
 `Reflect.*`, `Promise.prototype.*`, etc. authored here. Embedded via
 `include_str!`; parsed once per `Realm` by `bootstrap.rs`.
 
+Migration rule: a public builtin algorithm belongs in this JS layer whenever
+it can be expressed over `__ops__`. Rust remains only for core/performance,
+native-memory, crate-backed, or engine-integration work, and for direct
+bindings whose JS wrapper would be a one-line proxy or would increase total
+maintained LOC. Each exception is recorded in `tasks/builtin-migration.md`.
+
 ## `__ops__` — the only Rust↔JS bridge for spec ops
 
 Frozen object exposed at realm init. Each property is a canonical spec
