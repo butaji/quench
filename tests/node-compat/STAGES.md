@@ -522,3 +522,4 @@ these small fixtures isolate the currently implemented contract.
 |   523 | zlib async iterable compression round trips data                  | `tools/run-node-tests.sh --stage 523` |
 |   524 | util types identifies built-in collection and view types           | `tools/run-node-tests.sh --stage 524` |
 |   525 | stream promises finished tracks transform completion             | `tools/run-node-tests.sh --stage 525` |
+|   526 | stream web readable and writable reader/writer contracts          | `tools/run-node-tests.sh --stage 526` |
