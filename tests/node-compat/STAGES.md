@@ -864,3 +864,4 @@ these small fixtures isolate the currently implemented contract.
 |   865 | stream web exposes Web Streams constructors and helpers    | `tools/run-node-tests.sh --stage 865` |
 |   866 | stream consumers exposes conversion helpers                | `tools/run-node-tests.sh --stage 866` |
 |   867 | assert strict exposes strict assertion API                 | `tools/run-node-tests.sh --stage 867` |
+|   868 | fs promises exposes promise filesystem API                 | `tools/run-node-tests.sh --stage 868` |
