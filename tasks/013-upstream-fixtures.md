@@ -1661,6 +1661,9 @@ the `encoding: "buffer"` option.
 Stage 583 formalized inherited environment variables for spawned child
 processes.
 
+Stage 584 formalized child-process event ordering, with `spawn` preceding exit
+and stdio stream close events.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

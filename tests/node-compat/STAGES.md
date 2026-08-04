@@ -580,3 +580,4 @@ these small fixtures isolate the currently implemented contract.
 |   581 | child_process ref and unref preserve legacy return contracts         | `tools/run-node-tests.sh --stage 581` |
 |   582 | child_process exec supports Buffer output encoding                  | `tools/run-node-tests.sh --stage 582` |
 |   583 | child_process inherits environment variables for spawned commands    | `tools/run-node-tests.sh --stage 583` |
+|   584 | child_process emits spawn before exit and stream close events        | `tools/run-node-tests.sh --stage 584` |
