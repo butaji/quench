@@ -1232,6 +1232,9 @@ Stage 436 formalized timer handle reference control through `ref`, `unref`, and
 Stage 437 formalized readable stream pause/resume observability through
 `isPaused`.
 
+Stage 438 formalized writable backpressure reporting through
+`writableNeedDrain` and drain-state clearing.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
