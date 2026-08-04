@@ -611,3 +611,4 @@ these small fixtures isolate the currently implemented contract.
 |   612 | process versions exposes a semantic Ada version entry                  | `tools/run-node-tests.sh --stage 612` |
 |   613 | process versions exposes a timezone database version entry            | `tools/run-node-tests.sh --stage 613` |
 |   614 | process versions exposes a semantic Brotli version entry              | `tools/run-node-tests.sh --stage 614` |
+|   615 | process versions exposes a semantic nbytes version entry              | `tools/run-node-tests.sh --stage 615` |
