@@ -594,3 +594,4 @@ these small fixtures isolate the currently implemented contract.
 |   595 | process debugPort is numeric and writable                              | `tools/run-node-tests.sh --stage 595` |
 |   596 | process sourceMapsEnabled exposes a boolean default                     | `tools/run-node-tests.sh --stage 596` |
 |   597 | process release exposes Node runtime metadata                            | `tools/run-node-tests.sh --stage 597` |
+|   598 | process allowedNodeEnvironmentFlags exposes a Set contract               | `tools/run-node-tests.sh --stage 598` |
