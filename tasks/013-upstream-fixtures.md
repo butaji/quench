@@ -2400,3 +2400,8 @@ Stage 904 verifies the node:crypto asynchronous PBKDF2 derivation API.
 
 Retrospective: callback APIs can wrap verified synchronous primitives in a
 microtask, preserving Node’s async delivery without another native hook.
+
+Stage 905 verifies the node:crypto asynchronous HKDF derivation API.
+
+Retrospective: decorator ordering matters when wrappers depend on later
+polyfills; deferred lookup keeps async adapters aligned with final exports.
