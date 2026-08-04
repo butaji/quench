@@ -2374,3 +2374,8 @@ Stage 899 verifies the node:crypto canonical HMAC SHA-256 digest contract.
 
 Retrospective: keyed digest vectors reuse the same local-Node oracle workflow
 as hashes, keeping cryptographic regressions precise without extra host code.
+
+Stage 900 verifies the node:crypto secret key object API.
+
+Retrospective: key-object slices can start with the stable metadata/export
+contract, leaving algorithm-specific operations for focused later stages.

@@ -896,3 +896,4 @@ these small fixtures isolate the currently implemented contract.
 |   897 | crypto Web Crypto fills random typed arrays               | `tools/run-node-tests.sh --stage 897` |
 |   898 | crypto hash exposes canonical SHA-256 digest              | `tools/run-node-tests.sh --stage 898` |
 |   899 | crypto HMAC exposes canonical SHA-256 digest              | `tools/run-node-tests.sh --stage 899` |
+|   900 | crypto exposes usable secret key objects                 | `tools/run-node-tests.sh --stage 900` |
