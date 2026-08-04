@@ -393,3 +393,4 @@ these small fixtures isolate the currently implemented contract.
 |   394 | experimental stream/iter feature flag gating                  | `tools/run-node-tests.sh --stage 394` |
 |   395 | crypto advertised hash and cipher capabilities               | `tools/run-node-tests.sh --stage 395` |
 |   396 | crypto timingSafeEqual comparison and length errors           | `tools/run-node-tests.sh --stage 396` |
+|   397 | crypto randomInt ranges validation and callback               | `tools/run-node-tests.sh --stage 397` |
