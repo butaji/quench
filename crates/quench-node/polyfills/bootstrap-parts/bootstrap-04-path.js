@@ -126,6 +126,15 @@ const __nodeWindowsDriveParse = (input) => {
   const ext = dot > 0 ? relative.slice(dot) : "";
   return __nodeWindowsParts(relative, input.slice(0, 2), input.slice(0, 2));
 };
+const __nodeWindowsNamespacedPath = (value) => {
+  if (typeof value !== "string") return value;
+  if (value.startsWith("\\\\?\\")) return value.replace(/\//g, "\\");
+  const input = value.replace(/\//g, "\\");
+  if (input.startsWith("\\\\"))
+    return `\\\\?\\UNC\\${input.slice(2).replace(/\\+/g, "\\")}\\`;
+  if (/^[A-Za-z]:\\/.test(input)) return `\\\\?\\${input}`;
+  return `\\\\?\\${__nodeWinPath.resolve(input)}`;
+};
 const __nodeWindowsDirnameKeep = (input, uncRoot, index) => {
   if (index > 0 && input[index - 1] === "\\") return true;
   if (/^[A-Za-z]:\\/.test(input) && index === 2) return true;
@@ -243,6 +252,9 @@ globalThis.__nodePath = {
   },
   matchesGlob(path, pattern) {
     return __nodeGlobMatch(path, pattern);
+  },
+  toNamespacedPath(value) {
+    return value;
   }
 };
 globalThis.__nodePath.posix = globalThis.__nodePath;
@@ -359,6 +371,9 @@ const __nodeWinPath = {
       __nodePathArg(path).replace(/[\\/]/g, "/"),
       __nodePathArg(pattern).replace(/[\\/]/g, "/")
     );
+  },
+  toNamespacedPath(value) {
+    return __nodeWindowsNamespacedPath(value);
   }
 };
 __nodeWinPath.posix = globalThis.__nodePath;
