@@ -2787,3 +2787,11 @@ Stage 981 adds an in-process MessageChannel/MessagePort pair with microtask
 delivery, `onmessage`, `start()`, and `close()`. Retrospective: keeping ports
 entangled entirely in JavaScript avoids Rust runtime expansion for deterministic
 single-context message tests.
+
+Stage 982 verifies the global CustomEvent constructor and detail payload.
+Retrospective: a direct global-constructor stage distinguishes bootstrap
+availability from the internal module export covered by the earlier stages.
+
+Upstream audit: `test-eventtarget-memoryleakwarning.js` reaches warning-count
+validation after MessageChannel support; warning emission and `expectWarning`
+matching remain a separate harness task.
