@@ -2214,3 +2214,5 @@ Stage 831 verified the node:string_decoder API.
 Stage 832 verified the node:diagnostics_channel API.
 
 Stage 833 verified the node:perf_hooks timing and observer API.
+
+Stage 834 verified the node:worker_threads core API.
