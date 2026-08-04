@@ -1533,6 +1533,9 @@ disablement.
 Stage 542 formalized `util.callbackify()` success/error bridging and input
 validation for non-functions.
 
+Stage 543 formalized `util.transferableAbortSignal()` validation and
+`util.transferableAbortController()` abort behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
