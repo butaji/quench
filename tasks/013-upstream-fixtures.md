@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1114: querystring max keys
+
+- Fixture: `test-querystring-maxKeys-non-finite.js`
+- Matched Node’s type-sensitive handling of numeric non-finite `maxKeys` and
+  string non-finite values.
+- Retrospective: preserving option input types is necessary when coercion would
+  collapse distinct Node semantics.
+
 ## Stage 1113: querystring surrogate escaping
 
 - Fixture: `test-querystring-escape.js`
