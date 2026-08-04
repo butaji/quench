@@ -463,6 +463,11 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
 const __nodeBufferFromBase = __NodeBufferBase01.from;
 NodeBuffer.from = (...args) => {
   const source = __nodeBufferFromBase.apply(__NodeBufferBase01, args);
+  if (
+    __nodeBufferIsArrayBuffer(args[0]) ||
+    args[0] instanceof SharedArrayBuffer
+  )
+    return source;
   const output = new NodeBuffer(source.length);
   output.set(source);
   return output;
