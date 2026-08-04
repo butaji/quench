@@ -460,3 +460,4 @@ these small fixtures isolate the currently implemented contract.
 |   461 | stream late readable listener drains queued data                 | `tools/run-node-tests.sh --stage 461` |
 |   462 | stream readableLength tracks partial buffer reads                 | `tools/run-node-tests.sh --stage 462` |
 |   463 | stream readableFlowing tracks pause and resume state              | `tools/run-node-tests.sh --stage 463` |
+|   464 | stream readable and writable object mode flags                   | `tools/run-node-tests.sh --stage 464` |

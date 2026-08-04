@@ -1305,6 +1305,9 @@ complete buffer reads.
 Stage 463 formalized `readableFlowing` transitions from the initial null state
 to flowing, paused, and flowing again.
 
+Stage 464 formalized readable and writable object-mode flags and their byte-mode
+defaults.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
