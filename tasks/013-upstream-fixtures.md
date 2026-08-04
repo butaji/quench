@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1126: common allowGlobals harness helper
+
+- Fixture: `test-vm-run-in-new-context.js`
+- Added the missing no-op `common.allowGlobals()` compatibility helper so the
+  complete upstream VM fixture can finish after its assertions.
+- Retrospective: classify failures at the fixture boundary; a missing test
+  helper can masquerade as a failure in the API under test.
+
 ## Stage 1125: VM external callback mutation
 
 - Fixture: `test-vm-run-in-new-context.js` callback contract
