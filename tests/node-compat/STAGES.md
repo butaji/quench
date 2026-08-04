@@ -437,3 +437,4 @@ these small fixtures isolate the currently implemented contract.
 |   438 | stream writableNeedDrain backpressure and drain clearing       | `tools/run-node-tests.sh --stage 438` |
 |   439 | stream readable and writable completion flags                | `tools/run-node-tests.sh --stage 439` |
 |   440 | stream readable and writable state after destroy              | `tools/run-node-tests.sh --stage 440` |
+|   441 | stream writable cork nesting and uncork state                 | `tools/run-node-tests.sh --stage 441` |
