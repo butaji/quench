@@ -1974,3 +1974,5 @@ Stage 711 formalized process.stderr listener removal chainability.
 Stage 712 added the standard process.stdout addListener alias.
 
 Stage 713 added the standard process.stderr addListener alias.
+
+Stage 714 added lightweight process.stdout listenerCount support.
