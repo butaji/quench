@@ -450,7 +450,9 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-00.js").as_bytes())?;
         ctx.eval::<(), _>(include_str!("../polyfills/post-bootstrap/module-surface-final-01.js").as_bytes())?; ctx.globals().set("__nodeOsInitialized", false)?; ctx.globals().set("__quench_script_source", $source)?; let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source); ctx.eval::<(), _>(wrapped.as_bytes()).map_err(|error| {
             let detail = ctx.globals().get::<_, String>("__quench_last_error").unwrap_or_else(|_| format!("{error:?}")); eprintln!("JavaScript exception: {detail} ({error:?})");
-            error })?; while ctx.execute_pending_job() {}
+            error })?;
+        ctx.eval::<(), _>(b"if (globalThis.__quench_test_promises?.length) Promise.allSettled(globalThis.__quench_test_promises).then(() => { globalThis.__quench_tests_settled = true; });")?;
+        while ctx.execute_pending_job() {}
         if let Ok(detail) = ctx.globals().get::<_, String>("__quench_async_error") {
             if !detail.is_empty() {
                 eprintln!("Asynchronous JavaScript exception: {detail}");
