@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1127: VM Script option validation
+
+- Fixture: `test-vm-options-validation.js`
+- Added type/range validation for `vm.Script` offsets, filename, cached-data,
+  and cached-data production options.
+- Retrospective: validate shared constructor options once and reuse the helper
+  across execution methods to keep the Rust host unchanged.
+
 ## Stage 1126: common allowGlobals harness helper
 
 - Fixture: `test-vm-run-in-new-context.js`
