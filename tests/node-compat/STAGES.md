@@ -797,3 +797,4 @@ these small fixtures isolate the currently implemented contract.
 |   798 | process exposes builtin module loading                          | `tools/run-node-tests.sh --stage 798` |
 |   799 | process exposes allowed environment flags                       | `tools/run-node-tests.sh --stage 799` |
 |   800 | process exposes launch metadata                                 | `tools/run-node-tests.sh --stage 800` |
+|   801 | process exposes resource metric shapes                          | `tools/run-node-tests.sh --stage 801` |
