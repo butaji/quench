@@ -202,10 +202,15 @@ const __nodeBufferBase64String = (buffer, url) => {
     : result;
 };
 const __nodeBufferEncodedString = (buffer, encoding) => {
-  if (encoding === "hex")
-    return Array.from(buffer, (byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("");
+  if (encoding === "hex") {
+    const digits = "0123456789abcdef";
+    let result = "";
+    for (const byte of buffer) {
+      const value = Number(byte);
+      result += digits[(value >> 4) & 15] + digits[value & 15];
+    }
+    return result;
+  }
   if (encoding === "base64" || encoding === "base64url")
     return __nodeBufferBase64String(buffer, encoding === "base64url");
   if (encoding === "latin1" || encoding === "binary")
@@ -454,4 +459,11 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
   toLocaleString(...args) {
     return this.toString(...args);
   }
+};
+const __nodeBufferFromBase = __NodeBufferBase01.from;
+NodeBuffer.from = (...args) => {
+  const source = __nodeBufferFromBase.apply(__NodeBufferBase01, args);
+  const output = new NodeBuffer(source.length);
+  output.set(source);
+  return output;
 };
