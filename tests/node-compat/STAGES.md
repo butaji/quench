@@ -412,3 +412,4 @@ these small fixtures isolate the currently implemented contract.
 |   413 | fs FileHandle read position and readFile continuation          | `tools/run-node-tests.sh --stage 413` |
 |   414 | fs FileHandle readFile string encoding                         | `tools/run-node-tests.sh --stage 414` |
 |   415 | fs readFileSync file descriptor input                         | `tools/run-node-tests.sh --stage 415` |
+|   416 | fs appendFile synchronous data validation                      | `tools/run-node-tests.sh --stage 416` |
