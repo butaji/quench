@@ -1214,6 +1214,9 @@ descriptor after stream close for caller-managed cleanup.
 Stage 431 formalized WriteStream `autoClose: false` descriptor retention and
 caller-managed closure.
 
+Stage 432 formalized stream destruction, error propagation, close emission, and
+the `destroyed` state transition.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
