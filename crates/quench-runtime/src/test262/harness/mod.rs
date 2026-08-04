@@ -5,6 +5,8 @@
 
 #[cfg(test)]
 mod harness_loader_tests;
+#[cfg(test)]
+mod harness_scope_tests;
 pub mod host262;
 
 use crate::value::function::NativeConstructor;

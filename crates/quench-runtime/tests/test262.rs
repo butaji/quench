@@ -21,6 +21,56 @@ fn test_harness_deep_equal_basic() {
 }
 
 #[test]
+fn test_harness_deep_equal_formats_symbol_primitive() {
+    let mut host = QuenchHost::new();
+    let result =
+        host.run_script("assert.sameValue(String(assert.deepEqual.format(Symbol())), 'Symbol()')");
+    assert!(result.is_ok(), "Symbol formatting: {:?}", result);
+}
+
+#[test]
+fn test_harness_deep_equal_symbol_mismatch_throws_object() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        r#"
+        var thrown;
+        assert.sameValue(assert.deepEqual._compare(Symbol(), 'Symbol()'), false);
+        try { assert.deepEqual(Symbol(), 'Symbol()'); } catch (error) { thrown = error; }
+        assert.sameValue(typeof thrown, 'object');
+        assert.sameValue(thrown.constructor, Test262Error);
+        "#,
+    );
+    assert!(result.is_ok(), "Symbol mismatch error object: {:?}", result);
+}
+
+#[test]
+fn test_native_error_constructor_stringifies_function_message() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "var f = function () {}; f.toString = function () { return 'custom'; }; var error = new Test262Error(f); assert.sameValue(error.message, 'custom')",
+    );
+    assert!(result.is_ok(), "function message conversion: {:?}", result);
+}
+
+#[test]
+fn test_test262_error_constructor_accepts_lazy_formatter_message() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "var error = new Test262Error('value: ' + assert.deepEqual.format(Symbol())); assert.sameValue(typeof error, 'object'); assert.sameValue(error.constructor, Test262Error)",
+    );
+    assert!(result.is_ok(), "lazy Test262Error message: {:?}", result);
+}
+
+#[test]
+fn test_harness_throws_test262_error_object() {
+    let mut host = QuenchHost::new();
+    let result = host.run_script(
+        "assert.throws(Test262Error, function() { throw new Test262Error('failure'); })",
+    );
+    assert!(result.is_ok(), "Test262Error throw: {:?}", result);
+}
+
+#[test]
 fn test_test262_error_global() {
     let mut host = QuenchHost::new();
     let result = host.run_script(

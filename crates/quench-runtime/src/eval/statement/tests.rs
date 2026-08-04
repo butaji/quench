@@ -3170,4 +3170,23 @@ obj;
             result
         );
     }
+
+    #[test]
+    fn tail_call_in_if_does_not_evaluate_following_statement() {
+        assert_eq!(
+            eval(
+                "var after = false; \
+                 function call(strings) { return 'done'; } \
+                 function f(value) { \
+                   if (typeof value !== 'object') { return call`${value}`; } \
+                   after = true; \
+                   return 'wrong'; \
+                 } \
+                 f(Symbol()); \
+                 after"
+            )
+            .unwrap(),
+            Value::Boolean(false)
+        );
+    }
 }

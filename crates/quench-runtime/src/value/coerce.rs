@@ -63,7 +63,22 @@ pub fn to_js_string(v: &Value) -> String {
             }
             object_to_js_string(&o.borrow())
         }
-        Value::Function(f) => f.source_text(),
+        Value::Function(f) => {
+            if let Some(to_string) = f.get_property("toString") {
+                if matches!(
+                    to_string,
+                    Value::Function(_) | Value::NativeFunction(_) | Value::NativeConstructor(_)
+                ) {
+                    let function = Value::Function(f.clone());
+                    if let Ok(result) = call_value_with_this(to_string, vec![], function) {
+                        if let Some(s) = simple_string_value(&result) {
+                            return s;
+                        }
+                    }
+                }
+            }
+            f.source_text()
+        }
         Value::NativeFunction(_)
         | Value::NativeConstructor(_)
         | Value::Generator(_)

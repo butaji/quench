@@ -109,67 +109,89 @@ impl TestFailure {
     /// keywords against source lines. Falls back to assertion function calls.
     /// Returns a 1-based line number.
     fn locate_message_in_source(&self, lines: &[&str]) -> Option<usize> {
-        // Strip JsError("...") wrapper and error-type prefix.
+        let body = self.message_body();
+        let keywords = extract_keywords(&body);
+        if let Some(idx) = best_keyword_line(lines, &keywords) {
+            return Some(idx + 1);
+        }
+        if is_assert_throws_wrapper_message(&body) {
+            if let Some(idx) = lines.iter().rposition(|l| l.contains("assert.throws")) {
+                return Some(idx + 1);
+            }
+        }
+        fallback_assertion_line(lines).map(|idx| idx + 1)
+    }
+}
+
+const LOCATE_STOP_WORDS: &[&str] = &[
+    "Actual", "expected", "should", "have", "same", "contents", "this", "that", "with", "from",
+    "been", "call", "called", "value", "values", "throw", "thrown", "error", "failed", "after",
+    "before", "true", "false",
+];
+
+const LOCATE_ASSERTION_PATTERNS: &[&str] = &[
+    "assert.compareArray",
+    "assert.sameValue",
+    "assert.throws",
+    "assert.notSameValue",
+    "assert.deepEqual",
+    "assert(false",
+    "assert(true",
+    "$DONOTEVALUATE",
+    "verifyProperty",
+];
+
+impl TestFailure {
+    fn message_body(&self) -> String {
         let raw = self
             .message
             .strip_prefix("JsError(\"")
             .and_then(|s| s.rsplit_once("\")"))
             .map(|(inner, _)| inner)
             .unwrap_or(&self.message);
-        let body = raw
-            .split_once(':')
-            .map(|(_, rest)| rest.trim())
-            .unwrap_or(raw);
-
-        // Extract candidate keywords: words > 4 chars, no common tokens.
-        let stop_words = [
-            "Actual", "expected", "should", "have", "same", "contents", "this", "that", "with",
-            "from", "been", "call", "called", "value", "values", "throw", "thrown", "error",
-            "failed", "after", "before", "true", "false",
-        ];
-        let keywords: Vec<&str> = body
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|w| w.len() > 4 && !stop_words.contains(w))
-            .collect();
-
-        // Score each line by how many keywords it contains.
-        let mut scored: Vec<(usize, usize)> = lines
-            .iter()
-            .enumerate()
-            .filter_map(|(i, line)| {
-                let count = keywords.iter().filter(|kw| line.contains(*kw)).count();
-                if count > 0 {
-                    Some((i, count))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
-        if let Some(best) = scored.first() {
-            return Some(best.0 + 1);
-        }
-
-        // Fallback: search for assertion calls that likely caused the failure.
-        let assertion_pats = [
-            "assert.compareArray",
-            "assert.sameValue",
-            "assert.throws",
-            "assert.notSameValue",
-            "assert.deepEqual",
-            "assert(false",
-            "assert(true",
-            "$DONOTEVALUATE",
-            "verifyProperty",
-        ];
-        for pat in &assertion_pats {
-            if let Some(idx) = lines.iter().position(|l| l.contains(pat)) {
-                return Some(idx + 1);
-            }
-        }
-
-        None
+        raw.split_once(':')
+            .map(|(_, rest)| rest.trim().to_string())
+            .unwrap_or_else(|| raw.to_string())
     }
+}
+
+fn extract_keywords(body: &str) -> Vec<String> {
+    body.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| w.len() > 4 && !LOCATE_STOP_WORDS.contains(w))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+fn best_keyword_line(lines: &[&str], keywords: &[String]) -> Option<usize> {
+    let mut scored: Vec<(usize, usize)> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let count = keywords
+                .iter()
+                .filter(|kw| line.contains(kw.as_str()))
+                .count();
+            if count > 0 {
+                Some((i, count))
+            } else {
+                None
+            }
+        })
+        .collect();
+    scored.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    scored.first().map(|(i, _)| *i)
+}
+
+fn is_assert_throws_wrapper_message(body: &str) -> bool {
+    body.contains("Thrown value was not an object!")
+        || body.contains(" but got a ")
+        || body.contains(" to be thrown but no exception was thrown at all")
+}
+
+fn fallback_assertion_line(lines: &[&str]) -> Option<usize> {
+    LOCATE_ASSERTION_PATTERNS
+        .iter()
+        .find_map(|pat| lines.iter().position(|l| l.contains(pat)))
 }
 
 /// Extract structured properties from a thrown JS error Value.
@@ -894,5 +916,93 @@ verifyProperty(obj, prop, desc);
         );
         let outcome = run_single_test(&harness, &path);
         assert_eq!(outcome, TestOutcome::Pass, "S12.2_A11: {:?}", outcome);
+    }
+
+    fn locate(message: &str, source: &str) -> Option<usize> {
+        let failure = TestFailure::from_message(message);
+        let lines: Vec<&str> = source.lines().collect();
+        failure.locate_message_in_source(&lines)
+    }
+
+    const STAGE0_DEEP_EQUAL_SYNTH: &str = "/*--- description: synth ---*/\n\
+                                           var s1 = Symbol();\n\
+                                           var s2 = Symbol('foo');\n\
+                                           assert.throws(Test262Error, function () { assert.deepEqual(null, 0); });\n\
+                                           assert.throws(Test262Error, function () { assert.deepEqual(undefined, 0); });\n\
+                                           assert.throws(Test262Error, function () { assert.deepEqual(s1, \"Symbol()\"); });\n";
+
+    #[test]
+    fn locate_message_in_source_pins_exact_keyword_match() {
+        let source = "var x = 1;\n\
+                      var fooBar = 2;\n\
+                      var z = 3;\n";
+        let lines: Vec<&str> = source.lines().collect();
+        let failure = TestFailure::from_message("TypeError: fooBar reference mismatch");
+        assert_eq!(failure.locate_message_in_source(&lines), Some(2));
+    }
+
+    #[test]
+    fn locate_message_in_source_prefers_inner_assertion_in_wrapper() {
+        assert_eq!(
+            locate(
+                "JsError(\"Test262Error: Thrown value was not an object!\")",
+                STAGE0_DEEP_EQUAL_SYNTH,
+            ),
+            Some(6),
+            "STAGE0 deepEqual-primitives symptom should point at the inner assert.deepEqual line, not the first assert.throws wrapper",
+        );
+    }
+
+    #[test]
+    fn locate_message_in_source_returns_last_assert_throws_for_wrapper_message() {
+        let source = "assert.throws(TypeError, function () { throw 1; });\n\
+                      assert.throws(TypeError, function () { throw 2; });\n";
+        assert_eq!(
+            locate(
+                "JsError(\"Test262Error: Thrown value was not an object!\")",
+                source,
+            ),
+            Some(2),
+            "when the harness's assert.throws wrapper is the failure surface, the LAST matching wrapper is the best guess — STAGE0 deepEqual-primitives.js symptom",
+        );
+    }
+
+    #[test]
+    fn locate_message_in_source_falls_back_to_first_assertion() {
+        let source = "// prologue\n\
+                      assert.sameValue(1, 2);\n\
+                      assert.deepEqual(3, 4);\n";
+        assert_eq!(
+            locate("JsError(\"Test262Error: mystery\")", source),
+            Some(2),
+            "no-keyword fallback should still anchor on an assertion line",
+        );
+    }
+
+    #[test]
+    fn locate_message_in_source_returns_none_when_nothing_matches() {
+        let source = "// nothing relevant\n";
+        assert_eq!(
+            locate(
+                "JsError(\"Test262Error: Thrown value was not an object!\")",
+                source
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn locate_message_in_source_handles_js_error_wrapper() {
+        let source = "var alpha = 1;\n\
+                      var definedBeta = 2;\n\
+                      alpha();\n";
+        assert_eq!(
+            locate(
+                "JsError(\"TypeError: definedBeta reference undefined\")",
+                source
+            ),
+            Some(2),
+            "JsError(\"...\") wrapper must be stripped before keyword extraction",
+        );
     }
 }

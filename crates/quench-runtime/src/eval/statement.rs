@@ -663,6 +663,7 @@ fn handle_tail_call_in_block(
         if expr.as_ref().is_some_and(|e| is_tail_expr(e))
             && try_handle_tail_call(expr, env, in_arrow_function)?
         {
+            set_control_flow(ControlFlow::Return(Value::Undefined));
             env.borrow_mut().pop_scope();
             return Ok(Some(()));
         }

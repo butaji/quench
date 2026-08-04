@@ -1204,3 +1204,12 @@ fn function_prototype_is_callable() {
         Ok(crate::value::Value::String("function".to_string()))
     );
 }
+
+#[test]
+fn in_with_symbol_key_and_primitive_rhs_throws_type_error_object() {
+    let mut ctx = crate::Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("try { Symbol.toStringTag in Symbol(); } catch (error) { typeof error === 'object' && error instanceof TypeError; }"),
+        Ok(Value::Boolean(true))
+    );
+}

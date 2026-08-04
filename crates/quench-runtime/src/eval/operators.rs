@@ -464,9 +464,7 @@ fn eval_in_op(left: &Value, right: &Value) -> Result<Value, JsError> {
             Value::Function(_) | Value::NativeConstructor(_) | Value::NativeFunction(_) => {
                 Ok(Value::Boolean(false))
             }
-            _ => Err(JsError::new(
-                "TypeError: right-hand side of 'in' is not an object",
-            )),
+            _ => crate::throw!("TypeError", "right-hand side of 'in' is not an object"),
         };
     }
     let prop_name = to_js_string(left);

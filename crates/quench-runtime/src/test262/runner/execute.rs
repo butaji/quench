@@ -40,6 +40,43 @@ const INFRA_MARKERS: &[&str] = &[
     "failed to spawn",
 ];
 
+const JS_ERROR_TYPES: &[&str] = &[
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "AggregateError",
+    "Test262Error",
+];
+
+/// True when `msg` looks like a JS-throw message. Either wrapped in a
+/// `JsError("<Type>: …")` envelope or a bare `<Type>: …` where `<Type>` is a
+/// known JS error constructor. Such messages always originate from user test
+/// code, never from the runner, so the INFRA_MARKERS substring search must
+/// not falsely classify them.
+fn is_js_throw_msg(msg: &str) -> bool {
+    let inner = js_envelope_inner(msg).unwrap_or(msg);
+    inner
+        .split_once(':')
+        .map(|(k, _)| k)
+        .is_some_and(|k| JS_ERROR_TYPES.contains(&k))
+}
+
+/// Extract the inner of the first JsError("…") envelope in `msg`, whether
+/// the envelope is the whole message or embedded in a wrapper like
+/// `"expected X but got: JsError(\"…\")"`.
+fn js_envelope_inner(msg: &str) -> Option<&str> {
+    const PREFIX: &str = "JsError(\"";
+    const SUFFIX: &str = "\")";
+    let start = msg.find(PREFIX)? + PREFIX.len();
+    let after = &msg[start..];
+    let end = after.rfind(SUFFIX)?;
+    Some(&after[..end])
+}
+
 /// Does an error message satisfy a negative expectation? OXC reports parse
 /// failures as "Parse error: …"; per spec any parse-phase rejection IS a
 /// SyntaxError, so map that onto the expected type.
@@ -64,11 +101,9 @@ fn build_failure(msg: impl Into<String>, test_path: Option<&Path>) -> TestFailur
     let msg = msg.into();
     let (mut error_type, mut error_message, js_stack) = capture_thrown_diagnostics();
     if error_type.is_none() {
-        if let Some((kind, detail)) = msg
-            .trim_start_matches("JsError(\"")
-            .trim_end_matches("\")")
-            .split_once(':')
-        {
+        let envelope_inner = js_envelope_inner(&msg);
+        let candidate = envelope_inner.unwrap_or(&msg);
+        if let Some((kind, detail)) = candidate.split_once(':') {
             error_type = Some(kind.to_string());
             error_message = Some(detail.trim().to_string());
         }
@@ -103,7 +138,7 @@ pub fn check_outcome(
             failure: TestFailure::from_message("expected error but passed"),
         },
         (Some(neg), Err(msg)) => {
-            if INFRA_MARKERS.iter().any(|m| msg.contains(m)) {
+            if !is_js_throw_msg(&msg) && INFRA_MARKERS.iter().any(|m| msg.contains(m)) {
                 return TestOutcome::Fail {
                     failure: TestFailure::from_message(format!(
                         "infrastructure failure, not a test result: {}",
@@ -1704,5 +1739,11 @@ fn first_existing(candidates: &[std::path::PathBuf]) -> Option<std::path::PathBu
     candidates.iter().find(|p| p.is_file()).cloned()
 }
 
+#[cfg(test)]
+mod classification_helpers;
+#[cfg(test)]
+mod classification_isolated_tests;
+#[cfg(test)]
+mod classification_tests;
 #[cfg(test)]
 mod tests;
