@@ -2154,3 +2154,5 @@ Stage 801 aligned process resource metric shapes with local Node.
 Stage 802 added process.hrtime.bigint timing compatibility.
 
 Stage 803 verified core module API helpers and builtin detection.
+
+Stage 804 added modern module helper method compatibility.
