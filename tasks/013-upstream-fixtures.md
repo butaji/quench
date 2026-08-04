@@ -3247,3 +3247,10 @@ Stage 1054 preserves the `n` suffix for BigInt values appended after a
 non-string format argument. Retrospective: generic inspection used `String()`
 for all primitive numbers, which drops BigInt's source notation; handling
 BigInt before the generic fallback keeps appended values Node-compatible.
+
+Stage 1056 begins the explicit UTF-8 decoder path for StringDecoder and
+correctly replaces an invalid continuation byte without consuming the next
+ASCII character. Retrospective: the runtime TextDecoder produced incorrect
+code points for raw byte input, so validation is now isolated in a named
+decoder layer; the full upstream malformed-sequence matrix still has a later
+timeout requiring further refinement.
