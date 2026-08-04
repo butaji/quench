@@ -147,6 +147,8 @@ const __quenchCoreStaticModules = new Map([
             { name: "ExperimentalWarning" }
           );
         },
+        pendingDeprecate: (...args) =>
+          globalThis.__nodeUtil.pendingDeprecate(...args),
         sleep(milliseconds) {
           if (typeof milliseconds !== "number")
             throw new TypeError('The "msec" argument must be of type number');
