@@ -223,7 +223,8 @@ pub fn make_ops_object() -> Value {
             ))
         } else if let Value::Function(function) = &o {
             let own = function.get_property(&key).is_some()
-                || matches!(key.as_str(), "length" | "name" | "prototype");
+                || matches!(key.as_str(), "length" | "name")
+                || (key == "prototype" && (!function.is_method || function.is_generator));
             let inherited = crate::eval::member::eval_function_member(function, &key)
                 .map(|value| !matches!(value, Value::Undefined))
                 .unwrap_or(false);
@@ -637,7 +638,7 @@ pub fn make_ops_object() -> Value {
             Value::Function(function) => {
                 if key == "prototype"
                     && (function.is_arrow
-                        || function.is_method
+                        || (function.is_method && !function.is_generator)
                         || (function.is_async && !function.is_generator))
                 {
                     return Ok(Value::Undefined);
@@ -657,7 +658,11 @@ pub fn make_ops_object() -> Value {
                 desc.set("value", value);
                 desc.set(
                     "writable",
-                    Value::Boolean(key == "prototype" && !function.is_arrow && !function.is_method),
+                    Value::Boolean(
+                        key == "prototype"
+                            && !function.is_arrow
+                            && (!function.is_method || function.is_generator),
+                    ),
                 );
                 desc.set("enumerable", Value::Boolean(false));
                 desc.set("configurable", Value::Boolean(key != "prototype"));

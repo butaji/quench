@@ -963,6 +963,15 @@ mod tests {
         assert!(matches!(value, crate::Value::Object(_)));
     }
 
+    #[test]
+    fn generator_method_owns_a_generator_prototype() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("var method = { *method() {} }.method; Object.getPrototypeOf(method.prototype) === Object.getPrototypeOf(function*() {}).prototype")
+            .unwrap();
+        assert_eq!(value, crate::Value::Boolean(true));
+    }
+
     use super::*;
 
     #[test]

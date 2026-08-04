@@ -419,6 +419,9 @@ impl ValueFunction {
 
     /// Remove a property. Returns true if it was present.
     pub fn remove_property(&self, key: &str) -> bool {
+        if key == "prototype" && !self.is_arrow && (!self.is_method || self.is_generator) {
+            return false;
+        }
         let removed = self.properties.borrow_mut().remove(key).is_some();
         if matches!(key, "name" | "length" | "prototype") {
             let marker = Self::deleted_marker(key);
