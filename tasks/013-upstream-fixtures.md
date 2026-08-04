@@ -2687,3 +2687,7 @@ on the public lifecycle contract while the underlying resource performs cleanup.
 Stage 963 verifies `triggerAsyncId` propagation through
 `EventEmitterAsyncResource`. Retrospective: passing a fixed nonzero ID makes
 metadata propagation observable without depending on runtime-generated IDs.
+
+Stage 964 verifies an explicit per-instance `captureRejections: false` takes
+precedence over the static default. Retrospective: saving and restoring the
+static setting keeps the precedence test isolated from later fixtures.
