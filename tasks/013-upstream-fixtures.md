@@ -1117,6 +1117,8 @@ including rejection of empty ranges.
 Stage 398 formalized asynchronous `crypto.randomFill` offset and length bounds,
 in-place Buffer mutation, and callback return identity.
 
+Stage 399 formalized base64 digest encoding for SHA-256 hashes and HMAC values.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
