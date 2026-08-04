@@ -577,3 +577,4 @@ these small fixtures isolate the currently implemented contract.
 |   578 | child_process exposes the internal fork-child entry point            | `tools/run-node-tests.sh --stage 578` |
 |   579 | child_process stdio streams expose event and encoding methods        | `tools/run-node-tests.sh --stage 579` |
 |   580 | child_process stdout emits data and end events for environment output | `tools/run-node-tests.sh --stage 580` |
+|   581 | child_process ref and unref preserve legacy return contracts         | `tools/run-node-tests.sh --stage 581` |

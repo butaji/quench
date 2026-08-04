@@ -1652,6 +1652,9 @@ UTF-8 encoding configuration.
 Stage 580 formalized child-process stdout data/end events and environment
 mapping for a spawned command.
 
+Stage 581 formalized the legacy return contracts of child-process `ref()` and
+`unref()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
