@@ -1114,6 +1114,9 @@ error for unequal `timingSafeEqual` inputs.
 Stage 397 formalized synchronous and callback `crypto.randomInt` range behavior,
 including rejection of empty ranges.
 
+Stage 398 formalized asynchronous `crypto.randomFill` offset and length bounds,
+in-place Buffer mutation, and callback return identity.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
