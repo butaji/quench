@@ -827,6 +827,15 @@ mod tests {
     }
 
     #[test]
+    fn array_copy_within_rejects_null_receiver() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("try { Array.prototype.copyWithin.call(null, 0, 0); false; } catch (e) { e instanceof TypeError; }")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx
