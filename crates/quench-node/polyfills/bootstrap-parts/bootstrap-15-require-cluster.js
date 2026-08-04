@@ -78,7 +78,17 @@ const __quenchVmModule = {
     async link() {}
     async evaluate() {}
   },
-  createContext: (sandbox = {}) => sandbox,
+  createContext: (sandbox = {}) => {
+    if (
+      sandbox === null ||
+      (typeof sandbox !== "object" && typeof sandbox !== "function")
+    ) {
+      const error = new TypeError("The options argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return sandbox;
+  },
   runInThisContext: (code) => (0, eval)(String(code)),
   runInNewContext: (code, sandbox = {}) => {
     const previous = {};
