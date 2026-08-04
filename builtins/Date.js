@@ -8,7 +8,7 @@ var _nativeValueOf = Date.prototype.__valueOf;
 // Date.prototype.toString (ES2025 §21.4.4.38)
 Date.prototype.toString = function DateToString() {
   if (this === null || this === undefined) throw ThrowTypeError("Date.prototype.toString called on null or undefined");
-  return _nativeToString.call(this);
+  return this.__toString();
 };
 
 // Date.prototype.toISOString (ES2025 §21.4.4.41)

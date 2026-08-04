@@ -45,10 +45,10 @@ Number.prototype.toPrecision = function NumberToPrecision(precision) {
 
 Number.prototype.toString = function NumberToString(radix) {
   if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.toString called on null or undefined");
-  return _nativeToString.call(this, radix);
+  return this.__toString(radix);
 };
 
 Number.prototype.valueOf = function NumberValueOf() {
   if (this === null || this === undefined) throw ThrowTypeError("Number.prototype.valueOf called on null or undefined");
-  return _nativeValueOf.call(this);
+  return this.__valueOf();
 };
