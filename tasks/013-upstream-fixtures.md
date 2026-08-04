@@ -2464,3 +2464,8 @@ Stage 916 verifies the node:module absolute-path createRequire API.
 
 Retrospective: upstream module fixtures can fail in their shared `common`
 helpers before reaching the runtime API; focused stages isolate the API path.
+
+Stage 917 verifies the node:process release metadata contract.
+
+Retrospective: runtime metadata varies by build; focused contracts should
+assert stable fields observed in the local oracle instead of optional fields.
