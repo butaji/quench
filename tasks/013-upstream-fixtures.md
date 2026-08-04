@@ -3169,6 +3169,16 @@ negative and over-limit sizes, but the Proxy apply/construct paths bypassed
 that validation and reached native typed-array errors. The focused stage and
 both upstream allocation-boundary fixtures now pass.
 
+Stage 1046 adds a small-allocation Buffer pool and verifies that adjacent
+`Buffer.from()` calls share the pool ArrayBuffer while retaining independent
+byte ranges. Retrospective: pooling was isolated to the existing final
+`Buffer.from()` wrapper, so ArrayBuffer-backed and large allocations keep their
+separate ownership rules.
+
+Upstream audit: the pool fixture now passes its shared-buffer checks; its
+remaining transfer-blocking assertions require separate MessageChannel and
+ArrayBuffer transfer behavior.
+
 Stage 1044 completes the `INSPECT_MAX_BYTES` setter contract: NaN and negative
 values receive `ERR_OUT_OF_RANGE`, non-numbers receive
 `ERR_INVALID_ARG_TYPE`, and Infinity remains accepted. Retrospective: the
