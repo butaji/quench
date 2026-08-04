@@ -21,6 +21,13 @@ fn new_evaluates_arguments_before_constructor_validation() {
 }
 
 #[test]
+fn implicit_global_assignment_creates_enumerable_property() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx.eval("function f() { __implicit_global_probe__ = 42; } f(); Object.getOwnPropertyDescriptor(this, '__implicit_global_probe__').enumerable");
+    assert_eq!(value, Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn call_through_with_environment_uses_with_object_as_this() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(

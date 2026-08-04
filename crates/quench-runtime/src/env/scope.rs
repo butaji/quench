@@ -238,7 +238,16 @@ impl Scope {
 
     pub fn create_object_binding_property(&self, name: &str, value: Value) {
         if let Some(object) = &self.object_binding {
-            object.borrow_mut().set(name, value);
+            object.borrow_mut().define(
+                name,
+                value.clone(),
+                crate::value::PropertyFlags {
+                    value: Some(value),
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                },
+            );
         }
     }
 
