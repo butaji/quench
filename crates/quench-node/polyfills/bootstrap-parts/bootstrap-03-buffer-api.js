@@ -106,12 +106,46 @@ class NodeTextEncoder {
   }
 }
 globalThis.TextEncoder = NodeTextEncoder;
+const __nodeWindows1252 = {
+  128: "€",
+  130: "‚",
+  131: "ƒ",
+  132: "„",
+  133: "…",
+  134: "†",
+  135: "‡",
+  136: "ˆ",
+  137: "‰",
+  138: "Š",
+  139: "‹",
+  140: "Œ",
+  142: "Ž",
+  145: "‘",
+  146: "’",
+  147: "“",
+  148: "”",
+  149: "•",
+  150: "–",
+  151: "—",
+  152: "˜",
+  153: "™",
+  154: "š",
+  155: "›",
+  156: "œ",
+  158: "ž",
+  159: "Ÿ"
+};
 class NodeTextDecoder {
+  constructor(encoding = "utf-8") {
+    this.encoding = String(encoding).toLowerCase();
+  }
   decode(bytes) {
     let result = "";
     for (let i = 0; i < bytes.length;) {
       const first = bytes[i++];
-      if (first < 0x80) result += String.fromCodePoint(first);
+      if (this.encoding === "windows-1252" && first >= 128)
+        result += __nodeWindows1252[first] || String.fromCodePoint(first);
+      else if (first < 0x80) result += String.fromCodePoint(first);
       else if (first < 0xe0)
         result += String.fromCodePoint(
           ((first & 0x1f) << 6) | (bytes[i++] & 0x3f)

@@ -114,18 +114,16 @@ const __quenchTrackTestResult = (result) => {
   });
   return result;
 };
-const __quenchNodeTestModule = {
-  describe: (_name, callback) =>
-    __quenchTrackTestResult(callback({ assert: globalThis.__nodeAssert })),
-  it: (_name, callback) =>
-    __quenchTrackTestResult(callback({ assert: globalThis.__nodeAssert })),
-  test: (_name, options, callback) =>
-    __quenchTrackTestResult(
-      (typeof options === "function" ? options : callback)({
-        assert: globalThis.__nodeAssert
-      })
-    )
-};
+const __quenchNodeTestModule = (name, options, callback) =>
+  __quenchTrackTestResult(
+    (typeof options === "function" ? options : callback)({
+      assert: globalThis.__nodeAssert
+    })
+  );
+__quenchNodeTestModule.describe = (_name, callback) =>
+  __quenchTrackTestResult(callback({ assert: globalThis.__nodeAssert }));
+__quenchNodeTestModule.it = __quenchNodeTestModule.describe;
+__quenchNodeTestModule.test = __quenchNodeTestModule;
 const __quenchInternalBindingModule = {
   internalBinding: (binding) => {
     if (binding === "debug")
