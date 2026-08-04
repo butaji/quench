@@ -58,8 +58,13 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
   constructor(type, options = {}) {
     if (type === undefined || typeof type === "symbol")
       throw new TypeError("CustomEvent type is invalid");
-    if (options === null || typeof options !== "object")
-      throw new TypeError("CustomEvent options must be an object");
+    if (options === null || typeof options !== "object") {
+      const error = new TypeError(
+        `The "options" argument must be of type object. Received type ${typeof options} (${String(options)})`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     super(type, options);
     Object.defineProperty(this, "detail", {
       value: options.detail === undefined ? null : options.detail,
@@ -94,6 +99,15 @@ EventTarget.prototype.removeEventListener = function (name, listener, options) {
   return __quenchEventTargetRemove.call(this, name, wrapper, options);
 };
 EventTarget.prototype.dispatchEvent = function (event) {
+  event.target = this;
+  event.currentTarget = this;
+  try {
+    Object.defineProperty(event, "eventPhase", {
+      value: 2,
+      configurable: true
+    });
+  } catch (_) {}
+  event._quenchPath = [this];
   const result = __quenchEventTargetDispatch.call(this, event);
   return result && !event.defaultPrevented;
 };
@@ -107,6 +121,36 @@ if (globalThis.Event && !Event.prototype.__quenchPassivePreventDefault) {
     if (!this._quenchPassive) originalPreventDefault.call(this);
   };
   Event.prototype.__quenchPassivePreventDefault = true;
+}
+if (globalThis.Event) {
+  Event.prototype.timeStamp ||= Date.now();
+  Event.prototype.composedPath ||= function () {
+    return this._quenchPath || [];
+  };
+  Event.prototype.returnValue ??= true;
+  Event.prototype.isTrusted ??= false;
+  Event.prototype.eventPhase ??= 0;
+  Event.prototype.cancelBubble ??= false;
+  try {
+    Object.defineProperty(Event.prototype, "cancelBubble", {
+      get() {
+        return Boolean(this._quenchCancelBubble);
+      },
+      set(value) {
+        this._quenchCancelBubble = Boolean(value);
+      },
+      configurable: true
+    });
+  } catch (_) {}
+  Event.prototype.stopPropagation ||= function () {
+    this.cancelBubble = true;
+  };
+}
+if (globalThis.CustomEvent) {
+  CustomEvent.NONE ||= 0;
+  CustomEvent.CAPTURING_PHASE ||= 1;
+  CustomEvent.AT_TARGET ||= 2;
+  CustomEvent.BUBBLING_PHASE ||= 3;
 }
 if (globalThis.AbortSignal && !AbortSignal.prototype.__quenchEventArgument) {
   const originalAddEventListener = AbortSignal.prototype.addEventListener;

@@ -297,7 +297,7 @@ __nodeWinPath.win32 = __nodeWinPath;
 globalThis.__nodePath.win32 = __nodeWinPath;
 
 globalThis.__nodeCommon = {
-  mustCall: (fn, exact = 1) => {
+  mustCall: (fn = () => {}, exact = 1) => {
     let calls = 0;
     const wrapped = function (...args) {
       calls++;
