@@ -720,3 +720,4 @@ these small fixtures isolate the currently implemented contract.
 |   721 | process stderr setMaxListeners updates the listener limit                    | `tools/run-node-tests.sh --stage 721` |
 |   722 | process stdout rawListeners reports the lightweight listener state             | `tools/run-node-tests.sh --stage 722` |
 |   723 | process stderr rawListeners reports the lightweight listener state             | `tools/run-node-tests.sh --stage 723` |
+|   724 | process stdout prependListener returns the stream for chaining                | `tools/run-node-tests.sh --stage 724` |
