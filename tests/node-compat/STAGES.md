@@ -537,3 +537,4 @@ these small fixtures isolate the currently implemented contract.
 |   538 | wasi reports unknown builtin module errors                         | `tools/run-node-tests.sh --stage 538` |
 |   539 | inspector modules report unknown builtin module errors            | `tools/run-node-tests.sh --stage 539` |
 |   540 | util parseArgs handles booleans, strings, negation, and tokens     | `tools/run-node-tests.sh --stage 540` |
+|   541 | util styleText applies ANSI styles and color options               | `tools/run-node-tests.sh --stage 541` |
