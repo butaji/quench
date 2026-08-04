@@ -103,10 +103,10 @@ pub fn check_outcome(
             }
             if !error_type_matches(&neg.phase, &neg.typ, &msg) {
                 TestOutcome::Fail {
-                    failure: TestFailure::from_message(format!(
-                        "expected {} but got: {}",
-                        neg.typ, msg
-                    )),
+                    failure: build_failure(
+                        format!("expected {} but got: {}", neg.typ, msg),
+                        test_path,
+                    ),
                 }
             } else {
                 TestOutcome::Pass

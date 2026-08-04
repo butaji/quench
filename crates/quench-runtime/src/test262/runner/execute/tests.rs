@@ -87,6 +87,28 @@ fn parse_syntax_error_matches_only_parse_phase_expectations() {
 }
 
 #[test]
+fn negative_type_mismatch_preserves_test_path_diagnostics() {
+    use crate::test262::metadata::{Negative, Test262Metadata};
+
+    let path = PathBuf::from("test/harness/diagnostic.js");
+    let meta = Test262Metadata {
+        negative: Some(Negative {
+            phase: "runtime".into(),
+            typ: "TypeError".into(),
+        }),
+        ..Test262Metadata::default()
+    };
+
+    let outcome = check_outcome(&meta, Err("RangeError: boom".into()), Some(&path));
+    assert!(matches!(
+        outcome,
+        TestOutcome::Fail { failure }
+            if failure.message.contains("expected TypeError")
+                && failure.source_path.as_deref() == Some("test/harness/diagnostic.js")
+    ));
+}
+
+#[test]
 fn isolated_runner_matches_in_process_strictness() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::default_test262_dir;
