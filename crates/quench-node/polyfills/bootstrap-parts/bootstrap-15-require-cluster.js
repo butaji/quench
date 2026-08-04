@@ -69,6 +69,46 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
   if (worker.state !== "dead")
     __quenchFinishClusterWorker(cluster, worker, workerError);
 };
+const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
+    if (descriptor && "value" in descriptor) sandbox[key] = globalThis[key];
+  }
+  for (const key of Object.getOwnPropertyNames(globalThis))
+    if (
+      !originalGlobalKeys.has(key) &&
+      !keys.includes(key) &&
+      key !== "globalThis"
+    )
+      sandbox[key] = globalThis[key];
+};
+const __quenchVmRestoreProperties = (keys, previous) => {
+  for (const key of keys) {
+    const descriptor = previous.get(key);
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else delete globalThis[key];
+  }
+};
+const __quenchVmRunInContext = (code, sandbox) => {
+  const keys = Object.getOwnPropertyNames(sandbox);
+  const previous = new Map();
+  const originalGlobalKeys = new Set(Object.getOwnPropertyNames(globalThis));
+  for (const key of keys) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
+    Object.defineProperty(globalThis, key, {
+      ...descriptor,
+      configurable: true
+    });
+  }
+  try {
+    const result = (0, eval)(String(code));
+    __quenchVmCopyProperties(sandbox, keys, originalGlobalKeys);
+    return result;
+  } finally {
+    __quenchVmRestoreProperties(keys, previous);
+  }
+};
 const __quenchVmModule = {
   SourceTextModule: class SourceTextModule {
     constructor() {
@@ -105,24 +145,7 @@ const __quenchVmModule = {
       for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
     }
   },
-  runInContext: (code, sandbox = {}) => {
-    const previous = {};
-    const originalKeys = new Set(Object.keys(globalThis));
-    for (const key of Object.keys(sandbox)) {
-      previous[key] = globalThis[key];
-      globalThis[key] = sandbox[key] === sandbox ? globalThis : sandbox[key];
-    }
-    try {
-      const result = (0, eval)(String(code));
-      for (const key of Object.keys(sandbox)) sandbox[key] = globalThis[key];
-      for (const key of Object.keys(globalThis))
-        if (!originalKeys.has(key) && key !== "globalThis")
-          sandbox[key] = globalThis[key];
-      return result;
-    } finally {
-      for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
-    }
-  }
+  runInContext: (code, sandbox = {}) => __quenchVmRunInContext(code, sandbox)
 };
 const __quenchTrackTestResult = (result) => {
   if (!result?.then) return result;

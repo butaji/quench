@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1119: VM context accessors
+
+- Fixture: `test-vm-create-context-accessors.js`
+- Preserved non-enumerable getter/setter descriptors while entering and leaving
+  a VM context.
+- Retrospective: descriptor-based injection is safer than value copying for
+  context properties with accessors or non-default attributes.
+
 ## Stage 1118: VM global identity
 
 - Fixture: `test-vm-global-identity.js`
