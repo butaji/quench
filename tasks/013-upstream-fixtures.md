@@ -2899,3 +2899,7 @@ cannot observe.
 Stage 1003 verifies Readable default-encoding validation and retention.
 Retrospective: retaining the encoding keeps this stage focused on stream state;
 the remaining Buffer hexadecimal rendering mismatch is tracked separately.
+
+Stage 1004 verifies Readable rejects invalid non-object-mode chunks. Retrospective:
+the focused error assertion keeps chunk validation independent from stream flow
+scheduling and Buffer encoding.
