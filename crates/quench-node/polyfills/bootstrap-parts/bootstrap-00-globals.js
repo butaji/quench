@@ -186,6 +186,12 @@ const __nodeProcessKill = (pid, signal) => {
   if (__nodeClusterKill(cluster, pid, signal)) return true;
   return globalThis.__quench_kill?.(pid, String(signal || "SIGTERM")) ?? true;
 };
+const __quenchOriginalCwdGet = globalThis.__quench_cwd_get;
+const __quenchDisplayCwd = () => {
+  const cwd = __quenchOriginalCwdGet();
+  return cwd.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
+};
+globalThis.__quench_cwd_get = __quenchDisplayCwd;
 globalThis.process = {
   env: new Proxy(
     {},
@@ -268,8 +274,15 @@ globalThis.process = {
     }
   },
   features: { inspector: false, tls: false, quic: false, dtls: false },
-  cwd: () => globalThis.__quench_cwd_get(),
+  cwd: __quenchDisplayCwd,
   chdir: (value) => {
+    if (typeof value !== "string") {
+      const error = new TypeError(
+        `The "directory" argument must be of type string. Received ${typeof value}`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const path = String(value);
     if (!globalThis.__quench_fs_exists(path)) {
       const error = new Error(

@@ -5,3 +5,4 @@ assert.throws(() => process.chdir("does-not-exist"), {
   syscall: "chdir",
   dest: "does-not-exist"
 });
+assert.throws(() => process.chdir({}), { code: "ERR_INVALID_ARG_TYPE" });
