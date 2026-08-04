@@ -54,6 +54,22 @@ globalThis.Event ||= class Event {
     this._quenchImmediatePropagationStopped = true;
   }
 };
+globalThis.CustomEvent ||= class CustomEvent extends Event {
+  constructor(type, options = {}) {
+    if (type === undefined || typeof type === "symbol")
+      throw new TypeError("CustomEvent type is invalid");
+    if (options === null || typeof options !== "object")
+      throw new TypeError("CustomEvent options must be an object");
+    super(type, options);
+    Object.defineProperty(this, "detail", {
+      value: options.detail === undefined ? null : options.detail,
+      enumerable: true
+    });
+  }
+  get [Symbol.toStringTag]() {
+    return "CustomEvent";
+  }
+};
 const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;
 const __quenchEventTargetRemove = EventTarget.prototype.removeEventListener;
 const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;
