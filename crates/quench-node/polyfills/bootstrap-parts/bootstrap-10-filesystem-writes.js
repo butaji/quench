@@ -431,9 +431,9 @@ globalThis.__nodeOsInitialized = false;
 globalThis.__nodeOs = new Proxy(
   {},
   {
-    get: (_, key) => {
+    get: (target, key) => {
       globalThis.__nodeOsInitialized = true;
-      return __nodeOsExports[key];
+      return Reflect.has(target, key) ? target[key] : __nodeOsExports[key];
     },
     ownKeys: () => Reflect.ownKeys(__nodeOsExports),
     getOwnPropertyDescriptor: (_, key) => ({

@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1110: os EOL override
+
+- Fixture: `test-os-eol.js`
+- Updated the OS export proxy to honor consumer-defined own properties while
+  retaining fallback values for untouched exports.
+- Retrospective: proxy-backed modules need an explicit override path for
+  descriptor-sensitive Node APIs.
+
 ## Stage 1108: process binding allowlist
 
 - Fixture: `test-process-binding-internalbinding-allowlist.js`
