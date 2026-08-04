@@ -28,6 +28,7 @@ globalThis.__nodeCommon = {
       throw new Error(message);
     },
   noop: () => {},
+  allowGlobals: (..._values) => {},
   isAlive: (pid) => {
     const alive = globalThis.__quench_node_pids || new Set();
     globalThis.__quench_node_pids = alive;
