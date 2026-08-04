@@ -695,3 +695,4 @@ these small fixtures isolate the currently implemented contract.
 |   696 | process stdin pause and resume are callable and chainable                     | `tools/run-node-tests.sh --stage 696` |
 |   697 | process stdout on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 697` |
 |   698 | process stderr on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 698` |
+|   699 | process stdin setEncoding returns the stream for chaining                     | `tools/run-node-tests.sh --stage 699` |
