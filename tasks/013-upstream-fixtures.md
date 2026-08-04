@@ -1670,6 +1670,9 @@ stdio streams.
 Stage 586 formalized `process.send()` validation errors for invalid callbacks
 and unsupported IPC handle arguments.
 
+Stage 587 formalized equivalent callback validation for forked child-process
+`send()` calls.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
