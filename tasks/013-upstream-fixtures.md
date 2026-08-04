@@ -2198,3 +2198,5 @@ Stage 823 verified modern node:os parallelism and priority helpers.
 Stage 824 verified the core node:path API.
 
 Stage 825 added path.matchesGlob compatibility.
+
+Stage 826 verified the core node:url API.
