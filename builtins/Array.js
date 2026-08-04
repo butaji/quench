@@ -1,6 +1,7 @@
 // Self-hosted Array builtins on top of __ops__
 var ops = __ops__;
 var IsCallable = ops.IsCallable;
+var IsConstructor = ops.IsConstructor;
 var IsArray = ops.IsArray;
 var ToObject = ops.ToObject;
 var ThrowTypeError = ops.ThrowTypeError;
@@ -101,7 +102,7 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
       values.push(mapfn === undefined ? element : await mapfn.call(thisArg, element, i, items));
     }
   }
-  var result = typeof this === 'function' ? new this(values.length) : new Array(values.length);
+  var result = IsConstructor(this) ? new this(values.length) : new Array(values.length);
   for (var j = 0; j < values.length; j++) CreateDataProperty(result, j, values[j]);
   result.length = values.length;
   return result;
