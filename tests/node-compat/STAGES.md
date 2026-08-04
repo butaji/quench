@@ -799,3 +799,4 @@ these small fixtures isolate the currently implemented contract.
 |   800 | process exposes launch metadata                                 | `tools/run-node-tests.sh --stage 800` |
 |   801 | process exposes resource metric shapes                          | `tools/run-node-tests.sh --stage 801` |
 |   802 | process exposes high-resolution bigint timing                   | `tools/run-node-tests.sh --stage 802` |
+|   803 | module exposes core API helpers                                 | `tools/run-node-tests.sh --stage 803` |
