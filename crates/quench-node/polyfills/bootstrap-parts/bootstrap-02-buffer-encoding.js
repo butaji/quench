@@ -315,6 +315,29 @@ class NodeBuffer extends Uint8Array {
     return new NodeBuffer(NodeBuffer._validateSize(size));
   }
 
+  static concat(list, totalLength) {
+    if (!Array.isArray(list))
+      throw new TypeError("The list argument must be an Array");
+    if (
+      totalLength !== undefined &&
+      (!Number.isInteger(totalLength) || totalLength < 0)
+    )
+      throw new RangeError("The value of length is out of range");
+    const length =
+      totalLength ?? list.reduce((sum, item) => sum + item.byteLength, 0);
+    const output = new NodeBuffer(length);
+    let offset = 0;
+    for (const item of list) {
+      if (!ArrayBuffer.isView(item))
+        throw new TypeError("list items must be buffers");
+      const count = Math.min(item.byteLength, length - offset);
+      output.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
+      offset += count;
+      if (offset === length) break;
+    }
+    return output;
+  }
+
   static _validateSize(size) {
     if (typeof size !== "number") {
       const error = new TypeError('The "size" argument must be of type number');

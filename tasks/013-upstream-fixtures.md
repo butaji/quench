@@ -2974,3 +2974,12 @@ Buffer fix.
 Upstream audit: `test-stream-readable-default-encoding.js` and
 `test-buffer-badhex.js` now pass in full; the earlier stage-1003 Buffer
 rendering caveat is resolved.
+
+Stage 1014 adds final-layer `Buffer.concat()` support for Buffer and typed-array
+views, including explicit output lengths and zero-filled tails. Retrospective:
+testing a mixed Buffer/Uint8Array input keeps the implementation focused on
+copy semantics while avoiding another host callback.
+
+Upstream audit: `test-buffer-concat.js` reaches existing exact error-message
+compatibility gaps in the older concat validation path; the focused copy and
+length behavior now pass.
