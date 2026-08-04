@@ -2656,3 +2656,8 @@ from event ordering and confirms no listener remains attached.
 Stage 956 adds `EventEmitter` capture-rejection behavior for async listeners.
 Retrospective: handling promise rejection in `emit()` with a microtask keeps
 error delivery asynchronous while preserving the original error object.
+
+Stage 957 verifies the custom `nodejs.rejection` capture hook receives the
+original error, event name, and rejection context. Retrospective: testing the
+hook separately from the default `error` path prevents fallback behavior from
+masking missing symbol-based dispatch.
