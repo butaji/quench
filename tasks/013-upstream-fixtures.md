@@ -3087,3 +3087,10 @@ shared input formatter keeps search APIs consistent with `Buffer.from()` and
 Upstream audit: the focused includes-validation stage passes; the full
 `test-buffer-includes.js` fixture still exceeds the configured harness timeout
 in a separate search-path issue.
+
+Stage 1031 restores the legacy `new Buffer(number)` constructor behavior and
+verifies its final subclass and ArrayBuffer properties. Retrospective: the
+parent-property fixture exposed a difference between the callable Buffer API
+and its constructor trap; matching both paths keeps legacy construction local
+to the public API layer.
+The focused stage and upstream `test-buffer-parent-property.js` now pass.
