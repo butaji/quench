@@ -1331,6 +1331,9 @@ state, queued-buffer decoding, and unknown-encoding validation.
 Stage 473 formalized Readable encoding decoding data delivered through flowing
 `data` events.
 
+Stage 474 formalized Writable writes after destruction returning false and
+reporting `ERR_STREAM_DESTROYED`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
