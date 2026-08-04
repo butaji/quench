@@ -401,3 +401,4 @@ these small fixtures isolate the currently implemented contract.
 |   402 | perf_hooks performance clock and serialization                 | `tools/run-node-tests.sh --stage 402` |
 |   403 | perf_hooks user timing marks and measures                      | `tools/run-node-tests.sh --stage 403` |
 |   404 | perf_hooks entry queries and measure clearing                  | `tools/run-node-tests.sh --stage 404` |
+|   405 | timers/promises async interval iteration and values           | `tools/run-node-tests.sh --stage 405` |
