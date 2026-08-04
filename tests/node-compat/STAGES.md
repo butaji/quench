@@ -676,3 +676,4 @@ these small fixtures isolate the currently implemented contract.
 |   677 | process versions entries expose non-empty strings                            | `tools/run-node-tests.sh --stage 677` |
 |   678 | process execPath exposes a non-empty executable path string                   | `tools/run-node-tests.sh --stage 678` |
 |   679 | process hrtime exposes a two-component high-resolution tuple                  | `tools/run-node-tests.sh --stage 679` |
+|   680 | process hrtime.bigint exposes a non-negative nanosecond BigInt                 | `tools/run-node-tests.sh --stage 680` |
