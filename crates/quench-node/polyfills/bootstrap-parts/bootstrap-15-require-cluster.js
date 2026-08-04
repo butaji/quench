@@ -178,6 +178,8 @@ const __quenchVmModule = {
     }
   },
   createScript: (code) => new __quenchVmModule.Script(code),
+  compileFunction: (code, params, options) =>
+    __quenchVmCompileFunction(code, params, options),
   SourceTextModule: class SourceTextModule {
     constructor() {
       this.namespace = Object.create(null);
@@ -186,9 +188,10 @@ const __quenchVmModule = {
     async link() {}
     async evaluate() {}
   },
-  createContext: (sandbox = {}) => {
+  createContext: (sandbox = {}, options) => {
     if (!__quenchVmIsObject(sandbox))
       __quenchVmTypeError("The options argument must be an object");
+    __quenchVmValidateContextOptions(options);
     __quenchVmContexts.add(sandbox);
     return sandbox;
   },

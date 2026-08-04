@@ -1,5 +1,37 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1134: common string argument formatting
+
+- Fixture: `test-vm-basic.js` invalid-options diagnostics
+- Matched the Node common helper’s quoted string rendering in invalid argument
+  messages.
+- Retrospective: shared fixture helpers must produce the same diagnostic text
+  as the upstream helper before API validation assertions can be trusted.
+
+## Stage 1133: VM compileFunction basics
+
+- Fixture: `test-vm-basic.js` compile-function contract
+- Added callable parameterized functions, no-parameter function string output,
+  and initial code/parameter/options validation.
+- Retrospective: wrap the host `Function` constructor only where Node’s
+  observable function representation differs.
+
+## Stage 1132: VM context option validation
+
+- Fixture: `test-vm-basic.js` context options
+- Validated context metadata option types for `createContext()` and
+  `runInNewContext()`.
+- Retrospective: keep context metadata validation separate from execution
+  options because both APIs share the same call position with different keys.
+
+## Stage 1131: assert throws predicates
+
+- Fixture: `test-vm-basic.js` filename matcher
+- Distinguished error-constructor expectations from predicate callbacks in
+  `assert.throws`, allowing ordinary functions with a `.prototype` property.
+- Retrospective: validate harness semantics before changing the API under test;
+  the VM stack formatting was already correct.
+
 ## Stage 1130: process object brand
 
 - Fixture: `test-vm-basic.js` run-in-this-context contract
