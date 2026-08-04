@@ -111,7 +111,39 @@
       involuntaryContextSwitches: 0,
       voluntaryContextSwitches: 0
     });
-    globalThis.process.cpuUsage ||= () => ({ user: 0, system: 0 });
+    globalThis.process.cpuUsage = (previous) => {
+      if (previous === undefined) return { user: 0, system: 0 };
+      if (!previous || typeof previous !== "object") {
+        const error = new TypeError(
+          `The "prevValue" argument must be of type object. Received type ${typeof previous} (${String(previous)})`
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      for (const field of ["user", "system"]) {
+        const value = previous[field];
+        if (typeof value !== "number") {
+          const received =
+            value == null
+              ? ` Received ${value}`
+              : ` Received type ${typeof value} (${String(value)})`;
+          const error = new TypeError(
+            `The "prevValue.${field}" property must be of type number.` +
+              received
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (!Number.isFinite(value) || value < 0) {
+          const error = new RangeError(
+            `The property 'prevValue.${field}' is invalid. Received ${value}`
+          );
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+      }
+      return { user: 0, system: 0 };
+    };
     globalThis.process.memoryUsage.rss ||= () => 0;
   }
 }

@@ -3377,3 +3377,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Populated canonical Node environment flags and protected the set from direct
   and prototype-level mutation.
 - Verified the focused stage and Node's allowed-flags fixture.
+### Stage 1099: process CPU usage validation
+
+- Added typed and range validation for the `process.cpuUsage(previous)` shape.
+- Verified the focused stage and Node's complete CPU usage fixture.
