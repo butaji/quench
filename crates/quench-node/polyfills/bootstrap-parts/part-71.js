@@ -1,3 +1,16 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchChildLifecycleRequire = globalThis.require;\nconst __quenchChildLifecycle = __quenchChildLifecycleRequire("child_process");\nconst __quenchLifecycleSpawn = __quenchChildLifecycle.spawn;\n__quenchChildLifecycle.spawn = (...args) => { const child = __quenchLifecycleSpawn(...args); const originalOn = child.on; child.on = (event, listener) => { if (event === "spawn" && typeof listener === "function") queueMicrotask(() => listener.call(child)); return originalOn.call(child, event, listener); }; child.once("exit", (code, signal) => queueMicrotask(() => child.emit("close", code, signal))); return child; };\n'
-);
+const __quenchChildLifecycleRequire = globalThis.require;
+const __quenchChildLifecycle = __quenchChildLifecycleRequire("child_process");
+const __quenchLifecycleSpawn = __quenchChildLifecycle.spawn;
+__quenchChildLifecycle.spawn = (...args) => {
+  const child = __quenchLifecycleSpawn(...args);
+  const originalOn = child.on;
+  child.on = (event, listener) => {
+    if (event === "spawn" && typeof listener === "function")
+      queueMicrotask(() => listener.call(child));
+    return originalOn.call(child, event, listener);
+  };
+  child.once("exit", (code, signal) =>
+    queueMicrotask(() => child.emit("close", code, signal))
+  );
+  return child;
+};

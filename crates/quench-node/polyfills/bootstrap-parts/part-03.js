@@ -1,3 +1,364 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.Buffer = new Proxy(NodeBuffer, {\n  apply(_target, _thisArg, args) {\n    if (typeof args[0] === "number") return new NodeBuffer(args[0]);\n    return NodeBuffer.from(...args);\n  },\n  construct(_target, args) {\n    if (typeof args[0] === "number") {\n      const error = new TypeError(\n        \'The "string" argument must be of type string\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    return NodeBuffer.from(...args);\n  },\n});\nNodeBuffer.poolSize = 8192;\nfor (const name of [\n  "ascii",\n  "base64",\n  "base64url",\n  "latin1",\n  "hex",\n  "ucs2",\n  "utf8",\n]) {\n  NodeBuffer.prototype[`${name}Slice`] = NodeBuffer.prototype.slice;\n  NodeBuffer.prototype[`${name}Write`] = NodeBuffer.prototype.write;\n}\nNodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =\n  NodeBuffer.prototype.inspect;\nfor (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {\n  NodeBuffer.prototype[`readUint${name}`] =\n    NodeBuffer.prototype[`readUInt${name}`];\n  NodeBuffer.prototype[`writeUint${name}`] =\n    NodeBuffer.prototype[`writeUInt${name}`];\n}\nNodeBuffer.prototype.readUintLE = NodeBuffer.prototype.readUIntLE;\nNodeBuffer.prototype.toLocaleString = NodeBuffer.prototype.toString;\nNodeBuffer.prototype.readUintBE = NodeBuffer.prototype.readUIntBE;\nNodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;\nNodeBuffer.prototype.writeUintBE = NodeBuffer.prototype.writeUIntBE;\nNodeBuffer.prototype.readBigUint64LE = NodeBuffer.prototype.readBigUInt64LE;\nNodeBuffer.prototype.readBigUint64BE = NodeBuffer.prototype.readBigUInt64BE;\nNodeBuffer.prototype.writeBigUint64LE = NodeBuffer.prototype.writeBigUInt64LE;\nNodeBuffer.prototype.writeBigUint64BE = NodeBuffer.prototype.writeBigUInt64BE;\nconst __nodeGetOwnPropertyNames = Object.getOwnPropertyNames;\nObject.getOwnPropertyNames = (value) => {\n  const names = __nodeGetOwnPropertyNames(value);\n  return value === NodeBuffer.prototype\n    ? names.filter((name) => !name.startsWith("_"))\n    : names;\n};\nconst nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();\nconst nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");\nclass NodeTextEncoder {\n  encode(value) {\n    const output = [];\n    const input = String(value);\n    for (let index = 0; index < input.length; index++) {\n      let code = input.charCodeAt(index);\n      if (code >= 0xd800 && code <= 0xdbff) {\n        const next = input.charCodeAt(index + 1);\n        if (next >= 0xdc00 && next <= 0xdfff) {\n          code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);\n          index++;\n        } else code = 0xfffd;\n      } else if (code >= 0xdc00 && code <= 0xdfff) code = 0xfffd;\n      if (code < 0x80) output.push(code);\n      else if (code < 0x800)\n        output.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));\n      else if (code < 0x10000)\n        output.push(\n          0xe0 | (code >> 12),\n          0x80 | ((code >> 6) & 0x3f),\n          0x80 | (code & 0x3f),\n        );\n      else\n        output.push(\n          0xf0 | (code >> 18),\n          0x80 | ((code >> 12) & 0x3f),\n          0x80 | ((code >> 6) & 0x3f),\n          0x80 | (code & 0x3f),\n        );\n    }\n    return new Uint8Array(output);\n  }\n}\nglobalThis.TextEncoder = NodeTextEncoder;\nclass NodeTextDecoder {\n  decode(bytes) {\n    let result = "";\n    for (let i = 0; i < bytes.length; ) {\n      const first = bytes[i++];\n      if (first < 0x80) result += String.fromCodePoint(first);\n      else if (first < 0xe0)\n        result += String.fromCodePoint(\n          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f),\n        );\n      else if (first < 0xf0)\n        result += String.fromCodePoint(\n          ((first & 0x0f) << 12) |\n            ((bytes[i++] & 0x3f) << 6) |\n            (bytes[i++] & 0x3f),\n        );\n      else\n        result += String.fromCodePoint(\n          ((first & 7) << 18) |\n            ((bytes[i++] & 0x3f) << 12) |\n            ((bytes[i++] & 0x3f) << 6) |\n            (bytes[i++] & 0x3f),\n        );\n    }\n    return result;\n  }\n}\nglobalThis.TextDecoder = NodeTextDecoder;\nconst nodePathValue = (value) =>\n  value instanceof NodeBuffer\n    ? value.toString()\n    : value instanceof Uint8Array\n      ? new NodeTextDecoder().decode(value)\n      : value instanceof globalThis.__nodeURL\n        ? globalThis.__nodeUrlModule.fileURLToPath(value)\n        : String(value);\nconst nodeFsPath = (value) => {\n  if (\n    typeof value === "string" ||\n    value instanceof NodeBuffer ||\n    value instanceof Uint8Array ||\n    value instanceof globalThis.__nodeURL\n  )\n    return nodePathValue(value);\n  const error = new TypeError(\n    \'The "path" argument must be of type string or an instance of Buffer or URL\',\n  );\n  error.code = "ERR_INVALID_ARG_TYPE";\n  throw error;\n};\n\nglobalThis.__nodeAssert = (value, message) => {\n  if (!value) __nodeAssertionFailure(message);\n};\nglobalThis.__nodeAssert.AssertionError = class AssertionError extends Error {\n  constructor(message) {\n    super(message);\n    this.name = "AssertionError";\n  }\n};\nconst __nodeAssertionFailure = (message) => {\n  if (message instanceof Error) throw message;\n  const error = new globalThis.__nodeAssert.AssertionError(\n    message || "Assertion failed",\n  );\n  error.code = "ERR_ASSERTION";\n  throw error;\n};\nglobalThis.__nodeAssert.strictEqual = (actual, expected, message) => {\n  if (!Object.is(actual, expected)) {\n    const detail =\n      actual instanceof Error && expected instanceof Error\n        ? `Expected "actual" to be reference-equal to "expected":\\n+ actual - expected\\n\\n+ [${actual.name}: ${actual.message}]\\n- [${expected.name}: ${expected.message}]\\n`\n        : actual &&\n            expected &&\n            typeof actual === "object" &&\n            typeof expected === "object"\n          ? `Expected "actual" to be reference-equal to "expected":\\n+ actual\\n- expected\\n`\n          : `${actual} !== ${expected}`;\n    __nodeAssertionFailure(message || detail);\n  }\n};\nglobalThis.__nodeAssert.equal = (actual, expected, message) => {\n  if (actual != expected)\n    __nodeAssertionFailure(message || `${actual} != ${expected}`);\n};\nglobalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {\n  if (Object.is(actual, expected)) {\n    const rendered =\n      typeof actual === "string" && actual.length > 20\n        ? `\\n\\n\'${actual}\'`\n        : ` ${actual}`;\n    __nodeAssertionFailure(\n      message || `Expected "actual" to be strictly unequal to:${rendered}`,\n    );\n  }\n};\nglobalThis.__nodeAssert.notEqual = (actual, expected, message) => {\n  if (actual == expected) {\n    const error = new globalThis.__nodeAssert.AssertionError(\n      message || `${actual} != ${expected}`,\n    );\n    error.operator = "!=";\n    throw error;\n  }\n};\nglobalThis.__nodeAssert.ok = globalThis.__nodeAssert;\nconst __nodeAssertNormalize = (value, seen = new WeakSet()) => {\n  if (typeof value === "bigint") return `${value}n`;\n  if (value === null || typeof value !== "object") return value;\n  if (seen.has(value)) return "[Circular]";\n  seen.add(value);\n  if (ArrayBuffer.isView(value)) {\n    const values = [];\n    let length = 0;\n    try {\n      length = value.length || 0;\n    } catch (_) {}\n    for (let index = 0; index < length; index++)\n      values.push(__nodeAssertNormalize(value[index], seen));\n    return { constructor: value.constructor.name, values };\n  }\n  if (Array.isArray(value))\n    return value.map((item) => __nodeAssertNormalize(item, seen));\n  const normalized = {};\n  for (const key of Object.keys(value))\n    normalized[key] = __nodeAssertNormalize(value[key], seen);\n  return normalized;\n};\nglobalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {\n  if (\n    JSON.stringify(__nodeAssertNormalize(actual)) !==\n    JSON.stringify(__nodeAssertNormalize(expected))\n  ) {\n    __nodeAssertionFailure(message || "values differ");\n  }\n};\nglobalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {\n  if (\n    JSON.stringify(__nodeAssertNormalize(actual)) ===\n    JSON.stringify(__nodeAssertNormalize(expected))\n  )\n    __nodeAssertionFailure(message || "values are deeply equal");\n};\nglobalThis.__nodeAssert.throws = (fn, expected, message) => {\n  let thrown = false;\n  let captured;\n  try {\n    fn();\n  } catch (error) {\n    thrown = true;\n    captured = error;\n    if (typeof expected === "function" && expected.prototype === undefined) {\n      if (!expected(error)) throw error;\n    } else if (typeof expected === "function" && !(error instanceof expected)) {\n      const assertion = new globalThis.__nodeAssert.AssertionError(\n        `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\\n\\nError message:\\n\\n${error.message}`,\n      );\n      assertion.generatedMessage = true;\n      assertion.code = "ERR_ASSERTION";\n      assertion.operator = "throws";\n      assertion.actual = error;\n      assertion.expected = expected;\n      throw assertion;\n    }\n    if (expected instanceof RegExp && !expected.test(String(error))) {\n      const assertion = new globalThis.__nodeAssert.AssertionError(\n        `The input did not match the regular expression ${expected}. Input:\\n\\n\'${String(error)}\'\\n`,\n      );\n      assertion.code = "ERR_ASSERTION";\n      assertion.operator = "throws";\n      assertion.actual = error;\n      assertion.expected = expected;\n      throw assertion;\n    }\n    if (expected && typeof expected === "object") {\n      if (expected.name && error.name !== expected.name) throw error;\n      if (expected.message && error.message !== expected.message) throw error;\n      if (expected.code && error.code !== expected.code) throw error;\n      if (expected.operator && error.operator !== expected.operator)\n        throw error;\n    }\n  }\n  if (!thrown) {\n    const label =\n      typeof expected === "function"\n        ? ` (${expected.name})`\n        : typeof expected === "string"\n          ? `: ${expected}`\n          : ".";\n    const assertion = new globalThis.__nodeAssert.AssertionError(\n      `Missing expected exception${label}${message ? `: ${message}` : ""}`,\n    );\n    assertion.code = "ERR_ASSERTION";\n    assertion.operator = "throws";\n    assertion.actual = undefined;\n    assertion.expected = expected;\n    throw assertion;\n  }\n  return captured;\n};\nglobalThis.__nodeAssert.ifError = (error) => {\n  if (error) throw error;\n};\nglobalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {\n  try {\n    fn();\n  } catch (error) {\n    if (typeof expected === "function" && !(error instanceof expected))\n      throw error;\n    const text = typeof expected === "string" ? expected : message;\n    const assertion = new globalThis.__nodeAssert.AssertionError(\n      `Got unwanted exception${text ? `: ${text}` : "."}\\nActual message: "${error.message}"`,\n    );\n    assertion.code = "ERR_ASSERTION";\n    assertion.operator = "doesNotThrow";\n    throw assertion;\n  }\n};\nglobalThis.__nodeAssert.rejects = (promiseOrFn, expected) =>\n  Promise.resolve()\n    .then(() =>\n      typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn,\n    )\n    .then(\n      () => {\n        throw new Error("Missing expected rejection");\n      },\n      (error) => {\n        if (expected && expected.name && error.name !== expected.name)\n          throw error;\n        return error;\n      },\n    );\nglobalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>\n  Promise.resolve()\n    .then(() =>\n      typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn,\n    )\n    .catch((error) => {\n      throw new Error(message || `Unexpected rejection: ${error}`);\n    });\nglobalThis.__nodeAssert.match = (value, expression) => {\n  if (!expression.test(String(value)))\n    throw new Error("Value did not match expression");\n};\nglobalThis.__nodeAssert.strict = globalThis.__nodeAssert;\n\nconst __nodePathArg = (value) => {\n  if (typeof value !== "string") {\n    const error = new TypeError(\'The "path" argument must be of type string\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  return value;\n};\n'
-);
+globalThis.Buffer = new Proxy(NodeBuffer, {
+  apply(_target, _thisArg, args) {
+    if (typeof args[0] === "number") return new NodeBuffer(args[0]);
+    return NodeBuffer.from(...args);
+  },
+  construct(_target, args) {
+    if (typeof args[0] === "number") {
+      const error = new TypeError(
+        'The "string" argument must be of type string'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return NodeBuffer.from(...args);
+  }
+});
+NodeBuffer.poolSize = 8192;
+for (const name of [
+  "ascii",
+  "base64",
+  "base64url",
+  "latin1",
+  "hex",
+  "ucs2",
+  "utf8"
+]) {
+  NodeBuffer.prototype[`${name}Slice`] = NodeBuffer.prototype.slice;
+  NodeBuffer.prototype[`${name}Write`] = NodeBuffer.prototype.write;
+}
+NodeBuffer.prototype[Symbol.for("nodejs.util.inspect.custom")] =
+  NodeBuffer.prototype.inspect;
+for (const name of ["8", "16LE", "16BE", "32LE", "32BE"]) {
+  NodeBuffer.prototype[`readUint${name}`] =
+    NodeBuffer.prototype[`readUInt${name}`];
+  NodeBuffer.prototype[`writeUint${name}`] =
+    NodeBuffer.prototype[`writeUInt${name}`];
+}
+NodeBuffer.prototype.readUintLE = NodeBuffer.prototype.readUIntLE;
+NodeBuffer.prototype.toLocaleString = NodeBuffer.prototype.toString;
+NodeBuffer.prototype.readUintBE = NodeBuffer.prototype.readUIntBE;
+NodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;
+NodeBuffer.prototype.writeUintBE = NodeBuffer.prototype.writeUIntBE;
+NodeBuffer.prototype.readBigUint64LE = NodeBuffer.prototype.readBigUInt64LE;
+NodeBuffer.prototype.readBigUint64BE = NodeBuffer.prototype.readBigUInt64BE;
+NodeBuffer.prototype.writeBigUint64LE = NodeBuffer.prototype.writeBigUInt64LE;
+NodeBuffer.prototype.writeBigUint64BE = NodeBuffer.prototype.writeBigUInt64BE;
+const __nodeGetOwnPropertyNames = Object.getOwnPropertyNames;
+Object.getOwnPropertyNames = (value) => {
+  const names = __nodeGetOwnPropertyNames(value);
+  return value === NodeBuffer.prototype
+    ? names.filter((name) => !name.startsWith("_"))
+    : names;
+};
+const nodeAtob = (value) => NodeBuffer.from(String(value), "base64").toString();
+const nodeBtoa = (value) => NodeBuffer.from(String(value)).toString("base64");
+const __nodeEncodeCodePoint = (output, code) => {
+  if (code < 0x80) return output.push(code);
+  if (code < 0x800)
+    return output.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+  if (code < 0x10000)
+    return output.push(
+      0xe0 | (code >> 12),
+      0x80 | ((code >> 6) & 0x3f),
+      0x80 | (code & 0x3f)
+    );
+  return output.push(
+    0xf0 | (code >> 18),
+    0x80 | ((code >> 12) & 0x3f),
+    0x80 | ((code >> 6) & 0x3f),
+    0x80 | (code & 0x3f)
+  );
+};
+const __nodeReadCodePoint = (input, index) => {
+  const code = input.charCodeAt(index);
+  if (code < 0xd800 || code > 0xdfff) return [code, index];
+  const next = input.charCodeAt(index + 1);
+  if (code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff)
+    return [0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00), index + 1];
+  return [0xfffd, index];
+};
+class NodeTextEncoder {
+  encode(value) {
+    const output = [];
+    const input = String(value);
+    for (let index = 0; index < input.length; index++) {
+      const [code, nextIndex] = __nodeReadCodePoint(input, index);
+      index = nextIndex;
+      __nodeEncodeCodePoint(output, code);
+    }
+    return new Uint8Array(output);
+  }
+}
+globalThis.TextEncoder = NodeTextEncoder;
+class NodeTextDecoder {
+  decode(bytes) {
+    let result = "";
+    for (let i = 0; i < bytes.length;) {
+      const first = bytes[i++];
+      if (first < 0x80) result += String.fromCodePoint(first);
+      else if (first < 0xe0)
+        result += String.fromCodePoint(
+          ((first & 0x1f) << 6) | (bytes[i++] & 0x3f)
+        );
+      else if (first < 0xf0)
+        result += String.fromCodePoint(
+          ((first & 0x0f) << 12) |
+            ((bytes[i++] & 0x3f) << 6) |
+            (bytes[i++] & 0x3f)
+        );
+      else
+        result += String.fromCodePoint(
+          ((first & 7) << 18) |
+            ((bytes[i++] & 0x3f) << 12) |
+            ((bytes[i++] & 0x3f) << 6) |
+            (bytes[i++] & 0x3f)
+        );
+    }
+    return result;
+  }
+}
+globalThis.TextDecoder = NodeTextDecoder;
+const nodePathValue = (value) =>
+  value instanceof NodeBuffer
+    ? value.toString()
+    : value instanceof Uint8Array
+      ? new NodeTextDecoder().decode(value)
+      : value instanceof globalThis.__nodeURL
+        ? globalThis.__nodeUrlModule.fileURLToPath(value)
+        : String(value);
+const nodeFsPath = (value) => {
+  if (
+    typeof value === "string" ||
+    value instanceof NodeBuffer ||
+    value instanceof Uint8Array ||
+    value instanceof globalThis.__nodeURL
+  )
+    return nodePathValue(value);
+  const error = new TypeError(
+    'The "path" argument must be of type string or an instance of Buffer or URL'
+  );
+  error.code = "ERR_INVALID_ARG_TYPE";
+  throw error;
+};
+
+globalThis.__nodeAssert = (value, message) => {
+  if (!value) __nodeAssertionFailure(message);
+};
+globalThis.__nodeAssert.AssertionError = class AssertionError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AssertionError";
+  }
+};
+const __nodeAssertionFailure = (message) => {
+  if (message instanceof Error) throw message;
+  const error = new globalThis.__nodeAssert.AssertionError(
+    message || "Assertion failed"
+  );
+  error.code = "ERR_ASSERTION";
+  throw error;
+};
+globalThis.__nodeAssert.strictEqual = (actual, expected, message) => {
+  if (!Object.is(actual, expected)) {
+    const detail =
+      actual instanceof Error && expected instanceof Error
+        ? `Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ [${actual.name}: ${actual.message}]\n- [${expected.name}: ${expected.message}]\n`
+        : actual &&
+            expected &&
+            typeof actual === "object" &&
+            typeof expected === "object"
+          ? `Expected "actual" to be reference-equal to "expected":\n+ actual\n- expected\n`
+          : `${actual} !== ${expected}`;
+    __nodeAssertionFailure(message || detail);
+  }
+};
+globalThis.__nodeAssert.equal = (actual, expected, message) => {
+  if (actual != expected)
+    __nodeAssertionFailure(message || `${actual} != ${expected}`);
+};
+globalThis.__nodeAssert.notStrictEqual = (actual, expected, message) => {
+  if (Object.is(actual, expected)) {
+    const rendered =
+      typeof actual === "string" && actual.length > 20
+        ? `\n\n'${actual}'`
+        : ` ${actual}`;
+    __nodeAssertionFailure(
+      message || `Expected "actual" to be strictly unequal to:${rendered}`
+    );
+  }
+};
+globalThis.__nodeAssert.notEqual = (actual, expected, message) => {
+  if (actual == expected) {
+    const error = new globalThis.__nodeAssert.AssertionError(
+      message || `${actual} != ${expected}`
+    );
+    error.operator = "!=";
+    throw error;
+  }
+};
+globalThis.__nodeAssert.ok = globalThis.__nodeAssert;
+const __nodeAssertNormalizeView = (value, seen) => {
+  const values = [];
+  let length = 0;
+  try {
+    length = value.length || 0;
+  } catch (_) {}
+  for (let index = 0; index < length; index++)
+    values.push(__nodeAssertNormalize(value[index], seen));
+  return { constructor: value.constructor.name, values };
+};
+const __nodeAssertNormalizeObject = (value, seen) => {
+  const normalized = {};
+  for (const key of Object.keys(value))
+    normalized[key] = __nodeAssertNormalize(value[key], seen);
+  return normalized;
+};
+const __nodeAssertNormalize = (value, seen = new WeakSet()) => {
+  if (typeof value === "bigint") return `${value}n`;
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (ArrayBuffer.isView(value)) return __nodeAssertNormalizeView(value, seen);
+  if (Array.isArray(value))
+    return value.map((item) => __nodeAssertNormalize(item, seen));
+  return __nodeAssertNormalizeObject(value, seen);
+};
+globalThis.__nodeAssert.deepStrictEqual = (actual, expected, message) => {
+  if (
+    JSON.stringify(__nodeAssertNormalize(actual)) !==
+    JSON.stringify(__nodeAssertNormalize(expected))
+  ) {
+    __nodeAssertionFailure(message || "values differ");
+  }
+};
+globalThis.__nodeAssert.notDeepStrictEqual = (actual, expected, message) => {
+  if (
+    JSON.stringify(__nodeAssertNormalize(actual)) ===
+    JSON.stringify(__nodeAssertNormalize(expected))
+  )
+    __nodeAssertionFailure(message || "values are deeply equal");
+};
+const __nodeAssertMatchExpectedFunction = (error, expected) => {
+  if (expected.prototype === undefined) {
+    if (!expected(error)) throw error;
+    return;
+  }
+  if (!(error instanceof expected)) {
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `The error is expected to be an instance of "${expected.name}". Received "${error.constructor.name}"\n\nError message:\n\n${error.message}`
+    );
+    assertion.generatedMessage = true;
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "throws";
+    assertion.actual = error;
+    assertion.expected = expected;
+    throw assertion;
+  }
+};
+const __nodeAssertMatchExpectedRegExp = (error, expected) => {
+  if (expected instanceof RegExp && !expected.test(String(error))) {
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `The input did not match the regular expression ${expected}. Input:\n\n'${String(error)}'\n`
+    );
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "throws";
+    assertion.actual = error;
+    assertion.expected = expected;
+    throw assertion;
+  }
+};
+const __nodeAssertMatchExpectedObject = (error, expected) => {
+  if (!expected || typeof expected !== "object") return;
+  for (const key of ["name", "message", "code", "operator"])
+    if (expected[key] && error[key] !== expected[key]) throw error;
+};
+const __nodeAssertMatchExpected = (error, expected) => {
+  if (typeof expected === "function")
+    return __nodeAssertMatchExpectedFunction(error, expected);
+  __nodeAssertMatchExpectedRegExp(error, expected);
+  __nodeAssertMatchExpectedObject(error, expected);
+};
+globalThis.__nodeAssert.throws = (fn, expected, message) => {
+  let thrown = false;
+  let captured;
+  try {
+    fn();
+  } catch (error) {
+    thrown = true;
+    captured = error;
+    __nodeAssertMatchExpected(error, expected);
+  }
+  if (!thrown) {
+    const label =
+      typeof expected === "function"
+        ? ` (${expected.name})`
+        : typeof expected === "string"
+          ? `: ${expected}`
+          : ".";
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `Missing expected exception${label}${message ? `: ${message}` : ""}`
+    );
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "throws";
+    assertion.actual = undefined;
+    assertion.expected = expected;
+    throw assertion;
+  }
+  return captured;
+};
+globalThis.__nodeAssert.ifError = (error) => {
+  if (error) throw error;
+};
+globalThis.__nodeAssert.doesNotThrow = (fn, expected, message) => {
+  try {
+    fn();
+  } catch (error) {
+    if (typeof expected === "function" && !(error instanceof expected))
+      throw error;
+    const text = typeof expected === "string" ? expected : message;
+    const assertion = new globalThis.__nodeAssert.AssertionError(
+      `Got unwanted exception${text ? `: ${text}` : "."}\nActual message: "${error.message}"`
+    );
+    assertion.code = "ERR_ASSERTION";
+    assertion.operator = "doesNotThrow";
+    throw assertion;
+  }
+};
+globalThis.__nodeAssert.rejects = (promiseOrFn, expected) =>
+  Promise.resolve()
+    .then(() =>
+      typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn
+    )
+    .then(
+      () => {
+        throw new Error("Missing expected rejection");
+      },
+      (error) => {
+        if (expected && expected.name && error.name !== expected.name)
+          throw error;
+        return error;
+      }
+    );
+globalThis.__nodeAssert.doesNotReject = (promiseOrFn, message) =>
+  Promise.resolve()
+    .then(() =>
+      typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn
+    )
+    .catch((error) => {
+      throw new Error(message || `Unexpected rejection: ${error}`);
+    });
+globalThis.__nodeAssert.match = (value, expression) => {
+  if (!expression.test(String(value)))
+    throw new Error("Value did not match expression");
+};
+globalThis.__nodeAssert.strict = globalThis.__nodeAssert;
+
+const __nodePathArg = (value) => {
+  if (typeof value !== "string") {
+    const error = new TypeError('The "path" argument must be of type string');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return value;
+};
