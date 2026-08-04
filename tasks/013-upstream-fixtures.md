@@ -3372,3 +3372,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Added descriptor validation for `process.env`, rejecting accessors and
   non-configurable/non-writable/non-enumerable data descriptors.
 - Verified the focused stage and Node's descriptor fixture.
+### Stage 1098: allowed Node environment flags
+
+- Populated canonical Node environment flags and protected the set from direct
+  and prototype-level mutation.
+- Verified the focused stage and Node's allowed-flags fixture.
