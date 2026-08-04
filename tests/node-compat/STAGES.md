@@ -423,3 +423,4 @@ these small fixtures isolate the currently implemented contract.
 |   424 | fs ReadStream encoding options and bytesRead                  | `tools/run-node-tests.sh --stage 424` |
 |   425 | fs ReadStream inverted range validation                        | `tools/run-node-tests.sh --stage 425` |
 |   426 | fs WriteStream encoding options and bytesWritten               | `tools/run-node-tests.sh --stage 426` |
+|   427 | fs ReadStream close descriptor release                        | `tools/run-node-tests.sh --stage 427` |
