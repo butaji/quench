@@ -2,8 +2,8 @@
 
 const assert = require("assert");
 
-assert.throws(() => require("node:test/reporters"), {
-  code: "ERR_UNKNOWN_BUILTIN_MODULE"
-});
+const reporters = require("node:test/reporters");
+assert.strictEqual(typeof reporters.spec, "function");
+assert.strictEqual(typeof reporters.tap, "function");
 
-console.log("test reporters error passed");
+console.log("test reporters api passed");
