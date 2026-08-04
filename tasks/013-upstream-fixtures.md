@@ -1626,6 +1626,9 @@ process metadata such as stdio, arguments, and spawn file.
 Stage 571 formalized child-process `spawn`, `exit`, and `close` event ordering
 and completion arguments.
 
+Stage 572 formalized child-process spawn failure errors, including ENOENT
+metadata and the original spawn arguments.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
