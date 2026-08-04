@@ -747,3 +747,4 @@ these small fixtures isolate the currently implemented contract.
 |   748 | process stdout readableLength starts empty                                | `tools/run-node-tests.sh --stage 748` |
 |   749 | process stderr readableLength starts empty                                | `tools/run-node-tests.sh --stage 749` |
 |   750 | process stdout bytesWritten starts at zero                                | `tools/run-node-tests.sh --stage 750` |
+|   751 | process stderr bytesWritten starts at zero                                | `tools/run-node-tests.sh --stage 751` |
