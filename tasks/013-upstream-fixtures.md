@@ -1179,6 +1179,9 @@ inputs through the encoding option.
 Stage 419 formalized `fs.statSync` missing-path errors with `ENOENT` and `stat`
 syscall metadata.
 
+Stage 420 formalized independent state branching through `hash.copy` and
+`hmac.copy`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
