@@ -107,6 +107,12 @@ class NodeReadable extends NodeEventEmitter {
     this.readableFlowing = null;
     this.readableEnded = false;
     this.readableEncoding = null;
+    this.readableDefaultEncoding = options.defaultEncoding || "utf8";
+    if (!NodeBuffer.isEncoding(this.readableDefaultEncoding)) {
+      const error = new TypeError("Unknown encoding");
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     this._chunks = [];
     this.readableHighWaterMark = options.highWaterMark ?? 16 * 1024;
   }
@@ -202,7 +208,7 @@ class NodeReadable extends NodeEventEmitter {
       );
     if (chunk === null) return __nodeReadablePushEnd(this);
     if (!this.readableObjectMode && typeof chunk === "string")
-      chunk = NodeBuffer.from(chunk);
+      chunk = NodeBuffer.from(chunk, this.readableDefaultEncoding);
     return __nodeReadablePushChunk(this, chunk);
   }
   unshift(chunk) {

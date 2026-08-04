@@ -2895,3 +2895,7 @@ Stage 1002 verifies Readable invokes its `_read` hook when data flow begins and
 delivers the pushed chunk through async iteration. Retrospective: testing the
 hook and consumer together catches scheduling gaps that property-only stages
 cannot observe.
+
+Stage 1003 verifies Readable default-encoding validation and retention.
+Retrospective: retaining the encoding keeps this stage focused on stream state;
+the remaining Buffer hexadecimal rendering mismatch is tracked separately.
