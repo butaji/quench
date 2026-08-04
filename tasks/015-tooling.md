@@ -26,6 +26,7 @@ surrounding tooling should:
 - `tools/check-focused-stages.sh` — runs all focused stages.
 - `tools/compat-coverage.sh` — emits counts (focused stages, up-stream
   fixtures, parallel fixtures).
+- `tools/lint-stage-numbers.sh` — rejects gaps in the focused stage sequence.
 
 ## Backlog
 

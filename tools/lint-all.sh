@@ -7,3 +7,4 @@ cd "$root"
 
 tools/lint-js.sh
 tools/lint-rs.sh
+tools/lint-stage-numbers.sh
