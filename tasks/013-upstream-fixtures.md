@@ -2753,3 +2753,12 @@ automatic removal from normal repeated delivery.
 Upstream audit: `test-eventtarget-brandcheck.js` still requires native receiver
 brand enforcement for Event and EventTarget prototype methods. The adjacent
 once/twice lifecycle fixture passes and is covered by stage 975.
+
+Stage 976 adds the NodeEventTarget constructor, Node-style listener aliases,
+event names, and listener counts. Retrospective: introducing the wrapper in
+small observable pieces keeps native EventTarget dispatch behavior isolated
+from Node-specific bookkeeping.
+
+Upstream audit: `test-nodeeventtarget.js` now reaches callback metadata checks;
+the remaining failure is native rquickjs dispatch metadata rather than
+NodeEventTarget construction or listener bookkeeping.
