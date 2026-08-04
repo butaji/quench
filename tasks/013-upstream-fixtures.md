@@ -1143,6 +1143,9 @@ Stage 406 formalized `timers/promises` AbortSignal cancellation with Node’s
 Stage 407 formalized AbortSignal cancellation for async timer intervals, with
 no value yielded after cancellation and matching abort metadata.
 
+Stage 408 formalized AbortSignal cancellation for `timers/promises.setImmediate`
+with matching abort metadata.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
