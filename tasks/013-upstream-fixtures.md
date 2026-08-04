@@ -2799,3 +2799,7 @@ matching remain a separate harness task.
 Stage 983 verifies that closing a MessagePort suppresses queued messages.
 Retrospective: testing closure before posting avoids timing races while still
 covering the port-entanglement lifecycle boundary.
+
+Stage 984 verifies basic MessageChannel delivery through `onmessage` and
+`postMessage`. Retrospective: awaiting the receiving promise directly tests
+delivery ordering without relying on a fixed timer delay.
