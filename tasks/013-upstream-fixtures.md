@@ -3064,3 +3064,11 @@ subclass and owns its copied bytes. Retrospective: static constructors need an
 explicit final-layer wrapper because inherited methods construct their defining
 class; centralizing these wrappers in the allocation layer keeps that rule
 visible and avoids repeating it in each API file.
+
+Stage 1028 adds exact received-type diagnostics for `Buffer.byteLength()`.
+Retrospective: the same shared formatter now covers number, NaN, object, and
+array inputs, keeping byte-length validation aligned with `Buffer.from()`
+without another API-specific formatter.
+
+Upstream audit: the focused byte-length diagnostic stage passes; the complete
+fixture still reaches a later harness assertion mismatch after this boundary.
