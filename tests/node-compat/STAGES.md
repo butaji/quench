@@ -668,3 +668,4 @@ these small fixtures isolate the currently implemented contract.
 |   669 | process once delivers one event and removes its listener                      | `tools/run-node-tests.sh --stage 669` |
 |   670 | process removeAllListeners clears only the selected event                    | `tools/run-node-tests.sh --stage 670` |
 |   671 | process removeListener removes only the targeted callback                    | `tools/run-node-tests.sh --stage 671` |
+|   672 | process emit fans out arguments and reports listener presence                  | `tools/run-node-tests.sh --stage 672` |

@@ -1886,6 +1886,8 @@ Stage 670 formalized event-specific process.removeAllListeners behavior.
 
 Stage 671 formalized targeted process.removeListener behavior.
 
+Stage 672 formalized process.emit argument fan-out and listener-result behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
