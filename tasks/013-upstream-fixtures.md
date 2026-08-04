@@ -2112,3 +2112,5 @@ Stage 780 added async disposal protocol support to process stdout and stderr.
 Stage 781 verified promise returns from process stdout and stderr async disposal.
 
 Stage 782 added process identity and umask method compatibility.
+
+Stage 783 added process credential helper method compatibility.
