@@ -391,3 +391,4 @@ these small fixtures isolate the currently implemented contract.
 |   392 | crypto PBKDF2 argument validation and error codes              | `tools/run-node-tests.sh --stage 392` |
 |   393 | lazy querystring bootstrap and stringify availability         | `tools/run-node-tests.sh --stage 393` |
 |   394 | experimental stream/iter feature flag gating                  | `tools/run-node-tests.sh --stage 394` |
+|   395 | crypto advertised hash and cipher capabilities               | `tools/run-node-tests.sh --stage 395` |
