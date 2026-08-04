@@ -1,3 +1,10 @@
+const isIPv4Part = (part) => {
+  if (!/^\d+$/.test(part)) return false;
+  const n = Number(part);
+  if (n < 0 || n > 255) return false;
+  if (part.length > 1 && part.startsWith("0")) return false;
+  return part.length <= 3;
+};
 const isIPv4 = (input) => {
   if (input == null) return false;
   if (typeof input !== "string") {
@@ -9,14 +16,52 @@ const isIPv4 = (input) => {
   }
   const parts = input.split(".");
   if (parts.length !== 4) return false;
-  for (const part of parts) {
-    if (!/^\d+$/.test(part)) return false;
-    const n = Number(part);
-    if (n < 0 || n > 255) return false;
-    if (part.length > 1 && part.startsWith("0")) return false;
-    if (part.length > 3) return false;
+  return parts.every(isIPv4Part);
+};
+const validateIPv6Group = (group) => {
+  if (group.includes(".")) {
+    const parts = group.split(".");
+    return parts.length === 4 && parts.every(isIPv4Part) ? 2 : 0;
   }
-  return true;
+  if (group.length === 0 || group.length > 4 || !/^[0-9a-fA-F]+$/.test(group))
+    return 0;
+  return 1;
+};
+const normalizeIPv6Zone = (input) => {
+  if (!input.includes("%")) return input;
+  const percentIndex = input.indexOf("%");
+  const zone = input.slice(percentIndex + 1);
+  if (
+    percentIndex === input.length - 1 ||
+    input.indexOf("%", percentIndex + 1) !== -1 ||
+    zone.includes(":") ||
+    zone.includes("%") ||
+    zone.includes("@") ||
+    !/^[0-9A-Za-z._-]+$/.test(zone)
+  )
+    return null;
+  const address = input.slice(0, percentIndex);
+  return address.length ? address : null;
+};
+const countIPv6Groups = (headGroups, tailGroups, hasDoubleColon) => {
+  let expanded = 0;
+  for (let i = 0; i < headGroups.length; i++) {
+    const group = headGroups[i];
+    if (hasDoubleColon && group.includes(".")) return 0;
+    if (!hasDoubleColon && group.includes(".") && i < headGroups.length - 1)
+      return 0;
+    const width = validateIPv6Group(group);
+    if (!width) return 0;
+    expanded += width;
+  }
+  for (let i = 0; i < tailGroups.length; i++) {
+    const group = tailGroups[i];
+    if (i < tailGroups.length - 1 && group.includes(".")) return 0;
+    const width = validateIPv6Group(group);
+    if (!width) return 0;
+    expanded += width;
+  }
+  return expanded;
 };
 const isIPv6 = (input) => {
   if (input == null) return false;
@@ -28,23 +73,8 @@ const isIPv6 = (input) => {
     }
   }
   if (input.length === 0) return false;
-  let address = input;
-  if (address.includes("%")) {
-    const percentIndex = address.indexOf("%");
-    if (percentIndex === address.length - 1) return false;
-    if (address.indexOf("%", percentIndex + 1) !== -1) return false;
-    const zone = address.slice(percentIndex + 1);
-    if (
-      zone.includes(":") ||
-      zone.includes("%") ||
-      zone.includes("@") ||
-      zone.length === 0 ||
-      !/^[0-9A-Za-z._-]+$/.test(zone)
-    )
-      return false;
-    address = address.slice(0, percentIndex);
-    if (address.length === 0) return false;
-  }
+  const address = normalizeIPv6Zone(input);
+  if (!address) return false;
   if (address === "::") return true;
   const doubleColonIndex = address.indexOf("::");
   if (
@@ -57,37 +87,8 @@ const isIPv6 = (input) => {
   const tail = hasDoubleColon ? address.slice(doubleColonIndex + 2) : "";
   const headGroups = head === "" ? [] : head.split(":");
   const tailGroups = tail === "" ? [] : tail.split(":");
-  let expanded = 0;
-  const validateGroup = (group) => {
-    if (group.includes(".")) {
-      const parts = group.split(".");
-      if (parts.length !== 4) return false;
-      for (const part of parts) {
-        if (!/^\d+$/.test(part)) return false;
-        const n = Number(part);
-        if (n < 0 || n > 255) return false;
-        if (part.length > 1 && part.startsWith("0")) return false;
-      }
-      expanded += 2;
-    } else {
-      if (group.length === 0 || group.length > 4) return false;
-      if (!/^[0-9a-fA-F]+$/.test(group)) return false;
-      expanded++;
-    }
-    return true;
-  };
-  for (let i = 0; i < headGroups.length; i++) {
-    const group = headGroups[i];
-    if (hasDoubleColon && group.includes(".")) return false;
-    if (!hasDoubleColon && group.includes(".") && i < headGroups.length - 1)
-      return false;
-    if (!validateGroup(group)) return false;
-  }
-  for (let i = 0; i < tailGroups.length; i++) {
-    const group = tailGroups[i];
-    if (i < tailGroups.length - 1 && group.includes(".")) return false;
-    if (!validateGroup(group)) return false;
-  }
+  const expanded = countIPv6Groups(headGroups, tailGroups, hasDoubleColon);
+  if (!expanded) return false;
   if (hasDoubleColon) {
     if (expanded > 7) return false;
   } else {
