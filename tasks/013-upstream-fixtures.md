@@ -1049,6 +1049,9 @@ output.
 Stage 375 formalized cryptographic random byte generation and offset filling
 with in-place Buffer return semantics.
 
+Stage 376 formalized filesystem ENOENT errors, including open syscall metadata
+for missing paths.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

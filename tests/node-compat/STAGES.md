@@ -372,3 +372,4 @@ these small fixtures isolate the currently implemented contract.
 |   373 | stream pipe backpressure handling                                | `tools/run-node-tests.sh --stage 373` |
 |   374 | crypto hash Buffer input and hex digest                          | `tools/run-node-tests.sh --stage 374` |
 |   375 | crypto random byte generation and filling                       | `tools/run-node-tests.sh --stage 375` |
+|   376 | fs ENOENT error metadata                                         | `tools/run-node-tests.sh --stage 376` |
