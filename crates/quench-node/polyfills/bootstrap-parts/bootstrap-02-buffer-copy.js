@@ -41,6 +41,7 @@ const __nodeBufferCopyValidate = (source, target) => {
 const __nodeBufferConcatReceived = (value) => {
   if (value == null) return ` Received ${value}`;
   if (typeof value === "number") return ` Received type number (${value})`;
+  if (typeof value === "string") return ` Received type string (${value})`;
   if (ArrayBuffer.isView(value)) return " Received an instance of Buffer";
   const name =
     value.constructor?.name === "NodeBuffer"
