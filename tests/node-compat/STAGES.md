@@ -578,3 +578,4 @@ these small fixtures isolate the currently implemented contract.
 |   579 | child_process stdio streams expose event and encoding methods        | `tools/run-node-tests.sh --stage 579` |
 |   580 | child_process stdout emits data and end events for environment output | `tools/run-node-tests.sh --stage 580` |
 |   581 | child_process ref and unref preserve legacy return contracts         | `tools/run-node-tests.sh --stage 581` |
+|   582 | child_process exec supports Buffer output encoding                  | `tools/run-node-tests.sh --stage 582` |
