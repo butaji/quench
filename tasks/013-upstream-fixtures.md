@@ -2242,3 +2242,5 @@ Stage 845 verifies the node:vm contexts, scripts, and module API.
 Stage 846 verifies the node:readline interface and terminal API.
 
 Stage 847 verifies the node:repl interactive evaluation API.
+
+Stage 848 verifies the node:cluster primary and worker API.
