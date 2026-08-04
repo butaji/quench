@@ -2844,3 +2844,8 @@ surface before it can validate all cases.
 Stage 992 adds the missing `assert.fail()` assertion helper. Retrospective:
 implementing the helper at the shared assertion object fixes multiple upstream
 fixtures without adding test-specific behavior.
+
+Stage 993 verifies defensive EventEmitter `listeners()` behavior for missing
+internal storage and omitted event names. Retrospective: guarding the public
+query at one method boundary prevents malformed internal state from leaking as
+a TypeError.
