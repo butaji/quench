@@ -618,3 +618,4 @@ these small fixtures isolate the currently implemented contract.
 |   619 | process versions exposes a semantic llhttp version entry               | `tools/run-node-tests.sh --stage 619` |
 |   620 | process versions exposes a semantic nghttp3 version entry              | `tools/run-node-tests.sh --stage 620` |
 |   621 | process versions exposes a semantic ngtcp2 version entry              | `tools/run-node-tests.sh --stage 621` |
+|   622 | process versions exposes a semantic simdutf version entry              | `tools/run-node-tests.sh --stage 622` |
