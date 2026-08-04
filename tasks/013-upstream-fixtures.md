@@ -2762,3 +2762,7 @@ from Node-specific bookkeeping.
 Upstream audit: `test-nodeeventtarget.js` now reaches callback metadata checks;
 the remaining failure is native rquickjs dispatch metadata rather than
 NodeEventTarget construction or listener bookkeeping.
+
+Stage 977 verifies NodeEventTarget object listeners receive the listener object
+as `this` and honor `once`. Retrospective: wrapping `handleEvent` explicitly
+keeps callback binding independent from native EventTarget invocation rules.

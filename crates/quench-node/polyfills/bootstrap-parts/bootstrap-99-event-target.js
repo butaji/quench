@@ -84,8 +84,14 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     const callback =
       typeof listener === "function"
         ? listener
-        : (event) => listener.handleEvent(event);
-    (this._nodeListeners[name] ||= []).push({ listener, callback });
+        : function (event) {
+            return listener.handleEvent.call(listener, event);
+          };
+    (this._nodeListeners[name] ||= []).push({
+      listener,
+      callback,
+      once: Boolean(options?.once)
+    });
     super.addEventListener(name, callback, options);
     return this;
   }
@@ -109,6 +115,12 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
   }
   removeEventListener(name, listener) {
     return this.removeListener(name, listener);
+  }
+  dispatchEvent(event) {
+    const result = super.dispatchEvent(event);
+    for (const record of this._nodeListeners[event.type] || [])
+      if (record.once) this.removeListener(event.type, record.listener);
+    return result;
   }
   off(name, listener) {
     return this.removeListener(name, listener);
