@@ -240,31 +240,38 @@ class NodeURLSearchParams {
   }
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
+const __nodeURLResolveInput = (input, base) => {
+  let value = String(input);
+  if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
+    const baseUrl = new globalThis.__nodeURL(base);
+    value = value.startsWith("/")
+      ? baseUrl.origin + value
+      : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
+  }
+  return value;
+};
+const __nodeURLAssignParts = (url, match) => {
+  url.protocol = match[1] || "";
+  url.host = match[2] || "";
+  url.hostname = url.host.replace(/^.*@/, "").split(":")[0];
+  url.port = url.host.includes(":")
+    ? url.host.slice(url.host.lastIndexOf(":") + 1)
+    : "";
+  url.pathname = match[3] || "/";
+  url.search = match[4] ? `?${match[4]}` : "";
+  url.hash = match[5] ? `#${match[5]}` : "";
+  url.origin =
+    url.protocol && url.host ? `${url.protocol}//${url.host}` : "null";
+  url.searchParams = new NodeURLSearchParams(match[4] || "");
+};
 globalThis.__nodeURL = class NodeURL {
   constructor(input, base) {
-    let value = String(input);
-    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
-      const baseUrl = new NodeURL(base);
-      value = value.startsWith("/")
-        ? baseUrl.origin + value
-        : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
-    }
+    const value = __nodeURLResolveInput(input, base);
     const match = value.match(
       /^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
     );
     if (!match) throw new TypeError("Invalid URL");
-    this.protocol = match[1] || "";
-    this.host = match[2] || "";
-    this.hostname = this.host.replace(/^.*@/, "").split(":")[0];
-    this.port = this.host.includes(":")
-      ? this.host.slice(this.host.lastIndexOf(":") + 1)
-      : "";
-    this.pathname = match[3] || "/";
-    this.search = match[4] ? `?${match[4]}` : "";
-    this.hash = match[5] ? `#${match[5]}` : "";
-    this.origin =
-      this.protocol && this.host ? `${this.protocol}//${this.host}` : "null";
-    this.searchParams = new NodeURLSearchParams(match[4] || "");
+    __nodeURLAssignParts(this, match);
   }
   get href() {
     const query = this.searchParams.toString();
