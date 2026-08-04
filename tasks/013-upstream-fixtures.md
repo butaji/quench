@@ -2731,3 +2731,12 @@ keeps the Rust host minimal while restoring the observable DOM contract.
 Stage 972 verifies that `Event` requires a type argument. Retrospective:
 checking the missing-argument error before normal construction keeps constructor
 validation separate from flag and dispatch semantics.
+
+Stage 973 verifies `CustomEvent` detail immutability and type validation.
+Retrospective: focused stages can continue covering API semantics when an
+upstream fixture reaches an unrelated missing harness helper.
+
+Upstream audit: `test-events-customevent.js` reaches its readonly `detail`
+assertion, then fails because the compatibility `common.mustCall()` helper is
+not callable in this harness path. The CustomEvent behavior is covered by
+stage 973; the remaining fix belongs in common-test helper compatibility.
