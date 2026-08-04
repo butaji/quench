@@ -1448,6 +1448,9 @@ and cross-separator path matching.
 Stage 513 formalized frozen `os.constants` signal values and platform signal
 numbers.
 
+Stage 514 formalized synchronous zlib deflate, raw deflate, gzip round trips,
+string input, compression options, and `isZlib()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
