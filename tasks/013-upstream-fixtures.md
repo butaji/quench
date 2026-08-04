@@ -1268,6 +1268,9 @@ preserving buffered body data.
 
 Stage 450 formalized default Readable Buffer queueing and complete queue drain.
 
+Stage 451 formalized transition to flowing mode after data listeners attach,
+including queued data and EOF delivery.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
