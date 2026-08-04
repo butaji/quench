@@ -17,13 +17,13 @@ cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(te
 cargo run --bin run-test -- tests/test262/path/to/test.js
 
 # Run the configured stage
-cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Run a selected stage
-TEST262_STAGE=N cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+TEST262_STAGE=N cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Collect all failures and group them by error
-TEST262_STAGE=N TEST262_DIGEST=1 cargo test -p quench-runtime --test test262
+TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 
 # Fast digest invocation; output remains the Test262 SSOT
 TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
@@ -32,7 +32,7 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test
 TEST262_STAGE=N bash tools/run-each.sh
 
 # Run every stage in order
-ALL_STAGES=1 cargo test -p quench-runtime --test test262 test262_staged -- --ignored --nocapture
+ALL_STAGES=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all --no-capture
 ```
 
 The runner may use `tasks/index.json` to determine the configured stage. Do not infer
