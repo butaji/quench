@@ -2740,3 +2740,8 @@ Upstream audit: `test-events-customevent.js` reaches its readonly `detail`
 assertion, then fails because the compatibility `common.mustCall()` helper is
 not callable in this harness path. The CustomEvent behavior is covered by
 stage 973; the remaining fix belongs in common-test helper compatibility.
+
+Stage 974 verifies global `CustomEvent` detail, cancelability, and required
+type behavior. Retrospective: native Event metadata is kept as a separate
+boundary task after the upstream fixture exposed that rquickjs does not allow
+all dispatch fields to be assigned from JavaScript.
