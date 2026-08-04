@@ -2501,6 +2501,10 @@ uses the fixture path and a `child` argument rather than inline `-e` code. The
 focused contract caught that difference immediately and the polyfill now
 covers both portable probe forms.
 
+Stages 922 and 923 restore the contiguous stage sequence after discarded
+experiments. They capture the already-verified next-tick validation and
+child-process spawn-object contracts without reintroducing unverified fixes.
+
 Stage 924 adds the process source-map toggle contract. The upstream fixture
 was self-contained and showed that the existing no-op surface accepted every
 value; a small JS wrapper now validates booleans, stores the current state,
