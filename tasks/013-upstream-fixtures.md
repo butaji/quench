@@ -2050,3 +2050,5 @@ Stage 749 aligned process.stderr readableLength with local Node.
 Stage 750 aligned process.stdout bytesWritten with local Node.
 
 Stage 751 aligned process.stderr bytesWritten with local Node.
+
+Stage 752 aligned process.stdout writableCorked with local Node.
