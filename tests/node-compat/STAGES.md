@@ -531,3 +531,4 @@ these small fixtures isolate the currently implemented contract.
 |   532 | readline promises question resolves and closes input             | `tools/run-node-tests.sh --stage 532` |
 |   533 | repl starts evaluates expressions and closes                      | `tools/run-node-tests.sh --stage 533` |
 |   534 | constants exposes frozen filesystem and signal values             | `tools/run-node-tests.sh --stage 534` |
+|   535 | assert strict aliases assert and enforces strict comparisons      | `tools/run-node-tests.sh --stage 535` |

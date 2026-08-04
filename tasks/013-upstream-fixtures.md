@@ -1509,6 +1509,9 @@ closed-state reporting.
 Stage 534 formalized frozen `constants` filesystem, signal, and copy-file
 values.
 
+Stage 535 formalized `assert/strict` aliasing the main assert API and enforcing
+strict equality semantics.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
