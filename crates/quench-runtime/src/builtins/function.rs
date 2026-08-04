@@ -1044,6 +1044,15 @@ mod tests {
     }
 
     #[test]
+    fn repeated_function_prototype_calls_do_not_exhaust_call_depth() {
+        let mut ctx = Context::new().unwrap();
+        assert_eq!(
+            ctx.eval("for (var i = 0; i < 10001; i++) Function.prototype(); 'ok'"),
+            Ok(Value::String("ok".to_string()))
+        );
+    }
+
+    #[test]
     fn user_function_is_instanceof_function_after_array_map_call() {
         let mut ctx = Context::new().unwrap();
         assert_eq!(

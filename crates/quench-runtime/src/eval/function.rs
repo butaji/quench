@@ -296,45 +296,45 @@ pub(crate) fn call_value_impl(
         Value::NativeConstructor(nc) => call_native_constructor(nc, args, this_val),
         Value::Object(o) => {
             if crate::builtins::function::is_function_prototype(&o) {
-                return Ok(Value::Undefined);
+                Ok(Value::Undefined)
+            } else {
+                let call_slot = o.borrow().call_slot.clone();
+                if let Some(f) = call_slot {
+                    call_value_impl(f, args, this_val, force_strict)
+                } else if !o.borrow().is_callable() {
+                    let (_, error) = crate::value::error::create_js_error_with_type(
+                        "Value is not a function",
+                        "TypeError",
+                    );
+                    Err(error)
+                } else {
+                    call_object_as_constructor(o, args, this_val)
+                }
             }
-            // Check if this object has an internal [[Call]] slot (set by the
-            // Function constructor when called via super() from a class that
-            // extends Function). If so, call the stored function directly.
-            let call_slot = o.borrow().call_slot.clone();
-            if let Some(f) = call_slot {
-                return call_value_impl(f, args, this_val, force_strict);
-            }
-            if !o.borrow().is_callable() {
-                let (_, error) = crate::value::error::create_js_error_with_type(
-                    "Value is not a function",
-                    "TypeError",
-                );
-                return Err(error);
-            }
-            call_object_as_constructor(o, args, this_val)
         }
         Value::Class(class) => {
             if this_val != Value::Undefined {
                 if crate::eval::class::helpers::constructing_class_for_super().is_some() {
-                    return crate::eval::class::call_super_constructor(
+                    crate::eval::class::call_super_constructor(
                         *class,
                         args,
                         this_val,
                         &Rc::new(RefCell::new(Environment::new())),
+                    )
+                } else {
+                    let (_, js_err) = crate::value::error::create_js_error_with_type(
+                        "Class constructor cannot be invoked without 'new'",
+                        "TypeError",
                     );
+                    Err(js_err)
                 }
+            } else {
                 let (_, js_err) = crate::value::error::create_js_error_with_type(
                     "Class constructor cannot be invoked without 'new'",
                     "TypeError",
                 );
-                return Err(js_err);
+                Err(js_err)
             }
-            let (_, js_err) = crate::value::error::create_js_error_with_type(
-                "Class constructor cannot be invoked without 'new'",
-                "TypeError",
-            );
-            Err(js_err)
         }
         _ => {
             let msg = format!("Value is not a function, got {:?}", func);
