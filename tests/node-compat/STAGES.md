@@ -794,3 +794,4 @@ these small fixtures isolate the currently implemented contract.
 |   795 | process exposes finalization lifecycle methods                   | `tools/run-node-tests.sh --stage 795` |
 |   796 | process exposes permission query helper                          | `tools/run-node-tests.sh --stage 796` |
 |   797 | process exposes release metadata                                 | `tools/run-node-tests.sh --stage 797` |
+|   798 | process exposes builtin module loading                          | `tools/run-node-tests.sh --stage 798` |
