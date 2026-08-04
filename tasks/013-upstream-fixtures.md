@@ -3354,3 +3354,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added unknown-error message formatting and `getSystemErrorMessage`.
 - Added matching UV binding methods and strict argument validation.
+### Stage 1094: child process spawn errors
+
+- Normalized synthetic missing-command spawn behavior to one ENOENT error.
+- Suppressed the invalid spawn event and verified the upstream spawn-error fixture.

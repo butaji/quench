@@ -9,7 +9,8 @@ __quenchChildSpawnError.spawn = (...args) => {
     let reported = false;
     child.pid = undefined;
     child.emit = (event, ...values) => {
-      if (event === "exit" && !reported) {
+      if (event === "spawn") return false;
+      if ((event === "error" || event === "exit") && !reported) {
         reported = true;
         const error = new Error(`spawn ${command} ENOENT`);
         Object.assign(error, {
@@ -21,6 +22,7 @@ __quenchChildSpawnError.spawn = (...args) => {
         });
         emit.call(child, "error", error);
       }
+      if (event === "error") return true;
       return emit.call(child, event, ...values);
     };
   }
