@@ -2218,3 +2218,5 @@ Stage 833 verified the node:perf_hooks timing and observer API.
 Stage 834 verified the node:worker_threads core API.
 
 Stage 835 verifies the node:crypto hashing and randomness API.
+
+Stage 836 verifies the node:zlib compression and stream API.
