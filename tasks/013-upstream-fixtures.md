@@ -1430,6 +1430,9 @@ status, signal, and stderr predicates.
 Stage 507 formalized cluster worker state transitions, listening metadata, and
 SIGTERM exit reporting.
 
+Stage 508 formalized cluster fork environment overrides and IPC message
+delivery.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

@@ -504,3 +504,4 @@ these small fixtures isolate the currently implemented contract.
 |   505 | cluster setup emits configured settings                         | `tools/run-node-tests.sh --stage 505` |
 |   506 | common child-process helper validates spawn results              | `tools/run-node-tests.sh --stage 506` |
 |   507 | cluster worker lifecycle and listening metadata                  | `tools/run-node-tests.sh --stage 507` |
+|   508 | cluster fork merges custom environment variables                 | `tools/run-node-tests.sh --stage 508` |
