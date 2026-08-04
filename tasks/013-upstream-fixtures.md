@@ -2016,3 +2016,5 @@ Stage 732 added lightweight process.stdout listeners support.
 Stage 733 added lightweight process.stderr listeners support.
 
 Stage 734 added an empty awaitable process.stdout async iterator.
+
+Stage 735 added an empty awaitable process.stderr async iterator.
