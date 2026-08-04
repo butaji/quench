@@ -791,3 +791,4 @@ these small fixtures isolate the currently implemented contract.
 |   792 | process features expose Node capability flags                    | `tools/run-node-tests.sh --stage 792` |
 |   793 | process exposes configuration metadata                           | `tools/run-node-tests.sh --stage 793` |
 |   794 | process exposes diagnostic report object                         | `tools/run-node-tests.sh --stage 794` |
+|   795 | process exposes finalization lifecycle methods                   | `tools/run-node-tests.sh --stage 795` |
