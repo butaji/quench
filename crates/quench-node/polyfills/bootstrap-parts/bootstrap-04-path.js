@@ -396,7 +396,13 @@ class NodeEventEmitter {
       options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
   }
   on(event, listener) {
-    (this._events[event] ||= []).push(listener);
+    const current = this._events[event];
+    this._events[event] =
+      current === undefined
+        ? listener
+        : Array.isArray(current)
+          ? [...current, listener]
+          : [current, listener];
     return this;
   }
   addListener(event, listener) {
@@ -414,11 +420,17 @@ class NodeEventEmitter {
       const monitorSymbol =
         globalThis.__nodeErrorMonitorSymbol ||
         Symbol.for("events.errorMonitor");
-      const monitor = this._events[monitorSymbol] || [];
-      monitor.slice().forEach((listener) => listener(...args));
+      const monitor = this.listeners(monitorSymbol);
+      monitor.forEach((listener) => listener(...args));
     }
-    const listeners = this._events[event] || [];
-    listeners.slice().forEach((listener) => {
+    const listeners = this._events[event];
+    const values =
+      listeners === undefined
+        ? []
+        : Array.isArray(listeners)
+          ? listeners
+          : [listeners];
+    values.slice().forEach((listener) => {
       const result = listener(...args);
       if (this.captureRejections && result?.then)
         result.catch((error) =>
@@ -430,27 +442,32 @@ class NodeEventEmitter {
           })
         );
     });
-    return listeners.length > 0;
+    return values.length > 0;
   }
   removeListener(event, listener) {
-    this._events[event] = (this._events[event] || []).filter(
-      (item) => item !== listener
-    );
+    const values = this.listeners(event).filter((item) => item !== listener);
+    if (values.length === 0) delete this._events[event];
+    else this._events[event] = values.length === 1 ? values[0] : values;
     return this;
   }
   off(event, listener) {
     return this.removeListener(event, listener);
   }
   removeAllListeners(event) {
-    if (event === undefined) this._events = {};
+    if (event === undefined) this._events = Object.create(null);
     else delete this._events[event];
     return this;
   }
   listeners(event) {
-    return (this._events[event] || []).slice();
+    const value = this._events[event];
+    return value === undefined
+      ? []
+      : Array.isArray(value)
+        ? value.slice()
+        : [value];
   }
   listenerCount(event) {
-    return (this._events[event] || []).length;
+    return this.listeners(event).length;
   }
 }
 globalThis.__nodeEventEmitter = NodeEventEmitter;
