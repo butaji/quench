@@ -92,33 +92,12 @@ const __quenchVmRunCallback = (callback, sandbox, args) => {
     return callback(...args);
   } finally {
     __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
-    __quenchVmRestoreProperties(state.keys, state.previous);
+    __quenchVmRestoreProperties(
+      state.keys,
+      state.previous,
+      state.hiddenProcess
+    );
   }
-};
-const __quenchVmRestoreProperties = (keys, previous) => {
-  for (const key of keys) {
-    const descriptor = previous.get(key);
-    if (descriptor?.configurable)
-      Object.defineProperty(globalThis, key, descriptor);
-    else Reflect.deleteProperty(globalThis, key);
-  }
-};
-const __quenchVmInstallContext = (sandbox) => {
-  const keys = Object.getOwnPropertyNames(sandbox);
-  const previous = new Map();
-  const originalGlobalKeys = new Set(Object.getOwnPropertyNames(globalThis));
-  for (const key of keys) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
-    if (!previous.get(key) || previous.get(key).configurable)
-      Object.defineProperty(globalThis, key, descriptor);
-    if (key === "setTimeout" && typeof descriptor.value === "function") {
-      const timer = descriptor.value;
-      globalThis.setTimeout = (callback, ...args) =>
-        timer(() => __quenchVmRunCallback(callback, sandbox, []), ...args);
-    }
-  }
-  return { keys, previous, originalGlobalKeys };
 };
 const __quenchVmFormatError = (error, options, code) => {
   const match = /'([^']+)' is read-only/.exec(error.message || "");
@@ -170,7 +149,11 @@ const __quenchVmRunInContext = (code, sandbox, options) => {
   try {
     return __quenchVmEvaluateContext(code, sandbox, options, state);
   } finally {
-    __quenchVmRestoreProperties(state.keys, state.previous);
+    __quenchVmRestoreProperties(
+      state.keys,
+      state.previous,
+      state.hiddenProcess
+    );
   }
 };
 const __quenchVmModule = {
@@ -209,7 +192,14 @@ const __quenchVmModule = {
     __quenchVmContexts.add(sandbox);
     return sandbox;
   },
-  runInThisContext: (code) => (0, eval)(String(code)),
+  runInThisContext: (code, options) => {
+    try {
+      return (0, eval)(String(code));
+    } catch (error) {
+      __quenchVmFormatError(error, options, null);
+      throw error;
+    }
+  },
   runInNewContext: (code, sandbox = {}, options) =>
     __quenchVmRunInNewContext(code, sandbox, options),
   runInContext: (code, sandbox, options) =>
