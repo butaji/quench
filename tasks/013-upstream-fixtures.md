@@ -2683,3 +2683,7 @@ resource identity from event payload behavior.
 Stage 962 verifies chainable `EventEmitterAsyncResource.emitDestroy()` lifecycle
 behavior. Retrospective: asserting the fluent return keeps the fixture focused
 on the public lifecycle contract while the underlying resource performs cleanup.
+
+Stage 963 verifies `triggerAsyncId` propagation through
+`EventEmitterAsyncResource`. Retrospective: passing a fixed nonzero ID makes
+metadata propagation observable without depending on runtime-generated IDs.
