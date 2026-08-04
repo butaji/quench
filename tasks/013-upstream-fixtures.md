@@ -1308,6 +1308,9 @@ to flowing, paused, and flowing again.
 Stage 464 formalized readable and writable object-mode flags and their byte-mode
 defaults.
 
+Stage 465 formalized `destroy(error, callback)` preserving the original error
+for the callback and emitting `close`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
