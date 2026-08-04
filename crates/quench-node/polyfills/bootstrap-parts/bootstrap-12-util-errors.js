@@ -2,7 +2,9 @@ const __nodeSystemErrorNames = new Map([
   [-1, "EPERM"],
   [-2, "ENOENT"],
   [-13, "EACCES"],
-  [-17, "EEXIST"]
+  [-17, "EEXIST"],
+  [-32, "EPIPE"],
+  [-105, "ENOBUFS"]
 ]);
 const __nodeUtilGetSystemErrorName = (errorNumber) => {
   if (typeof errorNumber !== "number") {
