@@ -2675,3 +2675,7 @@ Stage 960 verifies `EventEmitterAsyncResource` event delivery, resource
 exposure, and name propagation. Retrospective: keeping the fixture synchronous
 tests the resource-backed dispatch contract without conflating it with async
 listener scheduling.
+
+Stage 961 verifies stable async-resource ID exposure during event delivery.
+Retrospective: checking the ID both inside the listener and afterward isolates
+resource identity from event payload behavior.
