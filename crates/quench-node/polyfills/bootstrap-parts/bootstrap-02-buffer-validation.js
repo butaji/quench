@@ -62,7 +62,7 @@ const __nodeBufferIncludesValidate = (value) => {
     !(value instanceof Uint8Array)
   ) {
     const error = new TypeError(
-      'The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.'
+      `The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array.${__nodeBufferFromReceived(value)}`
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
