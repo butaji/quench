@@ -661,3 +661,4 @@ these small fixtures isolate the currently implemented contract.
 |   662 | process cpuUsage exposes finite non-negative user and system metrics          | `tools/run-node-tests.sh --stage 662` |
 |   663 | process cpuUsage accepts a previous sample for delta metrics                  | `tools/run-node-tests.sh --stage 663` |
 |   664 | process memoryUsage exposes finite non-negative numeric metrics               | `tools/run-node-tests.sh --stage 664` |
+|   665 | process memoryUsage.rss exposes a finite non-negative metric                  | `tools/run-node-tests.sh --stage 665` |
