@@ -847,3 +847,4 @@ these small fixtures isolate the currently implemented contract.
 |   848 | cluster exposes primary and worker API                        | `tools/run-node-tests.sh --stage 848` |
 |   849 | trace events exposes category tracing API                    | `tools/run-node-tests.sh --stage 849` |
 |   850 | wasi exposes WebAssembly system interface API                | `tools/run-node-tests.sh --stage 850` |
+|   851 | async hooks exposes execution context API                    | `tools/run-node-tests.sh --stage 851` |
