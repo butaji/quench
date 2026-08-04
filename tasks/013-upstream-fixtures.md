@@ -3220,3 +3220,11 @@ Stage 1051 quotes string properties during `%O` object inspection.
 Retrospective: the shared inspection primitive returned raw strings, which was
 correct for plain string formatting but not object inspection; quoting at the
 inspection boundary keeps `%s` and `%O` behavior distinct.
+
+Stage 1052 makes `%c` consume and suppress an argument while preserving the
+literal token when no argument is supplied. Retrospective: the initial branch
+consumed `%c` unconditionally, so the no-argument form lost the token required
+by Node; checking argument availability before suppression fixes both forms.
+
+The upstream util-format fixture now advances past `%c` and exposes a separate
+extra-argument string-inspection mismatch.

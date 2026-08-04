@@ -285,7 +285,8 @@ globalThis.__nodeUtil = {
       args[0].replace(/%[sdifjoOc%]/g, (token) => {
         if (token === "%%") return "%";
         if (token === "%c") {
-          if (index < args.length) index++;
+          if (index >= args.length) return token;
+          index++;
           return "";
         }
         if (index >= args.length) return token;
