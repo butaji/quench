@@ -542,3 +542,4 @@ these small fixtures isolate the currently implemented contract.
 |   543 | util transferable abort helpers validate and preserve signals     | `tools/run-node-tests.sh --stage 543` |
 |   544 | console module exposes Console and common output methods           | `tools/run-node-tests.sh --stage 544` |
 |   545 | URL static canParse validates inputs and parse returns URL objects  | `tools/run-node-tests.sh --stage 545` |
+|   546 | v8 exposes heap statistics and unsupported coverage operations       | `tools/run-node-tests.sh --stage 546` |
