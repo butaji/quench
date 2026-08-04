@@ -390,8 +390,9 @@ globalThis.__nodeTmpdir = {
     )
 };
 class NodeEventEmitter {
-  constructor() {
+  constructor(options = {}) {
     this._events = {};
+    this.captureRejections = options.captureRejections === true;
   }
   on(event, listener) {
     (this._events[event] ||= []).push(listener);
@@ -409,7 +410,13 @@ class NodeEventEmitter {
   }
   emit(event, ...args) {
     const listeners = this._events[event] || [];
-    listeners.slice().forEach((listener) => listener(...args));
+    listeners.slice().forEach((listener) => {
+      const result = listener(...args);
+      if (this.captureRejections && result?.then)
+        result.catch((error) =>
+          queueMicrotask(() => this.emit("error", error))
+        );
+    });
     return listeners.length > 0;
   }
   removeListener(event, listener) {
