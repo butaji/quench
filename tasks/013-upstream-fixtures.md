@@ -1998,3 +1998,5 @@ Stage 723 added lightweight process.stderr rawListeners support.
 Stage 724 added chainable process.stdout prependListener support.
 
 Stage 725 added chainable process.stderr prependListener support.
+
+Stage 726 added chainable process stdout prependOnceListener support.
