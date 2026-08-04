@@ -860,3 +860,4 @@ these small fixtures isolate the currently implemented contract.
 |   861 | sys exposes legacy formatting and type API                  | `tools/run-node-tests.sh --stage 861` |
 |   862 | test reporters exposes standard reporter factories          | `tools/run-node-tests.sh --stage 862` |
 |   863 | inspector promises exposes async debugging API              | `tools/run-node-tests.sh --stage 863` |
+|   864 | process report exposes diagnostic report API                | `tools/run-node-tests.sh --stage 864` |
