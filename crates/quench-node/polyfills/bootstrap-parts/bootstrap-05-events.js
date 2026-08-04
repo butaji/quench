@@ -258,6 +258,8 @@ class NodeReadable extends NodeEventEmitter {
     while (this._chunks && this._chunks.length) yield this._chunks.shift();
   }
 }
+NodeReadable.prototype.readableEnded = false;
+NodeReadable.prototype.readable = true;
 class NodeWritable extends NodeEventEmitter {
   constructor(options = {}) {
     super();
