@@ -804,3 +804,4 @@ these small fixtures isolate the currently implemented contract.
 |   805 | module exposes metadata and constructors                        | `tools/run-node-tests.sh --stage 805` |
 |   806 | module createRequire resolves builtins                          | `tools/run-node-tests.sh --stage 806` |
 |   807 | module exposes loader hook methods                              | `tools/run-node-tests.sh --stage 807` |
+|   808 | module detects standard builtin names                           | `tools/run-node-tests.sh --stage 808` |
