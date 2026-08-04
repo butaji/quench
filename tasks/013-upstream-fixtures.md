@@ -1988,3 +1988,5 @@ Stage 718 added the Node-default process.stdout max-listener limit.
 Stage 719 added the Node-default process.stderr max-listener limit.
 
 Stage 720 made process.stdout setMaxListeners chainable and stateful.
+
+Stage 721 made process.stderr setMaxListeners chainable and stateful.
