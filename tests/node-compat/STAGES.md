@@ -573,3 +573,4 @@ these small fixtures isolate the currently implemented contract.
 |   574 | child_process spawnSync reports synchronous launch errors           | `tools/run-node-tests.sh --stage 574` |
 |   575 | child_process synchronous exec APIs return configured output        | `tools/run-node-tests.sh --stage 575` |
 |   576 | child_process kill reports signal termination and killed state      | `tools/run-node-tests.sh --stage 576` |
+|   577 | child_process exposes chainable ref and unref lifecycle methods      | `tools/run-node-tests.sh --stage 577` |
