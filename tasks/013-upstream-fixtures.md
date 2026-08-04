@@ -1287,6 +1287,9 @@ Stage 456 formalized rejection of Readable pushes after EOF with
 Stage 457 formalized rejection of Readable unshifts after end with
 `ERR_STREAM_UNSHIFT_AFTER_END_EVENT`.
 
+Stage 458 formalized `Readable.read(0)` returning null without consuming queued
+data.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
