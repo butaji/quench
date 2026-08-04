@@ -1379,6 +1379,9 @@ offset/length ranges.
 Stage 489 formalized `querystring.stringify()` rejecting lone surrogates with
 the expected URI error.
 
+Stage 490 formalized querystring parsing and unescaping preserving Unicode
+characters in literal and percent-encoded forms.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
