@@ -634,3 +634,4 @@ these small fixtures isolate the currently implemented contract.
 |   635 | process memoryUsage.rss exposes a numeric resident-set metric             | `tools/run-node-tests.sh --stage 635` |
 |   636 | process uptime exposes a non-negative monotonic seconds value             | `tools/run-node-tests.sh --stage 636` |
 |   637 | process nextTick forwards arguments after synchronous scheduling           | `tools/run-node-tests.sh --stage 637` |
+|   638 | process exitCode is writable without terminating the harness               | `tools/run-node-tests.sh --stage 638` |
