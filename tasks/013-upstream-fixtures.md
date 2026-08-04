@@ -1842,6 +1842,8 @@ Stage 648 formalized non-empty runtime identity strings for
 
 Stage 649 formalized the process.config.variables object contract.
 
+Stage 650 formalized string metadata fields on process.release.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

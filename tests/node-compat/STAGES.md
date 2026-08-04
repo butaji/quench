@@ -646,3 +646,4 @@ these small fixtures isolate the currently implemented contract.
 |   647 | process env coerces assignments to strings and supports deletion           | `tools/run-node-tests.sh --stage 647` |
 |   648 | process platform and arch expose non-empty runtime identity strings        | `tools/run-node-tests.sh --stage 648` |
 |   649 | process config exposes a variables object                                   | `tools/run-node-tests.sh --stage 649` |
+|   650 | process release exposes string metadata fields                               | `tools/run-node-tests.sh --stage 650` |
