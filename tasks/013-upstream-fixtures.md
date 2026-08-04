@@ -2324,3 +2324,5 @@ Stage 886 verifies the node:http2 settings conversion API.
 Stage 887 verifies the node:zlib raw, Brotli, and unzip algorithms.
 
 Stage 888 verifies the node:crypto usable hash chaining contract.
+
+Stage 889 verifies the node:crypto usable HMAC chaining contract.
