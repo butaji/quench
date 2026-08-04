@@ -58,7 +58,11 @@ const __nodeReadablePushError = (message, code) => {
 const __nodeReadablePushEnd = (stream) => {
   stream._ended = true;
   if (!stream._chunks.length) {
-    if (stream.listenerCount("data")) queueMicrotask(() => stream._emitEnd());
+    if (stream.listenerCount("readable")) {
+      queueMicrotask(() => stream.emit("readable"));
+      queueMicrotask(() => stream._emitEnd());
+    } else if (stream.listenerCount("data"))
+      queueMicrotask(() => stream._emitEnd());
     else stream._emitEnd();
   }
   return false;
