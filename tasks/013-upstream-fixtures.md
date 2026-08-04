@@ -1739,6 +1739,9 @@ Stage 612 formalized the semantic Ada version entry in `process.versions`.
 Stage 613 formalized the timezone database version entry in
 `process.versions`.
 
+Stage 614 formalized the semantic Brotli version entry in
+`process.versions`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
