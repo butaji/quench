@@ -1254,6 +1254,9 @@ Stage 444 formalized Readable `push` chunk delivery, end signaling, and the
 
 Stage 445 formalized Readable `unshift` chunk delivery and ordering.
 
+Stage 446 formalized Readable `read` size handling, FIFO buffering, and empty
+queue results.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

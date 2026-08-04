@@ -442,3 +442,4 @@ these small fixtures isolate the currently implemented contract.
 |   443 | fs WriteStream append flags preserve existing content          | `tools/run-node-tests.sh --stage 443` |
 |   444 | stream Readable push chunks and end signaling                  | `tools/run-node-tests.sh --stage 444` |
 |   445 | stream Readable unshift chunk delivery                         | `tools/run-node-tests.sh --stage 445` |
+|   446 | stream Readable read sizes and FIFO queue                     | `tools/run-node-tests.sh --stage 446` |
