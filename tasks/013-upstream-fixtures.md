@@ -2102,3 +2102,5 @@ Stage 775 aligned process.stdin ReadStream type and terminal metadata.
 Stage 776 aligned process.stdin end range metadata with local Node.
 
 Stage 777 verified that process.stdin async disposal returns a promise.
+
+Stage 778 aligned process.stdout Socket type and writable buffer size.

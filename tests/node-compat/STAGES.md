@@ -774,3 +774,4 @@ these small fixtures isolate the currently implemented contract.
 |   775 | process stdin exposes ReadStream type metadata                       | `tools/run-node-tests.sh --stage 775` |
 |   776 | process stdin aligns ReadStream range metadata                       | `tools/run-node-tests.sh --stage 776` |
 |   777 | process stdin async disposal returns a promise                      | `tools/run-node-tests.sh --stage 777` |
+|   778 | process stdout aligns Socket type and buffer size                   | `tools/run-node-tests.sh --stage 778` |
