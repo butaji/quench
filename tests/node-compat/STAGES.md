@@ -681,3 +681,4 @@ these small fixtures isolate the currently implemented contract.
 |   682 | process pid exposes a positive integer process identifier                     | `tools/run-node-tests.sh --stage 682` |
 |   683 | process ppid exposes a non-negative integer parent identifier                 | `tools/run-node-tests.sh --stage 683` |
 |   684 | process send exposes a boolean no-channel result                              | `tools/run-node-tests.sh --stage 684` |
+|   685 | process cwd exposes a non-empty current working directory string              | `tools/run-node-tests.sh --stage 685` |
