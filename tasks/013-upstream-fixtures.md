@@ -2124,3 +2124,5 @@ Stage 786 added process stdin access and runtime resource methods.
 Stage 787 added process active handle and request inspection helpers.
 
 Stage 788 added process control method surface compatibility.
+
+Stage 789 added process low-level binding method compatibility.
