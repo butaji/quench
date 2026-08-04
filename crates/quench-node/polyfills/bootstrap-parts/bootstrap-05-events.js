@@ -375,10 +375,18 @@ class NodeTransform extends NodeWritable {
     return chunk !== null;
   }
   write(chunk, encoding, callback) {
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = "utf8";
+    }
     if (this._transform) {
       const size = typeof chunk === "string" ? NodeBuffer.byteLength(chunk) : 1;
       this._writableState.needDrain = size >= this.writableHighWaterMark;
-      this._transform.call(this, chunk, encoding, () => callback && callback());
+      this._transform.call(this, chunk, encoding, () => {
+        this._writableState.needDrain = false;
+        this.writableNeedDrain = false;
+        if (callback) callback();
+      });
     } else super.write(chunk, encoding, callback);
     return true;
   }
