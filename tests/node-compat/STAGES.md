@@ -476,3 +476,4 @@ these small fixtures isolate the currently implemented contract.
 |   477 | stream read combines queued buffer chunks                         | `tools/run-node-tests.sh --stage 477` |
 |   478 | stream push string queues byte data                                | `tools/run-node-tests.sh --stage 478` |
 |   479 | fs readFile requires a callback                                | `tools/run-node-tests.sh --stage 479` |
+|   480 | fs mkdtemp requires a callback                                 | `tools/run-node-tests.sh --stage 480` |
