@@ -468,3 +468,4 @@ these small fixtures isolate the currently implemented contract.
 |   469 | timer handle refresh is chainable                                | `tools/run-node-tests.sh --stage 469` |
 |   470 | timer refresh after clear reactivates once                       | `tools/run-node-tests.sh --stage 470` |
 |   471 | interval refresh after clear reactivates once                    | `tools/run-node-tests.sh --stage 471` |
+|   472 | stream setEncoding chains and decodes queued buffers              | `tools/run-node-tests.sh --stage 472` |
