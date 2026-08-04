@@ -2320,3 +2320,5 @@ Stage 884 verifies the node:stream/promises pipeline helpers.
 Stage 885 verifies the node:net BlockList rule API.
 
 Stage 886 verifies the node:http2 settings conversion API.
+
+Stage 887 verifies the node:zlib raw, Brotli, and unzip algorithms.
