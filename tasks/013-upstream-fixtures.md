@@ -1790,6 +1790,9 @@ Stage 630 formalized conservative false capability checks for
 Stage 631 formalized deterministic numeric metrics from
 `process.resourceUsage()`.
 
+Stage 632 formalized deterministic user and system metrics from
+`process.cpuUsage()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
