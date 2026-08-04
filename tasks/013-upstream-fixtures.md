@@ -1474,6 +1474,9 @@ and `isatty()` behavior.
 Stage 522 formalized zlib Gzip and Gunzip transform streams with data events
 and stream writes.
 
+Stage 523 formalized async-iterable zlib compression/decompression helpers and
+their iterable chunk round trip.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

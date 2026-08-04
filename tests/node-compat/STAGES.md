@@ -519,3 +519,4 @@ these small fixtures isolate the currently implemented contract.
 |   520 | tls surface exposes defaults and unsupported connect behavior      | `tools/run-node-tests.sh --stage 520` |
 |   521 | tty streams expose non-interactive terminal surface              | `tools/run-node-tests.sh --stage 521` |
 |   522 | zlib transform streams compress and decompress data               | `tools/run-node-tests.sh --stage 522` |
+|   523 | zlib async iterable compression round trips data                  | `tools/run-node-tests.sh --stage 523` |
