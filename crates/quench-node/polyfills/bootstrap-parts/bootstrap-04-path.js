@@ -414,7 +414,12 @@ class NodeEventEmitter {
       const result = listener(...args);
       if (this.captureRejections && result?.then)
         result.catch((error) =>
-          queueMicrotask(() => this.emit("error", error))
+          queueMicrotask(() => {
+            const rejection = this[Symbol.for("nodejs.rejection")];
+            if (typeof rejection === "function")
+              rejection.call(this, error, event, ...args);
+            else this.emit("error", error);
+          })
         );
     });
     return listeners.length > 0;
