@@ -1727,6 +1727,9 @@ Stage 607 formalized the semantic OpenSSL version entry in `process.versions`.
 
 Stage 608 formalized the semantic zlib version entry in `process.versions`.
 
+Stage 609 formalized the numeric native modules ABI entry in
+`process.versions`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
