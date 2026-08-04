@@ -380,3 +380,4 @@ these small fixtures isolate the currently implemented contract.
 |   381 | crypto digest Buffer output                                     | `tools/run-node-tests.sh --stage 381` |
 |   382 | stream finish event before end callback                        | `tools/run-node-tests.sh --stage 382` |
 |   383 | isolated runtime state across stage fixtures                  | `tools/run-node-tests.sh --stage 383` |
+|   384 | crypto module bootstrap and randomUUID availability            | `tools/run-node-tests.sh --stage 384` |
