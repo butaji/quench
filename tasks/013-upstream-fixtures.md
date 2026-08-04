@@ -2192,3 +2192,5 @@ Stage 820 verified node:stream/promises helpers.
 Stage 821 verified the core node:util API.
 
 Stage 822 verified the core node:os API.
+
+Stage 823 verified modern node:os parallelism and priority helpers.
