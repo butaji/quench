@@ -832,3 +832,4 @@ these small fixtures isolate the currently implemented contract.
 |   833 | perf hooks exposes timing and observer API                      | `tools/run-node-tests.sh --stage 833` |
 |   834 | worker threads exposes core messaging API                     | `tools/run-node-tests.sh --stage 834` |
 |   835 | crypto exposes core hashing and randomness API                | `tools/run-node-tests.sh --stage 835` |
+|   836 | zlib exposes compression and stream API                       | `tools/run-node-tests.sh --stage 836` |
