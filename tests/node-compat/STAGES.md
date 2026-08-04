@@ -881,3 +881,4 @@ these small fixtures isolate the currently implemented contract.
 |   882 | process exposes builtin loading helpers                    | `tools/run-node-tests.sh --stage 882` |
 |   883 | stream exposes Web Stream adapter helpers                  | `tools/run-node-tests.sh --stage 883` |
 |   884 | stream promises exposes pipeline helpers                   | `tools/run-node-tests.sh --stage 884` |
+|   885 | net exposes BlockList rule API                              | `tools/run-node-tests.sh --stage 885` |
