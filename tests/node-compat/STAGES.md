@@ -939,3 +939,4 @@ these small fixtures isolate the currently implemented contract.
 |   940 | events static symbol and rejection settings                              | `tools/run-node-tests.sh --stage 940` |
 |   941 | EventEmitter listener enumeration                                        | `tools/run-node-tests.sh --stage 941` |
 |   942 | EventEmitter off alias lifecycle                                         | `tools/run-node-tests.sh --stage 942` |
+|   943 | EventEmitter remove-all-listeners cleanup                                | `tools/run-node-tests.sh --stage 943` |
