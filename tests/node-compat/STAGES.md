@@ -837,3 +837,4 @@ these small fixtures isolate the currently implemented contract.
 |   838 | http exposes client and server core API                       | `tools/run-node-tests.sh --stage 838` |
 |   839 | https exposes secure client and server API                    | `tools/run-node-tests.sh --stage 839` |
 |   840 | net exposes TCP client and server core API                    | `tools/run-node-tests.sh --stage 840` |
+|   841 | dgram exposes UDP socket API                                  | `tools/run-node-tests.sh --stage 841` |
