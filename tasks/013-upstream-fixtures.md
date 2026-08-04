@@ -2086,3 +2086,5 @@ Stage 767 added empty-input process.stdin read and chainable unshift behavior.
 Stage 768 aligned process.stdin isPaused with local Node.
 
 Stage 769 added process.stdin stdio lifecycle methods.
+
+Stage 770 aligned process.stdin fd, destroyed, and readableEncoding state.
