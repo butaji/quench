@@ -942,3 +942,4 @@ these small fixtures isolate the currently implemented contract.
 |   943 | EventEmitter remove-all-listeners cleanup                                | `tools/run-node-tests.sh --stage 943` |
 |   944 | EventEmitter prepend-listener ordering                                   | `tools/run-node-tests.sh --stage 944` |
 |   945 | EventEmitter instance max-listener APIs                                  | `tools/run-node-tests.sh --stage 945` |
+|   946 | EventEmitter raw ordinary listener inspection                            | `tools/run-node-tests.sh --stage 946` |
