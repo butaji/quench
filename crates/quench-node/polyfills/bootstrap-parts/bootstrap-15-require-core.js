@@ -3,13 +3,17 @@ let __quenchAsyncHooksModule;
   globalThis.__nodeCurrentAsyncResource ||= {};
   globalThis.__nodeNextAsyncId ||= 1;
   class AsyncResource {
-    constructor(type) {
+    constructor(type, options = {}) {
       this.type = String(type);
       this._asyncId = ++globalThis.__nodeNextAsyncId;
+      this._triggerAsyncId = options.triggerAsyncId || 0;
       this._resource = { asyncId: this._asyncId };
     }
     asyncId() {
       return this._asyncId;
+    }
+    triggerAsyncId() {
+      return this._triggerAsyncId;
     }
     runInAsyncScope(callback, thisArg, ...args) {
       if (typeof callback !== "function") {
@@ -88,7 +92,8 @@ const __quenchCoreStaticModules = new Map([
           super(options);
           const { AsyncResource } = globalThis.require("async_hooks");
           this.asyncResource = new AsyncResource(
-            options.name || "EventEmitterAsyncResource"
+            options.name || "EventEmitterAsyncResource",
+            options
           );
         }
         emit(event, ...args) {
