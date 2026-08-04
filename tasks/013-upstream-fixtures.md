@@ -2008,3 +2008,5 @@ Stage 728 added the process.stdout off alias for listener removal.
 Stage 729 added the process.stderr off alias for listener removal.
 
 Stage 730 added lightweight process.stdout emit behavior for unknown events.
+
+Stage 731 added lightweight process.stderr emit behavior for unknown events.
