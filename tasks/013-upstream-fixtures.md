@@ -3358,3 +3358,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Normalized synthetic missing-command spawn behavior to one ENOENT error.
 - Suppressed the invalid spawn event and verified the upstream spawn-error fixture.
+### Stage 1095: expanded system error catalog
+
+- Added `EPIPE` and `ENOBUFS` to the shared system-error catalog.
+- Verified the focused catalog contract and the upstream UV errno fixture.
