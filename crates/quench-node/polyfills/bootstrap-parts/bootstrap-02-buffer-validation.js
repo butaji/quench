@@ -19,16 +19,27 @@ const __nodeBufferValidateDoubleOffset = (length, offset) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (!Number.isFinite(offset) || !Number.isInteger(offset)) {
-    const error = new RangeError('The value of "offset" is out of range');
+  if (!Number.isInteger(offset)) {
+    const message =
+      Number.isNaN(offset) || Number.isFinite(offset)
+        ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+        : `The value of "offset" is out of range. It must be >= 0 and <= ${length - 8}. Received ${offset}`;
+    const error = new RangeError(message);
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
   if (offset < 0 || offset + 8 > length) {
+    if (offset >= 0 && length < 8) {
+      const error = new RangeError(
+        "Attempt to access memory outside buffer bounds"
+      );
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
     const error = new RangeError(
-      "Attempt to access memory outside buffer bounds"
+      `The value of "offset" is out of range. It must be >= 0 and <= ${length - 8}. Received ${offset}`
     );
-    error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+    error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
 };
