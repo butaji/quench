@@ -1765,6 +1765,8 @@ Stage 621 formalized the semantic ngtcp2 version entry in
 Stage 622 formalized the semantic simdutf version entry in
 `process.versions`.
 
+Stage 623 formalized the Unicode data version entry in `process.versions`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
