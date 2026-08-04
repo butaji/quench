@@ -454,3 +454,4 @@ these small fixtures isolate the currently implemented contract.
 |   455 | stream write-after-end rejection and error code                | `tools/run-node-tests.sh --stage 455` |
 |   456 | stream push-after-EOF rejection and error code                 | `tools/run-node-tests.sh --stage 456` |
 |   457 | stream unshift-after-end rejection and error code              | `tools/run-node-tests.sh --stage 457` |
+|   458 | stream Readable read(0) preserves queued data                  | `tools/run-node-tests.sh --stage 458` |
