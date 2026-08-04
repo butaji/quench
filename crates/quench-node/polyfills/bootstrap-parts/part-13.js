@@ -1,3 +1,28 @@
+const __nodeUtilFormatColor = (value) => {
+  if (value === null) return "\u001b[1mnull\u001b[22m";
+  if (value === undefined) return "\u001b[90mundefined\u001b[39m";
+  if (
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "bigint"
+  )
+    return `\u001b[33m${String(value)}${typeof value === "bigint" ? "n" : ""}\u001b[39m`;
+  if (typeof value === "symbol") return `\u001b[32m${String(value)}\u001b[39m`;
+  return String(value);
+};
+const __nodeUtilFormatCompact = (options, args) => {
+  if (
+    options.compact === undefined ||
+    args[0] !== "%s" ||
+    !Array.isArray(args[1])
+  )
+    return null;
+  return `[ ${args[1]
+    .map((value) =>
+      value && typeof value === "object" ? "[Object]" : String(value)
+    )
+    .join(", ")} ]`;
+};
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     const error = new TypeError(
@@ -6,33 +31,10 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  if (options.colors && typeof args[0] !== "string") {
-    const color = (value) => {
-      if (value === null) return "\u001b[1mnull\u001b[22m";
-      if (value === undefined) return "\u001b[90mundefined\u001b[39m";
-      if (
-        typeof value === "boolean" ||
-        typeof value === "number" ||
-        typeof value === "bigint"
-      )
-        return `\u001b[33m${String(value)}${typeof value === "bigint" ? "n" : ""}\u001b[39m`;
-      if (typeof value === "symbol")
-        return `\u001b[32m${String(value)}\u001b[39m`;
-      return String(value);
-    };
-    return args.map(color).join(" ");
-  }
-  if (
-    options.compact !== undefined &&
-    args[0] === "%s" &&
-    Array.isArray(args[1])
-  ) {
-    return `[ ${args[1]
-      .map((value) =>
-        value && typeof value === "object" ? "[Object]" : String(value)
-      )
-      .join(", ")} ]`;
-  }
+  if (options.colors && typeof args[0] !== "string")
+    return args.map(__nodeUtilFormatColor).join(" ");
+  const compact = __nodeUtilFormatCompact(options, args);
+  if (compact !== null) return compact;
   const previous =
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
   if (options && options.numericSeparator !== undefined)
@@ -45,6 +47,31 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   }
 };
 const __nodeQuerystringEscape = (value) => encodeURIComponent(String(value));
+const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
+  if (input[index] === "+" && decodeSpaces)
+    return { bytes: [0x20], advance: 0 };
+  if (
+    input[index] === "%" &&
+    /^[0-9a-f]{2}$/i.test(input.slice(index + 1, index + 3))
+  )
+    return {
+      bytes: [parseInt(input.slice(index + 1, index + 3), 16)],
+      advance: 2
+    };
+  let character = input[index];
+  if (
+    input.charCodeAt(index) >= 0xd800 &&
+    input.charCodeAt(index) <= 0xdbff &&
+    index + 1 < input.length &&
+    input.charCodeAt(index + 1) >= 0xdc00 &&
+    input.charCodeAt(index + 1) <= 0xdfff
+  )
+    character += input[index + 1];
+  return {
+    bytes: Array.from(new TextEncoder().encode(character)),
+    advance: character.length - 1
+  };
+};
 const __nodeQuerystringExports = {
   escape: __nodeQuerystringEscape,
   unescape: (value) =>
@@ -53,30 +80,9 @@ const __nodeQuerystringExports = {
     const input = String(value);
     const bytes = [];
     for (let i = 0; i < input.length; i++) {
-      if (input[i] === "+" && decodeSpaces) {
-        bytes.push(0x20);
-        continue;
-      }
-      if (
-        input[i] === "%" &&
-        /^[0-9a-f]{2}$/i.test(input.slice(i + 1, i + 3))
-      ) {
-        bytes.push(parseInt(input.slice(i + 1, i + 3), 16));
-        i += 2;
-      } else {
-        let character = input[i];
-        if (
-          input.charCodeAt(i) >= 0xd800 &&
-          input.charCodeAt(i) <= 0xdbff &&
-          i + 1 < input.length &&
-          input.charCodeAt(i + 1) >= 0xdc00 &&
-          input.charCodeAt(i + 1) <= 0xdfff
-        ) {
-          character += input[++i];
-        }
-        const encoded = new TextEncoder().encode(character);
-        bytes.push(...encoded);
-      }
+      const decoded = __nodeQuerystringDecodeByte(input, i, decodeSpaces);
+      bytes.push(...decoded.bytes);
+      i += decoded.advance;
     }
     return NodeBuffer.from(new Uint8Array(bytes));
   },
