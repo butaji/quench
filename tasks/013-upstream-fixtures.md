@@ -2563,3 +2563,7 @@ Stage 938 verifies the `events.addAbortListener()` disposable contract.
 Retrospective: the existing platform AbortSignal implementation already
 provides the required one-shot behavior, so the compatibility layer can
 retain Node's native events helper without a duplicate polyfill.
+
+Stage 939 verifies argument validation for `events.addAbortListener()`.
+Retrospective: synchronous validation stages are useful boundaries while the
+harness still needs explicit pending-job draining for promise-based APIs.

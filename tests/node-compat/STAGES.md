@@ -935,3 +935,4 @@ these small fixtures isolate the currently implemented contract.
 |   936 | static events max-listener validation                                    | `tools/run-node-tests.sh --stage 936` |
 |   937 | static events max-listener target validation                             | `tools/run-node-tests.sh --stage 937` |
 |   938 | events abort-listener disposable contract                                | `tools/run-node-tests.sh --stage 938` |
+|   939 | events abort-listener argument validation                                | `tools/run-node-tests.sh --stage 939` |
