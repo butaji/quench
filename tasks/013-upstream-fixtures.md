@@ -3058,3 +3058,9 @@ keeps this contract independent from allocation and encoding logic.
 Upstream audit: the focused invalid-input matrix passes; the full
 `test-buffer-from.js` fixture still reaches a later assertion mismatch in the
 current harness, which remains for the next stage.
+
+Stage 1027 verifies that `Buffer.copyBytesFrom()` returns the final Buffer
+subclass and owns its copied bytes. Retrospective: static constructors need an
+explicit final-layer wrapper because inherited methods construct their defining
+class; centralizing these wrappers in the allocation layer keeps that rule
+visible and avoids repeating it in each API file.
