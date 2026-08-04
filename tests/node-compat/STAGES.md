@@ -644,3 +644,4 @@ these small fixtures isolate the currently implemented contract.
 |   645 | process on and once return the process object for chaining                  | `tools/run-node-tests.sh --stage 645` |
 |   646 | process argv exposes a non-empty array of string arguments                 | `tools/run-node-tests.sh --stage 646` |
 |   647 | process env coerces assignments to strings and supports deletion           | `tools/run-node-tests.sh --stage 647` |
+|   648 | process platform and arch expose non-empty runtime identity strings        | `tools/run-node-tests.sh --stage 648` |
