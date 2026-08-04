@@ -791,6 +791,15 @@ mod tests {
     }
 
     #[test]
+    fn array_to_locale_string_does_not_forward_arguments_to_elements() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("[ { toLocaleString: function() { return arguments.length === 0 ? 'ok' : 'bad'; } } ].toLocaleString('en', {}) === 'ok'")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx

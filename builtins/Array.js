@@ -281,7 +281,7 @@ Array.prototype.toLocaleString = function ArrayToLocaleString(locales, options) 
     if (value === null || value === undefined) continue;
     var method = value.toLocaleString;
     if (!IsCallable(method)) throw ThrowTypeError("Array element toLocaleString is not callable");
-    R += method.call(value, locales, options);
+    R += method.call(value);
   }
   return R;
 };
