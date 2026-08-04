@@ -35,6 +35,14 @@ fn object_methods_are_not_constructable() {
 }
 
 #[test]
+fn symbol_call_inside_constructor_does_not_see_outer_new_target() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("class A { constructor() { this.value = Symbol('x'); } } new A().value.toString()");
+    assert_eq!(value, Ok(Value::String("Symbol(x)".into())));
+}
+
+#[test]
 fn call_through_with_environment_uses_with_object_as_this() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(
