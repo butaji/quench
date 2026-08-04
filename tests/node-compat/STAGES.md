@@ -863,3 +863,4 @@ these small fixtures isolate the currently implemented contract.
 |   864 | process report exposes diagnostic report API                | `tools/run-node-tests.sh --stage 864` |
 |   865 | stream web exposes Web Streams constructors and helpers    | `tools/run-node-tests.sh --stage 865` |
 |   866 | stream consumers exposes conversion helpers                | `tools/run-node-tests.sh --stage 866` |
+|   867 | assert strict exposes strict assertion API                 | `tools/run-node-tests.sh --stage 867` |
