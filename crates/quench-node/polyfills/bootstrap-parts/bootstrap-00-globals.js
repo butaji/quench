@@ -347,7 +347,21 @@ globalThis.process = {
   hrtime: (previous) => {
     const ns = BigInt(globalThis.__quench_now_ns());
     const current = [Number(ns / 1000000000n), Number(ns % 1000000000n)];
-    if (!previous) return current;
+    if (previous === undefined) return current;
+    if (!Array.isArray(previous)) {
+      const error = new TypeError(
+        `The "time" argument must be an instance of Array. Received type ${typeof previous} (${String(previous)})`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (previous.length !== 2) {
+      const error = new RangeError(
+        `The value of "time" is out of range. It must be 2. Received ${previous.length}`
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     let seconds = current[0] - previous[0];
     let nanos = current[1] - previous[1];
     if (nanos < 0) {
