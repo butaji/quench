@@ -705,3 +705,4 @@ these small fixtures isolate the currently implemented contract.
 |   706 | process stdout fd exposes a non-negative integer descriptor                   | `tools/run-node-tests.sh --stage 706` |
 |   707 | process stderr fd exposes a non-negative integer descriptor                   | `tools/run-node-tests.sh --stage 707` |
 |   708 | process stdout once returns the stream for chaining                           | `tools/run-node-tests.sh --stage 708` |
+|   709 | process stderr once returns the stream for chaining                           | `tools/run-node-tests.sh --stage 709` |
