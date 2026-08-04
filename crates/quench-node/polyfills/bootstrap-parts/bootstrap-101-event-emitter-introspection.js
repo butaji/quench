@@ -20,7 +20,10 @@ globalThis.__nodeEventEmitter.prototype.prependListener = function (
   return this;
 };
 globalThis.__nodeEventEmitter.prototype.once = function (event, listener) {
+  let called = false;
   const once = (...args) => {
+    if (called) return;
+    called = true;
     this.removeListener(event, once);
     return listener(...args);
   };
@@ -31,7 +34,10 @@ globalThis.__nodeEventEmitter.prototype.prependOnceListener = function (
   event,
   listener
 ) {
+  let called = false;
   const once = (...args) => {
+    if (called) return;
+    called = true;
     this.removeListener(event, once);
     return listener(...args);
   };
