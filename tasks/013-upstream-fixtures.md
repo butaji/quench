@@ -1096,6 +1096,9 @@ including subsequent `EBADF` behavior for the closed descriptor.
 Stage 391 formalized synchronous and callback PBKDF2 derivation with SHA-256
 vectors and Buffer output.
 
+Stage 392 formalized synchronous PBKDF2 validation for invalid iteration counts
+and missing digest arguments with Node error codes.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
