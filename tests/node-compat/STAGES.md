@@ -744,3 +744,4 @@ these small fixtures isolate the currently implemented contract.
 |   745 | process stderr readable state matches a process output stream                | `tools/run-node-tests.sh --stage 745` |
 |   746 | process stdout readableHighWaterMark matches local Node                    | `tools/run-node-tests.sh --stage 746` |
 |   747 | process stderr readableHighWaterMark matches local Node                    | `tools/run-node-tests.sh --stage 747` |
+|   748 | process stdout readableLength starts empty                                | `tools/run-node-tests.sh --stage 748` |
