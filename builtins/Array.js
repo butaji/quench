@@ -100,9 +100,9 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
 // Array.prototype.forEach (ES2025 §23.1.3.17)
 Array.prototype.forEach = function ArrayForEach(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.forEach called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
