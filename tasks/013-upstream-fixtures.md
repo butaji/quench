@@ -2703,3 +2703,9 @@ name propagation catches accidental dependence on caller-provided metadata.
 Stage 967 verifies `EventEmitterAsyncResource.emit()` preserves boolean
 listener-presence results. Retrospective: checking both absent and present
 listeners confirms the async-resource wrapper does not alter EventEmitter flow.
+
+Upstream audit: `test-events-once.js` now reaches the AbortSignal propagation
+checks, but the rquickjs host still delivers an undefined abort-event argument
+to native `AbortSignal` listeners. Focused `events.once()` stages pass; the
+remaining fix belongs at the host AbortSignal event boundary rather than in the
+Node events polyfill.

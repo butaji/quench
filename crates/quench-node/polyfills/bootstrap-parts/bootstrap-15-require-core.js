@@ -74,6 +74,30 @@ let __quenchAsyncHooksModule;
     })
   };
 }
+const __quenchEventsOnce = (emitter, event, options = {}) =>
+  new Promise((resolve, reject) => {
+    const cleanup = () => {
+      emitter.off(event, onEvent);
+      emitter.off("error", onError);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+    const onEvent = (...args) => {
+      cleanup();
+      resolve(args);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+    emitter.on(event, onEvent);
+    emitter.on("error", onError);
+    if (options.signal?.aborted) onAbort();
+    else options.signal?.addEventListener("abort", onAbort, { once: true });
+  });
 const __quenchCoreStaticModules = new Map([
   ["assert", () => globalThis.__nodeAssert],
   ["path", () => globalThis.__nodePath],
@@ -110,7 +134,7 @@ const __quenchCoreStaticModules = new Map([
       return {
         EventEmitter: globalThis.__nodeEventEmitter,
         EventEmitterAsyncResource,
-        once: globalThis.__nodeEventEmitter.once,
+        once: __quenchEventsOnce,
         on: globalThis.__nodeEventEmitter.on
       };
     }
