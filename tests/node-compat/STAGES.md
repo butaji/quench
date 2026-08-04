@@ -785,3 +785,4 @@ these small fixtures isolate the currently implemented contract.
 |   786 | process exposes runtime resource methods                          | `tools/run-node-tests.sh --stage 786` |
 |   787 | process exposes active handle and request inspection               | `tools/run-node-tests.sh --stage 787` |
 |   788 | process exposes control method surface                             | `tools/run-node-tests.sh --stage 788` |
+|   789 | process exposes low-level binding methods                          | `tools/run-node-tests.sh --stage 789` |
