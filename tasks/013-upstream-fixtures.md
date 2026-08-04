@@ -1965,3 +1965,4 @@ tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
 serial checker as the deterministic fallback while allowing larger fixture
 sets to use available CPU cores.
+Stage 709 formalized process.stderr one-shot listener chainability.
