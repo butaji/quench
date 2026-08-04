@@ -24,9 +24,9 @@ done | xargs -n 1 -P "$jobs" sh -c '
   fi
   run_stage() {
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$timeout_seconds" "$runner" $flags --stage "$stage"
+      timeout --kill-after=2 "$timeout_seconds" "$runner" $flags --stage "$stage"
     elif command -v gtimeout >/dev/null 2>&1; then
-      gtimeout "$timeout_seconds" "$runner" $flags --stage "$stage"
+      gtimeout --kill-after=2 "$timeout_seconds" "$runner" $flags --stage "$stage"
     else
       perl -e "alarm shift; exec \\@ARGV" "$timeout_seconds" "$runner" $flags --stage "$stage"
     fi
