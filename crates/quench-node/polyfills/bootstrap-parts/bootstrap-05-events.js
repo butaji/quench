@@ -357,7 +357,23 @@ class NodeTransform extends NodeWritable {
     return true;
   }
 }
+function NodeStream() {
+  this._events = Object.create(null);
+}
+NodeStream.prototype = Object.create(NodeEventEmitter.prototype);
+NodeStream.prototype.constructor = NodeStream;
+NodeStream.prototype.write = () => true;
+NodeStream.prototype.end = function () {
+  this.emit("finish");
+  return this;
+};
+NodeStream.prototype.pipe = function (destination) {
+  this.on("data", (chunk) => destination.write(chunk));
+  this.on("end", () => destination.end());
+  return destination;
+};
 const __nodeStreamExports = {
+  Stream: NodeStream,
   Readable: NodeReadable,
   Writable: NodeWritable,
   Transform: NodeTransform,

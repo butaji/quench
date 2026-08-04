@@ -2881,3 +2881,8 @@ two-listener order assertion isolates prepend bookkeeping from stream setup.
 Upstream audit: `test-event-emitter-prepend.js` currently fails in the unrelated
 NodeReadable constructor path; the EventEmitter prepend contract is covered by
 stage 999.
+
+Stage 1000 adds a callable legacy `stream.Stream` base with minimal writable
+behavior for function-style stream subclasses. Retrospective: separating the
+legacy constructor surface from modern stream classes minimizes host changes
+while unblocking compatibility fixtures that use prototype inheritance.
