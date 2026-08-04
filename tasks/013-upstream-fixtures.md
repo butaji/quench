@@ -1611,6 +1611,9 @@ Stage 565 formalized the legacy `cluster.setupMaster`/`setupPrimary` and
 Stage 566 formalized the primary-process `cluster.workers` registry, including
 its object shape and worker insertion after an online event.
 
+Stage 567 formalized cleanup of the primary-process worker registry after a
+worker exits.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
