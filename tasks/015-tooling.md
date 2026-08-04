@@ -107,6 +107,10 @@ zlib convenience methods while preserving synchronous validation and async
 error delivery.
 Stage 518 added zlib unzip autodetection and confirmed the existing compressed
 byte primitives can support both gzip and deflate without another host hook.
+
+The local Rust test profile is now configured in `.config/nextest.toml`.
+`tools/check-all-tests.sh` uses cargo-nextest when installed, followed by the
+parallel Node harness; GitHub CI remains intentionally absent.
 The bootstrap decomposition now also extracts util, querystring, URL, crypto,
 streams, OS, and performance implementations into readable files under the
 500-line limit; runtime concatenation preserves initialization order and the
