@@ -1793,6 +1793,9 @@ Stage 631 formalized deterministic numeric metrics from
 Stage 632 formalized deterministic user and system metrics from
 `process.cpuUsage()`.
 
+Stage 633 formalized the optional previous-sample contract of
+`process.cpuUsage()`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

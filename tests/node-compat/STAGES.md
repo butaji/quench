@@ -629,3 +629,4 @@ these small fixtures isolate the currently implemented contract.
 |   630 | process permission exposes conservative capability checks              | `tools/run-node-tests.sh --stage 630` |
 |   631 | process resourceUsage exposes deterministic numeric metrics             | `tools/run-node-tests.sh --stage 631` |
 |   632 | process cpuUsage exposes deterministic user and system metrics          | `tools/run-node-tests.sh --stage 632` |
+|   633 | process cpuUsage accepts a previous sample for delta metrics             | `tools/run-node-tests.sh --stage 633` |
