@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1122: VM Script evaluation
+
+- Fixture: `test-vm-context.js`
+- Added a minimal `vm.Script` wrapper with context and new-context execution
+  backed by the existing VM evaluator.
+- Retrospective: thin API wrappers can reuse the established evaluator while
+  keeping the Rust host unchanged.
+
 ## Stage 1121: VM getter descriptors
 
 - Fixture: `test-vm-getters.js`
