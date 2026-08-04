@@ -2636,3 +2636,7 @@ Stage 951 verifies `events.on()` async-iterator delivery, ordered argument
 tuples, explicit iterator cleanup, and listener removal. Retrospective: the
 fixture must use an async function because the harness evaluates scripts as
 classic scripts rather than modules with top-level await.
+
+Stage 952 verifies `events.on()` abort-signal rejection and listener cleanup.
+Retrospective: aborting before the first read gives a deterministic cancellation
+case and avoids coupling the contract to event scheduling.
