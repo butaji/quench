@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1106: process title flag
+
+- Fixture: `test-process-title-cli.js`
+- Added harness parsing for the upstream `// Flags: --title=...` directive and
+  applied it before the process surface initializes.
+- Retrospective: fixture directives belong in the runner boundary, keeping
+  command-line compatibility out of individual JavaScript test bodies.
+
 ## Stage 1105: process timer lifecycle
 
 - Fixtures: `test-process-getactiveresources-track-timer-lifetime.js`,
