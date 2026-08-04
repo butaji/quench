@@ -2359,3 +2359,8 @@ Stage 896 verifies the node:crypto buffer random bytes API.
 
 Retrospective: verify native rquickjs behavior before adding polyfills; this
 stage needed only a contract gate because the existing byte primitive matched.
+
+Stage 897 verifies the node:crypto Web Crypto random-values API.
+
+Retrospective: typed-array fallbacks must write through `buffer`,
+`byteOffset`, and `byteLength` so subviews retain correct Web Crypto behavior.
