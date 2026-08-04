@@ -1273,6 +1273,9 @@ including queued data and EOF delivery.
 
 Stage 452 formalized `resume()` draining queued data from a paused Readable.
 
+Stage 453 formalized writable length accounting and absence of spurious drain
+events for writes below the high-water mark.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
