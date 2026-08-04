@@ -70,25 +70,10 @@ let __quenchAsyncHooksModule;
     })
   };
 }
-const __quenchCoreStaticModules = new Map([
-  ["assert", globalThis.__nodeAssert],
-  ["path", globalThis.__nodePath],
-  ["path/posix", globalThis.__nodePath],
-  ["util", globalThis.__nodeUtil],
-  ["perf_hooks", globalThis.__nodePerfHooks],
-  ["crypto", globalThis.__nodeCrypto],
-  ["v8", {}],
-  [
-    "events",
-    {
-      EventEmitter: globalThis.__nodeEventEmitter,
-      once: globalThis.__nodeEventEmitter.once,
-      on: globalThis.__nodeEventEmitter.on
-    }
-  ],
-  ["async_hooks", __quenchAsyncHooksModule]
-]);
 const __quenchRequireCoreBase = (name) => {
+  if (name === "assert") return globalThis.__nodeAssert;
+  if (name === "path" || name === "path/posix") return globalThis.__nodePath;
+  if (name === "util") return globalThis.__nodeUtil;
   if (name === "os") {
     globalThis.__nodeOsInitialized = true;
     return globalThis.__nodeOs;
@@ -102,7 +87,15 @@ const __quenchRequireCoreBase = (name) => {
     globalThis.__nodeUrlInitialized = true;
     return globalThis.__nodeUrlModule;
   }
-  return __quenchCoreStaticModules.get(name);
+  if (name === "crypto") return globalThis.__nodeCrypto;
+  if (name === "v8") return {};
+  if (name === "events")
+    return {
+      EventEmitter: globalThis.__nodeEventEmitter,
+      once: globalThis.__nodeEventEmitter.once,
+      on: globalThis.__nodeEventEmitter.on
+    };
+  if (name === "async_hooks") return __quenchAsyncHooksModule;
 };
 const __quenchSpawnChild = (_command, args = []) => {
   const child = new globalThis.__nodeEventEmitter();
@@ -159,10 +152,8 @@ const __quenchChildProcessModule = () => {
 globalThis.__quench_require_part_00 = (name, specifier) => {
   const base = __quenchRequireCoreBase(name);
   if (base !== undefined) return base;
-};
-let __quenchHttpModule;
-{
-  if (!globalThis.__nodeHttp) {
+  if (name === "http") {
+    if (globalThis.__nodeHttp) return globalThis.__nodeHttp;
     const servers = new Map();
     const makeResponse = () => {
       const response = new globalThis.__nodeEventEmitter();
@@ -272,11 +263,8 @@ let __quenchHttpModule;
         http.get(target, typeof options === "function" ? options : callback)
     };
     globalThis.__nodeHttp = http;
-    __quenchHttpModule = http;
+    return http;
   }
-}
-globalThis.__quench_require_part_00 = (name, specifier) => {
-  if (name === "http") return globalThis.__nodeHttp || __quenchHttpModule;
   if (name === "child_process")
     return globalThis.__nodeRequireChildProcess || __quenchChildProcessModule();
 };
