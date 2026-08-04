@@ -1,42 +1,42 @@
 # Rust direct bindings intentionally wrapped by a one-line self-hosted method.
-bind
-toString
-add
-at
-charAt
-charCodeAt
-clear
-codePointAt
-delete
-deref
-drop
-every
-filter
-find
-flatMap
-forEach
-get
-has
-hasOwnProperty
-indexOf
-isPrototypeOf
-lastIndexOf
-map
-match
-reduce
-repeat
-replace
-replaceAll
-search
-set
-some
-take
-test
-then
-toArray
-toExponential
-toFixed
-toLocaleString
-toLowerCase
-toUpperCase
-valueOf
+bind|one-line JS receiver/proxy wrapper
+toString|one-line JS receiver/proxy wrapper
+add|one-line JS receiver/proxy wrapper
+at|one-line JS receiver/proxy wrapper
+charAt|one-line JS receiver/proxy wrapper
+charCodeAt|one-line JS receiver/proxy wrapper
+clear|one-line JS receiver/proxy wrapper
+codePointAt|one-line JS receiver/proxy wrapper
+delete|one-line JS receiver/proxy wrapper
+deref|one-line JS receiver/proxy wrapper
+drop|one-line JS receiver/proxy wrapper
+every|one-line JS receiver/proxy wrapper
+filter|one-line JS receiver/proxy wrapper
+find|one-line JS receiver/proxy wrapper
+flatMap|one-line JS receiver/proxy wrapper
+forEach|one-line JS receiver/proxy wrapper
+get|one-line JS receiver/proxy wrapper
+has|one-line JS receiver/proxy wrapper
+hasOwnProperty|one-line JS receiver/proxy wrapper
+indexOf|one-line JS receiver/proxy wrapper
+isPrototypeOf|one-line JS receiver/proxy wrapper
+lastIndexOf|one-line JS receiver/proxy wrapper
+map|one-line JS receiver/proxy wrapper
+match|one-line JS receiver/proxy wrapper
+reduce|one-line JS receiver/proxy wrapper
+repeat|one-line JS receiver/proxy wrapper
+replace|one-line JS receiver/proxy wrapper
+replaceAll|one-line JS receiver/proxy wrapper
+search|one-line JS receiver/proxy wrapper
+set|one-line JS receiver/proxy wrapper
+some|one-line JS receiver/proxy wrapper
+take|one-line JS receiver/proxy wrapper
+test|one-line JS receiver/proxy wrapper
+then|one-line JS receiver/proxy wrapper
+toArray|one-line JS receiver/proxy wrapper
+toExponential|one-line JS receiver/proxy wrapper
+toFixed|one-line JS receiver/proxy wrapper
+toLocaleString|one-line JS receiver/proxy wrapper
+toLowerCase|one-line JS receiver/proxy wrapper
+toUpperCase|one-line JS receiver/proxy wrapper
+valueOf|one-line JS receiver/proxy wrapper
