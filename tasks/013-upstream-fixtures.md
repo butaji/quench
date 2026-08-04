@@ -2028,3 +2028,5 @@ Stage 738 added active process.stdout writable-state properties.
 Stage 739 added active process.stderr writable-state properties.
 
 Stage 740 added process.stdout writableNeedDrain state.
+
+Stage 741 added process.stderr writableNeedDrain state.
