@@ -333,13 +333,17 @@ const __nodeLegacyUrlAuthority = (input) => {
   const host = (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase();
   return { auth, host };
 };
+const __nodeLegacyUrlPathParts = (parsed, host) => {
+  const pathname = parsed.pathname || (host ? "/" : "");
+  const search = parsed.search || null;
+  return { pathname, search };
+};
 const __nodeLegacyUrlParts = (input, parsed) => {
   const protocol = parsed.protocol.toLowerCase();
   const { auth, host } = __nodeLegacyUrlAuthority(input);
   const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
   const port = host.match(/:(\d+)$/)?.[1] || null;
-  const pathname = parsed.pathname || (host ? "/" : "");
-  const search = parsed.search || null;
+  const { pathname, search } = __nodeLegacyUrlPathParts(parsed, host);
   return {
     protocol: protocol || null,
     slashes: protocol ? true : null,
@@ -354,6 +358,25 @@ const __nodeLegacyUrlParts = (input, parsed) => {
     path: pathname ? `${pathname}${search || ""}` : null,
     href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
   };
+};
+const __nodeLegacyUrlFormatString = (value) => {
+  try {
+    const href = new globalThis.__nodeURL(value).href;
+    return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;
+  } catch (_) {
+    return value;
+  }
+};
+const __nodeLegacyUrlFormatObject = (value) => {
+  const protocol = value.protocol || "";
+  const host = value.host || value.hostname || "";
+  const prefix =
+    protocol && (value.slashes || host) ? `${protocol}//` : protocol;
+  const pathname = value.pathname || (host ? "/" : "");
+  let search = value.search;
+  if (search === undefined && value.query !== undefined)
+    search = typeof value.query === "string" ? `?${value.query}` : "";
+  return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;
 };
 const __nodeUrlModuleExports = {
   URL: globalThis.__nodeURL,
@@ -394,26 +417,9 @@ const __nodeUrlModuleExports = {
   },
   format: (value) => {
     if (value instanceof globalThis.__nodeURL) return value.href;
-    if (typeof value === "string") {
-      try {
-        const href = new globalThis.__nodeURL(value).href;
-        return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;
-      } catch (_) {
-        return value;
-      }
-    }
-    if (value && typeof value === "object") {
-      const protocol = value.protocol || "";
-      const host = value.host || value.hostname || "";
-      const prefix =
-        protocol && (value.slashes || host) ? `${protocol}//` : protocol;
-      const pathname = value.pathname || (host ? "/" : "");
-      let search = value.search;
-      if (search === undefined && value.query !== undefined) {
-        search = typeof value.query === "string" ? `?${value.query}` : "";
-      }
-      return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;
-    }
+    if (typeof value === "string") return __nodeLegacyUrlFormatString(value);
+    if (value && typeof value === "object")
+      return __nodeLegacyUrlFormatObject(value);
     return String(value);
   },
   resolve: (from, to) => new globalThis.__nodeURL(to, from).href
