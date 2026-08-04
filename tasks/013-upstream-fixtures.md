@@ -1465,6 +1465,9 @@ gzip data formats.
 Stage 519 formalized `StringDecoder` buffering incomplete UTF-8 sequences and
 flushing pending bytes at `end()`.
 
+Stage 520 formalized the TLS surface defaults, empty cipher list, secure
+context options, and unsupported connection error.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
