@@ -27,14 +27,9 @@ awk '
   if ($1 == "ok") pass[prefix]++
 }
 END {
-  for (p in total) {
-    sorted[++n] = p
-  }
-  asort(sorted)
   grand_total = 0
   grand_pass = 0
-  for (i = 1; i <= n; i++) {
-    p = sorted[i]
+  for (p in total) {
     t = total[p]
     s = (p in pass) ? pass[p] : 0
     f = t - s
