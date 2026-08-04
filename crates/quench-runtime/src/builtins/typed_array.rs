@@ -463,6 +463,14 @@ mod tests {
     }
 
     #[test]
+    fn typed_array_constructor_name_is_visible_to_javascript() {
+        let ctx = &mut Context::new().unwrap();
+        register_typed_arrays(ctx);
+        let result = ctx.eval("Uint8Array.name === 'Uint8Array'");
+        assert_eq!(result, Ok(Value::Boolean(true)));
+    }
+
+    #[test]
     fn typed_array_constructor_is_callable() {
         let ctx = &mut Context::new().unwrap();
         register_typed_arrays(ctx);
