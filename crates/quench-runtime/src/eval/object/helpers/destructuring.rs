@@ -174,7 +174,15 @@ fn array_destructuring_impl(
     } else if let Value::Generator(gen) = value {
         crate::value::generator::generator_as_iterator_object(Rc::clone(gen))
     } else {
-        return Err(JsError("Cannot destructure non-iterable value".to_string()));
+        // Per ES §13.3.3.5 / §13.3.3.6 BindingInitialization / IteratorBindingInitialization:
+        // attempting to iterate a non-iterable throws a TypeError. Set the thrown value
+        // so the surrounding catch block sees a real error object (not `undefined`)
+        // which is required by test262's assert.throws and the harness `assert`.
+        let msg = "TypeError: value is not iterable";
+        let (err, js_err) =
+            crate::value::error::create_js_error_with_type(&msg, "TypeError");
+        crate::value::set_thrown_value(err);
+        return Err(js_err);
     };
 
     // After array_with_iterator_impl completes, check if a generator yield was
