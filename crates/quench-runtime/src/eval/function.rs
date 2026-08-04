@@ -445,7 +445,9 @@ pub(crate) fn call_js_function_impl_with_strict(
                 .define("arguments".to_string(), args_obj);
         }
 
-        predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
+        if !has_parameter_expressions(&params) {
+            predeclare_var(&f.body, &mut call_env_rc.borrow_mut());
+        }
         bind_params(&f, &params, &args, &call_env_rc)?;
 
         let body_env_rc = function_body_env(&call_env_rc, &f, &this_val, &params);

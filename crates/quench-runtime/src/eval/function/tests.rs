@@ -118,6 +118,15 @@ fn call_value_default_param_overridden() {
 }
 
 #[test]
+fn default_parameter_closure_uses_parameter_environment() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx
+        .eval("var x = 'outside'; var captured; (function(_ = captured = function() { return x; }) { var x = 'inside'; }()); captured()")
+        .unwrap();
+    assert_eq!(value, Value::String("outside".into()));
+}
+
+#[test]
 fn call_value_rest_param() {
     let mut ctx = Context::new().unwrap();
     let v = ctx
