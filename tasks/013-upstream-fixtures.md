@@ -1602,6 +1602,9 @@ Stage 562 formalized the cluster `schedulingPolicy` default as
 Stage 563 formalized cumulative `cluster.setupPrimary()` updates to exec,
 argument, and exec-argument settings.
 
+Stage 564 formalized `cluster.setupPrimary()` defaults for arguments, exec,
+execArgv, and the non-silent setting.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
