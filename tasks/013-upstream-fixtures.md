@@ -3101,3 +3101,9 @@ encoding coercion. Retrospective: the ranged early return bypassed an existing
 encoding check; moving validation to the method boundary fixed both paths with
 one shared implementation.
 The focused stage and upstream `test-buffer-tostring-range.js` now pass.
+
+Stage 1033 distinguishes negative `readDouble*()` offsets from positive
+out-of-bounds offsets, matching Node's `ERR_OUT_OF_RANGE` contract. The
+retrospective confirms that separating invalid offset sign from buffer-size
+bounds is clearer than one combined branch; the focused stage and upstream
+`test-buffer-read.js` now pass.
