@@ -27,3 +27,13 @@ fn concat_reads_array_constructor_before_spreadability() {
         Ok(Value::String("constructor,spread".to_string()))
     );
 }
+
+#[test]
+fn concat_constructs_array_species() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var calls=0; function C(n){calls++;this.length=n;} var a=[]; a.constructor={}; a.constructor[Symbol.species]=C; a.concat(); calls===1")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}

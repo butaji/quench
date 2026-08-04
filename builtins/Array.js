@@ -355,8 +355,12 @@ Array.prototype.slice = function ArraySlice(start, end) {
 Array.prototype.concat = function ArrayConcat() {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.concat called on null or undefined");
   var O = ToObject(this);
-  if (IsArray(O)) O.constructor;
-  var A = new Array(0);
+  var C = IsArray(O) ? O.constructor : undefined;
+  if (C !== null && typeof C === 'object') {
+    C = C[Symbol.species];
+    if (C === null || C === undefined) C = undefined;
+  }
+  var A = C === undefined ? new Array(0) : new C(0);
   var n = 0;
   var items = [O];
   for (var i = 0; i < arguments.length; i++) items.push(arguments[i]);
