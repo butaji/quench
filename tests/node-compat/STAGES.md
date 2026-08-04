@@ -761,3 +761,4 @@ these small fixtures isolate the currently implemented contract.
 |   762 | process stdin readable state matches an active input stream                | `tools/run-node-tests.sh --stage 762` |
 |   763 | process stdin readableFlowing starts unset                               | `tools/run-node-tests.sh --stage 763` |
 |   764 | process stdin readableHighWaterMark matches local Node                  | `tools/run-node-tests.sh --stage 764` |
+|   765 | process stdin readableLength starts empty                                | `tools/run-node-tests.sh --stage 765` |

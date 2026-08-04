@@ -2076,3 +2076,5 @@ Stage 762 added active process.stdin readable-state properties.
 Stage 763 aligned process.stdin readableFlowing with local Node.
 
 Stage 764 aligned process.stdin readableHighWaterMark with local Node.
+
+Stage 765 aligned process.stdin readableLength with local Node.
