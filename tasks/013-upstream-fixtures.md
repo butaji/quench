@@ -1069,6 +1069,9 @@ Buffer with the expected SHA-256 length.
 Stage 382 formalized writable stream completion ordering, with `finish` emitted
 before the `end` callback.
 
+Stage 383 formalized fresh runtime state for each fixture, preventing globals
+from leaking between separate stage files.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
