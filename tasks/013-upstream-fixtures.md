@@ -2903,3 +2903,7 @@ the remaining Buffer hexadecimal rendering mismatch is tracked separately.
 Stage 1004 verifies Readable rejects invalid non-object-mode chunks. Retrospective:
 the focused error assertion keeps chunk validation independent from stream flow
 scheduling and Buffer encoding.
+
+Stage 1005 verifies Readable constructor `read` callbacks and
+`_readableState.reading` initialization/update. Retrospective: observing state
+before and after attaching data flow isolates lazy stream activation.
