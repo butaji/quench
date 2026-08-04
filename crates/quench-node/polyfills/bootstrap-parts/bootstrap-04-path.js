@@ -392,7 +392,8 @@ globalThis.__nodeTmpdir = {
 class NodeEventEmitter {
   constructor(options = {}) {
     this._events = {};
-    this.captureRejections = options.captureRejections === true;
+    this.captureRejections =
+      options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
   }
   on(event, listener) {
     (this._events[event] ||= []).push(listener);
