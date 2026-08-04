@@ -182,6 +182,13 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     };
+    const normalizeRangeEndpoint = (value, label) => {
+      if (typeof value === "string") return value;
+      if (value && typeof value.address === "string") return value.address;
+      const error = new TypeError(`Invalid ${label}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    };
     return {
       isIP,
       isIPv4,
@@ -249,21 +256,8 @@ globalThis.__quench_require_part_01 = (name, specifier) => {
           }
         }
         addRange(start, end, type) {
-          if (typeof start === "string") start = start;
-          else if (start && typeof start.address === "string")
-            start = start.address;
-          else {
-            const e = new TypeError("Invalid start");
-            e.code = "ERR_INVALID_ARG_TYPE";
-            throw e;
-          }
-          if (typeof end === "string") end = end;
-          else if (end && typeof end.address === "string") end = end.address;
-          else {
-            const e = new TypeError("Invalid end");
-            e.code = "ERR_INVALID_ARG_TYPE";
-            throw e;
-          }
+          start = normalizeRangeEndpoint(start, "start");
+          end = normalizeRangeEndpoint(end, "end");
           let resolvedType = type;
           if (resolvedType === undefined) {
             resolvedType = isIPv4(start) ? "ipv4" : "ipv6";
