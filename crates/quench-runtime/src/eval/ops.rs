@@ -354,17 +354,9 @@ pub fn make_ops_object() -> Value {
     set_op(&mut obj, "SetPrototypeOf", |args| {
         let o = args.first().cloned().unwrap_or(Value::Undefined);
         let proto = args.get(1).cloned().unwrap_or(Value::Null);
-        match &o {
-            Value::Object(obj_rc) => {
-                let proto_rc = match &proto {
-                    Value::Object(p) => Some(std::rc::Rc::clone(p)),
-                    Value::Null => None,
-                    _ => return Ok(Value::Boolean(false)),
-                };
-                obj_rc.borrow_mut().prototype = proto_rc;
-                Ok(Value::Boolean(true))
-            }
-            _ => Ok(Value::Boolean(false)),
+        match crate::builtins::object_static::object_set_prototype_of(vec![o, proto]) {
+            Ok(_) => Ok(Value::Boolean(true)),
+            Err(_) => Ok(Value::Boolean(false)),
         }
     });
 

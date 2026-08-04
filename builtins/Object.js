@@ -174,7 +174,7 @@ Object.getPrototypeOf = function ObjectGetPrototypeOf(O) {
 Object.setPrototypeOf = function ObjectSetPrototypeOf(O, proto) {
   if (O === null || O === undefined) throw ThrowTypeError("Cannot convert undefined or null to object");
   if (proto !== null && typeof proto !== 'object') throw ThrowTypeError("proto must be an object or null");
-  SetPrototypeOf(O, proto);
+  if (!SetPrototypeOf(O, proto)) throw ThrowTypeError("Cannot set prototype of object");
   return O;
 };
 
