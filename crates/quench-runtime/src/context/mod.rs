@@ -77,6 +77,7 @@ impl Context {
     pub fn eval(&mut self, source: &str) -> Result<Value, JsError> {
         interpreter::reset_depth();
         let _ = crate::value::error::take_thrown_value();
+        let _ = crate::interpreter::take_generator_yield();
 
         // Set thread-local for eval function to access this context
         let ctx_ptr: *mut Context = self;
@@ -107,6 +108,7 @@ impl Context {
         CURRENT_SOURCE.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        let _ = crate::interpreter::take_generator_yield();
 
         match result {
             Ok(value) => {

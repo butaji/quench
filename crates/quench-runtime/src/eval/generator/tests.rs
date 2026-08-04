@@ -454,6 +454,16 @@ mod generator_tests {
     }
 
     #[test]
+    fn context_eval_clears_stale_generator_yield_state() {
+        let mut ctx = Context::new().unwrap();
+        ctx.eval("var log = []; async function* g() { log.push({ name: 'started' }); yield 1; } var iter = g();")
+            .unwrap();
+        crate::interpreter::set_generator_yield(Value::String("stale".into()));
+        ctx.eval("iter.next();").unwrap();
+        assert_eq!(ctx.eval("log[0].name").unwrap(), Value::String("started".into()));
+    }
+
+    #[test]
     fn async_generator_queues_concurrent_dynamic_import_yields() {
         let mut ctx = Context::new().unwrap();
         crate::builtins::register_builtins(&mut ctx);
