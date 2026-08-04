@@ -403,3 +403,4 @@ these small fixtures isolate the currently implemented contract.
 |   404 | perf_hooks entry queries and measure clearing                  | `tools/run-node-tests.sh --stage 404` |
 |   405 | timers/promises async interval iteration and values           | `tools/run-node-tests.sh --stage 405` |
 |   406 | timers/promises AbortSignal cancellation error               | `tools/run-node-tests.sh --stage 406` |
+|   407 | timers/promises interval AbortSignal cancellation            | `tools/run-node-tests.sh --stage 407` |
