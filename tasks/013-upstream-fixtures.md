@@ -1673,6 +1673,9 @@ and unsupported IPC handle arguments.
 Stage 587 formalized equivalent callback validation for forked child-process
 `send()` calls.
 
+Stage 588 formalized normal forked child exit status and null signal
+reporting.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

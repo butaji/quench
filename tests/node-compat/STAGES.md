@@ -584,3 +584,4 @@ these small fixtures isolate the currently implemented contract.
 |   585 | child_process stdio streams expose readable and writable state       | `tools/run-node-tests.sh --stage 585` |
 |   586 | process.send validates callbacks and unsupported handle arguments    | `tools/run-node-tests.sh --stage 586` |
 |   587 | child_process fork send validates unsupported callback arguments     | `tools/run-node-tests.sh --stage 587` |
+|   588 | child_process fork reports normal child exit status                  | `tools/run-node-tests.sh --stage 588` |
