@@ -2349,3 +2349,8 @@ Stage 894 verifies the node:crypto bounded random integer API.
 Retrospective: a full parallel sweep exposed a pre-existing filesystem-stage
 flake; rerunning the isolated stage and sweep passed, so future gates should
 retain both isolated diagnostics and the parallel regression check.
+
+Stage 895 verifies the node:crypto version 4 random UUID API.
+
+Retrospective: format-level assertions are a useful deterministic check for
+random APIs while avoiding brittle expectations about exact generated values.
