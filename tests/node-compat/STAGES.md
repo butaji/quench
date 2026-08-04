@@ -696,3 +696,4 @@ these small fixtures isolate the currently implemented contract.
 |   697 | process stdout on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 697` |
 |   698 | process stderr on returns the stream for chaining                             | `tools/run-node-tests.sh --stage 698` |
 |   699 | process stdin setEncoding returns the stream for chaining                     | `tools/run-node-tests.sh --stage 699` |
+|   700 | process stdout setEncoding returns the stream for chaining                    | `tools/run-node-tests.sh --stage 700` |
