@@ -15,6 +15,8 @@
     const originalClearTimeout = globalThis.clearTimeout;
     const originalSetInterval = globalThis.setInterval;
     const originalClearInterval = globalThis.clearInterval;
+    const originalSetImmediate = globalThis.setImmediate;
+    const originalClearImmediate = globalThis.clearImmediate;
     if (typeof originalSetTimeout === "function") {
       globalThis.setTimeout = (callback, delay, ...args) => {
         let timer;
@@ -40,6 +42,22 @@
       globalThis.clearInterval = (timer) => {
         activeTimers.delete(timer);
         return originalClearInterval(timer);
+      };
+    }
+    if (typeof originalSetImmediate === "function") {
+      globalThis.setImmediate = (callback, ...args) => {
+        let timer;
+        const wrappedCallback = (...callbackArgs) => {
+          activeTimers.delete(timer);
+          return callback(...callbackArgs);
+        };
+        timer = originalSetImmediate(wrappedCallback, ...args);
+        activeTimers.set(timer, "Immediate");
+        return timer;
+      };
+      globalThis.clearImmediate = (timer) => {
+        activeTimers.delete(timer);
+        return originalClearImmediate(timer);
       };
     }
     globalThis.process.getActiveResourcesInfo = () => [

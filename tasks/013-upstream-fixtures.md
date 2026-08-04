@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1104: process active timer types
+
+- Fixture: `test-process-getactiveresources-track-multiple-timers.js`
+- Added `Immediate` tracking alongside the existing timeout and interval
+  tracking, including cleanup when an immediate fires or is cleared.
+- Retrospective: keeping resource tracking at the timer boundary makes the
+  process surface small and lets timer fixtures validate resource lifecycle.
+
 ## Stage 1103: process active resources
 
 - Fixture: `test-process-getactiveresources.js`
