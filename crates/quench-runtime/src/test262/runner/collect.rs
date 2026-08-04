@@ -68,4 +68,18 @@ mod tests {
         }
         assert_eq!(collect_tests(dir.path()).len(), 3);
     }
+
+    #[test]
+    fn stage_zero_inventory_is_complete_and_unique() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("tests/test262/test/harness");
+        let tests = collect_tests(&root);
+        assert_eq!(tests.len(), 116);
+        let unique = tests.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), tests.len());
+    }
 }
