@@ -2118,3 +2118,5 @@ Stage 783 added process credential helper method compatibility.
 Stage 784 added process uncaught exception capture state helpers.
 
 Stage 785 added process warning emission compatibility.
+
+Stage 786 added process stdin access and runtime resource methods.
