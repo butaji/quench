@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1144: VM inherited prototype properties
+
+- Fixture: `test-vm-symbols.js`
+- Temporarily applied the sandbox prototype to the context global so inherited
+  methods and symbol-backed state remain visible during evaluation.
+- Retrospective: context entry must preserve both own descriptors and the
+  sandbox prototype chain; restoring both prevents host-global contamination.
+
 ## Stage 1143: VM nested global identity
 
 - Fixture: `test-vm-property-not-on-sandbox.js`
