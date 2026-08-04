@@ -2300,3 +2300,5 @@ Stage 874 verifies the node:url URLPattern matching API.
 Stage 875 verifies the node:fs callback, promise, and sync copy API.
 
 Stage 876 verifies the node:fs file watching API.
+
+Stage 877 verifies the node:fs directory and stream constructors.
