@@ -2084,3 +2084,5 @@ Stage 766 aligned process.stdin readableObjectMode with local Node.
 Stage 767 added empty-input process.stdin read and chainable unshift behavior.
 
 Stage 768 aligned process.stdin isPaused with local Node.
+
+Stage 769 added process.stdin stdio lifecycle methods.
