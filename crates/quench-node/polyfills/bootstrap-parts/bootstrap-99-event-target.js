@@ -159,6 +159,40 @@ globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
     return delivered;
   }
 };
+globalThis.MessagePort ||= class MessagePort extends EventTarget {
+  constructor() {
+    super();
+    this.onmessage = null;
+    this._peer = null;
+    this._started = false;
+    this._closed = false;
+  }
+  start() {
+    this._started = true;
+  }
+  close() {
+    this._closed = true;
+  }
+  postMessage(value) {
+    if (this._closed || !this._peer || this._peer._closed) return;
+    const event = new CustomEvent("message", { detail: value });
+    Object.defineProperty(event, "data", { value, enumerable: true });
+    queueMicrotask(() => {
+      if (this._peer._closed) return;
+      this._peer.dispatchEvent(event);
+      if (typeof this._peer.onmessage === "function")
+        this._peer.onmessage.call(this._peer, event);
+    });
+  }
+};
+globalThis.MessageChannel ||= class MessageChannel {
+  constructor() {
+    this.port1 = new MessagePort();
+    this.port2 = new MessagePort();
+    this.port1._peer = this.port2;
+    this.port2._peer = this.port1;
+  }
+};
 const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;
 const __quenchEventTargetRemove = EventTarget.prototype.removeEventListener;
 const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;

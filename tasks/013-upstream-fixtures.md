@@ -2782,3 +2782,8 @@ the stage to formatter-specific output while preserving the public type name.
 Upstream audit: `test-eventtarget-memoryleakwarning.js` is currently blocked by
 the missing `MessageChannel` global; it is independent of EventTarget listener
 bookkeeping and remains a subsequent host-global task.
+
+Stage 981 adds an in-process MessageChannel/MessagePort pair with microtask
+delivery, `onmessage`, `start()`, and `close()`. Retrospective: keeping ports
+entangled entirely in JavaScript avoids Rust runtime expansion for deterministic
+single-context message tests.
