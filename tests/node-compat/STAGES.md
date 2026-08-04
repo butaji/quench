@@ -932,3 +932,4 @@ these small fixtures isolate the currently implemented contract.
 |   933 | upstream EventEmitter list contract                                      | `tools/run-node-tests.sh --stage 933` |
 |   934 | static events listener count                                             | `tools/run-node-tests.sh --stage 934` |
 |   935 | static events listener count validation                                  | `tools/run-node-tests.sh --stage 935` |
+|   936 | static events max-listener validation                                    | `tools/run-node-tests.sh --stage 936` |
