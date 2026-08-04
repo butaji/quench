@@ -13,6 +13,36 @@ const __quenchVmCompilePrefix = (extensions) => {
     )
     .join("\n");
 };
+const __quenchVmInvokeCompiled = (compiled, extensions, args, options) => {
+  try {
+    return compiled(extensions, ...args);
+  } catch (error) {
+    const line = (options?.lineOffset || 0) + 1;
+    const column =
+      error.name === "Error" ? (options?.columnOffset || 0) + 7 : 1;
+    error.stack = `${error.name}: ${error.message}\n    at <anonymous>:${line}:${column}`;
+    throw error;
+  }
+};
+const __quenchVmCreateCompiledFunction = (
+  compiled,
+  extensions,
+  options,
+  code,
+  params
+) => {
+  const fn = extensions.length
+    ? (...args) => __quenchVmInvokeCompiled(compiled, extensions, args, options)
+    : (...args) => __quenchVmInvokeCompiled(compiled, [], args, options);
+  if (!params.length) fn.toString = () => `function () {\n${code}\n}`;
+  if (options?.produceCachedData) {
+    fn.cachedDataProduced = true;
+    fn.cachedData = NodeBuffer.from(code);
+  }
+  if (options?.cachedData)
+    fn.cachedDataRejected = options.cachedData.toString() !== code;
+  return fn;
+};
 const __quenchVmCompileFunction = (code, params = [], options) => {
   if (typeof code !== "string")
     __quenchVmTypeError(
@@ -28,9 +58,11 @@ const __quenchVmCompileFunction = (code, params = [], options) => {
   const extensions = __quenchVmCompileExtensions(options);
   const prefix = __quenchVmCompilePrefix(extensions);
   const compiled = Function("__extensions", ...params, `${prefix}\n${code}`);
-  const fn = extensions.length
-    ? (...args) => compiled(extensions, ...args)
-    : (...args) => compiled(undefined, ...args);
-  if (!params.length) fn.toString = () => `function () {\n${code}\n}`;
-  return fn;
+  return __quenchVmCreateCompiledFunction(
+    compiled,
+    extensions,
+    options,
+    code,
+    params
+  );
 };
