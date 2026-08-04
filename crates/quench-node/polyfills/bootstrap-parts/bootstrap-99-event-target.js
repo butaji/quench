@@ -75,6 +75,70 @@ globalThis.CustomEvent ||= class CustomEvent extends Event {
     return "CustomEvent";
   }
 };
+globalThis.NodeEventTarget ||= class NodeEventTarget extends EventTarget {
+  constructor() {
+    super();
+    this._nodeListeners = {};
+  }
+  addListener(name, listener, options) {
+    const callback =
+      typeof listener === "function"
+        ? listener
+        : (event) => listener.handleEvent(event);
+    (this._nodeListeners[name] ||= []).push({ listener, callback });
+    super.addEventListener(name, callback, options);
+    return this;
+  }
+  addEventListener(name, listener, options) {
+    return this.addListener(name, listener, options);
+  }
+  on(name, listener, options) {
+    return this.addListener(name, listener, options);
+  }
+  once(name, listener, options = {}) {
+    return this.addListener(name, listener, { ...options, once: true });
+  }
+  removeListener(name, listener) {
+    const records = this._nodeListeners[name] || [];
+    this._nodeListeners[name] = records.filter((record) => {
+      if (record.listener !== listener) return true;
+      super.removeEventListener(name, record.callback);
+      return false;
+    });
+    return this;
+  }
+  removeEventListener(name, listener) {
+    return this.removeListener(name, listener);
+  }
+  off(name, listener) {
+    return this.removeListener(name, listener);
+  }
+  listenerCount(name) {
+    return (this._nodeListeners[name] || []).length;
+  }
+  eventNames() {
+    return Object.keys(this._nodeListeners).filter((name) =>
+      this.listenerCount(name)
+    );
+  }
+  removeAllListeners(name) {
+    for (const event of name === undefined ? this.eventNames() : [name]) {
+      for (const record of this._nodeListeners[event] || [])
+        super.removeEventListener(event, record.callback);
+      delete this._nodeListeners[event];
+    }
+    return this;
+  }
+  emit(name, ...args) {
+    if (!name)
+      throw new TypeError("The event name is required [ERR_INVALID_ARG_TYPE]");
+    const event =
+      args[0] instanceof Event
+        ? args[0]
+        : new CustomEvent(name, { detail: args[0] });
+    return this.dispatchEvent(event);
+  }
+};
 const __quenchEventTargetAdd = EventTarget.prototype.addEventListener;
 const __quenchEventTargetRemove = EventTarget.prototype.removeEventListener;
 const __quenchEventTargetDispatch = EventTarget.prototype.dispatchEvent;
