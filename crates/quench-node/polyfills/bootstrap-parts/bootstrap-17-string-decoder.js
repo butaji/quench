@@ -1,6 +1,6 @@
 const __quenchOriginalRequireWithDecoder = globalThis.require;
 const __quenchDecoderInputBytes = (input) => {
-  if (ArrayBuffer.isView(input) && !(input instanceof Uint8Array))
+  if (ArrayBuffer.isView(input))
     return Array.from(
       new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
     );
