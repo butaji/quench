@@ -1,3 +1,75 @@
+let __quenchAsyncHooksModule;
+{
+  globalThis.__nodeCurrentAsyncResource ||= {};
+  globalThis.__nodeNextAsyncId ||= 1;
+  class AsyncResource {
+    constructor(type) {
+      this.type = String(type);
+      this._asyncId = ++globalThis.__nodeNextAsyncId;
+      this._resource = { asyncId: this._asyncId };
+    }
+    asyncId() {
+      return this._asyncId;
+    }
+    runInAsyncScope(callback, thisArg, ...args) {
+      if (typeof callback !== "function") {
+        const error = new TypeError(
+          "The callback argument must be of type function"
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const previous = globalThis.__nodeCurrentAsyncResource;
+      globalThis.__nodeCurrentAsyncResource = this._resource;
+      try {
+        return callback.apply(thisArg, args);
+      } finally {
+        globalThis.__nodeCurrentAsyncResource = previous;
+      }
+    }
+    bind(callback, thisArg) {
+      if (typeof callback !== "function") {
+        const error = new TypeError(
+          "The callback argument must be of type function"
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const resource = this;
+      const bound = function (...args) {
+        return resource.runInAsyncScope(
+          callback,
+          thisArg === undefined ? this : thisArg,
+          ...args
+        );
+      };
+      Object.defineProperty(bound, "length", { value: callback.length });
+      return bound;
+    }
+    emitDestroy() {
+      return this;
+    }
+    static bind(callback, thisArg) {
+      return new AsyncResource("bound").bind(callback, thisArg);
+    }
+  }
+  __quenchAsyncHooksModule = {
+    AsyncResource,
+    executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource,
+    executionAsyncId: () => globalThis.__nodeCurrentAsyncResource.asyncId || 1,
+    triggerAsyncId: () => 0,
+    createHook: (callbacks = {}) => ({
+      enable() {
+        if (typeof callbacks.init === "function")
+          callbacks.init(1, "ROOT", 0, globalThis.__nodeCurrentAsyncResource);
+        return this;
+      },
+      disable() {
+        return this;
+      }
+    })
+  };
+}
 globalThis.__quench_require_part_00 = (name, specifier) => {
   if (name === "assert") return globalThis.__nodeAssert;
   if (name === "path" || name === "path/posix") return globalThis.__nodePath;
@@ -23,78 +95,7 @@ globalThis.__quench_require_part_00 = (name, specifier) => {
       once: globalThis.__nodeEventEmitter.once,
       on: globalThis.__nodeEventEmitter.on
     };
-  if (name === "async_hooks") {
-    globalThis.__nodeCurrentAsyncResource ||= {};
-    globalThis.__nodeNextAsyncId ||= 1;
-    class AsyncResource {
-      constructor(type) {
-        this.type = String(type);
-        this._asyncId = ++globalThis.__nodeNextAsyncId;
-        this._resource = { asyncId: this._asyncId };
-      }
-      asyncId() {
-        return this._asyncId;
-      }
-      runInAsyncScope(callback, thisArg, ...args) {
-        if (typeof callback !== "function") {
-          const error = new TypeError(
-            "The callback argument must be of type function"
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
-        }
-        const previous = globalThis.__nodeCurrentAsyncResource;
-        globalThis.__nodeCurrentAsyncResource = this._resource;
-        try {
-          return callback.apply(thisArg, args);
-        } finally {
-          globalThis.__nodeCurrentAsyncResource = previous;
-        }
-      }
-      bind(callback, thisArg) {
-        if (typeof callback !== "function") {
-          const error = new TypeError(
-            "The callback argument must be of type function"
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
-        }
-        const resource = this;
-        const bound = function (...args) {
-          return resource.runInAsyncScope(
-            callback,
-            thisArg === undefined ? this : thisArg,
-            ...args
-          );
-        };
-        Object.defineProperty(bound, "length", { value: callback.length });
-        return bound;
-      }
-      emitDestroy() {
-        return this;
-      }
-      static bind(callback, thisArg) {
-        return new AsyncResource("bound").bind(callback, thisArg);
-      }
-    }
-    return {
-      AsyncResource,
-      executionAsyncResource: () => globalThis.__nodeCurrentAsyncResource,
-      executionAsyncId: () =>
-        globalThis.__nodeCurrentAsyncResource.asyncId || 1,
-      triggerAsyncId: () => 0,
-      createHook: (callbacks = {}) => ({
-        enable() {
-          if (typeof callbacks.init === "function")
-            callbacks.init(1, "ROOT", 0, globalThis.__nodeCurrentAsyncResource);
-          return this;
-        },
-        disable() {
-          return this;
-        }
-      })
-    };
-  }
+  if (name === "async_hooks") return __quenchAsyncHooksModule;
   if (name === "http") {
     if (globalThis.__nodeHttp) return globalThis.__nodeHttp;
     const servers = new Map();
