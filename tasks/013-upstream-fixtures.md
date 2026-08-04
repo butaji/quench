@@ -1290,6 +1290,9 @@ Stage 457 formalized rejection of Readable unshifts after end with
 Stage 458 formalized `Readable.read(0)` returning null without consuming queued
 data.
 
+Stage 459 formalized `readableEnded` remaining false while data is delivered
+and becoming true only after the Readable emits `end`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
