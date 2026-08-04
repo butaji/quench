@@ -2627,3 +2627,7 @@ Stage 949 verifies instance `EventEmitter.listenerCount()` across repeated,
 distinct, and missing event names. Retrospective: a three-case count fixture
 covers duplicate registration and zero-state behavior without introducing
 asynchronous scheduling noise.
+
+Stage 950 verifies the listener-identity overload of `listenerCount()`.
+Retrospective: registering two callbacks with one duplicate distinguishes total
+counting from identity filtering in a deterministic fixture.
