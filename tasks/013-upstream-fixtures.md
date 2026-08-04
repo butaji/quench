@@ -3332,3 +3332,8 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 
 - Added `util.deprecate` with invalid-code validation and one-time warning behavior.
 - Verified the focused stage and Node's invalid-code fixture.
+### Stage 1089: util deprecate contract
+
+- Added optional-code handling, warning deduplication, arity/prototype preservation,
+  and the internal pending-deprecate alias.
+- Verified the focused stage and Node's complete `util.deprecate` fixture.

@@ -235,8 +235,14 @@ const __nodeUtilFormatTokenValue = (token, value) => {
   if (token === "%j") return __nodeUtilFormatJson(value);
   return __nodeUtilFormatObjectToken(token, value);
 };
-const __nodeUtilDeprecate = (functionToWrap, message, code) => {
-  if (typeof code !== "string") {
+const __nodeUtilDeprecationCodes = new Set();
+const __nodeUtilDeprecate = (
+  functionToWrap,
+  message = "",
+  code,
+  options = {}
+) => {
+  if (code !== undefined && typeof code !== "string") {
     const received =
       code === null
         ? "Received null"
@@ -247,21 +253,38 @@ const __nodeUtilDeprecate = (functionToWrap, message, code) => {
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
-  let warned = false;
-  return function deprecatedFunction(...args) {
-    if (!warned) {
-      warned = true;
-      process.emitWarning(message, { code });
+  const warningKey = code === undefined ? functionToWrap : code;
+  const deprecatedFunction = function (...args) {
+    if (!__nodeUtilDeprecationCodes.has(warningKey)) {
+      __nodeUtilDeprecationCodes.add(warningKey);
+      setImmediate(() =>
+        process.emitWarning(String(message), {
+          name: "DeprecationWarning",
+          code
+        })
+      );
     }
     return functionToWrap.apply(this, args);
   };
+  Object.defineProperty(deprecatedFunction, "length", {
+    configurable: true,
+    value: functionToWrap.length
+  });
+  if (options.modifyPrototype !== false) {
+    deprecatedFunction.prototype = functionToWrap.prototype;
+    Object.setPrototypeOf(deprecatedFunction, functionToWrap);
+  }
+  return deprecatedFunction;
 };
+const __nodeUtilPendingDeprecate = (functionToWrap, message, code) =>
+  __nodeUtilDeprecate(functionToWrap, message, code);
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
   isArray: (value) => Array.isArray(value),
   debuglog: () => () => {},
   deprecate: __nodeUtilDeprecate,
+  pendingDeprecate: __nodeUtilPendingDeprecate,
   _extend: (target, source) => {
     if (source && typeof source === "object") Object.assign(target, source);
     return target;
