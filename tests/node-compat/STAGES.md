@@ -443,3 +443,4 @@ these small fixtures isolate the currently implemented contract.
 |   444 | stream Readable push chunks and end signaling                  | `tools/run-node-tests.sh --stage 444` |
 |   445 | stream Readable unshift chunk delivery                         | `tools/run-node-tests.sh --stage 445` |
 |   446 | stream Readable read sizes and FIFO queue                     | `tools/run-node-tests.sh --stage 446` |
+|   447 | stream Readable EOF ordering after buffered read              | `tools/run-node-tests.sh --stage 447` |
