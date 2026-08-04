@@ -12,7 +12,7 @@ const __nodeBufferByteLength = (value, encoding) => {
   if (typeof value === "string")
     return __nodeBufferStringByteLength(value, encoding);
   if (
-    value instanceof ArrayBuffer ||
+    __nodeBufferIsArrayBuffer(value) ||
     value instanceof SharedArrayBuffer ||
     ArrayBuffer.isView(value)
   )

@@ -3201,3 +3201,11 @@ Retrospective: `instanceof ArrayBuffer` accepts objects with a forged prototype;
 calling the native `byteLength` getter distinguishes genuine backing stores
 while preserving shared storage for real ArrayBuffers. Upstream
 `test-buffer-arraybuffer.js` now passes.
+
+Stage 1049 removes the realm-sensitive `instanceof ArrayBuffer` gate and uses
+the intrinsic getter as the complete brand check. Retrospective: a genuine
+ArrayBuffer from `vm.runInNewContext()` has the correct internal slot but a
+different constructor identity; intrinsic validation handles both cross-realm
+objects and forged prototypes. The dedicated cross-realm stage now passes;
+`test-buffer-bytelength.js` still has a separate invalid-argument diagnostic
+mismatch.
