@@ -1,5 +1,14 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1105: process timer lifecycle
+
+- Fixtures: `test-process-getactiveresources-track-timer-lifetime.js`,
+  `test-process-getactiveresources-track-interval-lifetime.js`
+- Kept one-shot `Timeout` resources visible during their callback, while
+  retaining cleanup after callback completion and explicit cancellation.
+- Retrospective: lifecycle assertions exposed that cleanup timing differs by
+  timer type; the focused stage now protects the observable timeout contract.
+
 ## Stage 1104: process active timer types
 
 - Fixture: `test-process-getactiveresources-track-multiple-timers.js`
