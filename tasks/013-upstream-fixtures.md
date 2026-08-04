@@ -2078,3 +2078,5 @@ Stage 763 aligned process.stdin readableFlowing with local Node.
 Stage 764 aligned process.stdin readableHighWaterMark with local Node.
 
 Stage 765 aligned process.stdin readableLength with local Node.
+
+Stage 766 aligned process.stdin readableObjectMode with local Node.
