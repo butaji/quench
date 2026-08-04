@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1115: VM function realm identity
+
+- Fixture: `test-util-promisify.js`
+- Preserved a distinct function prototype for `vm.runInNewContext()` results
+  and propagated it through generated promisified functions.
+- Retrospective: cross-context invariants need to be established at VM result
+  creation, then preserved by utilities that wrap functions.
+
 ## Stage 1114: querystring max keys
 
 - Fixture: `test-querystring-maxKeys-non-finite.js`
