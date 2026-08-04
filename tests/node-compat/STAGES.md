@@ -889,3 +889,4 @@ these small fixtures isolate the currently implemented contract.
 |   890 | crypto exposes timing-safe equality comparison             | `tools/run-node-tests.sh --stage 890` |
 |   891 | crypto exposes algorithm inventory                         | `tools/run-node-tests.sh --stage 891` |
 |   892 | crypto Web Crypto exposes digest                          | `tools/run-node-tests.sh --stage 892` |
+|   893 | crypto exposes synchronous random fill                    | `tools/run-node-tests.sh --stage 893` |
