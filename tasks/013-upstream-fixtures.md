@@ -2613,3 +2613,7 @@ wrapper violation only when each implementation function is also split below
 the limits; otherwise it merely moves the same violation. Focused ESLint,
 Prettier, build, stage, and `git diff --check` runs remain the fastest safe
 checkpoint loop.
+
+Retrospective: numeric bootstrap fragment names hid API ownership during lint
+refactors. Descriptive, order-prefixed names preserve evaluation order while
+making targeted review and subsystem decomposition substantially faster.
