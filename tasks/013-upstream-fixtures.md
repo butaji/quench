@@ -2430,3 +2430,8 @@ Stage 910 verifies the node:process thread CPU usage argument contract.
 
 Retrospective: sampling upstream fixtures before staging exposed validation
 gaps that simple export-presence checks would not catch.
+
+Stage 911 verifies the node:process umask validation and tracking API.
+
+Retrospective: running the upstream fixture immediately after the focused
+stage caught numeric-versus-octal state handling that the narrow test omitted.
