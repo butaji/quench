@@ -2584,3 +2584,7 @@ surface drift with less fixture complexity than another event sequence.
 Stage 943 verifies targeted and global `removeAllListeners()` cleanup,
 including empty event-name bookkeeping. Retrospective: checking both scoped
 and global cleanup catches state leaks without involving once wrappers.
+
+Stage 944 verifies `prependListener()` ordering and fluent return behavior.
+Retrospective: recording call order in a synchronous fixture isolates listener
+priority semantics without depending on asynchronous job execution.
