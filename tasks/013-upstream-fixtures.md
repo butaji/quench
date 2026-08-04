@@ -2150,3 +2150,5 @@ Stage 799 populated process.allowedNodeEnvironmentFlags with baseline flags.
 Stage 800 verified process launch metadata compatibility.
 
 Stage 801 aligned process resource metric shapes with local Node.
+
+Stage 802 added process.hrtime.bigint timing compatibility.
