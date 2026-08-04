@@ -72,6 +72,23 @@ const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
     advance: character.length - 1
   };
 };
+const __nodeQuerystringParseValue = (value, options) => {
+  const inputValue = String(value).replace(/\+/g, " ");
+  if (options && options.decodeURIComponent) {
+    try {
+      return options.decodeURIComponent(inputValue);
+    } catch (_) {}
+  }
+  return globalThis.__nodeQuerystring.unescape(inputValue);
+};
+const __nodeQuerystringAddValue = (result, key, value) => {
+  result[key] =
+    result[key] === undefined
+      ? value
+      : Array.isArray(result[key])
+        ? result[key].concat(value)
+        : [result[key], value];
+};
 const __nodeQuerystringExports = {
   escape: __nodeQuerystringEscape,
   unescape: (value) =>
@@ -126,17 +143,6 @@ const __nodeQuerystringExports = {
   parse: (input, sep = "&", eq = "=", options = {}) => {
     const result = Object.create(null);
     if (input == null || input === "") return result;
-    const decode = (value) => {
-      const inputValue = String(value).replace(/\+/g, " ");
-      if (options && options.decodeURIComponent) {
-        try {
-          return options.decodeURIComponent(inputValue);
-        } catch (_) {
-          return globalThis.__nodeQuerystring.unescape(inputValue);
-        }
-      }
-      return globalThis.__nodeQuerystring.unescape(inputValue);
-    };
     const separator = sep == null ? "&" : String(sep);
     const equals = eq == null ? "=" : String(eq);
     const maxKeys =
@@ -151,16 +157,15 @@ const __nodeQuerystringExports = {
       .filter(Boolean)
       .forEach((part) => {
         const index = part.indexOf(equals);
-        const key = decode(index < 0 ? part : part.slice(0, index));
-        const value = decode(
-          index < 0 ? "" : part.slice(index + equals.length)
+        const key = __nodeQuerystringParseValue(
+          index < 0 ? part : part.slice(0, index),
+          options
         );
-        result[key] =
-          result[key] === undefined
-            ? value
-            : Array.isArray(result[key])
-              ? result[key].concat(value)
-              : [result[key], value];
+        const value = __nodeQuerystringParseValue(
+          index < 0 ? "" : part.slice(index + equals.length),
+          options
+        );
+        __nodeQuerystringAddValue(result, key, value);
       });
     return result;
   }
