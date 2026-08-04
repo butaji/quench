@@ -478,3 +478,4 @@ these small fixtures isolate the currently implemented contract.
 |   479 | fs readFile requires a callback                                | `tools/run-node-tests.sh --stage 479` |
 |   480 | fs mkdtemp requires a callback                                 | `tools/run-node-tests.sh --stage 480` |
 |   481 | fs mkdtempSync validates prefix type                            | `tools/run-node-tests.sh --stage 481` |
+|   482 | fs async mkdtemp validates prefix type                           | `tools/run-node-tests.sh --stage 482` |
