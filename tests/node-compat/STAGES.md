@@ -878,3 +878,4 @@ these small fixtures isolate the currently implemented contract.
 |   879 | crypto exposes signing and key generation API              | `tools/run-node-tests.sh --stage 879` |
 |   880 | crypto exposes symmetric and derivation API                | `tools/run-node-tests.sh --stage 880` |
 |   881 | os exposes platform and user environment API               | `tools/run-node-tests.sh --stage 881` |
+|   882 | process exposes builtin loading helpers                    | `tools/run-node-tests.sh --stage 882` |
