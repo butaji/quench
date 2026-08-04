@@ -769,3 +769,4 @@ these small fixtures isolate the currently implemented contract.
 |   770 | process stdin exposes local stream state                              | `tools/run-node-tests.sh --stage 770` |
 |   771 | process stdin exposes stream lifecycle state                          | `tools/run-node-tests.sh --stage 771` |
 |   772 | process stdin exposes readable stream methods                         | `tools/run-node-tests.sh --stage 772` |
+|   773 | process stdin exposes close and pending state                         | `tools/run-node-tests.sh --stage 773` |
