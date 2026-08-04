@@ -1970,3 +1970,5 @@ Stage 709 formalized process.stderr one-shot listener chainability.
 Stage 710 formalized process.stdout listener removal chainability.
 
 Stage 711 formalized process.stderr listener removal chainability.
+
+Stage 712 added the standard process.stdout addListener alias.
