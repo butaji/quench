@@ -426,3 +426,4 @@ these small fixtures isolate the currently implemented contract.
 |   427 | fs ReadStream close descriptor release                        | `tools/run-node-tests.sh --stage 427` |
 |   428 | fs WriteStream close descriptor release                       | `tools/run-node-tests.sh --stage 428` |
 |   429 | process exit event ordering and zero exit code                 | `tools/run-node-tests.sh --stage 429` |
+|   430 | fs stream autoClose false descriptor retention                  | `tools/run-node-tests.sh --stage 430` |
