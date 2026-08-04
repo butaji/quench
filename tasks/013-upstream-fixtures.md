@@ -2459,3 +2459,8 @@ upstream chdir fixture still exposes `/tmp` symlink normalization separately.
 
 Retrospective: bootstrap initialization can overwrite harness globals, so
 script paths now flow through a dedicated host key before final assignment.
+
+Stage 916 verifies the node:module absolute-path createRequire API.
+
+Retrospective: upstream module fixtures can fail in their shared `common`
+helpers before reaching the runtime API; focused stages isolate the API path.
