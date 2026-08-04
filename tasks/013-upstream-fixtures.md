@@ -2278,3 +2278,5 @@ Stage 863 verifies the node:inspector/promises async debugging API.
 Stage 864 verifies the node:process report diagnostic report API.
 
 Stage 865 verifies the node:stream/web Web Streams constructors and helpers.
+
+Stage 866 verifies the node:stream/consumers conversion helpers.
