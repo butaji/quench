@@ -8,7 +8,13 @@ const __nodeValidateVariableByteLength = (byteLength) => {
     throw error;
   }
   if (!Number.isInteger(byteLength) || byteLength < 1 || byteLength > 6) {
-    const error = new RangeError('The value of "byteLength" is out of range');
+    const integerMessage =
+      Number.isNaN(byteLength) ||
+      (Number.isFinite(byteLength) && !Number.isInteger(byteLength));
+    const message = integerMessage
+      ? `The value of "byteLength" is out of range. It must be an integer. Received ${byteLength}`
+      : `The value of "byteLength" is out of range. It must be >= 1 and <= 6. Received ${byteLength}`;
+    const error = new RangeError(message);
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
@@ -21,6 +27,24 @@ const __nodeValidateVariableValue = (value, min, max) => {
     value > max
   ) {
     const error = new RangeError('The value of "value" is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
+const __nodeValidateVariableOffset = (offset, length, byteLength) => {
+  if (typeof offset !== "number")
+    return NodeBuffer.prototype._integerOffset.call(
+      { length },
+      offset,
+      byteLength
+    );
+  if (!Number.isInteger(offset) || offset < 0 || offset + byteLength > length) {
+    const message =
+      Number.isNaN(offset) ||
+      (Number.isFinite(offset) && !Number.isInteger(offset))
+        ? `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+        : `The value of "offset" is out of range. It must be >= 0 and <= ${length - byteLength}. Received ${offset}`;
+    const error = new RangeError(message);
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
@@ -283,7 +307,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase03 {
 
   _validateVariableInteger(value, offset, byteLength, signed = false) {
     __nodeValidateVariableByteLength(byteLength);
-    NodeBuffer.prototype._integerOffset.call(this, offset, byteLength);
+    __nodeValidateVariableOffset(offset, this.length, byteLength);
     const min = signed ? -(2 ** (8 * byteLength - 1)) : 0;
     const max = signed
       ? 2 ** (8 * byteLength - 1) - 1
