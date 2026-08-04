@@ -2182,3 +2182,5 @@ Stage 815 verified the core node:buffer static API.
 Stage 816 verified modern node:buffer encoding helpers.
 
 Stage 817 verified the core node:events emitter API.
+
+Stage 818 verified node:events listener inspection and limits.
