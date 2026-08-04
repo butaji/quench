@@ -2567,3 +2567,8 @@ retain Node's native events helper without a duplicate polyfill.
 Stage 939 verifies argument validation for `events.addAbortListener()`.
 Retrospective: synchronous validation stages are useful boundaries while the
 harness still needs explicit pending-job draining for promise-based APIs.
+
+Stage 940 verifies the deterministic `events.errorMonitor` and
+`captureRejections` static exports. Retrospective: static identity contracts
+provide useful compatibility coverage while promise-based EventEmitter paths
+await an isolated job-loop fix.
