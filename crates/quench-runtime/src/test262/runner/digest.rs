@@ -48,21 +48,19 @@ pub fn run_stage_digest(
     };
 
     let mut passed = 0usize;
-    let skipped = 0usize;
+    let mut skipped = 0usize;
     let mut failures: Vec<(String, TestFailure)> = Vec::new();
-    let skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
+    let mut skip_reasons: BTreeMap<String, usize> = BTreeMap::new();
 
     for (path, outcome) in outcomes {
-        match outcome {
-            TestOutcome::Pass => passed += 1,
-            TestOutcome::Skip { reason } => {
-                failures.push((
-                    path,
-                    TestFailure::from_message(format!("test was skipped: {}", reason)),
-                ));
-            }
-            TestOutcome::Fail { failure } => failures.push((path, failure)),
-        }
+        record_outcome(
+            path,
+            outcome,
+            &mut passed,
+            &mut skipped,
+            &mut failures,
+            &mut skip_reasons,
+        );
     }
 
     let detail = show_detail();
@@ -87,6 +85,24 @@ pub fn run_stage_digest(
                 .first()
                 .map(|(p, f)| (p.clone(), f.message.clone())),
         },
+    }
+}
+
+fn record_outcome(
+    path: String,
+    outcome: TestOutcome,
+    passed: &mut usize,
+    skipped: &mut usize,
+    failures: &mut Vec<(String, TestFailure)>,
+    skip_reasons: &mut BTreeMap<String, usize>,
+) {
+    match outcome {
+        TestOutcome::Pass => *passed += 1,
+        TestOutcome::Skip { reason } => {
+            *skipped += 1;
+            *skip_reasons.entry(reason).or_default() += 1;
+        }
+        TestOutcome::Fail { failure } => failures.push((path, failure)),
     }
 }
 
@@ -502,6 +518,46 @@ fn label(path: &Path, strict: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_outcome_tracks_pass_fail_and_skip_separately() {
+        let mut passed = 0;
+        let mut skipped = 0;
+        let mut failures = Vec::new();
+        let mut reasons = BTreeMap::new();
+        record_outcome(
+            "pass.js".into(),
+            TestOutcome::Pass,
+            &mut passed,
+            &mut skipped,
+            &mut failures,
+            &mut reasons,
+        );
+        record_outcome(
+            "skip.js".into(),
+            TestOutcome::Skip {
+                reason: "unsupported feature".into(),
+            },
+            &mut passed,
+            &mut skipped,
+            &mut failures,
+            &mut reasons,
+        );
+        record_outcome(
+            "fail.js".into(),
+            TestOutcome::Fail {
+                failure: TestFailure::from_message("boom"),
+            },
+            &mut passed,
+            &mut skipped,
+            &mut failures,
+            &mut reasons,
+        );
+        assert_eq!(passed, 1);
+        assert_eq!(skipped, 1);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(reasons.get("unsupported feature"), Some(&1));
+    }
 
     #[test]
     fn normalize_reason_strips_wrappers_and_prefixes() {
