@@ -822,3 +822,4 @@ these small fixtures isolate the currently implemented contract.
 |   823 | os exposes modern parallelism and priority API                  | `tools/run-node-tests.sh --stage 823` |
 |   824 | path exposes core parsing and joining API                       | `tools/run-node-tests.sh --stage 824` |
 |   825 | path exposes glob matching helper                              | `tools/run-node-tests.sh --stage 825` |
+|   826 | url exposes core URL and parsing API                            | `tools/run-node-tests.sh --stage 826` |
