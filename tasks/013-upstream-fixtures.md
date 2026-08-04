@@ -1199,6 +1199,9 @@ Stage 425 formalized synchronous rejection of inverted ReadStream ranges with
 Stage 426 formalized WriteStream encoding options, byte accounting, and output
 content validation.
 
+Stage 427 formalized ReadStream descriptor cleanup, leaving `fd` null after
+close.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
