@@ -664,6 +664,11 @@ pub fn make_ops_object() -> Value {
                 ))))
             }
             Value::Class(class) => {
+                if matches!(key.as_str(), "name" | "length" | "prototype") {
+                    return crate::builtins::object_static::get_class_property_descriptor(
+                        class, &key,
+                    );
+                }
                 if !class.has_static_own_property(&key) {
                     return Ok(Value::Undefined);
                 }
