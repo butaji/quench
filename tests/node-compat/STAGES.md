@@ -429,3 +429,4 @@ these small fixtures isolate the currently implemented contract.
 |   430 | fs stream autoClose false descriptor retention                  | `tools/run-node-tests.sh --stage 430` |
 |   431 | fs WriteStream autoClose false descriptor retention             | `tools/run-node-tests.sh --stage 431` |
 |   432 | stream destroy error, close, and destroyed state               | `tools/run-node-tests.sh --stage 432` |
+|   433 | process nextTick ordering before promise callbacks             | `tools/run-node-tests.sh --stage 433` |
