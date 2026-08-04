@@ -782,3 +782,4 @@ these small fixtures isolate the currently implemented contract.
 |   783 | process exposes credential helper methods                          | `tools/run-node-tests.sh --stage 783` |
 |   784 | process exposes uncaught exception capture state                   | `tools/run-node-tests.sh --stage 784` |
 |   785 | process exposes warning emission                                   | `tools/run-node-tests.sh --stage 785` |
+|   786 | process exposes runtime resource methods                          | `tools/run-node-tests.sh --stage 786` |
