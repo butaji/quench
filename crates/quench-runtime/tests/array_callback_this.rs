@@ -133,3 +133,13 @@ fn array_flat_does_not_call_nested_flat_methods() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_flat_writes_species_result_at_numeric_indices() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("function C(){Object.defineProperty(this,'0',{value:1,writable:false,configurable:true});} var a=[[2]]; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.flat(); r[0]===2&&Object.getOwnPropertyDescriptor(r,'0').writable")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}
