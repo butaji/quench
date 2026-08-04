@@ -451,3 +451,4 @@ these small fixtures isolate the currently implemented contract.
 |   452 | stream resume drains paused queued data                        | `tools/run-node-tests.sh --stage 452` |
 |   453 | stream writable length recovery without spurious drain         | `tools/run-node-tests.sh --stage 453` |
 |   454 | stream writable end chainability and finish event              | `tools/run-node-tests.sh --stage 454` |
+|   455 | stream write-after-end rejection and error code                | `tools/run-node-tests.sh --stage 455` |
