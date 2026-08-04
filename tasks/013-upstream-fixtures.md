@@ -2886,3 +2886,7 @@ Stage 1000 adds a callable legacy `stream.Stream` base with minimal writable
 behavior for function-style stream subclasses. Retrospective: separating the
 legacy constructor surface from modern stream classes minimizes host changes
 while unblocking compatibility fixtures that use prototype inheritance.
+
+Stage 1001 exposes `Readable.prototype.readableEnded` and its false default.
+Retrospective: checking both prototype ownership and instance initialization
+captures the structural and runtime parts of the stream state contract.
