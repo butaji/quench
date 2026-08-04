@@ -632,3 +632,4 @@ these small fixtures isolate the currently implemented contract.
 |   633 | process cpuUsage accepts a previous sample for delta metrics             | `tools/run-node-tests.sh --stage 633` |
 |   634 | process memoryUsage exposes all numeric memory metrics                   | `tools/run-node-tests.sh --stage 634` |
 |   635 | process memoryUsage.rss exposes a numeric resident-set metric             | `tools/run-node-tests.sh --stage 635` |
+|   636 | process uptime exposes a non-negative monotonic seconds value             | `tools/run-node-tests.sh --stage 636` |
