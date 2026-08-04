@@ -26,7 +26,15 @@ const __nodeValidateVariableValue = (value, min, max) => {
     value < min ||
     value > max
   ) {
-    const error = new RangeError('The value of "value" is out of range');
+    const bits = Math.log2(max + 1);
+    const bound = bits > 32 ? `< 2 ** ${bits}` : `<= ${max}`;
+    const received =
+      bits > 32
+        ? String(value).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, "$1_")
+        : value;
+    const error = new RangeError(
+      `The value of "value" is out of range. It must be >= ${min} and ${bound}. Received ${received}`
+    );
     error.code = "ERR_OUT_OF_RANGE";
     throw error;
   }
