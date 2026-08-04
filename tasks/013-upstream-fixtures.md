@@ -2699,3 +2699,7 @@ ordering guarantee explicit without relying on microtask timing.
 Stage 966 verifies the default `EventEmitterAsyncResource` resource name.
 Retrospective: checking the no-options constructor separately from explicit
 name propagation catches accidental dependence on caller-provided metadata.
+
+Stage 967 verifies `EventEmitterAsyncResource.emit()` preserves boolean
+listener-presence results. Retrospective: checking both absent and present
+listeners confirms the async-resource wrapper does not alter EventEmitter flow.
