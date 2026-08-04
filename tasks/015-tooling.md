@@ -69,9 +69,6 @@ surrounding tooling should:
 
 10. **Coverage HTML report** generated from
     `tools/coverage-by-prefix.sh`.
-11. **CI workflow** at `.github/workflows/ci.yml` that runs
-    `check-focused-stages.sh` and `tools/measure-node-tests.sh` on every
-    push.
 
 ## Slicing rules
 
