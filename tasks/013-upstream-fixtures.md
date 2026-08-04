@@ -2306,3 +2306,5 @@ Stage 877 verifies the node:fs directory and stream constructors.
 Stage 878 verifies the node:crypto key and certificate constructors.
 
 Stage 879 verifies the node:crypto signing and key generation API.
+
+Stage 880 verifies the node:crypto symmetric and derivation API.
