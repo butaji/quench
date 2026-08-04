@@ -1,4 +1,20 @@
 const __quenchOriginalRequireWithDecoder = globalThis.require;
+const __quenchDecoderInputBytes = (input) => {
+  if (ArrayBuffer.isView(input) && !(input instanceof Uint8Array))
+    return Array.from(
+      new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    );
+  return Array.from(input || []);
+};
+const __quenchDecoderStoreUtf8 = (decoder, bytes) => {
+  const result = __quenchDecodeUtf8(bytes, false);
+  decoder._pending = result.pending;
+  decoder.lastNeed = result.pending.length ? 3 - result.pending.length : 0;
+  decoder.lastTotal = result.pending.length ? 3 : 0;
+  decoder.lastChar.fill(0);
+  decoder.lastChar.set(result.pending);
+  return result.text;
+};
 const __quenchStringDecoderClass = class {
   constructor(encoding = "utf8") {
     this.encoding = String(encoding).toLowerCase().replace("-", "");
@@ -8,12 +24,15 @@ const __quenchStringDecoderClass = class {
     this._pending = [];
     this.lastNeed = 0;
     this.lastTotal = 0;
-    this.lastChar = new Uint8Array(4);
+    this.lastChar = new NodeBuffer(4);
   }
   write(input) {
-    const bytes = [...this._pending, ...Array.from(input || [])];
+    const bytes = [...this._pending, ...__quenchDecoderInputBytes(input)];
     if (this.encoding === "utf8") {
-      const result = __quenchDecodeUtf8(bytes, false);
+      return __quenchDecoderStoreUtf8(this, bytes);
+    }
+    if (this.encoding === "ucs2" || this.encoding === "utf16le") {
+      const result = __quenchDecodeUtf16(bytes, false);
       this._pending = result.pending;
       return result.text;
     }
@@ -33,10 +52,19 @@ const __quenchStringDecoderClass = class {
     this._pending = bytes.slice(end);
     return this._decoder.decode(new Uint8Array(bytes.slice(0, end)));
   }
+  text(input, offset = 0) {
+    return offset >= input.length ? "" : this.write(input.slice(offset));
+  }
   end(input) {
     if (this.encoding === "utf8") {
       const prefix = input === undefined ? "" : this.write(input);
-      return `${prefix}${__quenchDecodeUtf8(this._pending, true).text}`;
+      const result = __quenchDecodeUtf8(this._pending, true);
+      this._pending = [];
+      return `${prefix}${result.text}`;
+    }
+    if (this.encoding === "ucs2" || this.encoding === "utf16le") {
+      const prefix = input === undefined ? "" : this.write(input);
+      return `${prefix}${__quenchDecodeUtf16(this._pending, true).text}`;
     }
     return `${input === undefined ? "" : this.write(input)}${this._decoder.decode(new Uint8Array(this._pending))}`;
   }
