@@ -98,10 +98,7 @@ const __quenchVmRunInContext = (code, sandbox) => {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
     if (!previous.get(key) || previous.get(key).configurable)
-      Object.defineProperty(globalThis, key, {
-        ...descriptor,
-        configurable: true
-      });
+      Object.defineProperty(globalThis, key, descriptor);
   }
   try {
     const result = (0, eval)(String(code));

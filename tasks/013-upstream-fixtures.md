@@ -1,5 +1,12 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1121: VM getter descriptors
+
+- Fixture: `test-vm-getters.js`
+- Preserved the original `configurable` attribute for VM accessor properties.
+- Retrospective: cleanup convenience must not alter descriptors visible to
+  evaluated code; isolated runtimes make exact descriptor preservation viable.
+
 ## Stage 1120: VM non-configurable properties
 
 - Fixtures: `test-vm-global-non-writable-properties.js`,
