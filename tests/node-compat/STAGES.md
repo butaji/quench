@@ -502,3 +502,4 @@ these small fixtures isolate the currently implemented contract.
 |   503 | child process eval exit reports normal completion                | `tools/run-node-tests.sh --stage 503` |
 |   504 | cluster primary exposes worker lifecycle controls               | `tools/run-node-tests.sh --stage 504` |
 |   505 | cluster setup emits configured settings                         | `tools/run-node-tests.sh --stage 505` |
+|   506 | common child-process helper validates spawn results              | `tools/run-node-tests.sh --stage 506` |
