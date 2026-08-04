@@ -20,8 +20,8 @@ done < "$exceptions"
 js_methods="$tmp_dir/js-methods"
 rust_bindings="$tmp_dir/rust-bindings"
 sed -nE 's/.*prototype\.([A-Za-z_$][A-Za-z0-9_$]*)[[:space:]]*=.*/\1/p' builtins/*.js | sort -u > "$js_methods"
-grep -RhoE --include='*.rs' '"__[A-Za-z_$][A-Za-z0-9_$]*"' crates/quench-runtime/src/builtins \
-    | sed -E 's/.*"__([^\"]+)".*/\1/' | sort -u > "$rust_bindings"
+grep -RhoE --include='*.rs' '__[A-Za-z_$][A-Za-z0-9_$]*' crates/quench-runtime/src/builtins \
+    | sed -E 's/^__//' | sort -u > "$rust_bindings"
 
 while IFS= read -r method; do
     [[ -z "$method" ]] && continue
@@ -30,5 +30,13 @@ while IFS= read -r method; do
         failures=1
     fi
 done < "$js_methods"
+
+while IFS='|' read -r method reason extra; do
+    [[ -z "$method" || "$method" == \#* ]] && continue
+    if ! grep -Fxq "$method" "$js_methods"; then
+        echo "stale direct binding record: $method|$reason" >&2
+        failures=1
+    fi
+done < "$exceptions"
 
 exit "$failures"
