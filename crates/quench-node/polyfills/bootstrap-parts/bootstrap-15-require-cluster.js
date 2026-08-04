@@ -120,6 +120,7 @@ const __quenchVmFormatError = (error, options, code) => {
 };
 const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
   try {
+    __quenchVmCheckRestrictedDeclaration(code);
     const result = (0, eval)(String(code));
     __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
     return result;
