@@ -51,6 +51,143 @@ const __nodeUtilInspectBasic = (value) => {
   if (typeof value === "function") return __nodeUtilInspectFunction(value);
   return __nodeUtilInspectNoResult;
 };
+const __nodeUtilFormatNumber = (token, value) => {
+  if (typeof value === "bigint" && token === "%d")
+    return `${__nodeUtilFormatNumeric(value)}n`;
+  if (
+    typeof value === "symbol" ||
+    Object.prototype.toString.call(value) === "[object Symbol]"
+  )
+    return "NaN";
+  if (token === "%f" && value === "") return "NaN";
+  if (token === "%d" && typeof value === "string" && /^\s*-0/.test(value))
+    return "-0";
+  if (typeof value === "object" && value && value.description === "foo")
+    return "NaN";
+  let number;
+  try {
+    number = token === "%i" ? Number.parseInt(value, 10) : Number(value);
+  } catch (_) {
+    number = NaN;
+  }
+  return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
+};
+const __nodeUtilCircularReplacer = (seen) => (key, entry) => {
+  if (entry && typeof entry === "object") {
+    if (seen.has(entry)) return "[Circular]";
+    seen.add(entry);
+  }
+  return entry;
+};
+const __nodeUtilFormatJson = (value) => {
+  const seen = new WeakSet();
+  try {
+    const rendered = JSON.stringify(value, __nodeUtilCircularReplacer(seen));
+    if (rendered === undefined) return "undefined";
+    return rendered.includes("[Circular]") ? "[Circular]" : rendered;
+  } catch (error) {
+    if (error instanceof TypeError && /circular/i.test(error.message))
+      return "[Circular]";
+    throw error;
+  }
+};
+const __nodeUtilInspectValue = (value) => {
+  const basic = __nodeUtilInspectBasic(value);
+  if (basic !== __nodeUtilInspectNoResult) return basic;
+  if (Array.isArray(value))
+    return value.length
+      ? `[ ${value.map(__nodeUtilInspectValue).join(", ")} ]`
+      : "[]";
+  if (typeof value === "object") {
+    const entries = Object.keys(value).map(
+      (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
+    );
+    return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+  }
+  return String(value);
+};
+const __nodeUtilInspectNamedArray = (value) => {
+  const indexed = Object.keys(value).some((key) => /^\d+$/.test(key));
+  const items = indexed
+    ? Array.from({ length: value.length }, (_, index) =>
+        Object.prototype.hasOwnProperty.call(value, index)
+          ? __nodeUtilInspectValue(value[index])
+          : `<${value.length} empty items>`
+      )
+    : [`<${value.length} empty items>`];
+  const extras = Object.keys(value)
+    .filter((key) => !/^\d+$/.test(key))
+    .map((key) => `${key}: ${__nodeUtilInspectValue(value[key])}`);
+  return `${value.constructor.name}(${value.length}) [ ${[
+    ...items,
+    ...extras
+  ].join(", ")} ]`;
+};
+const __nodeUtilContainsFunction = (value) =>
+  typeof value === "function" ||
+  (value &&
+    typeof value === "object" &&
+    Object.values(value).some((entry) => __nodeUtilContainsFunction(entry)));
+const __nodeUtilStructured = (value, depth = 0) => {
+  const indent = "  ".repeat(depth);
+  const childIndent = "  ".repeat(depth + 1);
+  if (typeof value === "function") {
+    const name = value.name ? `: ${value.name}` : "";
+    return `<ref *1> [Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
+  }
+  if (Array.isArray(value)) {
+    const items = value.map(
+      (item) => `${childIndent}${__nodeUtilStructured(item, depth + 1)}`
+    );
+    items.push(`${childIndent}[length]: ${value.length}`);
+    return `[\n${items.join(",\n")}\n${indent}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.keys(value).map(
+      (key) =>
+        `${childIndent}${key}: ${__nodeUtilStructured(value[key], depth + 1)}`
+    );
+    return `{\n${entries.join(",\n")}\n${indent}}`;
+  }
+  return typeof value === "string"
+    ? `'${value}'`
+    : __nodeUtilInspectValue(value);
+};
+const __nodeUtilFormatStringValue = (value) => {
+  if (!value || typeof value !== "object") return String(value);
+  if (value instanceof Date) return __nodeUtilInspectValue(value);
+  if (typeof value[Symbol.toPrimitive] === "function") {
+    try {
+      return String(value);
+    } catch (_) {}
+  }
+  if (Object.getPrototypeOf(value) === null) {
+    const entries = Object.keys(value).map(
+      (key) => `${key}: ${__nodeUtilInspectValue(value[key])}`
+    );
+    const name = __nodePrototypeNames.get(value) || "Object";
+    return `[${name}: null prototype] {${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+  }
+  if (Array.isArray(value) && value.constructor?.name !== "Array")
+    return __nodeUtilInspectNamedArray(value);
+  if (
+    typeof value.toString === "function" &&
+    value.toString !== Object.prototype.toString
+  ) {
+    try {
+      return value.toString();
+    } catch (_) {}
+  }
+  if (Array.isArray(value))
+    return `[ ${value.map(__nodeUtilInspectValue).join(", ")} ]`;
+  const entries = Object.keys(value).map(
+    (key) =>
+      `${key}: ${Array.isArray(value[key]) ? "[Array]" : __nodeUtilInspectValue(value[key])}`
+  );
+  const name = value.constructor?.name;
+  const prefix = name && name !== "Object" ? `${name} ` : "";
+  return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+};
 globalThis.__nodeUtil = {
   TextEncoder: globalThis.TextEncoder,
   TextDecoder: globalThis.TextDecoder,
@@ -101,143 +238,9 @@ globalThis.__nodeUtil = {
       ),
   format: (...args) => {
     if (!args.length) return "";
-    const inspect = (value) => {
-      const basic = __nodeUtilInspectBasic(value);
-      if (basic !== __nodeUtilInspectNoResult) return basic;
-      if (Array.isArray(value))
-        return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
-      if (typeof value === "object") {
-        const entries = Object.keys(value).map(
-          (key) => `${key}: ${inspect(value[key])}`
-        );
-        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
-      }
-      return String(value);
-    };
-    const formatNamedArray = (value) => {
-      const hasIndexedValues = Object.keys(value).some((key) =>
-        /^\d+$/.test(key)
-      );
-      const items = hasIndexedValues
-        ? Array.from({ length: value.length }, (_, index) =>
-            Object.prototype.hasOwnProperty.call(value, index)
-              ? inspect(value[index])
-              : `<${value.length} empty items>`
-          )
-        : [`<${value.length} empty items>`];
-      const extras = Object.keys(value)
-        .filter((key) => !/^\d+$/.test(key))
-        .map((key) => `${key}: ${inspect(value[key])}`);
-      return `${value.constructor.name}(${value.length}) [ ${[
-        ...items,
-        ...extras
-      ].join(", ")} ]`;
-    };
-    const stringValue = (value) => {
-      if (value && typeof value === "object") {
-        if (value instanceof Date) return inspect(value);
-        if (typeof value[Symbol.toPrimitive] === "function") {
-          try {
-            return String(value);
-          } catch (_) {}
-        }
-        if (Object.getPrototypeOf(value) === null) {
-          const entries = Object.keys(value).map(
-            (key) => `${key}: ${inspect(value[key])}`
-          );
-          const name = __nodePrototypeNames.get(value) || "Object";
-          return `[${name}: null prototype] {${
-            entries.length ? ` ${entries.join(", ")} ` : ""
-          }}`;
-        }
-        if (Array.isArray(value) && value.constructor?.name !== "Array")
-          return formatNamedArray(value);
-        if (
-          typeof value.toString === "function" &&
-          value.toString !== Object.prototype.toString
-        ) {
-          try {
-            return value.toString();
-          } catch (_) {}
-        }
-        if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;
-        const entries = Object.keys(value).map(
-          (key) =>
-            `${key}: ${Array.isArray(value[key]) ? "[Array]" : inspect(value[key])}`
-        );
-        const name = value.constructor?.name;
-        const prefix = name && name !== "Object" ? `${name} ` : "";
-        return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
-      }
-      return String(value);
-    };
-    const structured = (value, depth = 0) => {
-      const indent = "  ".repeat(depth);
-      const childIndent = "  ".repeat(depth + 1);
-      if (typeof value === "function") {
-        const name = value.name ? `: ${value.name}` : "";
-        return `<ref *1> [Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
-      }
-      if (Array.isArray(value)) {
-        const items = value.map(
-          (item) => `${childIndent}${structured(item, depth + 1)}`
-        );
-        items.push(`${childIndent}[length]: ${value.length}`);
-        return `[\n${items.join(",\n")}\n${indent}]`;
-      }
-      if (value && typeof value === "object") {
-        const entries = Object.keys(value).map(
-          (key) => `${childIndent}${key}: ${structured(value[key], depth + 1)}`
-        );
-        return `{\n${entries.join(",\n")}\n${indent}}`;
-      }
-      return typeof value === "string" ? `'${value}'` : inspect(value);
-    };
-    const containsFunction = (value) =>
-      typeof value === "function" ||
-      (value &&
-        typeof value === "object" &&
-        Object.values(value).some((entry) => containsFunction(entry)));
-    const formatNumber = (token, value) => {
-      if (typeof value === "bigint" && token === "%d")
-        return `${__nodeUtilFormatNumeric(value)}n`;
-      if (
-        typeof value === "symbol" ||
-        Object.prototype.toString.call(value) === "[object Symbol]"
-      )
-        return "NaN";
-      if (token === "%f" && value === "") return "NaN";
-      if (token === "%d" && typeof value === "string" && /^\s*-0/.test(value))
-        return "-0";
-      if (typeof value === "object" && value && value.description === "foo")
-        return "NaN";
-      let number;
-      try {
-        number = token === "%i" ? Number.parseInt(value, 10) : Number(value);
-      } catch (_) {
-        number = NaN;
-      }
-      return Object.is(number, -0) ? "-0" : __nodeUtilFormatNumeric(number);
-    };
-    const formatJson = (value) => {
-      const seen = new WeakSet();
-      try {
-        const rendered = JSON.stringify(value, (key, entry) => {
-          if (entry && typeof entry === "object") {
-            if (seen.has(entry)) return "[Circular]";
-            seen.add(entry);
-          }
-          return entry;
-        });
-        if (rendered === undefined) return "undefined";
-        return rendered.includes("[Circular]") ? "[Circular]" : rendered;
-      } catch (error) {
-        if (error instanceof TypeError && /circular/i.test(error.message))
-          return "[Circular]";
-        throw error;
-      }
-    };
-    if (typeof args[0] !== "string") return args.map(inspect).join(" ");
+    const stringValue = __nodeUtilFormatStringValue;
+    if (typeof args[0] !== "string")
+      return args.map(__nodeUtilInspectValue).join(" ");
     let index = 1;
     return (
       args[0].replace(/%[sdifjoOc%]/g, (token) => {
@@ -257,24 +260,24 @@ globalThis.__nodeUtil = {
                 : __nodeUtilFormatNumeric(value)
               : stringValue(value);
         if (token === "%d" || token === "%f" || token === "%i")
-          return formatNumber(token, value);
-        if (token === "%j") return formatJson(value);
+          return __nodeUtilFormatNumber(token, value);
+        if (token === "%j") return __nodeUtilFormatJson(value);
         if ((token === "%o" || token === "%O") && typeof value === "string")
           return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
         if (
           token === "%o" &&
           value &&
           typeof value === "object" &&
-          containsFunction(value)
+          __nodeUtilContainsFunction(value)
         )
-          return structured(value);
+          return __nodeUtilStructured(value);
         return token === "%o" || token === "%O"
-          ? inspect(value)
+          ? __nodeUtilInspectValue(value)
           : String(value);
       }) +
       args
         .slice(index)
-        .map((value) => ` ${inspect(value)}`)
+        .map((value) => ` ${__nodeUtilInspectValue(value)}`)
         .join("")
     );
   },
