@@ -3209,3 +3209,9 @@ different constructor identity; intrinsic validation handles both cross-realm
 objects and forged prototypes. The dedicated cross-realm stage now passes;
 `test-buffer-bytelength.js` still has a separate invalid-argument diagnostic
 mismatch.
+
+Stage 1050 restores numeric conversion for negative-zero strings and preserves
+BigInt values for both `%d` and `%i` in `util.format`. Retrospective: a
+special-case added to preserve symbol behavior incorrectly bypassed JavaScript's
+signed-zero conversion, while BigInt handling covered only `%d`; keeping the
+special cases aligned with Node's numeric tokens fixes both paths.
