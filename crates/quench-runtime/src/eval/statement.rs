@@ -1083,7 +1083,13 @@ fn resolve_dispose_method(
         Value::Function(function) => function
             .get_property(key_name)
             .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
-        _ => return Err(JsError::new("TypeError: Symbol is not callable")),
+        _ => {
+            let msg = "TypeError: Symbol is not callable";
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
+        }
     };
     let mut method = get_resource_dispose_property(resource, &key, env)?;
     if is_async && matches!(method, Value::Undefined | Value::Null) {
@@ -1094,7 +1100,13 @@ fn resolve_dispose_method(
             Some(Value::Function(function)) => function
                 .get_property("dispose")
                 .ok_or_else(|| JsError::new("TypeError: disposal symbol is not initialized"))?,
-            _ => return Err(JsError::new("TypeError: Symbol is not callable")),
+            _ => {
+                let msg = "TypeError: Symbol is not callable";
+                let (err, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
+            }
         };
         method = get_resource_dispose_property(resource, &fallback, env)?;
     }
@@ -1789,7 +1801,11 @@ fn eval_for(
                 )
             });
             if updates_const {
-                return Err(JsError("TypeError: Assignment to constant variable".into()));
+                let msg = "TypeError: Assignment to constant variable";
+                let (err, js_err) =
+                    crate::value::error::create_js_error_with_type(&msg, "TypeError");
+                crate::value::set_thrown_value(err);
+                return Err(js_err);
             }
             let _ = eval_expression(update, env, in_arrow_function)?;
         }

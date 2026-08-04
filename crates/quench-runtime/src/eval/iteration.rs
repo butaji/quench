@@ -25,7 +25,20 @@ pub fn get_iterator(value: &Value) -> Result<Vec<Value>, JsError> {
         Value::Object(o) => get_object_iterator(o),
         Value::String(s) => get_string_iterator(s),
         Value::Generator(gen) => get_generator_values(gen),
-        _ => Err(JsError("TypeError: Value is not iterable".to_string())),
+        _ => {
+            // Per ES §14.7.5 / §23.2.5 / §24.2.5, attempting to iterate a non-iterable
+            // throws a TypeError. Set the thrown value so the surrounding catch
+            // block sees a real error object (not `undefined`) — required by
+            // test262's `assert.throws` and the harness `assert`.
+            let msg = match value {
+                Value::Null => "TypeError: undefined is not iterable (cannot read property Symbol(Symbol.iterator))".to_string(),
+                Value::Undefined => "TypeError: undefined is not iterable (cannot read property Symbol(Symbol.iterator))".to_string(),
+                _ => "TypeError: Value is not iterable".to_string(),
+            };
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            Err(js_err)
+        }
     }
 }
 
@@ -906,7 +919,17 @@ pub fn eval_for_of(
             (iterator, sync_fallback)
         }
         Value::Object(o) => (obtain_iterator(o)?, false),
-        _ => return Err(JsError("TypeError: Value is not iterable".to_string())),
+        _ => {
+            // Per ES §14.7.5.1 Runtime Semantics, for-of on a non-iterable
+            // throws TypeError. Set the thrown value so the catch block sees
+            // a real error object (not `undefined`) — required by test262's
+            // `assert.throws` and the harness `assert`.
+            let msg = "TypeError: Value is not iterable";
+            let (err, js_err) =
+                crate::value::error::create_js_error_with_type(&msg, "TypeError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
+        }
     };
     eval_for_of_iterator(ForOfIteratorRun {
         iterator,

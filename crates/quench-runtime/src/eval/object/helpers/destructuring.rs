@@ -1426,10 +1426,13 @@ pub fn assign_to_identifier(
         }
         let Some(scope) = scope else { return Ok(()) };
         if scope.borrow().is_tdz(name) {
-            return Err(JsError(format!(
+            let msg = format!(
                 "ReferenceError: Cannot access '{}' before initialization",
                 name
-            )));
+            );
+            let (err, js_err) = crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
+            crate::value::set_thrown_value(err);
+            return Err(js_err);
         }
         if scope.borrow().get_kind(name) == Some(VarKind::Const) {
             if scope.borrow().is_function_name(name)

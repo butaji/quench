@@ -340,7 +340,11 @@ pub(crate) fn touch_assignment_target(
             if has_object_binding {
                 let scope = env.borrow().binding_scope(name);
                 if scope.is_none() && crate::interpreter::is_strict_mode() {
-                    return Err(JsError(format!("ReferenceError: {} is not defined", name)));
+                    let msg = format!("ReferenceError: {} is not defined", name);
+                    let (err, js_err) =
+                        crate::value::error::create_js_error_with_type(&msg, "ReferenceError");
+                    crate::value::set_thrown_value(err);
+                    return Err(js_err);
                 }
                 cache_destructuring_identifier_reference(name, scope);
             } else {
