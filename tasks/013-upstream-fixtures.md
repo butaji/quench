@@ -1093,6 +1093,9 @@ Stage 389 formalized lazy OS compatibility initialization and exposure of
 Stage 390 formalized asynchronous `fs.close` completion and descriptor release,
 including subsequent `EBADF` behavior for the closed descriptor.
 
+Stage 391 formalized synchronous and callback PBKDF2 derivation with SHA-256
+vectors and Buffer output.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
