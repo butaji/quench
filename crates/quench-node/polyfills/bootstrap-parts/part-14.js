@@ -1,3 +1,11 @@
+const __nodeCryptoRandomArguments = (minimum, maximum, callback) => {
+  if (typeof minimum === "function")
+    return { minimum: 0, maximum: 0x1_0000_0000_0000, callback: minimum };
+  if (typeof maximum === "function")
+    return { minimum: 0, maximum: minimum, callback: maximum };
+  if (maximum === undefined) return { minimum: 0, maximum: minimum, callback };
+  return { minimum, maximum, callback };
+};
 const __createNodeCrypto = () => ({
   getHashes: () => ["sha256"],
   getCiphers: () => [],
@@ -22,18 +30,11 @@ const __createNodeCrypto = () => ({
     return difference === 0;
   },
   randomInt: (minimum = 0, maximum, callback) => {
-    if (typeof minimum === "function") {
-      callback = minimum;
-      minimum = 0;
-      maximum = 0x1_0000_0000_0000;
-    } else if (typeof maximum === "function") {
-      callback = maximum;
-      maximum = minimum;
-      minimum = 0;
-    } else if (maximum === undefined) {
-      maximum = minimum;
-      minimum = 0;
-    }
+    ({ minimum, maximum, callback } = __nodeCryptoRandomArguments(
+      minimum,
+      maximum,
+      callback
+    ));
     if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
       const error = new TypeError("The bounds must be safe integers");
       error.code = "ERR_INVALID_ARG_TYPE";
