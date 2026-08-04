@@ -1367,6 +1367,9 @@ Stage 484 formalized HMAC digest rejecting unknown output encodings with
 Stage 485 formalized hash digest rejecting unknown output encodings with
 `ERR_UNKNOWN_ENCODING`.
 
+Stage 486 formalized finalized Hash and Hmac contexts rejecting `copy()` with
+`ERR_CRYPTO_HASH_FINALIZED`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
