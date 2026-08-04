@@ -409,3 +409,4 @@ these small fixtures isolate the currently implemented contract.
 |   410 | process.binding unknown module error                         | `tools/run-node-tests.sh --stage 410` |
 |   411 | process.getBuiltinModule known and unknown modules           | `tools/run-node-tests.sh --stage 411` |
 |   412 | perf_hooks timerify thrown error preservation                 | `tools/run-node-tests.sh --stage 412` |
+|   413 | fs FileHandle read position and readFile continuation          | `tools/run-node-tests.sh --stage 413` |
