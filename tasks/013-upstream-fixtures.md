@@ -3342,3 +3342,7 @@ decoding; the shared byte-range path matches Node’s Buffer-oriented contract.
 - Added a readable dotenv parser for `util.parseEnv`, including quotes,
   comments, multiline values, duplicate keys, and invalid input validation.
 - Verified the focused stage and Node's complete `test-util-parse-env.js` fixture.
+### Stage 1091: util host-port exceptions
+
+- Added system-error name mapping and `_exceptionWithHostPort` error shaping.
+- Verified host/port, port-zero, local-address, and errno properties against Node.
