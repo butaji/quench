@@ -1211,6 +1211,9 @@ default zero exit code.
 Stage 430 formalized stream `autoClose: false` behavior, retaining the file
 descriptor after stream close for caller-managed cleanup.
 
+Stage 431 formalized WriteStream `autoClose: false` descriptor retention and
+caller-managed closure.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
