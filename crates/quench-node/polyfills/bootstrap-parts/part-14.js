@@ -43,6 +43,51 @@ const __nodeCryptoValidatePbkdf2 = (
   __nodeCryptoValidatePbkdf2Numbers(iterations, keylen);
   __nodeCryptoValidatePbkdf2Digest(digest);
 };
+const __nodeCryptoHashCopy = (chunks) => {
+  const clone = globalThis.__nodeCrypto.createHash("sha256");
+  for (const chunk of chunks) clone.update(chunk);
+  return clone;
+};
+const __nodeCryptoAssertDigestOpen = (finalized) => {
+  if (finalized) {
+    const error = new Error("Digest already called");
+    error.code = "ERR_CRYPTO_HASH_FINALIZED";
+    throw error;
+  }
+};
+const __nodeCryptoHmacDigest = (inner, outer, chunks, encoding) => {
+  const message = [];
+  for (const chunk of chunks) message.push(...chunk);
+  const innerDigest = globalThis.__quench_sha256_bytes([...inner, ...message]);
+  const result = NodeBuffer.from(
+    globalThis.__quench_sha256_bytes([...outer, ...innerDigest])
+  );
+  if (encoding === undefined || encoding === null) return result;
+  if (encoding === "hex" || encoding === "base64")
+    return result.toString(encoding);
+  const error = new TypeError(`Unknown encoding: ${encoding}`);
+  error.code = "ERR_UNKNOWN_ENCODING";
+  throw error;
+};
+const __nodeCryptoHmacPads = (key) => {
+  let keyBytes =
+    typeof key === "string"
+      ? new NodeTextEncoder().encode(key)
+      : NodeBuffer.from(key);
+  if (keyBytes.length > 64)
+    keyBytes = NodeBuffer.from(
+      globalThis.__quench_sha256_bytes(Array.from(keyBytes))
+    );
+  const padded = NodeBuffer.alloc(64);
+  padded.set(keyBytes);
+  const inner = new NodeBuffer(64);
+  const outer = new NodeBuffer(64);
+  for (let index = 0; index < 64; index++) {
+    inner[index] = padded[index] ^ 0x36;
+    outer[index] = padded[index] ^ 0x5c;
+  }
+  return { keyBytes, inner, outer };
+};
 const __createNodeCrypto = () => ({
   getHashes: () => ["sha256"],
   getCiphers: () => [],
@@ -206,41 +251,7 @@ const __createNodeCrypto = () => ({
   pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
     if (typeof callback !== "function")
       throw new TypeError('The "callback" argument must be of type function');
-    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "password" argument must be of type string or an instance of Buffer'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
-      const error = new TypeError(
-        'The "salt" argument must be of type string or an instance of Buffer'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (
-      !Number.isInteger(iterations) ||
-      iterations <= 0 ||
-      iterations > 0x7fffffff
-    ) {
-      const error = new RangeError('The value of "iterations" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
-      const error = new RangeError('The value of "keylen" is out of range');
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (typeof digest !== "string") {
-      const error = new TypeError(
-        'The "digest" argument must be of type string'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
+    __nodeCryptoValidatePbkdf2(password, salt, iterations, keylen, digest);
     let result;
     try {
       result = globalThis.__nodeCrypto.pbkdf2Sync(
@@ -263,11 +274,7 @@ const __createNodeCrypto = () => ({
     let finalized = false;
     const hash = {
       update: (value, encoding) => {
-        if (finalized) {
-          const error = new Error("Digest already called");
-          error.code = "ERR_CRYPTO_HASH_FINALIZED";
-          throw error;
-        }
+        __nodeCryptoAssertDigestOpen(finalized);
         if (typeof value === "string")
           chunks.push(NodeBuffer.from(value, encoding || "utf8"));
         else if (value instanceof Uint8Array) chunks.push(value);
@@ -275,11 +282,7 @@ const __createNodeCrypto = () => ({
         return hash;
       },
       digest: (encoding) => {
-        if (finalized) {
-          const error = new Error("Digest already called");
-          error.code = "ERR_CRYPTO_HASH_FINALIZED";
-          throw error;
-        }
+        __nodeCryptoAssertDigestOpen(finalized);
         finalized = true;
         const input = [];
         for (const chunk of chunks) input.push(...chunk);
@@ -293,14 +296,8 @@ const __createNodeCrypto = () => ({
         throw error;
       },
       copy: () => {
-        if (finalized) {
-          const error = new Error("Digest already called");
-          error.code = "ERR_CRYPTO_HASH_FINALIZED";
-          throw error;
-        }
-        const clone = globalThis.__nodeCrypto.createHash("sha256");
-        for (const chunk of chunks) clone.update(chunk);
-        return clone;
+        __nodeCryptoAssertDigestOpen(finalized);
+        return __nodeCryptoHashCopy(chunks);
       }
     };
     return hash;
@@ -308,22 +305,7 @@ const __createNodeCrypto = () => ({
   createHmac: (algorithm, key) => {
     if (algorithm !== "sha256")
       throw new Error(`Unsupported hmac: ${algorithm}`);
-    let keyBytes =
-      typeof key === "string"
-        ? new NodeTextEncoder().encode(key)
-        : NodeBuffer.from(key);
-    if (keyBytes.length > 64)
-      keyBytes = NodeBuffer.from(
-        globalThis.__quench_sha256_bytes(Array.from(keyBytes))
-      );
-    const padded = NodeBuffer.alloc(64);
-    padded.set(keyBytes);
-    const inner = new NodeBuffer(64);
-    const outer = new NodeBuffer(64);
-    for (let i = 0; i < 64; i++) {
-      inner[i] = padded[i] ^ 0x36;
-      outer[i] = padded[i] ^ 0x5c;
-    }
+    const { keyBytes, inner, outer } = __nodeCryptoHmacPads(key);
     const chunks = [];
     let finalized = false;
     const hmac = {
@@ -341,27 +323,9 @@ const __createNodeCrypto = () => ({
         return hmac;
       },
       digest: (encoding) => {
-        if (finalized) {
-          const error = new Error("Digest already called");
-          error.code = "ERR_CRYPTO_HASH_FINALIZED";
-          throw error;
-        }
+        __nodeCryptoAssertDigestOpen(finalized);
         finalized = true;
-        const message = [];
-        for (const chunk of chunks) message.push(...chunk);
-        const innerDigest = globalThis.__quench_sha256_bytes([
-          ...inner,
-          ...message
-        ]);
-        const result = NodeBuffer.from(
-          globalThis.__quench_sha256_bytes([...outer, ...innerDigest])
-        );
-        if (encoding === undefined || encoding === null) return result;
-        if (encoding === "hex" || encoding === "base64")
-          return result.toString(encoding);
-        const error = new TypeError(`Unknown encoding: ${encoding}`);
-        error.code = "ERR_UNKNOWN_ENCODING";
-        throw error;
+        return __nodeCryptoHmacDigest(inner, outer, chunks, encoding);
       },
       copy: () => {
         if (finalized) {
