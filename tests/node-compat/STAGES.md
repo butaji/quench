@@ -885,3 +885,4 @@ these small fixtures isolate the currently implemented contract.
 |   886 | http2 exposes settings conversion API                       | `tools/run-node-tests.sh --stage 886` |
 |   887 | zlib exposes raw Brotli and unzip algorithms                | `tools/run-node-tests.sh --stage 887` |
 |   888 | crypto exposes usable hash chaining contract               | `tools/run-node-tests.sh --stage 888` |
+|   889 | crypto exposes usable HMAC chaining contract               | `tools/run-node-tests.sh --stage 889` |
