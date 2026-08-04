@@ -2505,3 +2505,8 @@ Stage 926 records the verified OS signal-constant contract. The existing
 platform table already matched the upstream fixture, so this stage required no
 runtime change; the next OS slice should isolate priority validation from the
 host-dependent `setpriority` behavior.
+
+Stage 927 records the verified `os` fast-information surface. The existing
+host-derived platform, architecture, release, hostname, load-average, and CPU
+values satisfy the upstream fixture; priority mutation remains isolated for a
+future host-specific implementation.
