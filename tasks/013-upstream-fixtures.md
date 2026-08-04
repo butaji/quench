@@ -1808,6 +1808,9 @@ Stage 636 formalized the non-negative monotonic seconds contract of
 Stage 637 formalized argument forwarding and synchronous scheduling for
 `process.nextTick`.
 
+Stage 638 formalized writable `process.exitCode` state without terminating
+the harness.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
