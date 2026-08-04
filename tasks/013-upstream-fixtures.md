@@ -2644,3 +2644,7 @@ case and avoids coupling the contract to event scheduling.
 Stage 953 verifies `events.once()` argument tuple resolution and one-shot
 listener cleanup. Retrospective: asserting listener installation before emit
 and removal after resolution covers both promise wiring and lifecycle cleanup.
+
+Stage 954 verifies `events.once()` rejection from an `error` event and cleanup
+of the pending listener. Retrospective: retaining the exact error object in the
+assertion catches accidental wrapping across the promise boundary.
