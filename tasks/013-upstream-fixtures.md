@@ -2405,3 +2405,8 @@ Stage 905 verifies the node:crypto asynchronous HKDF derivation API.
 
 Retrospective: decorator ordering matters when wrappers depend on later
 polyfills; deferred lookup keeps async adapters aligned with final exports.
+
+Stage 906 verifies the node:crypto default Buffer hash digest contract.
+
+Retrospective: keep output-type contracts separate from encoded-output vectors;
+this isolates Buffer interop regressions without duplicating hash semantics.
