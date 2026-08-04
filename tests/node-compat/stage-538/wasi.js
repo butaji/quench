@@ -2,11 +2,10 @@
 
 const assert = require("assert");
 
-assert.throws(() => require("wasi"), {
-  code: "ERR_UNKNOWN_BUILTIN_MODULE"
-});
-assert.throws(() => require("node:wasi"), {
-  code: "ERR_UNKNOWN_BUILTIN_MODULE"
-});
+for (const name of ["wasi", "node:wasi"]) {
+  const wasi = require(name);
+  assert.strictEqual(typeof wasi.WASI, "function");
+  assert.strictEqual(typeof wasi.getImportObject, "function");
+}
 
-console.log("wasi error passed");
+console.log("wasi api passed");

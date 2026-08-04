@@ -2246,3 +2246,5 @@ Stage 847 verifies the node:repl interactive evaluation API.
 Stage 848 verifies the node:cluster primary and worker API.
 
 Stage 849 verifies the node:trace_events category tracing API.
+
+Stage 850 verifies the node:wasi WebAssembly system interface API.
