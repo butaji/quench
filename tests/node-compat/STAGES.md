@@ -658,3 +658,4 @@ these small fixtures isolate the currently implemented contract.
 |   659 | process getBuiltinModule resolves built-ins with and without node prefix     | `tools/run-node-tests.sh --stage 659` |
 |   660 | process permission has exposes a boolean capability result                    | `tools/run-node-tests.sh --stage 660` |
 |   661 | process resourceUsage exposes finite non-negative numeric metrics             | `tools/run-node-tests.sh --stage 661` |
+|   662 | process cpuUsage exposes finite non-negative user and system metrics          | `tools/run-node-tests.sh --stage 662` |
