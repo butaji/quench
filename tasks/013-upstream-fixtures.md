@@ -2178,3 +2178,5 @@ Stage 813 added static Module resolution helper methods.
 Stage 814 verified the core node:assert API.
 
 Stage 815 verified the core node:buffer static API.
+
+Stage 816 verified modern node:buffer encoding helpers.
