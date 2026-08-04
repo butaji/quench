@@ -191,7 +191,10 @@ class NodeReadable extends NodeEventEmitter {
   }
   _read() {}
   destroy(error, callback) {
-    if (this.destroyed) return this;
+    if (this.destroyed) {
+      if (callback) queueMicrotask(() => callback());
+      return this;
+    }
     this.destroyed = true;
     this.readable = false;
     if (error) this.emit("error", error);
@@ -355,7 +358,10 @@ class NodeWritable extends NodeEventEmitter {
     this._destroy = options.destroy;
   }
   destroy(error, callback) {
-    if (this.destroyed) return this;
+    if (this.destroyed) {
+      if (callback) queueMicrotask(() => callback());
+      return this;
+    }
     this.destroyed = true;
     this.writable = false;
     this._writableState.errored = error || null;

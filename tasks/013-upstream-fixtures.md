@@ -2940,3 +2940,8 @@ and avoids duplicating error/close bookkeeping in the stream class.
 
 Upstream audit: `test-stream-writable-destroy.js` still exercises additional
 native state fields and repeated-destroy behavior beyond this focused slice.
+
+Stage 1010 verifies that a repeated `destroy()` call remains a no-op while
+still delivering its callback asynchronously. Retrospective: checking the
+already-destroyed branch directly exposed a missing callback path that a
+single-destroy lifecycle test could not detect.
