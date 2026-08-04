@@ -927,3 +927,4 @@ these small fixtures isolate the currently implemented contract.
 |   930 | events max-listener static APIs                       | `tools/run-node-tests.sh --stage 930` |
 |   931 | events static listener inspection                     | `tools/run-node-tests.sh --stage 931` |
 |   932 | EventEmitter event name enumeration                  | `tools/run-node-tests.sh --stage 932` |
+|   933 | upstream EventEmitter list contract                  | `tools/run-node-tests.sh --stage 933` |
