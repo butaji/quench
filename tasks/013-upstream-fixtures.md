@@ -2379,3 +2379,8 @@ Stage 900 verifies the node:crypto secret key object API.
 
 Retrospective: key-object slices can start with the stable metadata/export
 contract, leaving algorithm-specific operations for focused later stages.
+
+Stage 901 verifies the node:crypto synchronous HKDF derivation API.
+
+Retrospective: composition over existing HMAC primitives delivered HKDF
+without expanding the Rust boundary or duplicating cryptographic byte logic.
