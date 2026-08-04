@@ -207,6 +207,12 @@ class NodeReadable extends NodeEventEmitter {
         "ERR_STREAM_PUSH_AFTER_EOF"
       );
     if (chunk === null) return __nodeReadablePushEnd(this);
+    if (!this.readableObjectMode && !ArrayBuffer.isView(chunk)) {
+      const error = new TypeError("chunk must be a string or buffer");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      this.emit("error", error);
+      return false;
+    }
     if (!this.readableObjectMode && typeof chunk === "string")
       chunk = NodeBuffer.from(chunk, this.readableDefaultEncoding);
     return __nodeReadablePushChunk(this, chunk);
