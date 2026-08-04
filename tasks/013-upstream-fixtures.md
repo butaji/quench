@@ -2088,3 +2088,5 @@ Stage 768 aligned process.stdin isPaused with local Node.
 Stage 769 added process.stdin stdio lifecycle methods.
 
 Stage 770 aligned process.stdin fd, destroyed, and readableEncoding state.
+
+Stage 771 aligned process.stdin stream lifecycle state with local Node.
