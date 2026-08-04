@@ -3296,6 +3296,8 @@ Retrospective: direct prototype calls previously failed with an incidental
 property error; checking decoder state first produces Node’s stable
 `ERR_INVALID_THIS` contract.
 
+Stage 1071 recognizes slash- and backslash-rooted Windows paths as absolute.
+
 Stage 1070 trims trailing separators before calculating path extensions.
 
 Stage 1063 normalizes all typed-array views through their underlying bytes,
