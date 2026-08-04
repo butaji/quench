@@ -83,6 +83,15 @@ fn main() -> ExitCode {
             quench_runtime::test262::host::TestOutcome::Pass => ExitCode::SUCCESS,
             quench_runtime::test262::host::TestOutcome::Fail { failure } => {
                 eprintln!("Reason: {}", failure.message);
+                if let Some(error_type) = failure.error_type {
+                    eprintln!("Type: {}", error_type);
+                }
+                if let Some(error_message) = failure.error_message {
+                    eprintln!("JS message: {}", error_message);
+                }
+                if let Some(js_stack) = failure.js_stack {
+                    eprintln!("Stack:\n{}", js_stack);
+                }
                 ExitCode::from(1)
             }
             quench_runtime::test262::host::TestOutcome::Skip { reason } => {
