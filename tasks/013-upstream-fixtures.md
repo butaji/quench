@@ -2236,3 +2236,5 @@ Stage 842 verifies the node:tls secure transport API.
 Stage 843 verifies the node:child_process process creation API.
 
 Stage 844 verifies the node:v8 serialization and heap inspection API.
+
+Stage 845 verifies the node:vm contexts, scripts, and module API.
