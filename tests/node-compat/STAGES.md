@@ -687,3 +687,4 @@ these small fixtures isolate the currently implemented contract.
 |   688 | process stderr exposes a writable stream-like object                         | `tools/run-node-tests.sh --stage 688` |
 |   689 | process stdin exposes a stream-like listener interface                       | `tools/run-node-tests.sh --stage 689` |
 |   690 | process stdin on returns the stream for chaining                              | `tools/run-node-tests.sh --stage 690` |
+|   691 | process stdout write reports a successful empty write                         | `tools/run-node-tests.sh --stage 691` |
