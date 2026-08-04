@@ -105,7 +105,9 @@ decomposed in subsequent slices.
 
 ## Status
 
-In progress. Items 1, 5, and 6 are the immediate next slices; repository-wide
+In progress. Items 1 and 5 remain immediate next slices; the host callback
+contract template is now available as `tools/host-callback-contract.md`.
+Repository-wide
 source-limit enforcement is now installed. The bootstrap diagnostics added for
 stage 514 exposed and fixed an initialization-order bug in the stream polyfill.
 Stage 516 also confirmed that one shared callback adapter is sufficient for the
