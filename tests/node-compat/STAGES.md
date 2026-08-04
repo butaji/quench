@@ -492,3 +492,4 @@ these small fixtures isolate the currently implemented contract.
 |   493 | async_hooks exposes resource and chainable hooks                 | `tools/run-node-tests.sh --stage 493` |
 |   494 | http server and client exchange JSON in process                  | `tools/run-node-tests.sh --stage 494` |
 |   495 | async resource state propagates through timers                   | `tools/run-node-tests.sh --stage 495` |
+|   496 | async resource bind preserves receiver and metadata              | `tools/run-node-tests.sh --stage 496` |
