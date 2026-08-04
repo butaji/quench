@@ -163,11 +163,6 @@ impl NativeConstructor {
         result
     }
 
-    /// Get the internal function Rc for comparison
-    pub(crate) fn func_rc(&self) -> &super::NativeFn {
-        &self.func
-    }
-
     /// Call the inner function directly, setting native_this to this constructor.
     pub(crate) fn call_func(&self, args: Vec<Value>) -> Result<Value, JsError> {
         (self.func)(args)

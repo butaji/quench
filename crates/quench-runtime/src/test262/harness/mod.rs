@@ -3,15 +3,9 @@
 //! Loads actual JS harness files from test262/harness/ via ctx.eval(),
 //! supplemented by Rust-native helpers for Stage 0 compliance.
 
-pub mod assert_helpers;
-pub mod deep_equal;
 #[cfg(test)]
 mod harness_loader_tests;
 pub mod host262;
-pub mod property_helpers;
-#[cfg(test)]
-mod property_helpers_tests;
-pub mod test_deep_equal;
 
 use crate::value::function::NativeConstructor;
 use crate::value::{Object, ObjectKind};
@@ -579,8 +573,8 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     for js_file in [
         "assert.js",
         "deepEqual.js",
-        "propertyHelper.js",
         "nativeErrors.js",
+        "propertyHelper.js",
         "fnGlobalObject.js",
         // isConstructor.js is NOT loaded here. The upstream JS file
         // (identical to the local copy) uses Reflect.construct and is
@@ -614,10 +608,6 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
     ctx.set_global("$DONOTEVALUATE".to_string(), make_native(donotevaluate));
     ctx.set_global("stop".to_string(), make_native(done));
     ctx.set_global("print".to_string(), make_native(print_fn));
-    ctx.set_global(
-        "verifyProperty".to_string(),
-        make_native(property_helpers::verify_property),
-    );
     // verifyAccessorProperty and the deprecated verifyWritable /
     // verifyNotWritable / verifyEnumerable / verifyNotEnumerable /
     // verifyConfigurable / verifyNotConfigurable come from the real JS
@@ -633,11 +623,6 @@ pub fn try_inject_harness(ctx: &mut Context) -> Result<(), String> {
             make_error_constructor_array(ctx, true),
         );
     }
-    ctx.set_global(
-        "makeNativeError".to_string(),
-        make_native(property_helpers::make_native_error),
-    );
-
     if let Some(Value::Object(obj)) = ctx.get_global("globalThis") {
         GLOBAL_OBJECT.with(|g| *g.borrow_mut() = Some(obj));
     }
