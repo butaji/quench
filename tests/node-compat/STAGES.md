@@ -386,3 +386,4 @@ these small fixtures isolate the currently implemented contract.
 |   387 | fs close invalid descriptor EBADF metadata                     | `tools/run-node-tests.sh --stage 387` |
 |   388 | lazy URL bootstrap and url.parse availability                  | `tools/run-node-tests.sh --stage 388` |
 |   389 | lazy OS bootstrap and os.platform availability                | `tools/run-node-tests.sh --stage 389` |
+|   390 | fs close callback descriptor release                           | `tools/run-node-tests.sh --stage 390` |
