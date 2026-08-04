@@ -706,6 +706,26 @@ pub fn make_ops_object() -> Value {
                     &key,
                 )
             }
+            Value::NativeFunction(nf) => {
+                if nf.get_property(&format!("\0deleted:{key}")).is_some() {
+                    return Ok(Value::Undefined);
+                }
+                if !matches!(key.as_str(), "name" | "length" | "prototype")
+                    && nf.get_property(&key).is_none()
+                {
+                    return Ok(Value::Undefined);
+                }
+                let value = crate::eval::member::eval_native_function_member(nf, &key)?;
+                let mut desc =
+                    crate::value::object::Object::new(crate::value::ObjectKind::Ordinary);
+                desc.set("value", value);
+                desc.set("writable", Value::Boolean(key != "name" && key != "length"));
+                desc.set("enumerable", Value::Boolean(false));
+                desc.set("configurable", Value::Boolean(key != "prototype"));
+                Ok(Value::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    desc,
+                ))))
+            }
             _ => Ok(Value::Undefined),
         }
     });

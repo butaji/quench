@@ -272,6 +272,21 @@ impl Context {
                 configurable: true,
             },
         );
+        // Per ES §17, every built-in Function object that is not anonymous has
+        // a name property with attributes {[[Writable]]: false, [[Enumerable]]:
+        // false, [[Configurable]]: true}. The propertyHelper.js harness asserts
+        // this with `obj.hasOwnProperty('name')`, so the name must live in
+        // own properties (the `nf.name` field is not exposed as own).
+        nf.define_property(
+            "name",
+            Value::String(name.to_string()),
+            crate::value::PropertyFlags {
+                value: Some(Value::String(name.to_string())),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+            },
+        );
         self.set_global(name.to_string(), Value::NativeFunction(Rc::new(nf)));
     }
 

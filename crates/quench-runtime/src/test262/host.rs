@@ -434,6 +434,30 @@ mod tests {
     }
 
     #[test]
+    fn harness_string_underscore_native_helpers_are_present() {
+        use crate::test262::runner::execute::initialize_test_context;
+        let mut ctx = initialize_test_context(false).expect("ctx");
+        // The JS String.js builtin layer wraps `String.fromCharCode` /
+        // `String.fromCodePoint` with JS functions that call the underscore
+        // variants (`String.__fromCharCode`, `String.__fromCodePoint`).
+        // If those native helpers are missing, every spec test that uses
+        // `String.fromCharCode` blows up with "Cannot read property 'apply'
+        // of undefined". This regression pin guards the bootstrap order.
+        assert!(
+            matches!(ctx.get_global("String"), Some(Value::Object(_))),
+            "String global must be an object"
+        );
+        let r = ctx
+            .eval("String.fromCharCode(65)")
+            .expect("String.fromCharCode must work");
+        assert_eq!(r, Value::String("A".into()));
+        let r = ctx
+            .eval("String.fromCharCode(65, 66)")
+            .expect("String.fromCharCode(2-arg)");
+        assert_eq!(r, Value::String("AB".into()));
+    }
+
+    #[test]
     fn harness_assert_settable_in_test_context() {
         use crate::test262::runner::execute::initialize_test_context;
         let mut ctx = initialize_test_context(false).expect("ctx");

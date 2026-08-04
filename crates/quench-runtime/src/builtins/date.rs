@@ -128,12 +128,25 @@ fn create_string_constructor_object(
     string_obj_rc
         .borrow_mut()
         .set("prototype", Value::Object(string_proto));
+    let from_char_code = create_from_char_code_fn();
+    let from_code_point = create_from_code_point_fn();
+    // The self-hosted JS String builtin layer wraps `String.fromCharCode`
+    // and `String.fromCodePoint` with JS functions that call the underscore
+    // variants via `.apply`. Both variants must exist on the global String
+    // object so the JS wrappers do not throw
+    // "Cannot read property 'apply' of undefined".
     string_obj_rc
         .borrow_mut()
-        .set("fromCharCode", create_from_char_code_fn());
+        .set("__fromCharCode", from_char_code.clone());
     string_obj_rc
         .borrow_mut()
-        .set("fromCodePoint", create_from_code_point_fn());
+        .set("__fromCodePoint", from_code_point.clone());
+    string_obj_rc
+        .borrow_mut()
+        .set("fromCharCode", from_char_code);
+    string_obj_rc
+        .borrow_mut()
+        .set("fromCodePoint", from_code_point);
     string_obj_rc.borrow_mut().set("constructor", string_fn);
     string_obj_rc
 }
