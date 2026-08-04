@@ -70,10 +70,25 @@ let __quenchAsyncHooksModule;
     })
   };
 }
+const __quenchCoreStaticModules = new Map([
+  ["assert", () => globalThis.__nodeAssert],
+  ["path", () => globalThis.__nodePath],
+  ["path/posix", () => globalThis.__nodePath],
+  ["util", () => globalThis.__nodeUtil],
+  ["perf_hooks", () => globalThis.__nodePerfHooks],
+  ["crypto", () => globalThis.__nodeCrypto],
+  ["v8", () => ({})],
+  [
+    "events",
+    () => ({
+      EventEmitter: globalThis.__nodeEventEmitter,
+      once: globalThis.__nodeEventEmitter.once,
+      on: globalThis.__nodeEventEmitter.on
+    })
+  ],
+  ["async_hooks", () => __quenchAsyncHooksModule]
+]);
 const __quenchRequireCoreBase = (name) => {
-  if (name === "assert") return globalThis.__nodeAssert;
-  if (name === "path" || name === "path/posix") return globalThis.__nodePath;
-  if (name === "util") return globalThis.__nodeUtil;
   if (name === "os") {
     globalThis.__nodeOsInitialized = true;
     return globalThis.__nodeOs;
@@ -82,20 +97,12 @@ const __quenchRequireCoreBase = (name) => {
     globalThis.__nodeQuerystringInitialized = true;
     return globalThis.__nodeQuerystring;
   }
-  if (name === "perf_hooks") return globalThis.__nodePerfHooks;
   if (name === "url") {
     globalThis.__nodeUrlInitialized = true;
     return globalThis.__nodeUrlModule;
   }
-  if (name === "crypto") return globalThis.__nodeCrypto;
-  if (name === "v8") return {};
-  if (name === "events")
-    return {
-      EventEmitter: globalThis.__nodeEventEmitter,
-      once: globalThis.__nodeEventEmitter.once,
-      on: globalThis.__nodeEventEmitter.on
-    };
-  if (name === "async_hooks") return __quenchAsyncHooksModule;
+  const factory = __quenchCoreStaticModules.get(name);
+  return factory ? factory() : undefined;
 };
 const __quenchSpawnChild = (_command, args = []) => {
   const child = new globalThis.__nodeEventEmitter();
