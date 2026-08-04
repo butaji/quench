@@ -572,6 +572,16 @@ fn async_done_replacement_on_global_object_is_observed_by_helper() {
 }
 
 #[test]
+fn async_helper_observes_replaced_done_callback() {
+    let script = format!(
+        "{}{}globalThis.$DONE = function() {{}}; asyncTest(function() {{ return Promise.resolve(); }});",
+        ASYNC_DONE_PRELUDE,
+        include_str!("../../../../../../tests/test262/harness/asyncHelpers.js")
+    );
+    assert_eq!(run_async_script(&script, false), Ok(()));
+}
+
+#[test]
 fn dynamic_import_rejection_reaches_catch_handler() {
     let script = format!(
         "{}import('./missing-module.js').catch(function(error) {{ if (error === undefined) throw new Error('missing error'); $DONE(); }}, $DONE);",
