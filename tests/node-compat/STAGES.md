@@ -615,3 +615,4 @@ these small fixtures isolate the currently implemented contract.
 |   616 | process versions exposes a locale-data CLDR version entry              | `tools/run-node-tests.sh --stage 616` |
 |   617 | process versions exposes a semantic ICU version entry                  | `tools/run-node-tests.sh --stage 617` |
 |   618 | process versions exposes a semantic nghttp2 version entry              | `tools/run-node-tests.sh --stage 618` |
+|   619 | process versions exposes a semantic llhttp version entry               | `tools/run-node-tests.sh --stage 619` |
