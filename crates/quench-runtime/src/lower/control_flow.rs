@@ -434,14 +434,24 @@ pub fn lower_switch(switch: &ast::SwitchStatement) -> Option<Statement> {
     }
     switch_scope_stmts.push(for_stmt);
 
-    Some(Statement::SequenceDecls(vec![
+    let has_default = switch.cases.iter().any(|case| case.test.is_none());
+    let lowered_switch = Statement::SequenceDecls(vec![
         Statement::VarDeclaration {
             kind: VarKind::Var,
             name: disc_name,
             init: Some(discriminant),
         },
         Statement::Block(switch_scope_stmts),
-    ]))
+    ]);
+    if has_default {
+        Some(Statement::If {
+            condition: Box::new(Expression::Boolean(true)),
+            consequent: Box::new(lowered_switch),
+            alternate: None,
+        })
+    } else {
+        Some(lowered_switch)
+    }
 }
 
 fn collect_switch_case_decls(case_bodies: &[Vec<Statement>]) -> Vec<String> {

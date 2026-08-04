@@ -19,6 +19,14 @@ fn try_without_catch_finally_preserves_try_completion() {
 }
 
 #[test]
+fn switch_case_still_matches_when_default_calls_function() {
+    assert_eq!(
+        eval("function boxed(value) { return false; } function classify(value) { switch (typeof value) { case 'string': return true; default: return boxed(value); } } classify('a')").unwrap(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
 fn generator_assignment_defers_write_until_yield_resumes() {
     let value = eval("var obj = {foo: 'initial'}; function* g() { obj.foo = yield; } var iter = g(); iter.next(); var before = obj.foo; iter.next('resumed'); [before, obj.foo].join('|')").unwrap();
     assert_eq!(value, Value::String("initial|resumed".into()));
