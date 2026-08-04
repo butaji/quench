@@ -1872,6 +1872,8 @@ Stage 663 formalized the previous-sample process.cpuUsage contract.
 
 Stage 664 formalized finite non-negative process.memoryUsage metrics.
 
+Stage 665 formalized the finite non-negative process.memoryUsage.rss metric.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
