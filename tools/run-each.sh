@@ -119,3 +119,7 @@ done < <(find "$TEST_DIR" -name "*.js" ! -name "*_FIXTURE.js" | sort)
 echo ""
 echo ""
 echo "=== Results: $PASSED passed, $FAILED failed, $SKIPPED skipped ($TOTAL total) ==="
+
+if [[ "$FAILED" -ne 0 ]]; then
+    exit 1
+fi

@@ -35,7 +35,8 @@ TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test
 # Fast digest invocation; output remains the Test262 SSOT
 TEST262_STAGE=N TEST262_DIGEST=1 cargo nextest run -p quench-runtime --test test262 --profile test262 -E 'test(test262_staged)' --run-ignored all
 
-# Crash-isolated fallback for a stage (slower, useful after a runtime crash)
+# Crash-isolated fallback for a stage (slower, useful after a runtime crash;
+# exits non-zero when any test fails or times out)
 TEST262_STAGE=N bash tools/run-each.sh
 
 # Run every stage in order
@@ -67,3 +68,9 @@ bash tools/digest-all.sh
 The helper scripts under `tools/` are implementation details of the runner.
 Use them directly only when their command-line behavior is needed; do not
 add their output or progress summaries to documentation.
+
+The nextest Test262 profile intentionally uses one harness test thread: the
+harness owns the per-file loop and produces the digest, so nextest parallelism
+applies to unit/integration tests rather than splitting one stage's SSOT run.
+`run-each.sh` is the diagnostic crash-isolation path and is not a replacement
+for the digest command.
