@@ -1,4 +1,3 @@
-const __NodeBufferBase01 = NodeBuffer;
 const __nodeBufferCopyNumber = (value) => {
   const result = Math.trunc(Number(value));
   return Number.isNaN(result) ? 0 : result;
@@ -275,7 +274,6 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase01 {
       sourceEnd
     );
   }
-
   static concat(list, totalLength) {
     __nodeBufferConcatValidate(list, totalLength);
     const length =
@@ -491,6 +489,11 @@ NodeBuffer.from = (...args) => {
     args[0] instanceof SharedArrayBuffer
   )
     return source;
+  const pooled = __nodeBufferPoolFrom(source);
+  if (pooled) {
+    Object.setPrototypeOf(pooled, NodeBuffer.prototype);
+    return pooled;
+  }
   const output = new NodeBuffer(source.length);
   output.set(source);
   return output;
