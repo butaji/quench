@@ -2262,3 +2262,5 @@ Stage 855 verifies the node:inspector debugging session API.
 Stage 856 verifies the node:test runner and lifecycle API.
 
 Stage 857 verifies the node:process modern memory and resource API.
+
+Stage 858 verifies the node:util/types specialized type predicates.
