@@ -852,3 +852,4 @@ these small fixtures isolate the currently implemented contract.
 |   853 | punycode exposes Unicode domain conversion API               | `tools/run-node-tests.sh --stage 853` |
 |   854 | domain exposes legacy error context API                     | `tools/run-node-tests.sh --stage 854` |
 |   855 | inspector exposes debugging session API                    | `tools/run-node-tests.sh --stage 855` |
+|   856 | test exposes test runner and lifecycle API                  | `tools/run-node-tests.sh --stage 856` |
