@@ -2144,3 +2144,5 @@ Stage 796 verified process.permission query compatibility.
 Stage 797 verified process.release metadata compatibility.
 
 Stage 798 verified process.getBuiltinModule loading behavior.
+
+Stage 799 populated process.allowedNodeEnvironmentFlags with baseline flags.
