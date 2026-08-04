@@ -232,7 +232,12 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    if (offset < 0 || offset + 8 > this.length) {
+    if (offset < 0) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset + 8 > this.length) {
       const error = new RangeError(
         "Attempt to access memory outside buffer bounds"
       );
