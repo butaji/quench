@@ -419,6 +419,7 @@ macro_rules! run_host_context {
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) globalThis.process.stdin.readableLength ??= 0")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) globalThis.process.stdin.readableObjectMode ??= false")?;
         ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) { globalThis.process.stdin.read ||= (() => null); globalThis.process.stdin.unshift ||= (() => globalThis.process.stdin); }")?;
+        ctx.eval::<(), _>(b"if (globalThis.process && globalThis.process.stdin) globalThis.process.stdin.isPaused ||= (() => false)")?;
         ctx.globals().set("__nodeOsInitialized", false)?;
         ctx.globals().set("__quench_script_source", $source)?;
         let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source);
