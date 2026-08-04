@@ -1436,6 +1436,9 @@ delivery.
 Stage 509 formalized cluster and worker disconnect events, exited-after-
 disconnect state, and clean worker exit metadata.
 
+Stage 510 formalized cluster worker termination by signal and corresponding
+exit/disconnect state.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
