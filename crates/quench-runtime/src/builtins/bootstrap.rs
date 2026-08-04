@@ -782,6 +782,18 @@ mod tests {
     }
 
     #[test]
+    fn array_from_applies_iterator_mapper_before_next_step() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var seen = 0; var items = { [Symbol.iterator]: function() { return { next: function() { seen++; return seen < 3 ? { done: false, value: seen } : { done: true }; } }; } }; try { Array.from(items, function() { throw new Error('stop'); }); false; } catch (e) { seen === 1; }",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+
+    #[test]
     fn array_flat_map_reads_length_before_callback_validation() {
         let mut ctx = new_ctx();
         let r = ctx
