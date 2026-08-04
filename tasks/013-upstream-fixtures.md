@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1118: VM global identity
+
+- Fixture: `test-vm-global-identity.js`
+- Preserved `window === this` for contexts whose window property points back to
+  the context object.
+- Retrospective: recognizing self-referential sandbox properties at injection
+  time avoids creating a second proxy for the VM global.
+
 ## Stage 1117: VM context forwarding
 
 - Fixture: `test-vm-context-property-forwarding.js`
