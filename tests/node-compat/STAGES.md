@@ -866,3 +866,4 @@ these small fixtures isolate the currently implemented contract.
 |   867 | assert strict exposes strict assertion API                 | `tools/run-node-tests.sh --stage 867` |
 |   868 | fs promises exposes promise filesystem API                 | `tools/run-node-tests.sh --stage 868` |
 |   869 | worker threads exposes environment and transfer helpers   | `tools/run-node-tests.sh --stage 869` |
+|   870 | fs exposes callback and promise glob API                    | `tools/run-node-tests.sh --stage 870` |
