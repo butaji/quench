@@ -435,3 +435,4 @@ these small fixtures isolate the currently implemented contract.
 |   436 | timer handle ref, unref, and hasRef state                     | `tools/run-node-tests.sh --stage 436` |
 |   437 | stream isPaused pause and resume state                        | `tools/run-node-tests.sh --stage 437` |
 |   438 | stream writableNeedDrain backpressure and drain clearing       | `tools/run-node-tests.sh --stage 438` |
+|   439 | stream readable and writable completion flags                | `tools/run-node-tests.sh --stage 439` |
