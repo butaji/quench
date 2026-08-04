@@ -2709,3 +2709,8 @@ checks, but the rquickjs host still delivers an undefined abort-event argument
 to native `AbortSignal` listeners. Focused `events.once()` stages pass; the
 remaining fix belongs at the host AbortSignal event boundary rather than in the
 Node events polyfill.
+
+Stage 968 verifies `events.once()` delivery for EventTargets and rejection of
+invalid options. Retrospective: separating validation and listener selection
+helpers preserved the linter limits while exposing the shared EventEmitter and
+EventTarget contract in one focused stage.
