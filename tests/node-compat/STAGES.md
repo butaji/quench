@@ -496,3 +496,4 @@ these small fixtures isolate the currently implemented contract.
 |   497 | buffer legacy encoding methods are exposed                       | `tools/run-node-tests.sh --stage 497` |
 |   498 | buffer prototype surface omits underscored methods                | `tools/run-node-tests.sh --stage 498` |
 |   499 | buffer inspect hook formats generic typed arrays                 | `tools/run-node-tests.sh --stage 499` |
+|   500 | buffer float writes validate integer and range offsets             | `tools/run-node-tests.sh --stage 500` |
