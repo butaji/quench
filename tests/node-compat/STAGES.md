@@ -472,3 +472,4 @@ these small fixtures isolate the currently implemented contract.
 |   473 | stream setEncoding decodes flowing data                           | `tools/run-node-tests.sh --stage 473` |
 |   474 | stream write after destroy rejects with error                     | `tools/run-node-tests.sh --stage 474` |
 |   475 | stream push after destroy rejects with error                      | `tools/run-node-tests.sh --stage 475` |
+|   476 | stream writableLength counts UTF-8 bytes                         | `tools/run-node-tests.sh --stage 476` |
