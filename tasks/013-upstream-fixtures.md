@@ -1,5 +1,14 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1123: VM expose-gc hook
+
+- Fixtures: `test-vm-create-and-run-in-context.js`,
+  `test-vm-context-async-script.js`
+- Added the minimal no-op `globalThis.gc()` hook required by the upstream
+  `--expose-gc` fixtures.
+- Retrospective: unsupported CLI flags can expose small capability hooks at
+  bootstrap time without affecting the Rust host.
+
 ## Stage 1122: VM Script evaluation
 
 - Fixture: `test-vm-context.js`

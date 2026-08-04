@@ -84,6 +84,22 @@ const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
       sandbox[key] = globalThis[key];
 };
 const __quenchVmContexts = new WeakSet();
+const __quenchVmIsObject = (value) =>
+  value !== null && (typeof value === "object" || typeof value === "function");
+const __quenchVmTypeError = (message) => {
+  const error = new TypeError(message);
+  error.code = "ERR_INVALID_ARG_TYPE";
+  throw error;
+};
+const __quenchVmRunCallback = (callback, sandbox, args) => {
+  const state = __quenchVmInstallContext(sandbox);
+  try {
+    return callback(...args);
+  } finally {
+    __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
+    __quenchVmRestoreProperties(state.keys, state.previous);
+  }
+};
 const __quenchVmRestoreProperties = (keys, previous) => {
   for (const key of keys) {
     const descriptor = previous.get(key);
@@ -101,6 +117,11 @@ const __quenchVmInstallContext = (sandbox) => {
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
     if (!previous.get(key) || previous.get(key).configurable)
       Object.defineProperty(globalThis, key, descriptor);
+    if (key === "setTimeout" && typeof descriptor.value === "function") {
+      const timer = descriptor.value;
+      globalThis.setTimeout = (callback, ...args) =>
+        timer(() => __quenchVmRunCallback(callback, sandbox, []), ...args);
+    }
   }
   return { keys, previous, originalGlobalKeys };
 };
@@ -128,22 +149,14 @@ const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
   }
 };
 const __quenchVmValidateContext = (sandbox) => {
-  if (
-    sandbox === null ||
-    (typeof sandbox !== "object" && typeof sandbox !== "function")
-  ) {
-    const error = new TypeError(
+  if (!__quenchVmIsObject(sandbox))
+    __quenchVmTypeError(
       'The "contextifiedObject" argument must be of type object.'
     );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
   if (!__quenchVmContexts.has(sandbox)) {
-    const error = new TypeError(
+    __quenchVmTypeError(
       'The "contextifiedObject" argument must be an vm.Context'
     );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
   }
 };
 const __quenchVmRunInContext = (code, sandbox, options) => {
@@ -177,27 +190,15 @@ const __quenchVmModule = {
     async evaluate() {}
   },
   createContext: (sandbox = {}) => {
-    if (
-      sandbox === null ||
-      (typeof sandbox !== "object" && typeof sandbox !== "function")
-    ) {
-      const error = new TypeError("The options argument must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
+    if (!__quenchVmIsObject(sandbox))
+      __quenchVmTypeError("The options argument must be an object");
     __quenchVmContexts.add(sandbox);
     return sandbox;
   },
   runInThisContext: (code) => (0, eval)(String(code)),
   runInNewContext: (code, sandbox = {}) => {
-    if (
-      sandbox === null ||
-      (typeof sandbox !== "object" && typeof sandbox !== "function")
-    ) {
-      const error = new TypeError("The context argument must be an object");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
+    if (!__quenchVmIsObject(sandbox))
+      __quenchVmTypeError("The context argument must be an object");
     const previous = {};
     for (const key of Object.keys(sandbox)) {
       previous[key] = globalThis[key];
