@@ -16,5 +16,5 @@ Function.prototype.bind = function FunctionBind(thisArg) {
 // Function.prototype.toString (ES2025 §20.2.3.7)
 Function.prototype.toString = function FunctionToString() {
   if (typeof this !== 'function') throw ThrowTypeError("toString called on non-function");
-  return _nativeToString.call(this);
+  return this.__toString();
 };
