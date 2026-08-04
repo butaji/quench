@@ -493,3 +493,4 @@ these small fixtures isolate the currently implemented contract.
 |   494 | http server and client exchange JSON in process                  | `tools/run-node-tests.sh --stage 494` |
 |   495 | async resource state propagates through timers                   | `tools/run-node-tests.sh --stage 495` |
 |   496 | async resource bind preserves receiver and metadata              | `tools/run-node-tests.sh --stage 496` |
+|   497 | buffer legacy encoding methods are exposed                       | `tools/run-node-tests.sh --stage 497` |
