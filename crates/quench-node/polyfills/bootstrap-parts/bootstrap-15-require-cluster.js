@@ -85,8 +85,9 @@ const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
 const __quenchVmRestoreProperties = (keys, previous) => {
   for (const key of keys) {
     const descriptor = previous.get(key);
-    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-    else delete globalThis[key];
+    if (descriptor?.configurable)
+      Object.defineProperty(globalThis, key, descriptor);
+    else Reflect.deleteProperty(globalThis, key);
   }
 };
 const __quenchVmRunInContext = (code, sandbox) => {
@@ -96,15 +97,21 @@ const __quenchVmRunInContext = (code, sandbox) => {
   for (const key of keys) {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
-    Object.defineProperty(globalThis, key, {
-      ...descriptor,
-      configurable: true
-    });
+    if (!previous.get(key) || previous.get(key).configurable)
+      Object.defineProperty(globalThis, key, {
+        ...descriptor,
+        configurable: true
+      });
   }
   try {
     const result = (0, eval)(String(code));
     __quenchVmCopyProperties(sandbox, keys, originalGlobalKeys);
     return result;
+  } catch (error) {
+    const match = /'([^']+)' is read-only/.exec(error.message || "");
+    if (match)
+      error.message = `Cannot assign to read only property '${match[1]}'`;
+    throw error;
   } finally {
     __quenchVmRestoreProperties(keys, previous);
   }
