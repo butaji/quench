@@ -131,9 +131,9 @@ Array.prototype.map = function ArrayMap(callbackfn /*, thisArg */) {
 // Array.prototype.filter (ES2025 §23.1.3.12)
 Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.filter called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   var A = new Array(0);
   var to = 0;
