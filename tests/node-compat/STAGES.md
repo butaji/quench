@@ -912,3 +912,4 @@ these small fixtures isolate the currently implemented contract.
 |   913 | process validates next tick callback arguments             | `tools/run-node-tests.sh --stage 913` |
 |   914 | process exposes monotonic uptime                          | `tools/run-node-tests.sh --stage 914` |
 |   915 | harness injects per-script filename and dirname           | `tools/run-node-tests.sh --stage 915` |
+|   916 | module exposes absolute-path createRequire                | `tools/run-node-tests.sh --stage 916` |
