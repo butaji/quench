@@ -2857,3 +2857,11 @@ the introspection methods keeps compact storage invisible to callers.
 Stage 995 verifies `removeListener` notifications preserve event name, callback
 identity, and emitter `this` binding. Retrospective: emitting lifecycle events
 after storage mutation makes nested removal deterministic and observable.
+
+Stage 996 verifies chainable `removeAllListeners()`, complete listener removal,
+and notification delivery. Retrospective: the focused stage checks lifecycle
+invariants without depending on the upstream process-exit ordering harness.
+
+Upstream audit: `test-event-emitter-remove-all-listeners.js` reaches its exit
+assertions; the remaining mismatch is the complete LIFO ordering interaction
+among `removeListener` observers.
