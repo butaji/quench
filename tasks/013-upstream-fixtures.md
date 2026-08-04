@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1108: process binding allowlist
+
+- Fixture: `test-process-binding-internalbinding-allowlist.js`
+- Added truthy placeholders for Node’s permitted internal binding names while
+  preserving the real `util` binding and unknown-module errors.
+- Retrospective: an allowlist is enough for discovery tests; concrete APIs stay
+  scoped to the fixtures that exercise them.
+
 ## Stage 1107: process util binding
 
 - Fixture: `test-process-binding-util.js`
