@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1113: querystring surrogate escaping
+
+- Fixture: `test-querystring-escape.js`
+- Added legacy querystring surrogate encoding and Node’s `ERR_INVALID_URI`
+  behavior for lone surrogates.
+- Retrospective: legacy encoding needs a dedicated normalization pass rather
+  than relying on the stricter WHATWG/JS URI encoder.
+
 ## Stage 1112: OS process priority
 
 - Fixture: `test-os-process-priority.js`
