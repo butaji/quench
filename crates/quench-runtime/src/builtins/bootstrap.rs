@@ -565,6 +565,17 @@ mod tests {
     }
 
     #[test]
+    fn object_define_property_getter_is_invoked_by_member_access() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var accessed = false; var obj = {}; Object.defineProperty(obj, 'length', { get: function() { accessed = true; return 2; } }); obj.length === 2 && accessed",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn boxed_number_converts_to_its_primitive_value() {
         let mut ctx = new_ctx();
         let r = ctx.eval("Number(new Number(0)) === 0").unwrap();
