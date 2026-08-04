@@ -2544,3 +2544,8 @@ after Stage 932; no additional runtime code was required.
 
 Stage 934 adds the static `events.listenerCount()` forwarding API, including
 the optional listener filter, over the existing emitter implementation.
+
+Stage 935 adds invalid-target validation for static `events.listenerCount()`.
+Retrospective: static facades need explicit target validation because
+forwarding a missing method otherwise leaks an implementation-specific
+TypeError.
