@@ -1646,6 +1646,9 @@ Stage 577 formalized chainable child-process `ref()` and `unref()` methods.
 Stage 578 formalized the internal `_forkChild` entry point and its callable
 arity for forked child-process compatibility.
 
+Stage 579 formalized child-process stdio stream event methods and chainable
+UTF-8 encoding configuration.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
