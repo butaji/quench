@@ -1,3 +1,396 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __createNodeCrypto = () => ({\n  getHashes: () => ["sha256"],\n  getCiphers: () => [],\n  timingSafeEqual: (left, right) => {\n    if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {\n      const error = new TypeError(\n        \'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (left.length !== right.length) {\n      const error = new RangeError(\n        "Input buffers must have the same byte length",\n      );\n      error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";\n      throw error;\n    }\n    let difference = 0;\n    for (let index = 0; index < left.length; index++)\n      difference |= left[index] ^ right[index];\n    return difference === 0;\n  },\n  randomInt: (minimum = 0, maximum, callback) => {\n    if (typeof minimum === "function") {\n      callback = minimum;\n      minimum = 0;\n      maximum = 0x1_0000_0000_0000;\n    } else if (typeof maximum === "function") {\n      callback = maximum;\n      maximum = minimum;\n      minimum = 0;\n    } else if (maximum === undefined) {\n      maximum = minimum;\n      minimum = 0;\n    }\n    if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {\n      const error = new TypeError("The bounds must be safe integers");\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (maximum <= minimum || maximum - minimum > 0x1_0000_0000_0000) {\n      const error = new RangeError(\n        "The difference between max and min must be less than 2^48",\n      );\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    const range = maximum - minimum;\n    const limit = Math.floor(0x1_0000_0000_0000 / range) * range;\n    const choose = () => {\n      let value;\n      do {\n        const bytes = globalThis.__quench_random_bytes(6);\n        value = 0;\n        for (const byte of bytes) value = value * 256 + byte;\n      } while (value >= limit);\n      return minimum + (value % range);\n    };\n    if (typeof callback === "function") {\n      queueMicrotask(() => callback(null, choose()));\n      return;\n    }\n    return choose();\n  },\n  randomUUID: () => globalThis.__quench_random_uuid(),\n  randomBytes: (size, callback) => {\n    if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {\n      const error = new RangeError(\'The "size" argument is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    if (callback !== undefined && typeof callback !== "function") {\n      const error = new TypeError(\n        \'The "callback" argument must be of type function\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    const output = NodeBuffer.from(globalThis.__quench_random_bytes(size));\n    if (typeof callback === "function")\n      queueMicrotask(() => callback(null, output));\n    return output;\n  },\n  randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {\n    if (!ArrayBuffer.isView(buffer)) {\n      const error = new TypeError(\n        \'The "buffer" argument must be an instance of ArrayBufferView\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (\n      !Number.isSafeInteger(offset) ||\n      !Number.isSafeInteger(size) ||\n      offset < 0 ||\n      size < 0 ||\n      offset + size > buffer.byteLength\n    ) {\n      const error = new RangeError(\'The value of "offset" is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    const bytes = globalThis.__quench_random_bytes(Number(size));\n    buffer.set(bytes, offset);\n    return buffer;\n  },\n  randomFill: (buffer, offset, size, callback) => {\n    if (typeof offset === "function") {\n      callback = offset;\n      offset = 0;\n      size = buffer.length;\n    } else if (typeof size === "function") {\n      callback = size;\n      size = buffer.length - (offset || 0);\n    }\n    if (typeof callback !== "function")\n      throw new TypeError(\'The "callback" argument must be of type function\');\n    try {\n      const result = globalThis.__nodeCrypto.randomFillSync(\n        buffer,\n        offset || 0,\n        size === undefined ? buffer.length - (offset || 0) : size,\n      );\n      queueMicrotask(() => callback(null, result));\n    } catch (error) {\n      queueMicrotask(() => callback(error));\n    }\n  },\n  pbkdf2Sync: (password, salt, iterations, keylen, digest) => {\n    if (typeof password !== "string" && !(password instanceof Uint8Array)) {\n      const error = new TypeError(\n        \'The "password" argument must be of type string or an instance of Buffer\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {\n      const error = new TypeError(\n        \'The "salt" argument must be of type string or an instance of Buffer\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (\n      !Number.isInteger(iterations) ||\n      iterations <= 0 ||\n      iterations > 0x7fffffff\n    ) {\n      const error = new RangeError(\'The value of "iterations" is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {\n      const error = new RangeError(\'The value of "keylen" is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    if (typeof digest !== "string") {\n      const error = new TypeError(\n        \'The "digest" argument must be of type string\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (digest.toLowerCase() !== "sha256")\n      throw new Error(`Unsupported digest: ${digest}`);\n    const passwordBytes =\n      typeof password === "string"\n        ? new NodeTextEncoder().encode(password)\n        : password;\n    const saltBytes =\n      typeof salt === "string" ? new NodeTextEncoder().encode(salt) : salt;\n    const output = [];\n    const blocks = Math.ceil(keylen / 32);\n    for (let block = 1; block <= blocks; block++) {\n      const suffix = [\n        (block >>> 24) & 255,\n        (block >>> 16) & 255,\n        (block >>> 8) & 255,\n        block & 255,\n      ];\n      let u = NodeBuffer.from(\n        globalThis.__nodeCrypto\n          .createHmac("sha256", passwordBytes)\n          .update(NodeBuffer.from([...saltBytes, ...suffix]))\n          .digest(),\n      );\n      const result = Array.from(u);\n      for (let count = 1; count < iterations; count++) {\n        u = NodeBuffer.from(\n          globalThis.__nodeCrypto\n            .createHmac("sha256", passwordBytes)\n            .update(u)\n            .digest(),\n        );\n        for (let index = 0; index < result.length; index++)\n          result[index] ^= u[index];\n      }\n      output.push(...result);\n    }\n    return NodeBuffer.from(output.slice(0, keylen));\n  },\n  pbkdf2: (password, salt, iterations, keylen, digest, callback) => {\n    if (typeof callback !== "function")\n      throw new TypeError(\'The "callback" argument must be of type function\');\n    if (typeof password !== "string" && !(password instanceof Uint8Array)) {\n      const error = new TypeError(\n        \'The "password" argument must be of type string or an instance of Buffer\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {\n      const error = new TypeError(\n        \'The "salt" argument must be of type string or an instance of Buffer\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (\n      !Number.isInteger(iterations) ||\n      iterations <= 0 ||\n      iterations > 0x7fffffff\n    ) {\n      const error = new RangeError(\'The value of "iterations" is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {\n      const error = new RangeError(\'The value of "keylen" is out of range\');\n      error.code = "ERR_OUT_OF_RANGE";\n      throw error;\n    }\n    if (typeof digest !== "string") {\n      const error = new TypeError(\n        \'The "digest" argument must be of type string\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    let result;\n    try {\n      result = globalThis.__nodeCrypto.pbkdf2Sync(\n        password,\n        salt,\n        iterations,\n        keylen,\n        digest,\n      );\n    } catch (error) {\n      queueMicrotask(() => callback(error));\n      return;\n    }\n    queueMicrotask(() => callback(null, result));\n  },\n  createHash: (algorithm) => {\n    if (algorithm !== "sha256")\n      throw new Error(`Unsupported hash: ${algorithm}`);\n    const chunks = [];\n    let finalized = false;\n    const hash = {\n      update: (value, encoding) => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        if (typeof value === "string")\n          chunks.push(NodeBuffer.from(value, encoding || "utf8"));\n        else if (value instanceof Uint8Array) chunks.push(value);\n        else chunks.push(new NodeTextEncoder().encode(String(value)));\n        return hash;\n      },\n      digest: (encoding) => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        finalized = true;\n        const input = [];\n        for (const chunk of chunks) input.push(...chunk);\n        const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));\n        const result = bytes.toString("hex");\n        if (encoding === undefined || encoding === null) return bytes;\n        if (encoding === "hex") return result;\n        if (encoding === "base64") return bytes.toString("base64");\n        const error = new TypeError(`Unknown encoding: ${encoding}`);\n        error.code = "ERR_UNKNOWN_ENCODING";\n        throw error;\n      },\n      copy: () => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        const clone = globalThis.__nodeCrypto.createHash("sha256");\n        for (const chunk of chunks) clone.update(chunk);\n        return clone;\n      },\n    };\n    return hash;\n  },\n  createHmac: (algorithm, key) => {\n    if (algorithm !== "sha256")\n      throw new Error(`Unsupported hmac: ${algorithm}`);\n    let keyBytes =\n      typeof key === "string"\n        ? new NodeTextEncoder().encode(key)\n        : NodeBuffer.from(key);\n    if (keyBytes.length > 64)\n      keyBytes = NodeBuffer.from(\n        globalThis.__quench_sha256_bytes(Array.from(keyBytes)),\n      );\n    const padded = NodeBuffer.alloc(64);\n    padded.set(keyBytes);\n    const inner = new NodeBuffer(64);\n    const outer = new NodeBuffer(64);\n    for (let i = 0; i < 64; i++) {\n      inner[i] = padded[i] ^ 0x36;\n      outer[i] = padded[i] ^ 0x5c;\n    }\n    const chunks = [];\n    let finalized = false;\n    const hmac = {\n      update: (value, encoding) => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        chunks.push(\n          typeof value === "string"\n            ? NodeBuffer.from(value, encoding || "utf8")\n            : NodeBuffer.from(value),\n        );\n        return hmac;\n      },\n      digest: (encoding) => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        finalized = true;\n        const message = [];\n        for (const chunk of chunks) message.push(...chunk);\n        const innerDigest = globalThis.__quench_sha256_bytes([\n          ...inner,\n          ...message,\n        ]);\n        const result = NodeBuffer.from(\n          globalThis.__quench_sha256_bytes([...outer, ...innerDigest]),\n        );\n        if (encoding === undefined || encoding === null) return result;\n        if (encoding === "hex" || encoding === "base64")\n          return result.toString(encoding);\n        const error = new TypeError(`Unknown encoding: ${encoding}`);\n        error.code = "ERR_UNKNOWN_ENCODING";\n        throw error;\n      },\n      copy: () => {\n        if (finalized) {\n          const error = new Error("Digest already called");\n          error.code = "ERR_CRYPTO_HASH_FINALIZED";\n          throw error;\n        }\n        const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);\n        for (const chunk of chunks) clone.update(chunk);\n        return clone;\n      },\n    };\n    return hmac;\n  },\n});\nlet __nodeCryptoInstance;\nglobalThis.__nodeCryptoInitialized = false;\nglobalThis.__nodeCrypto = new Proxy(\n  {},\n  {\n    get: (_, key) => {\n      globalThis.__nodeCryptoInitialized = true;\n      __nodeCryptoInstance ||= __createNodeCrypto();\n      return __nodeCryptoInstance[key];\n    },\n    ownKeys: () =>\n      Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),\n    getOwnPropertyDescriptor: (_, key) => ({\n      enumerable: true,\n      configurable: true,\n      value: (__nodeCryptoInstance ||= __createNodeCrypto())[key],\n    }),\n  },\n);\n'
+const __createNodeCrypto = () => ({
+  getHashes: () => ["sha256"],
+  getCiphers: () => [],
+  timingSafeEqual: (left, right) => {
+    if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (left.length !== right.length) {
+      const error = new RangeError(
+        "Input buffers must have the same byte length"
+      );
+      error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
+      throw error;
+    }
+    let difference = 0;
+    for (let index = 0; index < left.length; index++)
+      difference |= left[index] ^ right[index];
+    return difference === 0;
+  },
+  randomInt: (minimum = 0, maximum, callback) => {
+    if (typeof minimum === "function") {
+      callback = minimum;
+      minimum = 0;
+      maximum = 0x1_0000_0000_0000;
+    } else if (typeof maximum === "function") {
+      callback = maximum;
+      maximum = minimum;
+      minimum = 0;
+    } else if (maximum === undefined) {
+      maximum = minimum;
+      minimum = 0;
+    }
+    if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)) {
+      const error = new TypeError("The bounds must be safe integers");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (maximum <= minimum || maximum - minimum > 0x1_0000_0000_0000) {
+      const error = new RangeError(
+        "The difference between max and min must be less than 2^48"
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const range = maximum - minimum;
+    const limit = Math.floor(0x1_0000_0000_0000 / range) * range;
+    const choose = () => {
+      let value;
+      do {
+        const bytes = globalThis.__quench_random_bytes(6);
+        value = 0;
+        for (const byte of bytes) value = value * 256 + byte;
+      } while (value >= limit);
+      return minimum + (value % range);
+    };
+    if (typeof callback === "function") {
+      queueMicrotask(() => callback(null, choose()));
+      return;
+    }
+    return choose();
+  },
+  randomUUID: () => globalThis.__quench_random_uuid(),
+  randomBytes: (size, callback) => {
+    if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError('The "size" argument is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (callback !== undefined && typeof callback !== "function") {
+      const error = new TypeError(
+        'The "callback" argument must be of type function'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const output = NodeBuffer.from(globalThis.__quench_random_bytes(size));
+    if (typeof callback === "function")
+      queueMicrotask(() => callback(null, output));
+    return output;
+  },
+  randomFillSync: (buffer, offset = 0, size = buffer.length - offset) => {
+    if (!ArrayBuffer.isView(buffer)) {
+      const error = new TypeError(
+        'The "buffer" argument must be an instance of ArrayBufferView'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(size) ||
+      offset < 0 ||
+      size < 0 ||
+      offset + size > buffer.byteLength
+    ) {
+      const error = new RangeError('The value of "offset" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const bytes = globalThis.__quench_random_bytes(Number(size));
+    buffer.set(bytes, offset);
+    return buffer;
+  },
+  randomFill: (buffer, offset, size, callback) => {
+    if (typeof offset === "function") {
+      callback = offset;
+      offset = 0;
+      size = buffer.length;
+    } else if (typeof size === "function") {
+      callback = size;
+      size = buffer.length - (offset || 0);
+    }
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    try {
+      const result = globalThis.__nodeCrypto.randomFillSync(
+        buffer,
+        offset || 0,
+        size === undefined ? buffer.length - (offset || 0) : size
+      );
+      queueMicrotask(() => callback(null, result));
+    } catch (error) {
+      queueMicrotask(() => callback(error));
+    }
+  },
+  pbkdf2Sync: (password, salt, iterations, keylen, digest) => {
+    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "password" argument must be of type string or an instance of Buffer'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "salt" argument must be of type string or an instance of Buffer'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isInteger(iterations) ||
+      iterations <= 0 ||
+      iterations > 0x7fffffff
+    ) {
+      const error = new RangeError('The value of "iterations" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      const error = new RangeError('The value of "keylen" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof digest !== "string") {
+      const error = new TypeError(
+        'The "digest" argument must be of type string'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (digest.toLowerCase() !== "sha256")
+      throw new Error(`Unsupported digest: ${digest}`);
+    const passwordBytes =
+      typeof password === "string"
+        ? new NodeTextEncoder().encode(password)
+        : password;
+    const saltBytes =
+      typeof salt === "string" ? new NodeTextEncoder().encode(salt) : salt;
+    const output = [];
+    const blocks = Math.ceil(keylen / 32);
+    for (let block = 1; block <= blocks; block++) {
+      const suffix = [
+        (block >>> 24) & 255,
+        (block >>> 16) & 255,
+        (block >>> 8) & 255,
+        block & 255
+      ];
+      let u = NodeBuffer.from(
+        globalThis.__nodeCrypto
+          .createHmac("sha256", passwordBytes)
+          .update(NodeBuffer.from([...saltBytes, ...suffix]))
+          .digest()
+      );
+      const result = Array.from(u);
+      for (let count = 1; count < iterations; count++) {
+        u = NodeBuffer.from(
+          globalThis.__nodeCrypto
+            .createHmac("sha256", passwordBytes)
+            .update(u)
+            .digest()
+        );
+        for (let index = 0; index < result.length; index++)
+          result[index] ^= u[index];
+      }
+      output.push(...result);
+    }
+    return NodeBuffer.from(output.slice(0, keylen));
+  },
+  pbkdf2: (password, salt, iterations, keylen, digest, callback) => {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    if (typeof password !== "string" && !(password instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "password" argument must be of type string or an instance of Buffer'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof salt !== "string" && !(salt instanceof Uint8Array)) {
+      const error = new TypeError(
+        'The "salt" argument must be of type string or an instance of Buffer'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      !Number.isInteger(iterations) ||
+      iterations <= 0 ||
+      iterations > 0x7fffffff
+    ) {
+      const error = new RangeError('The value of "iterations" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      const error = new RangeError('The value of "keylen" is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof digest !== "string") {
+      const error = new TypeError(
+        'The "digest" argument must be of type string'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    let result;
+    try {
+      result = globalThis.__nodeCrypto.pbkdf2Sync(
+        password,
+        salt,
+        iterations,
+        keylen,
+        digest
+      );
+    } catch (error) {
+      queueMicrotask(() => callback(error));
+      return;
+    }
+    queueMicrotask(() => callback(null, result));
+  },
+  createHash: (algorithm) => {
+    if (algorithm !== "sha256")
+      throw new Error(`Unsupported hash: ${algorithm}`);
+    const chunks = [];
+    let finalized = false;
+    const hash = {
+      update: (value, encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        if (typeof value === "string")
+          chunks.push(NodeBuffer.from(value, encoding || "utf8"));
+        else if (value instanceof Uint8Array) chunks.push(value);
+        else chunks.push(new NodeTextEncoder().encode(String(value)));
+        return hash;
+      },
+      digest: (encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        finalized = true;
+        const input = [];
+        for (const chunk of chunks) input.push(...chunk);
+        const bytes = NodeBuffer.from(globalThis.__quench_sha256_bytes(input));
+        const result = bytes.toString("hex");
+        if (encoding === undefined || encoding === null) return bytes;
+        if (encoding === "hex") return result;
+        if (encoding === "base64") return bytes.toString("base64");
+        const error = new TypeError(`Unknown encoding: ${encoding}`);
+        error.code = "ERR_UNKNOWN_ENCODING";
+        throw error;
+      },
+      copy: () => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        const clone = globalThis.__nodeCrypto.createHash("sha256");
+        for (const chunk of chunks) clone.update(chunk);
+        return clone;
+      }
+    };
+    return hash;
+  },
+  createHmac: (algorithm, key) => {
+    if (algorithm !== "sha256")
+      throw new Error(`Unsupported hmac: ${algorithm}`);
+    let keyBytes =
+      typeof key === "string"
+        ? new NodeTextEncoder().encode(key)
+        : NodeBuffer.from(key);
+    if (keyBytes.length > 64)
+      keyBytes = NodeBuffer.from(
+        globalThis.__quench_sha256_bytes(Array.from(keyBytes))
+      );
+    const padded = NodeBuffer.alloc(64);
+    padded.set(keyBytes);
+    const inner = new NodeBuffer(64);
+    const outer = new NodeBuffer(64);
+    for (let i = 0; i < 64; i++) {
+      inner[i] = padded[i] ^ 0x36;
+      outer[i] = padded[i] ^ 0x5c;
+    }
+    const chunks = [];
+    let finalized = false;
+    const hmac = {
+      update: (value, encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        chunks.push(
+          typeof value === "string"
+            ? NodeBuffer.from(value, encoding || "utf8")
+            : NodeBuffer.from(value)
+        );
+        return hmac;
+      },
+      digest: (encoding) => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        finalized = true;
+        const message = [];
+        for (const chunk of chunks) message.push(...chunk);
+        const innerDigest = globalThis.__quench_sha256_bytes([
+          ...inner,
+          ...message
+        ]);
+        const result = NodeBuffer.from(
+          globalThis.__quench_sha256_bytes([...outer, ...innerDigest])
+        );
+        if (encoding === undefined || encoding === null) return result;
+        if (encoding === "hex" || encoding === "base64")
+          return result.toString(encoding);
+        const error = new TypeError(`Unknown encoding: ${encoding}`);
+        error.code = "ERR_UNKNOWN_ENCODING";
+        throw error;
+      },
+      copy: () => {
+        if (finalized) {
+          const error = new Error("Digest already called");
+          error.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw error;
+        }
+        const clone = globalThis.__nodeCrypto.createHmac("sha256", keyBytes);
+        for (const chunk of chunks) clone.update(chunk);
+        return clone;
+      }
+    };
+    return hmac;
+  }
+});
+let __nodeCryptoInstance;
+globalThis.__nodeCryptoInitialized = false;
+globalThis.__nodeCrypto = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeCryptoInitialized = true;
+      __nodeCryptoInstance ||= __createNodeCrypto();
+      return __nodeCryptoInstance[key];
+    },
+    ownKeys: () =>
+      Reflect.ownKeys((__nodeCryptoInstance ||= __createNodeCrypto())),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: (__nodeCryptoInstance ||= __createNodeCrypto())[key]
+    })
+  }
 );

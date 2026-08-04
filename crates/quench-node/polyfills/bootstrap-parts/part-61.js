@@ -1,3 +1,4 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchClusterPolicyRequire = globalThis.require;\nconst __quenchClusterPolicy = __quenchClusterPolicyRequire("cluster");\nif (__quenchClusterPolicy.schedulingPolicy === undefined) __quenchClusterPolicy.schedulingPolicy = __quenchClusterPolicy.SCHED_RR;\n'
-);
+const __quenchClusterPolicyRequire = globalThis.require;
+const __quenchClusterPolicy = __quenchClusterPolicyRequire("cluster");
+if (__quenchClusterPolicy.schedulingPolicy === undefined)
+  __quenchClusterPolicy.schedulingPolicy = __quenchClusterPolicy.SCHED_RR;

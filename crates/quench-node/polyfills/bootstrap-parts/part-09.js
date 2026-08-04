@@ -1,3 +1,411 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeFs.createReadStream = (value, options = {}) => {\n  const start = options.start === undefined ? 0 : Number(options.start);\n  const end = options.end === undefined ? undefined : Number(options.end);\n  if (!Number.isInteger(start) || start < 0) {\n    const error = new RangeError(\'The "start" option is out of range\');\n    error.code = "ERR_OUT_OF_RANGE";\n    throw error;\n  }\n  if (end !== undefined && (!Number.isInteger(end) || end < 0 || start > end)) {\n    const error = new RangeError(\'The "end" option is out of range\');\n    error.code = "ERR_OUT_OF_RANGE";\n    throw error;\n  }\n  const stream = new NodeReadable(options);\n  const path = nodePathValue(value);\n  stream.path = path;\n  stream.fd = null;\n  stream.bytesRead = 0;\n  if (options.encoding !== undefined) stream.setEncoding(options.encoding);\n  queueMicrotask(() => {\n    try {\n      stream.fd = globalThis.__nodeFs.openSync(path, "r");\n      stream.emit("open", stream.fd);\n      const bytes = globalThis.__nodeFs.readFileSync(path);\n      const end = options.end === undefined ? bytes.length : options.end + 1;\n      const chunk = bytes.subarray(start, Math.min(end, bytes.length));\n      if (chunk.length) {\n        stream.push(chunk);\n        stream.bytesRead += chunk.byteLength;\n      }\n      stream.push(null);\n      if (options.autoClose !== false)\n        stream.once("end", () => {\n          if (stream.fd !== null) {\n            globalThis.__nodeFs.closeSync(stream.fd);\n            stream.fd = null;\n          }\n          stream.emit("close");\n        });\n    } catch (error) {\n      stream.emit("error", error);\n    }\n  });\n  return stream;\n};\nclass NodeAbortSignal {\n  constructor() {\n    this.aborted = false;\n    this._listeners = [];\n  }\n  addEventListener(event, listener) {\n    if (event === "abort") this._listeners.push(listener);\n  }\n  removeEventListener(event, listener) {\n    this._listeners = this._listeners.filter((item) => item !== listener);\n  }\n  static abort() {\n    const signal = new NodeAbortSignal();\n    signal.aborted = true;\n    return signal;\n  }\n}\nclass NodeAbortController {\n  constructor() {\n    this.signal = new NodeAbortSignal();\n  }\n  abort() {\n    this.signal.aborted = true;\n    this.signal._listeners.slice().forEach((listener) => listener());\n  }\n}\nglobalThis.AbortSignal = NodeAbortSignal;\nglobalThis.AbortController = NodeAbortController;\nglobalThis.__nodeFs.open = (value, flags, mode, callback) => {\n  if (typeof flags === "function") {\n    callback = flags;\n    flags = "r";\n    mode = undefined;\n  } else if (typeof mode === "function") {\n    callback = mode;\n    mode = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (\n    mode !== undefined &&\n    mode !== null &&\n    typeof mode !== "number" &&\n    typeof mode !== "string"\n  ) {\n    const error = new TypeError(\'The "mode" argument must be of type number\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    let fd;\n    try {\n      fd = globalThis.__nodeFs.openSync(path, flags, mode);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, fd);\n  });\n};\nglobalThis.__nodeFs.readdir = (value, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    let result;\n    try {\n      result = globalThis.__nodeFs.readdirSync(path, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, result);\n  });\n};\nglobalThis.__nodeFs.mkdir = (value, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = {};\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (\n    options &&\n    Object.prototype.hasOwnProperty.call(options, "recursive") &&\n    typeof options.recursive !== "boolean"\n  ) {\n    const error = new TypeError(\n      \'The "options.recursive" property must be of type boolean.\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.mkdirSync(path, options);\n      callback(null);\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.__nodeFs.readFile = (value, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function") {\n    const error = new TypeError(\n      \'The "callback" argument must be of type function\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  if (\n    options &&\n    options.signal !== undefined &&\n    !(options.signal instanceof NodeAbortSignal)\n  ) {\n    const error = new TypeError(\'The "signal" option must be an AbortSignal\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    if (options && options.signal && options.signal.aborted) {\n      const error = new Error("The operation was aborted");\n      error.name = "AbortError";\n      error.code = "ABORT_ERR";\n      callback(error);\n      return;\n    }\n    let data;\n    try {\n      data = globalThis.__nodeFs.readFileSync(value, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, data);\n  });\n};\nglobalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (\n    options !== undefined &&\n    typeof options !== "function" &&\n    typeof options !== "string" &&\n    (typeof options !== "object" || options === null)\n  ) {\n    const error = new TypeError(\n      \'The "options" argument must be a string or an object\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  if (\n    typeof prefix !== "string" &&\n    !(prefix instanceof Uint8Array) &&\n    !(prefix instanceof globalThis.__nodeURL)\n  ) {\n    const error = new TypeError(\n      \'The "prefix" argument must be of type string or an instance of Buffer or URL\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  if (typeof callback !== "function") {\n    const error = new TypeError(\n      \'The "callback" argument must be of type function\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    try {\n      callback(null, globalThis.__nodeFs.mkdtempSync(prefix));\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.__nodeFs.writeFile = (value, data, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (options && options.signal && options.signal.aborted) {\n    queueMicrotask(() => {\n      const error = new Error("The operation was aborted");\n      error.name = "AbortError";\n      callback(error);\n    });\n    return;\n  }\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.writeFileSync(value, data);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.promises = {\n  open: (value, flags = "r", mode) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.open(value, flags, mode, (error, fd) =>\n        error\n          ? reject(error)\n          : resolve({\n              fd,\n              close: () => Promise.resolve(),\n              read: (buffer, offset, length, position) =>\n                Promise.resolve().then(() => {\n                  let target = buffer;\n                  let start = offset;\n                  let size = length;\n                  let at = position;\n                  if (offset && typeof offset === "object") {\n                    const options = offset;\n                    target = options.buffer || NodeBuffer.alloc(16384);\n                    start = options.offset == null ? 0 : options.offset;\n                    size =\n                      options.length === undefined\n                        ? target.length - start\n                        : options.length;\n                    at = options.position;\n                  }\n                  if (target.length === 0 && Number(size) > 0) {\n                    const error = new TypeError("The buffer is empty");\n                    error.code = "ERR_INVALID_ARG_VALUE";\n                    throw error;\n                  }\n                  const bytesRead = globalThis.__nodeFs.readSync(\n                    fd,\n                    target,\n                    start || 0,\n                    size === undefined ? target.length : size,\n                    at === undefined ? null : at,\n                  );\n                  return { bytesRead, buffer: target };\n                }),\n            }),\n      ),\n    ),\n  readFile: (value, options) =>\n    value && typeof value === "object" && typeof value.fd === "number"\n      ? value.readFile(options)\n      : new Promise((resolve, reject) =>\n          globalThis.__nodeFs.readFile(value, options, (error, data) =>\n            error ? reject(error) : resolve(data),\n          ),\n        ),\n  writeFile: (value, data, options) =>\n    new Promise((resolve, reject) =>\n      queueMicrotask(() =>\n        globalThis.__nodeFs.writeFile(value, data, options, (error) =>\n          error ? reject(error) : resolve(),\n        ),\n      ),\n    ),\n  appendFile: (value, data, options) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.appendFile(value, data, options, (error) =>\n        error ? reject(error) : resolve(),\n      ),\n    ),\n  access: (value, mode) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.access(value, mode, (error) =>\n        error ? reject(error) : resolve(),\n      ),\n    ),\n  truncate: (value, length = 0) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.truncateSync(value, length),\n    ),\n  ftruncate: (fd, length = 0) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.ftruncateSync(fd, length)),\n  fsync: (fd) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(fd)),\n  fdatasync: (fd) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(fd)),\n  rm: (value, options) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.rm(value, options, (error) =>\n        error ? reject(error) : resolve(),\n      ),\n    ),\n  opendir: (value, options) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),\n  symlink: (target, link, type) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.symlink(target, link, type, (error) =>\n        error ? reject(error) : resolve(),\n      ),\n    ),\n  readlink: (value, options) =>\n    new Promise((resolve, reject) =>\n      globalThis.__nodeFs.readlink(value, options, (error, result) =>\n        error ? reject(error) : resolve(result),\n      ),\n    ),\n  realpath: (value, options) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.realpathSync(value, options),\n    ),\n  fstat: (fd) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd)),\n  fchmod: (fd, mode) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fchmodSync(fd, mode)),\n  chmod: (value, mode) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.chmodSync(value, mode)),\n  rename: (from, to) =>\n    Promise.resolve().then(() =>\n      globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to)),\n    ),\n  unlink: (value) =>\n    Promise.resolve().then(() =>\n      globalThis.__quench_fs_unlink(nodeFsPath(value)),\n    ),\n  copyFile: (from, to, mode = 0) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.copyFileSync(from, to, mode),\n    ),\n  rmdir: (value, options) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.rmdirSync(value, options)),\n  mkdtemp: (prefix) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.mkdtempSync(prefix)),\n  readv: (fd, buffers, position) =>\n    Promise.resolve().then(() => {\n      const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position);\n      return { bytesRead, buffers };\n    }),\n  writev: (fd, buffers, position) =>\n    Promise.resolve().then(() => {\n      const bytesWritten = globalThis.__nodeFs.writevSync(\n        fd,\n        buffers,\n        position,\n      );\n      return { bytesWritten, buffers };\n    }),\n  mkdir: (value) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),\n  readdir: (value, options) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.readdirSync(value, options),\n    ),\n  stat: (value) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),\n  lstat: (value) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.lstatSync(value)),\n  link: (existing, link) =>\n    Promise.resolve().then(() => globalThis.__nodeFs.linkSync(existing, link)),\n};\nconst __nodePromiseOpen = globalThis.__nodeFs.promises.open;\n'
-);
+globalThis.__nodeFs.createReadStream = (value, options = {}) => {
+  const start = options.start === undefined ? 0 : Number(options.start);
+  const end = options.end === undefined ? undefined : Number(options.end);
+  if (!Number.isInteger(start) || start < 0) {
+    const error = new RangeError('The "start" option is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  if (end !== undefined && (!Number.isInteger(end) || end < 0 || start > end)) {
+    const error = new RangeError('The "end" option is out of range');
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+  const stream = new NodeReadable(options);
+  const path = nodePathValue(value);
+  stream.path = path;
+  stream.fd = null;
+  stream.bytesRead = 0;
+  if (options.encoding !== undefined) stream.setEncoding(options.encoding);
+  queueMicrotask(() => {
+    try {
+      stream.fd = globalThis.__nodeFs.openSync(path, "r");
+      stream.emit("open", stream.fd);
+      const bytes = globalThis.__nodeFs.readFileSync(path);
+      const end = options.end === undefined ? bytes.length : options.end + 1;
+      const chunk = bytes.subarray(start, Math.min(end, bytes.length));
+      if (chunk.length) {
+        stream.push(chunk);
+        stream.bytesRead += chunk.byteLength;
+      }
+      stream.push(null);
+      if (options.autoClose !== false)
+        stream.once("end", () => {
+          if (stream.fd !== null) {
+            globalThis.__nodeFs.closeSync(stream.fd);
+            stream.fd = null;
+          }
+          stream.emit("close");
+        });
+    } catch (error) {
+      stream.emit("error", error);
+    }
+  });
+  return stream;
+};
+class NodeAbortSignal {
+  constructor() {
+    this.aborted = false;
+    this._listeners = [];
+  }
+  addEventListener(event, listener) {
+    if (event === "abort") this._listeners.push(listener);
+  }
+  removeEventListener(event, listener) {
+    this._listeners = this._listeners.filter((item) => item !== listener);
+  }
+  static abort() {
+    const signal = new NodeAbortSignal();
+    signal.aborted = true;
+    return signal;
+  }
+}
+class NodeAbortController {
+  constructor() {
+    this.signal = new NodeAbortSignal();
+  }
+  abort() {
+    this.signal.aborted = true;
+    this.signal._listeners.slice().forEach((listener) => listener());
+  }
+}
+globalThis.AbortSignal = NodeAbortSignal;
+globalThis.AbortController = NodeAbortController;
+globalThis.__nodeFs.open = (value, flags, mode, callback) => {
+  if (typeof flags === "function") {
+    callback = flags;
+    flags = "r";
+    mode = undefined;
+  } else if (typeof mode === "function") {
+    callback = mode;
+    mode = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (
+    mode !== undefined &&
+    mode !== null &&
+    typeof mode !== "number" &&
+    typeof mode !== "string"
+  ) {
+    const error = new TypeError('The "mode" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    let fd;
+    try {
+      fd = globalThis.__nodeFs.openSync(path, flags, mode);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, fd);
+  });
+};
+globalThis.__nodeFs.readdir = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    let result;
+    try {
+      result = globalThis.__nodeFs.readdirSync(path, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, result);
+  });
+};
+globalThis.__nodeFs.mkdir = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (
+    options &&
+    Object.prototype.hasOwnProperty.call(options, "recursive") &&
+    typeof options.recursive !== "boolean"
+  ) {
+    const error = new TypeError(
+      'The "options.recursive" property must be of type boolean.'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.mkdirSync(path, options);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+globalThis.__nodeFs.readFile = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (
+    options &&
+    options.signal !== undefined &&
+    !(options.signal instanceof NodeAbortSignal)
+  ) {
+    const error = new TypeError('The "signal" option must be an AbortSignal');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    if (options && options.signal && options.signal.aborted) {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      callback(error);
+      return;
+    }
+    let data;
+    try {
+      data = globalThis.__nodeFs.readFileSync(value, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, data);
+  });
+};
+globalThis.__nodeFs.mkdtemp = (prefix, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (
+    options !== undefined &&
+    typeof options !== "function" &&
+    typeof options !== "string" &&
+    (typeof options !== "object" || options === null)
+  ) {
+    const error = new TypeError(
+      'The "options" argument must be a string or an object'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (
+    typeof prefix !== "string" &&
+    !(prefix instanceof Uint8Array) &&
+    !(prefix instanceof globalThis.__nodeURL)
+  ) {
+    const error = new TypeError(
+      'The "prefix" argument must be of type string or an instance of Buffer or URL'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    try {
+      callback(null, globalThis.__nodeFs.mkdtempSync(prefix));
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+globalThis.__nodeFs.writeFile = (value, data, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (options && options.signal && options.signal.aborted) {
+    queueMicrotask(() => {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      callback(error);
+    });
+    return;
+  }
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.writeFileSync(value, data);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.promises = {
+  open: (value, flags = "r", mode) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.open(value, flags, mode, (error, fd) =>
+        error
+          ? reject(error)
+          : resolve({
+              fd,
+              close: () => Promise.resolve(),
+              read: (buffer, offset, length, position) =>
+                Promise.resolve().then(() => {
+                  let target = buffer;
+                  let start = offset;
+                  let size = length;
+                  let at = position;
+                  if (offset && typeof offset === "object") {
+                    const options = offset;
+                    target = options.buffer || NodeBuffer.alloc(16384);
+                    start = options.offset == null ? 0 : options.offset;
+                    size =
+                      options.length === undefined
+                        ? target.length - start
+                        : options.length;
+                    at = options.position;
+                  }
+                  if (target.length === 0 && Number(size) > 0) {
+                    const error = new TypeError("The buffer is empty");
+                    error.code = "ERR_INVALID_ARG_VALUE";
+                    throw error;
+                  }
+                  const bytesRead = globalThis.__nodeFs.readSync(
+                    fd,
+                    target,
+                    start || 0,
+                    size === undefined ? target.length : size,
+                    at === undefined ? null : at
+                  );
+                  return { bytesRead, buffer: target };
+                })
+            })
+      )
+    ),
+  readFile: (value, options) =>
+    value && typeof value === "object" && typeof value.fd === "number"
+      ? value.readFile(options)
+      : new Promise((resolve, reject) =>
+          globalThis.__nodeFs.readFile(value, options, (error, data) =>
+            error ? reject(error) : resolve(data)
+          )
+        ),
+  writeFile: (value, data, options) =>
+    new Promise((resolve, reject) =>
+      queueMicrotask(() =>
+        globalThis.__nodeFs.writeFile(value, data, options, (error) =>
+          error ? reject(error) : resolve()
+        )
+      )
+    ),
+  appendFile: (value, data, options) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.appendFile(value, data, options, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+  access: (value, mode) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.access(value, mode, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+  truncate: (value, length = 0) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.truncateSync(value, length)
+    ),
+  ftruncate: (fd, length = 0) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.ftruncateSync(fd, length)),
+  fsync: (fd) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(fd)),
+  fdatasync: (fd) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(fd)),
+  rm: (value, options) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.rm(value, options, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+  opendir: (value, options) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.opendirSync(value)),
+  symlink: (target, link, type) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.symlink(target, link, type, (error) =>
+        error ? reject(error) : resolve()
+      )
+    ),
+  readlink: (value, options) =>
+    new Promise((resolve, reject) =>
+      globalThis.__nodeFs.readlink(value, options, (error, result) =>
+        error ? reject(error) : resolve(result)
+      )
+    ),
+  realpath: (value, options) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.realpathSync(value, options)
+    ),
+  fstat: (fd) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(fd)),
+  fchmod: (fd, mode) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fchmodSync(fd, mode)),
+  chmod: (value, mode) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.chmodSync(value, mode)),
+  rename: (from, to) =>
+    Promise.resolve().then(() =>
+      globalThis.__quench_fs_rename(nodeFsPath(from), nodeFsPath(to))
+    ),
+  unlink: (value) =>
+    Promise.resolve().then(() =>
+      globalThis.__quench_fs_unlink(nodeFsPath(value))
+    ),
+  copyFile: (from, to, mode = 0) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.copyFileSync(from, to, mode)
+    ),
+  rmdir: (value, options) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.rmdirSync(value, options)),
+  mkdtemp: (prefix) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.mkdtempSync(prefix)),
+  readv: (fd, buffers, position) =>
+    Promise.resolve().then(() => {
+      const bytesRead = globalThis.__nodeFs.readvSync(fd, buffers, position);
+      return { bytesRead, buffers };
+    }),
+  writev: (fd, buffers, position) =>
+    Promise.resolve().then(() => {
+      const bytesWritten = globalThis.__nodeFs.writevSync(
+        fd,
+        buffers,
+        position
+      );
+      return { bytesWritten, buffers };
+    }),
+  mkdir: (value) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.mkdirSync(value)),
+  readdir: (value, options) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.readdirSync(value, options)
+    ),
+  stat: (value) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.statSync(value)),
+  lstat: (value) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.lstatSync(value)),
+  link: (existing, link) =>
+    Promise.resolve().then(() => globalThis.__nodeFs.linkSync(existing, link))
+};
+const __nodePromiseOpen = globalThis.__nodeFs.promises.open;

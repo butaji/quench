@@ -1,3 +1,22 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchChildProcessRequire = globalThis.require;\nconst __quenchChildProcess = __quenchChildProcessRequire("child_process");\nconst __quenchExecCallback = (options, callback) => typeof options === "function" ? options : callback;\nconst __quenchExec = (command, options, callback) => { const done = __quenchExecCallback(options, callback); const child = __quenchChildProcess.spawn(command); if (done) queueMicrotask(() => done(null, "", "")); return child; };\n__quenchChildProcess.exec = __quenchExec;\n__quenchChildProcess.execFile = (file, args, options, callback) => { const values = Array.isArray(args) ? args : []; const done = Array.isArray(args) ? __quenchExecCallback(options, callback) : __quenchExecCallback(args, options); const child = __quenchChildProcess.spawn(file, values); if (done) queueMicrotask(() => done(null, "", "")); return child; };\n__quenchChildProcess.execSync = () => NodeBuffer.from("");\n__quenchChildProcess.execFileSync = () => NodeBuffer.from("");\n'
-);
+const __quenchChildProcessRequire = globalThis.require;
+const __quenchChildProcess = __quenchChildProcessRequire("child_process");
+const __quenchExecCallback = (options, callback) =>
+  typeof options === "function" ? options : callback;
+const __quenchExec = (command, options, callback) => {
+  const done = __quenchExecCallback(options, callback);
+  const child = __quenchChildProcess.spawn(command);
+  if (done) queueMicrotask(() => done(null, "", ""));
+  return child;
+};
+__quenchChildProcess.exec = __quenchExec;
+__quenchChildProcess.execFile = (file, args, options, callback) => {
+  const values = Array.isArray(args) ? args : [];
+  const done = Array.isArray(args)
+    ? __quenchExecCallback(options, callback)
+    : __quenchExecCallback(args, options);
+  const child = __quenchChildProcess.spawn(file, values);
+  if (done) queueMicrotask(() => done(null, "", ""));
+  return child;
+};
+__quenchChildProcess.execSync = () => NodeBuffer.from("");
+__quenchChildProcess.execFileSync = () => NodeBuffer.from("");

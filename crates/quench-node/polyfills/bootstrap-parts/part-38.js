@@ -1,3 +1,53 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithParseArgs = globalThis.require;\nconst __quenchParseArgs = (options = {}) => {\n  const args = options.args || [];\n  const definitions = options.options || {};\n  const values = {}, positionals = [], tokens = [];\n  for (let index = 0; index < args.length; index++) {\n    const argument = args[index];\n    if (!argument.startsWith("-")) { positionals.push(argument); tokens.push({ kind: "positional", value: argument }); continue; }\n    const negative = argument.startsWith("--no-");\n    const name = (negative ? argument.slice(5) : argument.replace(/^-+/, "")).split("=")[0];\n    const definition = definitions[name] || {};\n    const inline = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : undefined;\n    const value = definition.type === "boolean" ? !negative : inline ?? args[++index];\n    values[name] = definition.multiple ? [...(values[name] || []), value] : value;\n    tokens.push({ kind: "option", name, value });\n  }\n  return { values, positionals, ...(options.tokens ? { tokens } : {}) };\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "util") return Object.assign({}, __quenchOriginalRequireWithParseArgs(specifier), { parseArgs: __quenchParseArgs });\n  return __quenchOriginalRequireWithParseArgs(specifier);\n};\n'
-);
+const __quenchOriginalRequireWithParseArgs = globalThis.require;
+const __quenchParseOption = (
+  argument,
+  args,
+  index,
+  definitions,
+  values,
+  tokens
+) => {
+  const negative = argument.startsWith("--no-");
+  const name = (
+    negative ? argument.slice(5) : argument.replace(/^-+/, "")
+  ).split("=")[0];
+  const definition = definitions[name] || {};
+  const separator = argument.indexOf("=");
+  const inline = separator >= 0 ? argument.slice(separator + 1) : undefined;
+  const value =
+    definition.type === "boolean" ? !negative : (inline ?? args[index + 1]);
+  values[name] = definition.multiple ? [...(values[name] || []), value] : value;
+  tokens.push({ kind: "option", name, value });
+  return separator >= 0 || definition.type === "boolean" ? index : index + 1;
+};
+const __quenchParseArgs = (options = {}) => {
+  const args = options.args || [];
+  const definitions = options.options || {};
+  const values = {},
+    positionals = [],
+    tokens = [];
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (!argument.startsWith("-")) {
+      positionals.push(argument);
+      tokens.push({ kind: "positional", value: argument });
+      continue;
+    }
+    index = __quenchParseOption(
+      argument,
+      args,
+      index,
+      definitions,
+      values,
+      tokens
+    );
+  }
+  return { values, positionals, ...(options.tokens ? { tokens } : {}) };
+};
+globalThis.require = (specifier) => {
+  if (String(specifier).replace(/^node:/, "") === "util")
+    return Object.assign({}, __quenchOriginalRequireWithParseArgs(specifier), {
+      parseArgs: __quenchParseArgs
+    });
+  return __quenchOriginalRequireWithParseArgs(specifier);
+};

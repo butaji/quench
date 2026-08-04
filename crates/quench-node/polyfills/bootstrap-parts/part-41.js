@@ -1,3 +1,25 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithTransferableAbort = globalThis.require;\nconst __quenchTransferableSignals = new WeakSet();\nconst __quenchTransferableAbortSignal = (signal) => {\n  if (!(signal instanceof AbortSignal)) throw new TypeError("The signal argument must be an AbortSignal");\n  __quenchTransferableSignals.add(signal);\n  return signal;\n};\nconst __quenchTransferableAbortController = () => {\n  const controller = new AbortController();\n  __quenchTransferableSignals.add(controller.signal);\n  return controller;\n};\nglobalThis.require = (specifier) => {\n  if (String(specifier).replace(/^node:/, "") === "util") return Object.assign({}, __quenchOriginalRequireWithTransferableAbort(specifier), { transferableAbortSignal: __quenchTransferableAbortSignal, transferableAbortController: __quenchTransferableAbortController });\n  return __quenchOriginalRequireWithTransferableAbort(specifier);\n};\n'
-);
+const __quenchOriginalRequireWithTransferableAbort = globalThis.require;
+const __quenchTransferableSignals = new WeakSet();
+const __quenchTransferableAbortSignal = (signal) => {
+  if (!(signal instanceof AbortSignal))
+    throw new TypeError("The signal argument must be an AbortSignal");
+  __quenchTransferableSignals.add(signal);
+  return signal;
+};
+const __quenchTransferableAbortController = () => {
+  const controller = new AbortController();
+  __quenchTransferableSignals.add(controller.signal);
+  return controller;
+};
+globalThis.require = (specifier) => {
+  if (String(specifier).replace(/^node:/, "") === "util")
+    return Object.assign(
+      {},
+      __quenchOriginalRequireWithTransferableAbort(specifier),
+      {
+        transferableAbortSignal: __quenchTransferableAbortSignal,
+        transferableAbortController: __quenchTransferableAbortController
+      }
+    );
+  return __quenchOriginalRequireWithTransferableAbort(specifier);
+};
