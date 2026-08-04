@@ -2316,3 +2316,5 @@ Stage 882 verifies the node:process builtin loading helpers.
 Stage 883 verifies the node:stream Web Stream adapter helpers.
 
 Stage 884 verifies the node:stream/promises pipeline helpers.
+
+Stage 885 verifies the node:net BlockList rule API.
