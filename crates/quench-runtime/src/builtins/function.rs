@@ -946,6 +946,15 @@ mod tests {
     }
 
     #[test]
+    fn generator_function_prototype_descriptor_is_non_configurable() {
+        let mut context = crate::Context::new().unwrap();
+        let value = context
+            .eval("Object.getOwnPropertyDescriptor(function*() {}, 'prototype').configurable")
+            .unwrap();
+        assert_eq!(value, crate::Value::Boolean(false));
+    }
+
+    #[test]
     fn generator_prototype_has_symbol_to_string_tag() {
         let mut context = crate::Context::new().unwrap();
         let value = context

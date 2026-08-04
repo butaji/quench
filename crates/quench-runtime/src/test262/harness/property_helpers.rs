@@ -441,19 +441,27 @@ fn vp_is_writable(obj_ref: &Rc<RefCell<crate::value::Object>>, key: &str) -> boo
 /// Matches the JS isConfigurable from propertyHelper.js which permanently
 /// deletes configurable properties (no automatic restoration).
 fn vp_is_configurable(obj: &Value, key: &str) -> bool {
-    if let Value::Object(obj_ref) = obj {
-        let mut obj_mut = obj_ref.borrow_mut();
-        let is_configurable = obj_mut
-            .descriptors
-            .get(key)
-            .map(|f| f.configurable)
-            .unwrap_or(true);
-        if is_configurable {
-            obj_mut.delete(key);
+    match obj {
+        Value::Object(obj_ref) => {
+            let mut obj_mut = obj_ref.borrow_mut();
+            let is_configurable = obj_mut
+                .descriptors
+                .get(key)
+                .map(|f| f.configurable)
+                .unwrap_or(true);
+            if is_configurable {
+                obj_mut.delete(key);
+            }
+            is_configurable
         }
-        is_configurable
-    } else {
-        false
+        Value::Function(function) => {
+            crate::builtins::object_static::get_function_property_descriptor(function, key)
+                .ok()
+                .and_then(|descriptor| descriptor.as_object().cloned())
+                .and_then(|descriptor| descriptor.borrow().get("configurable"))
+                .is_some_and(|value| crate::value::to_bool(&value))
+        }
+        _ => false,
     }
 }
 
