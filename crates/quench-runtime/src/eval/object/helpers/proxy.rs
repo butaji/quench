@@ -200,6 +200,28 @@ pub fn proxy_get_property(obj: &Rc<RefCell<Object>>, prop_name: &str) -> Result<
     })
 }
 
+pub fn proxy_delete_property(
+    obj: &Rc<RefCell<Object>>,
+    prop_name: &str,
+) -> Result<Option<bool>, JsError> {
+    let Some((handler, target)) = proxy_handler_and_target(obj) else {
+        return Ok(None);
+    };
+    let trap = handler.borrow().get_own_value("deleteProperty");
+    let Some(trap) = trap else {
+        let Value::Object(target_obj) = target else {
+            return Ok(Some(true));
+        };
+        return Ok(Some(target_obj.borrow_mut().delete(prop_name)));
+    };
+    let result = crate::eval::function::call_value_with_this(
+        trap,
+        vec![target, Value::String(prop_name.to_string())],
+        Value::Object(Rc::clone(obj)),
+    )?;
+    Ok(Some(crate::value::to_bool(&result)))
+}
+
 /// Find a proxy in the prototype chain, returning (proxy_rc, handler, target).
 #[allow(clippy::type_complexity)]
 pub fn find_proxy_in_prototype_chain(

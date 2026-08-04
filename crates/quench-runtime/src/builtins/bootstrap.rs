@@ -827,6 +827,15 @@ mod tests {
     }
 
     #[test]
+    fn array_copy_within_propagates_proxy_delete_exception() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("var p = new Proxy({ 42: true, length: 43 }, { deleteProperty: function() { throw new Error('stop'); } }); try { Array.prototype.copyWithin.call(p, 42, 0); false; } catch (e) { e.message === 'stop'; }")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx

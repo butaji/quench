@@ -172,6 +172,11 @@ pub fn eval_delete(
                     "TypeError: Cannot delete property of null or undefined".to_string(),
                 )),
                 Value::Object(obj_rc) => {
+                    if let Some(deleted) = crate::eval::object::proxy_delete_property(
+                        &obj_rc, &prop_key,
+                    )? {
+                        return Ok(Value::Boolean(deleted));
+                    }
                     let deleted = obj_rc.borrow_mut().delete(&prop_key);
                     if !deleted && crate::interpreter::is_strict_mode() {
                         let (_, error) = crate::value::error::create_js_error_with_type(
