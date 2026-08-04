@@ -1401,6 +1401,9 @@ receiver, async ID, and callback validation.
 Stage 497 formalized Buffer legacy encoding slice and write methods being
 available on the prototype.
 
+Stage 498 formalized the public Buffer prototype surface and Buffer instance
+identity without legacy underscored methods.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
