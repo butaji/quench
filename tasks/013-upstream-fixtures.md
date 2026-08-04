@@ -1302,6 +1302,9 @@ before the listener was attached.
 Stage 462 formalized `readableLength` tracking queued bytes through partial and
 complete buffer reads.
 
+Stage 463 formalized `readableFlowing` transitions from the initial null state
+to flowing, paused, and flowing again.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
