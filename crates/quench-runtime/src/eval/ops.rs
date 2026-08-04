@@ -34,6 +34,17 @@ fn is_callable_value(value: &Value) -> bool {
     false
 }
 
+fn is_array_value(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    if object.borrow().kind == crate::value::ObjectKind::Array {
+        return true;
+    }
+    crate::eval::object::proxy_handler_and_target(object)
+        .is_some_and(|(_, target)| is_array_value(&target))
+}
+
 /// Build the `__ops__` frozen object — the Rust↔JS bridge for spec abstract ops.
 /// JS builtins destructure this at parse time: `const { IsCallable, ToObject } = __ops__;`
 pub fn make_ops_object() -> Value {
@@ -160,8 +171,7 @@ pub fn make_ops_object() -> Value {
 
     set_op(&mut obj, "IsArray", |args| {
         let v = args.first().cloned().unwrap_or(Value::Undefined);
-        let is_array =
-            matches!(&v, Value::Object(o) if o.borrow().kind == crate::value::ObjectKind::Array);
+        let is_array = is_array_value(&v);
         Ok(Value::Boolean(is_array))
     });
 
@@ -973,6 +983,15 @@ mod tests {
                 "var IsConstructor = __ops__.IsConstructor; \
              IsConstructor(Array) && !IsConstructor(() => {})",
             )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_is_array_follows_proxy_target() {
+        let mut ctx = crate::Context::new().unwrap();
+        let r = ctx
+            .eval("__ops__.IsArray(new Proxy([], {})) && !__ops__.IsArray(new Proxy({}, {}))")
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
     }
