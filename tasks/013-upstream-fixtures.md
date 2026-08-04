@@ -1361,6 +1361,9 @@ Stage 482 formalized async `fs.mkdtemp()` rejecting non-string prefixes with
 Stage 483 formalized sync and async `fs.mkdtemp()` rejecting invalid options
 types with `ERR_INVALID_ARG_TYPE`.
 
+Stage 484 formalized HMAC digest rejecting unknown output encodings with
+`ERR_UNKNOWN_ENCODING`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
