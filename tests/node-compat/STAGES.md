@@ -650,3 +650,4 @@ these small fixtures isolate the currently implemented contract.
 |   651 | process allowed environment flags exposes a set-like collection              | `tools/run-node-tests.sh --stage 651` |
 |   652 | process features exposes a boolean inspector capability                      | `tools/run-node-tests.sh --stage 652` |
 |   653 | process deprecation policy flags expose boolean defaults                     | `tools/run-node-tests.sh --stage 653` |
+|   654 | process debugPort exposes a finite non-negative number                       | `tools/run-node-tests.sh --stage 654` |
