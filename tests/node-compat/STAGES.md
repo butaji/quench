@@ -600,3 +600,4 @@ these small fixtures isolate the currently implemented contract.
 |   601 | process features exposes a runtime capability object                   | `tools/run-node-tests.sh --stage 601` |
 |   602 | process deprecation flags default to false booleans                      | `tools/run-node-tests.sh --stage 602` |
 |   603 | process version exposes a Node-style semantic version string             | `tools/run-node-tests.sh --stage 603` |
+|   604 | process versions exposes the Node version entry                       | `tools/run-node-tests.sh --stage 604` |
