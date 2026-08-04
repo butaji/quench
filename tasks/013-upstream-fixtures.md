@@ -1217,6 +1217,9 @@ caller-managed closure.
 Stage 432 formalized stream destruction, error propagation, close emission, and
 the `destroyed` state transition.
 
+Stage 433 repaired the sequential fixture ledger with process `nextTick`
+ordering before promise callbacks.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
