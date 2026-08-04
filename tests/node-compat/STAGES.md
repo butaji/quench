@@ -498,3 +498,4 @@ these small fixtures isolate the currently implemented contract.
 |   499 | buffer inspect hook formats generic typed arrays                 | `tools/run-node-tests.sh --stage 499` |
 |   500 | buffer float writes validate integer and range offsets             | `tools/run-node-tests.sh --stage 500` |
 |   501 | child process exit reports code and null signal                   | `tools/run-node-tests.sh --stage 501` |
+|   502 | child process IPC send reports queue backpressure                 | `tools/run-node-tests.sh --stage 502` |
