@@ -23,6 +23,7 @@ cat > "$file" <<'END_TEMPLATE'
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+process.on('exit', common.mustCall());
 
 // Place test assertions here. Each test exercises one contract point.
 // Use `common.mustCall` or `common.mustSucceed` where async callbacks exist.
