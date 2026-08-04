@@ -1373,6 +1373,9 @@ Stage 486 formalized finalized Hash and Hmac contexts rejecting `copy()` with
 Stage 487 formalized `crypto.randomBytes()` rejecting negative, fractional, and
 non-function callback arguments.
 
+Stage 488 formalized `crypto.randomFillSync()` validating buffer input and
+offset/length ranges.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
