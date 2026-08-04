@@ -801,3 +801,4 @@ these small fixtures isolate the currently implemented contract.
 |   802 | process exposes high-resolution bigint timing                   | `tools/run-node-tests.sh --stage 802` |
 |   803 | module exposes core API helpers                                 | `tools/run-node-tests.sh --stage 803` |
 |   804 | module exposes modern helper methods                            | `tools/run-node-tests.sh --stage 804` |
+|   805 | module exposes metadata and constructors                        | `tools/run-node-tests.sh --stage 805` |

@@ -2156,3 +2156,5 @@ Stage 802 added process.hrtime.bigint timing compatibility.
 Stage 803 verified core module API helpers and builtin detection.
 
 Stage 804 added modern module helper method compatibility.
+
+Stage 805 added module metadata and constructor compatibility.
