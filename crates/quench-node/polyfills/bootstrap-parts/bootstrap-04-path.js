@@ -6,7 +6,8 @@ const __nodePathFormatExtension = (extension) => {
 const __nodePathFormatParts = (parts) => {
   if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
     const error = new TypeError(
-      'The "pathObject" argument must be of type object'
+      'The "pathObject" argument must be of type object.' +
+        (globalThis.__nodeCommon?.invalidArgTypeHelper?.(parts) || "")
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
@@ -34,12 +35,21 @@ const __nodeWindowsParts = (base, root, dir) => {
     name: ext ? base.slice(0, -ext.length) : base
   };
 };
+const __nodeWindowsKeepSeparator = (trimmed, root, index, trailing) => {
+  if (trailing) return true;
+  if (index > 0 && trimmed[index - 1] === "\\" && trimmed[index - 2] !== "\\")
+    return true;
+  if (root.length === 3 && index === 2) return true;
+  return root.startsWith("\\\\") && index === root.length - 1;
+};
 const __nodeWindowsDir = (trimmed, root, index, trailing) => {
   if (index < 0) return "";
-  const keepSeparator =
-    trailing ||
-    (root.length === 3 && index === 2) ||
-    (root.startsWith("\\\\") && index === root.length - 1);
+  const keepSeparator = __nodeWindowsKeepSeparator(
+    trimmed,
+    root,
+    index,
+    trailing
+  );
   return trimmed.slice(0, index + (keepSeparator ? 1 : 0)) || root;
 };
 const __nodeGlobNormalize = (value) =>
@@ -100,6 +110,20 @@ const __nodeGlobMatch = (path, pattern) => {
   }
   return pathIndex === paths.length;
 };
+const __nodeWindowsDriveParse = (input) => {
+  if (/^[A-Za-z]:\\$/.test(input) || /^[A-Za-z]:$/.test(input))
+    return { root: input, dir: input, base: "", ext: "", name: "" };
+  if (!/^[A-Za-z]:[^\\]/.test(input)) return null;
+  const relative = input.slice(2);
+  const dot = relative.lastIndexOf(".");
+  const ext = dot > 0 ? relative.slice(dot) : "";
+  return __nodeWindowsParts(relative, input.slice(0, 2), input.slice(0, 2));
+};
+const __nodeWindowsDirnameKeep = (input, uncRoot, index) => {
+  if (index > 0 && input[index - 1] === "\\") return true;
+  if (/^[A-Za-z]:\\/.test(input) && index === 2) return true;
+  return uncRoot.startsWith("\\\\") && index === uncRoot.length - 1;
+};
 globalThis.__nodePath = {
   sep: "/",
   delimiter: ":",
@@ -134,7 +158,7 @@ globalThis.__nodePath = {
     return result || (absolute ? "/" : ".");
   },
   basename: (value, suffix) => {
-    const base = __nodePathArg(value).replace(/\\/g, "/").split("/").pop();
+    const base = __nodePathArg(value).split("/").pop();
     if (suffix !== undefined) {
       const end = __nodePathArg(suffix);
       return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
@@ -142,8 +166,7 @@ globalThis.__nodePath = {
     return base;
   },
   dirname: (value) => {
-    const input =
-      __nodePathArg(value).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+    const input = __nodePathArg(value).replace(/\/+$/, "") || "/";
     const parts = input.split("/");
     parts.pop();
     return parts.join("/") || (input.startsWith("/") ? "/" : ".");
@@ -180,7 +203,12 @@ globalThis.__nodePath = {
     const trimmed =
       input.replace(/\/+$/, "") || (input.startsWith("/") ? "/" : "");
     const base = globalThis.__nodePath.basename(trimmed);
-    const dir = globalThis.__nodePath.dirname(trimmed);
+    const dir =
+      input.endsWith("/") && trimmed === "."
+        ? ""
+        : input.includes("/")
+          ? globalThis.__nodePath.dirname(trimmed)
+          : "";
     const ext = globalThis.__nodePath.extname(base);
     return {
       root: input.startsWith("/") ? "/" : "",
@@ -251,14 +279,8 @@ const __nodeWinPath = {
     const root = __nodeWindowsRoot(input);
     const hadTrailingSeparator = input.length > 0 && /[\\]$/.test(input);
     const trimmed = input.replace(/[\\]+$/, "") || root;
-    if (/^[A-Za-z]:$/.test(input))
-      return { root: input, dir: "", base: "", ext: "", name: "" };
-    if (/^[A-Za-z]:[^\\]/.test(input)) {
-      const relative = input.slice(2);
-      const dot = relative.lastIndexOf(".");
-      const ext = dot > 0 ? relative.slice(dot) : "";
-      return __nodeWindowsParts(relative, input.slice(0, 2), "");
-    }
+    const drive = __nodeWindowsDriveParse(input);
+    if (drive) return drive;
     if (root.startsWith("\\\\") && trimmed === root.slice(0, -1))
       return { root, dir: root, base: "", ext: "", name: "" };
     const index = trimmed.lastIndexOf("\\");
@@ -277,8 +299,11 @@ const __nodeWinPath = {
     return `${dir}\\${base}`;
   },
   basename: (value, suffix) => {
+    const input = __nodePathArg(value);
+    if (/^[A-Za-z]:$/.test(input) || /^[A-Za-z]:[\\/]+$/.test(input)) return "";
+    if (/^[A-Za-z]:[^\\]/.test(input)) return input.slice(2);
     const base =
-      __nodePathArg(value)
+      input
         .replace(/[\\/]+$/, "")
         .split(/[\\/]/)
         .pop() || "";
@@ -289,9 +314,17 @@ const __nodeWinPath = {
     return base;
   },
   dirname: (value) => {
-    const input = __nodePathArg(value).replace(/[\\/]+$/, "");
+    const original = __nodePathArg(value);
+    if (/^[A-Za-z]:[\\]+$/.test(original)) return original;
+    if (/^[A-Za-z]:$/.test(original) || /^[A-Za-z]:[^\\]/.test(original))
+      return original.slice(0, 2);
+    const input = original.replace(/[\\/]+$/, "");
+    if (!input) return original ? "\\" : ".";
     const index = input.lastIndexOf("\\");
-    return index < 0 ? "" : input.slice(0, index) || "\\";
+    if (index < 0) return "";
+    const uncRoot = __nodeWindowsRoot(input);
+    const keepSeparator = __nodeWindowsDirnameKeep(input, uncRoot, index);
+    return input.slice(0, index + (keepSeparator ? 1 : 0)) || "\\";
   },
   extname(value) {
     const base = __nodeWinPath.basename(__nodePathArg(value));
@@ -302,199 +335,3 @@ const __nodeWinPath = {
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;
 globalThis.__nodePath.win32 = __nodeWinPath;
-globalThis.__nodeCommon = {
-  mustCall: (fn = () => {}, exact = 1) => {
-    let calls = 0;
-    const wrapped = function (...args) {
-      calls++;
-      wrapped.calls = calls;
-      return fn.apply(this, args);
-    };
-    wrapped.calls = 0;
-    wrapped.expected = exact;
-    wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;
-    globalThis.__nodeCallChecks.push(wrapped);
-    return wrapped;
-  },
-  mustCallAtLeast: (fn, minimum = 1) => {
-    const wrapped = globalThis.__nodeCommon.mustCall(fn, minimum);
-    wrapped.__quench_at_least = true;
-    return wrapped;
-  },
-  mustSucceed: (fn = () => {}) =>
-    globalThis.__nodeCommon.mustCall((error, ...args) => {
-      if (error) throw error;
-      return fn(...args);
-    }),
-  mustNotCall:
-    (message = "Unexpected call") =>
-    () => {
-      throw new Error(message);
-    },
-  noop: () => {},
-  isAlive: (pid) => {
-    const alive = globalThis.__quench_node_pids || new Set();
-    globalThis.__quench_node_pids = alive;
-    return alive.has(pid);
-  },
-  printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
-  expectsError: (_expected) => (error) => {
-    if (!error) throw new Error("Expected filesystem error");
-  },
-  invalidArgTypeHelper: (input) => {
-    if (input == null) return ` Received ${input}`;
-    let rendered;
-    try {
-      rendered = String(input);
-    } catch (_) {
-      rendered = Object.prototype.toString.call(input);
-    }
-    return ` Received type ${typeof input} (${rendered})`;
-  },
-  expectWarning: (_type, _message) => {},
-  mustNotMutateObjectDeep: (value) => value,
-  isLinux: process.platform === "linux",
-  hasIntl: typeof Intl !== "undefined",
-  isDebug: false,
-  isMacOS: process.platform === "darwin",
-  isWindows: process.platform === "win32",
-  isAIX: false,
-  isFreeBSD: false,
-  enoughTestMem: true,
-  canCreateSymLink: () => process.platform !== "win32",
-  getArrayBufferViews: (buffer) => [
-    buffer,
-    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
-    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-  ]
-};
-globalThis.__quench_verify_calls = () => {
-  for (const callback of globalThis.__nodeCallChecks || []) {
-    if (
-      callback.__quench_at_least
-        ? callback.calls < callback.expected
-        : callback.calls !== callback.expected
-    )
-      throw new Error(
-        `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`
-      );
-  }
-};
-globalThis.__nodeTmpdir = {
-  path: `/tmp/quench-node-${process.pid}`,
-  hasEnoughSpace: (_bytes) => false,
-  refresh: () => {
-    try {
-      globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path);
-    } catch (_) {}
-  },
-  resolve: (name = "") =>
-    globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
-  fileURL: (name = "") =>
-    new globalThis.__nodeURL(
-      `file://${globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))}`
-    )
-};
-class NodeEventEmitter {
-  constructor(options = {}) {
-    this._events = Object.create(null);
-    this.captureRejections =
-      options.captureRejections ?? NodeEventEmitter.captureRejections ?? false;
-  }
-  on(event, listener) {
-    this._events ||= Object.create(null);
-    const current = this._events[event];
-    this._events[event] =
-      current === undefined
-        ? listener
-        : Array.isArray(current)
-          ? [...current, listener]
-          : [current, listener];
-    return this;
-  }
-  addListener(event, listener) {
-    return this.on(event, listener);
-  }
-  once(event, listener) {
-    const wrapped = (...args) => {
-      this.removeListener(event, wrapped);
-      listener(...args);
-    };
-    return this.on(event, wrapped);
-  }
-  emit(event, ...args) {
-    if (event === "error") {
-      const monitorSymbol =
-        globalThis.__nodeErrorMonitorSymbol ||
-        Symbol.for("events.errorMonitor");
-      const monitor = this.listeners(monitorSymbol);
-      monitor.forEach((listener) => listener(...args));
-    }
-    const listeners = this._events[event];
-    const values =
-      listeners === undefined
-        ? []
-        : Array.isArray(listeners)
-          ? listeners
-          : [listeners];
-    values.slice().forEach((listener) => {
-      const result = listener.call(this, ...args);
-      if (this.captureRejections && result?.then)
-        result.catch((error) =>
-          queueMicrotask(() => {
-            const rejection = this[Symbol.for("nodejs.rejection")];
-            if (typeof rejection === "function")
-              rejection.call(this, error, event, ...args);
-            else this.emit("error", error);
-          })
-        );
-    });
-    return values.length > 0;
-  }
-  removeListener(event, listener) {
-    const current = this.listeners(event);
-    const removed = current.find(
-      (item) => item === listener || item.listener === listener
-    );
-    if (!removed) return this;
-    const values = current.filter((item) => item !== removed);
-    if (values.length === 0) delete this._events[event];
-    else this._events[event] = values.length === 1 ? values[0] : values;
-    if (event !== "removeListener")
-      this.emit("removeListener", event, removed.listener || removed);
-    return this;
-  }
-  off(event, listener) {
-    return this.removeListener(event, listener);
-  }
-  removeAllListeners(event) {
-    if (!this._events) {
-      this._events = Object.create(null);
-      return this;
-    }
-    const names = event === undefined ? this.eventNames() : [event];
-    if (event === undefined && names.includes("removeListener")) {
-      names.splice(names.indexOf("removeListener"), 1);
-      names.push("removeListener");
-    }
-    for (const name of names) {
-      for (const listener of this.listeners(name).reverse())
-        this.removeListener(name, listener);
-    }
-    return this;
-  }
-  listeners(event) {
-    if (event === undefined || !this._events) return [];
-    const value = this._events[event];
-    return value === undefined
-      ? []
-      : Array.isArray(value)
-        ? value.slice()
-        : [value];
-  }
-  listenerCount(event) {
-    return this.listeners(event).length;
-  }
-}
-globalThis.__nodeEventEmitter = NodeEventEmitter;
-globalThis.process._events = Object.create(null);

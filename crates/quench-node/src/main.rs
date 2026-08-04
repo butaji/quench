@@ -26,6 +26,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-allocation.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-03-buffer-api.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-04-path.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-04-path-support.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-05-events.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-06-filesystem-validation.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-06-filesystem-io.js"),

@@ -227,7 +227,7 @@ const __nodeAssertNormalizeView = (value, seen) => {
 };
 const __nodeAssertNormalizeObject = (value, seen) => {
   const normalized = {};
-  for (const key of Object.keys(value))
+  for (const key of Object.keys(value).sort())
     normalized[key] = __nodeAssertNormalize(value[key], seen);
   return normalized;
 };
