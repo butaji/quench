@@ -584,6 +584,18 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+    #[test]
+    fn array_every_reads_length_before_callback_validation() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval(
+                "var accessed = false; var obj = {}; Object.defineProperty(obj, 'length', { get: function() { accessed = true; return 2; } }); \
+                 try { Array.prototype.every.call(obj, null); false; } catch (e) { e instanceof TypeError && accessed; }",
+            )
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
 
     #[test]
     fn boxed_number_converts_to_its_primitive_value() {
