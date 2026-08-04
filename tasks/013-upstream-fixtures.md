@@ -1912,6 +1912,8 @@ Stage 683 formalized the non-negative integer process.ppid contract.
 
 Stage 684 formalized the boolean no-channel process.send result contract.
 
+Stage 685 formalized the non-empty process.cwd current-directory contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
