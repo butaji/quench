@@ -483,3 +483,4 @@ these small fixtures isolate the currently implemented contract.
 |   484 | crypto HMAC digest validates encoding                            | `tools/run-node-tests.sh --stage 484` |
 |   485 | crypto hash digest validates encoding                             | `tools/run-node-tests.sh --stage 485` |
 |   486 | crypto finalized hash copy rejects                                | `tools/run-node-tests.sh --stage 486` |
+|   487 | crypto randomBytes validates size and callback                     | `tools/run-node-tests.sh --stage 487` |
