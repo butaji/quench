@@ -1942,6 +1942,8 @@ Stage 698 formalized process.stderr listener chainability.
 
 Stage 699 formalized chainable process.stdin.setEncoding behavior.
 
+Stage 700 formalized chainable process.stdout.setEncoding behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
