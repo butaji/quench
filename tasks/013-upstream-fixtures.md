@@ -3286,6 +3286,8 @@ empty byte arrays; validating before conversion matches Node’s error codes and
 keeps the byte normalization path focused on actual views.
 
 Stage 1064 validates the StringDecoder receiver before decoding input.
+
+Stage 1065 makes Windows path methods safe when detached from their namespace.
 Retrospective: direct prototype calls previously failed with an incidental
 property error; checking decoder state first produces Node’s stable
 `ERR_INVALID_THIS` contract.

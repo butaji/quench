@@ -105,6 +105,7 @@ globalThis.__nodePath = {
   delimiter: ":",
   isAbsolute: (value) => __nodePathArg(value).startsWith("/"),
   resolve: (...parts) => {
+    parts.forEach(__nodePathArg);
     let resolved = "";
     let trailing = false;
     for (const part of parts) {
@@ -216,21 +217,27 @@ const __nodeWinPath = {
     const parts = input.slice(root.length).split("\\").filter(Boolean);
     const output = [];
     for (const part of parts) {
-      if (part === ".." && output.length && output.at(-1) !== "..")
+      if (part === ".." && output.length && output[output.length - 1] !== "..")
         output.pop();
       else if (part !== ".") output.push(part);
     }
     return `${root}${output.join("\\")}${output.length ? "" : root ? "" : "."}`;
   },
   join(...parts) {
-    return this.normalize(parts.map(__nodePathArg).join("\\"));
+    return __nodeWinPath.normalize(parts.map(__nodePathArg).join("\\"));
   },
   resolve(...parts) {
-    return this.normalize(parts.map(__nodePathArg).join("\\"));
+    return __nodeWinPath.normalize(parts.map(__nodePathArg).join("\\"));
   },
   relative(from, to) {
-    const a = this.normalize(__nodePathArg(from)).split("\\").filter(Boolean);
-    const b = this.normalize(__nodePathArg(to)).split("\\").filter(Boolean);
+    const a = __nodeWinPath
+      .normalize(__nodePathArg(from))
+      .split("\\")
+      .filter(Boolean);
+    const b = __nodeWinPath
+      .normalize(__nodePathArg(to))
+      .split("\\")
+      .filter(Boolean);
     while (a.length && a[0].toLowerCase() === b[0].toLowerCase()) {
       a.shift();
       b.shift();
@@ -287,7 +294,7 @@ const __nodeWinPath = {
     return index < 0 ? "" : input.slice(0, index) || "\\";
   },
   extname(value) {
-    const base = this.basename(__nodePathArg(value));
+    const base = __nodeWinPath.basename(__nodePathArg(value));
     const index = base.lastIndexOf(".");
     return index > 0 ? base.slice(index) : "";
   }
@@ -295,7 +302,6 @@ const __nodeWinPath = {
 __nodeWinPath.posix = globalThis.__nodePath;
 __nodeWinPath.win32 = __nodeWinPath;
 globalThis.__nodePath.win32 = __nodeWinPath;
-
 globalThis.__nodeCommon = {
   mustCall: (fn = () => {}, exact = 1) => {
     let calls = 0;
