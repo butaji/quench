@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1107: process util binding
+
+- Fixture: `test-process-binding-util.js`
+- Implemented the `process.binding('util')` type-predicate surface by sharing
+  the existing `util.types` functions and preserving the native key set.
+- Retrospective: binding compatibility can reuse public polyfill functions;
+  only the small native-only predicate needs a local fallback.
+
 ## Stage 1106: process title flag
 
 - Fixture: `test-process-title-cli.js`
