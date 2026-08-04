@@ -462,9 +462,9 @@ Array.prototype[Symbol.iterator] = Array.prototype.values;
 // Array.prototype.findIndex (ES2025 §23.1.3.15)
 Array.prototype.findIndex = function ArrayFindIndex(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.findIndex called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (callbackfn.call(thisArg, O[k], k, O)) return k;
