@@ -18,7 +18,7 @@ const __nodeBufferByteLength = (value, encoding) => {
   )
     return value.byteLength;
   const error = new TypeError(
-    'The "string" argument must be of type string or an instance of Buffer or ArrayBuffer'
+    `The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.${__nodeBufferFromReceived(value)}`
   );
   error.code = "ERR_INVALID_ARG_TYPE";
   throw error;
