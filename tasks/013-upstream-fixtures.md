@@ -2496,3 +2496,7 @@ Stage 924 adds the process source-map toggle contract. The upstream fixture
 was self-contained and showed that the existing no-op surface accepted every
 value; a small JS wrapper now validates booleans, stores the current state,
 and preserves Node's undefined return value.
+
+Stage 925 adds the process ref/unref forwarding contract. The adapter checks
+Node's symbol hooks first and falls back to the legacy methods, so both user
+objects and timer handles share the same small implementation.
