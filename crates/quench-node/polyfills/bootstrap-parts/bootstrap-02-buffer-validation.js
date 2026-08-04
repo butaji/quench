@@ -310,12 +310,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (
-      offset === Infinity ||
-      offset === -Infinity ||
-      offset < 0 ||
-      (this.length >= size && offset + size > this.length)
-    ) {
+    if (offset === Infinity || offset === -Infinity) {
       const error = new RangeError(
         `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`
       );
@@ -325,6 +320,13 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     if (!Number.isInteger(offset)) {
       const error = new RangeError(
         `The value of "offset" is out of range. It must be an integer. Received ${offset}`
+      );
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset < 0 || (this.length >= size && offset + size > this.length)) {
+      const error = new RangeError(
+        `The value of "offset" is out of range. It must be >= 0 and <= ${this.length - size}. Received ${offset}`
       );
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
