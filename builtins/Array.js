@@ -187,9 +187,9 @@ Array.prototype.find = function ArrayFind(callbackfn /*, thisArg */) {
 // Array.prototype.some (ES2025 §23.1.3.30)
 Array.prototype.some = function ArraySome(callbackfn /*, thisArg */) {
   if (this === null || this === undefined) throw ThrowTypeError("Array.prototype.some called on null or undefined");
-  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var O = ToObject(this);
   var len = ToLength(O.length);
+  if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
