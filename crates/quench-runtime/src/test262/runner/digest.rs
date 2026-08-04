@@ -242,6 +242,7 @@ struct GroupEntry {
 #[derive(Debug, Clone, serde::Serialize)]
 struct TestFailureSample {
     path: String,
+    source_line: Option<usize>,
     error_type: Option<String>,
     error_message: Option<String>,
     js_stack: Option<String>,
@@ -271,6 +272,7 @@ fn group_failures(failures: &[(String, TestFailure)], include_detail: bool) -> V
                     .take(8)
                     .map(|(path, f)| TestFailureSample {
                         path: path.clone(),
+                        source_line: f.source_line,
                         error_type: f.error_type.clone(),
                         error_message: f.error_message.clone(),
                         js_stack: f.js_stack.clone(),
@@ -636,6 +638,7 @@ mod tests {
         let mut f = TestFailure::from_message("TypeError: boom");
         f.error_type = Some("TypeError".into());
         f.error_message = Some("boom".into());
+        f.source_line = Some(42);
         let fails = vec![("a.js".into(), f.clone())];
         // Without detail: samples empty
         let g = group_failures(&fails, false);
@@ -644,6 +647,7 @@ mod tests {
         let g = group_failures(&fails, true);
         assert_eq!(g[0].samples.len(), 1);
         assert_eq!(g[0].samples[0].error_type, Some("TypeError".into()));
+        assert_eq!(g[0].samples[0].source_line, Some(42));
     }
 
     #[test]
