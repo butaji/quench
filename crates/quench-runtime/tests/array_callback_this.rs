@@ -63,3 +63,13 @@ fn array_filter_reads_constructor_before_callback() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn array_filter_constructs_species_result() {
+    let mut ctx = Context::new().unwrap();
+    assert_eq!(
+        ctx.eval("var C=function(){this.marker=7;}; var a=[]; a.constructor={}; a.constructor[Symbol.species]=C; var r=a.filter(()=>true); r.marker===7")
+            .unwrap(),
+        Value::Boolean(true)
+    );
+}

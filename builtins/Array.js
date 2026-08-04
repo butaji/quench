@@ -148,8 +148,12 @@ Array.prototype.filter = function ArrayFilter(callbackfn /*, thisArg */) {
   var len = ToLength(O.length);
   if (!IsCallable(callbackfn)) throw ThrowTypeError("callbackfn is not a function");
   var thisArg = arguments.length > 1 ? arguments[1] : undefined;
-  O.constructor;
-  var A = new Array(0);
+  var C = O.constructor;
+  if (C !== null && typeof C === 'object') {
+    C = C[Symbol.species];
+    if (C === null || C === undefined) C = undefined;
+  }
+  var A = C === undefined ? new Array(0) : new C(0);
   var to = 0;
   for (var k = 0; k < len; k++) {
     if (HasProperty(O, k)) {
