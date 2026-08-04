@@ -547,3 +547,4 @@ these small fixtures isolate the currently implemented contract.
 |   548 | process metrics expose uptime memory and CPU usage                  | `tools/run-node-tests.sh --stage 548` |
 |   549 | fs constants expose flags and are immutable                          | `tools/run-node-tests.sh --stage 549` |
 |   550 | stream PassThrough forwards data and remains readable and writable   | `tools/run-node-tests.sh --stage 550` |
+|   551 | process report exposes JavaScript reports and signal defaults       | `tools/run-node-tests.sh --stage 551` |
