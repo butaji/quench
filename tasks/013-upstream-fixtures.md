@@ -2096,3 +2096,5 @@ Stage 772 added process.stdin pipe, unpipe, and wrap readable methods.
 Stage 773 added process.stdin close and pending compatibility.
 
 Stage 774 added process.stdin async disposal protocol support.
+
+Stage 775 aligned process.stdin ReadStream type and terminal metadata.
