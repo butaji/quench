@@ -14,6 +14,13 @@ fn call_does_not_evaluate_arguments_for_non_callable_member() {
 }
 
 #[test]
+fn new_evaluates_arguments_before_constructor_validation() {
+    let mut ctx = Context::new().unwrap();
+    let value = ctx.eval("var x = {}; try { new x(x = Array); } catch (e) {} x === Array");
+    assert_eq!(value, Ok(Value::Boolean(true)));
+}
+
+#[test]
 fn call_through_with_environment_uses_with_object_as_this() {
     let mut ctx = Context::new().unwrap();
     assert_eq!(

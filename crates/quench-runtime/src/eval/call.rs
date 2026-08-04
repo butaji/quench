@@ -561,12 +561,12 @@ pub fn eval_new(
     let constructor_val =
         crate::eval::expression::eval_expression(constructor, env, in_arrow_function)?;
 
+    let args = eval_call_arguments(arguments, env, in_arrow_function)?;
+
     if !crate::eval::class::helpers::is_constructor_value(&constructor_val) {
         let (_, js_err) = create_js_error_with_type("function is not a constructor", "TypeError");
         return Err(js_err);
     }
-
-    let args = eval_call_arguments(arguments, env, in_arrow_function)?;
 
     // Per ES §13.2.6 GetNewTarget: while this constructor runs, `new.target`
     // resolves to the constructor being invoked. Capture the constructor value
