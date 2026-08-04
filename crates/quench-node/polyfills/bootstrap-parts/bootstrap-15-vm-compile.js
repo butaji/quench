@@ -1,3 +1,18 @@
+const __quenchVmCompileExtensions = (options) => [
+  ...(options?.parsingContext ? [options.parsingContext] : []),
+  ...(options?.contextExtensions || [])
+];
+const __quenchVmCompilePrefix = (extensions) => {
+  const names = [
+    ...new Set(extensions.flatMap((extension) => Object.keys(extension)))
+  ];
+  return names
+    .map(
+      (name) =>
+        `const ${name} = __extensions.reduce((value, item) => value ?? item?.[${JSON.stringify(name)}], undefined);`
+    )
+    .join("\n");
+};
 const __quenchVmCompileFunction = (code, params = [], options) => {
   if (typeof code !== "string")
     __quenchVmTypeError(
@@ -10,13 +25,8 @@ const __quenchVmCompileFunction = (code, params = [], options) => {
   __quenchVmValidateCompileOptions(options);
   if (code.trimStart().startsWith("});"))
     throw new SyntaxError("Unexpected token '}'");
-  const extensions = options?.contextExtensions || [];
-  const names = [
-    ...new Set(extensions.flatMap((extension) => Object.keys(extension)))
-  ];
-  const prefix = names
-    .map((name) => `const ${name} = __extensions[0][${JSON.stringify(name)}];`)
-    .join("\n");
+  const extensions = __quenchVmCompileExtensions(options);
+  const prefix = __quenchVmCompilePrefix(extensions);
   const compiled = Function("__extensions", ...params, `${prefix}\n${code}`);
   const fn = extensions.length
     ? (...args) => compiled(extensions, ...args)

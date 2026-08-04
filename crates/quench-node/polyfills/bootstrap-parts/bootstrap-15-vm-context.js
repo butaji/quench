@@ -84,7 +84,10 @@ const __quenchVmValidateCompileFields = (options) => {
     __quenchVmTypeError(
       'The "options.produceCachedData" property must be of type boolean. Received null'
     );
-  if (options.parsingContext !== undefined)
+  if (
+    options.parsingContext !== undefined &&
+    !__quenchVmContexts.has(options.parsingContext)
+  )
     __quenchVmTypeError(
       `The "options.parsingContext" property must be an instance of Context.${__quenchVmInvalidTypeSuffix(options.parsingContext)}`
     );

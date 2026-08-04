@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1136: VM compileFunction parsing context
+
+- Fixture: `test-vm-basic.js` valid `parsingContext` contract
+- Accepted contextified objects as compile-function parsing contexts and made
+  their bindings visible to the compiled function.
+- Retrospective: validate context identity against the VM context registry, then
+  reuse the extension-binding path for execution.
+
 ## Stage 1135: VM compileFunction context extensions
 
 - Fixture: `test-vm-basic.js` context-extension contract
