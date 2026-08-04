@@ -120,7 +120,11 @@ fn create_string_constructor_object(
 ) -> Rc<RefCell<Object>> {
     let string_obj = Object::new(ObjectKind::Ordinary);
     let string_obj_rc = Rc::new(RefCell::new(string_obj));
-    string_obj_rc.borrow_mut().callable = true;
+    {
+        let mut object = string_obj_rc.borrow_mut();
+        object.callable = true;
+        object.prototype = crate::builtins::get_function_prototype();
+    }
     string_obj_rc
         .borrow_mut()
         .set("prototype", Value::Object(string_proto));

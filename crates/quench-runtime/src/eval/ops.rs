@@ -17,21 +17,19 @@ use crate::value::{JsError, Value};
 use std::rc::Rc;
 
 fn is_callable_value(value: &Value) -> bool {
-    if matches!(
+    if let Value::Object(object) = value {
+        return object.borrow().is_callable()
+            || crate::eval::object::proxy_handler_and_target(object)
+                .map(|(_, target)| is_callable_value(&target))
+                .unwrap_or(false);
+    }
+    matches!(
         value,
         Value::Function(_)
             | Value::NativeFunction(_)
             | Value::NativeConstructor(_)
             | Value::Class(_)
-    ) {
-        return true;
-    }
-    if let Value::Object(object) = value {
-        return crate::eval::object::proxy_handler_and_target(object)
-            .map(|(_, target)| is_callable_value(&target))
-            .unwrap_or(false);
-    }
-    false
+    )
 }
 
 fn is_array_value(value: &Value) -> bool {
@@ -915,6 +913,20 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_ops_bridge_is_callable_for_object_wrapped_constructor() {
+        let mut ctx = crate::Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        assert_eq!(
+            ctx.eval("__ops__.IsCallable(String)").unwrap(),
+            Value::Boolean(true)
+        );
+        assert_eq!(
+            ctx.eval("typeof String.call").unwrap(),
+            Value::String("function".into())
+        );
     }
 
     #[test]
