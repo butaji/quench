@@ -541,3 +541,4 @@ these small fixtures isolate the currently implemented contract.
 |   542 | util callbackify bridges promises and errors to callbacks          | `tools/run-node-tests.sh --stage 542` |
 |   543 | util transferable abort helpers validate and preserve signals     | `tools/run-node-tests.sh --stage 543` |
 |   544 | console module exposes Console and common output methods           | `tools/run-node-tests.sh --stage 544` |
+|   545 | URL static canParse validates inputs and parse returns URL objects  | `tools/run-node-tests.sh --stage 545` |

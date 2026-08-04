@@ -1541,6 +1541,9 @@ logging, assertion, grouping, table, and trace methods. The existing shared
 console polyfill already covered this surface, so the stage required no new
 runtime code.
 
+Stage 545 formalized `URL.canParse()` validation and `URL.parse()` null-on-
+failure behavior; the existing URL surface already covered both statics.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
