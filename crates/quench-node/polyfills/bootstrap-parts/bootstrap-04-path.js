@@ -410,6 +410,13 @@ class NodeEventEmitter {
     return this.on(event, wrapped);
   }
   emit(event, ...args) {
+    if (event === "error") {
+      const monitorSymbol =
+        globalThis.__nodeErrorMonitorSymbol ||
+        Symbol.for("events.errorMonitor");
+      const monitor = this._events[monitorSymbol] || [];
+      monitor.slice().forEach((listener) => listener(...args));
+    }
     const listeners = this._events[event] || [];
     listeners.slice().forEach((listener) => {
       const result = listener(...args);
