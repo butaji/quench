@@ -1,5 +1,5 @@
 const __quenchOriginalRequireWithDecoder = globalThis.require;
-class __quenchStringDecoder {
+const __quenchStringDecoderClass = class {
   constructor(encoding = "utf8") {
     this.encoding = String(encoding).toLowerCase().replace("-", "");
     this._decoder = new TextDecoder(
@@ -31,7 +31,13 @@ class __quenchStringDecoder {
   end(input) {
     return `${input === undefined ? "" : this.write(input)}${this._decoder.decode(new Uint8Array(this._pending))}`;
   }
+};
+function __quenchStringDecoder(encoding) {
+  const state = new __quenchStringDecoderClass(encoding);
+  Object.setPrototypeOf(this, __quenchStringDecoderClass.prototype);
+  Object.assign(this, state);
 }
+__quenchStringDecoder.prototype = __quenchStringDecoderClass.prototype;
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "string_decoder")
     return { StringDecoder: __quenchStringDecoder };
