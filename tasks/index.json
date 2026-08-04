@@ -1112,25 +1112,25 @@
       "id": 91,
       "path": "test/built-ins/MapIteratorPrototype",
       "tests": 11,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 11,
-      "pass_rate": "0.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 92,
       "path": "test/built-ins/SetIteratorPrototype",
       "tests": 11,
-      "status": "pending",
+      "status": "done",
       "difficulty": 3,
       "impl": "js",
       "rust_loc": "0\u20130",
       "js_loc": "100\u2013200",
-      "failed": 11,
-      "pass_rate": "0.0%"
+      "failed": 0,
+      "pass_rate": "100.0%"
     },
     {
       "id": 93,
