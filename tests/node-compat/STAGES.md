@@ -883,3 +883,4 @@ these small fixtures isolate the currently implemented contract.
 |   884 | stream promises exposes pipeline helpers                   | `tools/run-node-tests.sh --stage 884` |
 |   885 | net exposes BlockList rule API                              | `tools/run-node-tests.sh --stage 885` |
 |   886 | http2 exposes settings conversion API                       | `tools/run-node-tests.sh --stage 886` |
+|   887 | zlib exposes raw Brotli and unzip algorithms                | `tools/run-node-tests.sh --stage 887` |
