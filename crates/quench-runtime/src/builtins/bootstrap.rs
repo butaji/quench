@@ -800,6 +800,15 @@ mod tests {
     }
 
     #[test]
+    fn array_copy_by_value_materializes_holes() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("var a = [0, , 2]; var s = a.toSpliced(0, 0); var w = a.with(2, 3); s[1] === undefined && w[1] === undefined && 1 in s && 1 in w")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
+    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx

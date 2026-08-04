@@ -697,10 +697,10 @@ Array.prototype.toSpliced = function ArrayToSpliced(start, deleteCount /*, ...it
   var itemCount = Math.max(arguments.length - 2, 0);
   var newLen = len - actualDeleteCount + itemCount;
   var A = new Array(newLen);
-  for (var i = 0; i < actualStart; i++) { if (HasProperty(O, i)) CreateDataProperty(A, i, O[i]); }
+  for (var i = 0; i < actualStart; i++) CreateDataProperty(A, i, O[i]);
   for (var i = 0; i < itemCount; i++) CreateDataProperty(A, actualStart + i, arguments[i + 2]);
   for (var i = actualStart + actualDeleteCount; i < len; i++) {
-    if (HasProperty(O, i)) CreateDataProperty(A, i - actualDeleteCount + itemCount, O[i]);
+    CreateDataProperty(A, i - actualDeleteCount + itemCount, O[i]);
   }
   return A;
 };
@@ -715,7 +715,7 @@ Array.prototype.with = function ArrayWith(index, value) {
   if (actualIndex < 0 || actualIndex >= len) throw new RangeError("Array.prototype.with index out of range");
   var A = new Array(len);
   for (var i = 0; i < len; i++) {
-    if (HasProperty(O, i)) CreateDataProperty(A, i, O[i]);
+    CreateDataProperty(A, i, O[i]);
   }
   CreateDataProperty(A, actualIndex, value);
   return A;
