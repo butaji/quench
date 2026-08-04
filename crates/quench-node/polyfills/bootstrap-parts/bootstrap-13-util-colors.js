@@ -26,7 +26,8 @@ const __nodeUtilFormatCompact = (options, args) => {
 globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     const error = new TypeError(
-      'The "inspectOptions" argument must be an object'
+      'The "inspectOptions" argument must be an object.' +
+        globalThis.__nodeCommon.invalidArgTypeHelper(options)
     );
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
