@@ -403,11 +403,26 @@ pub fn make_ops_object() -> Value {
             Value::Object(o) => {
                 let mut obj = o.borrow_mut();
                 obj.extensible = false;
-                for key in obj.properties.keys().cloned().collect::<Vec<_>>() {
-                    if let Some(flags) = obj.descriptors.get_mut(&key) {
-                        flags.configurable = false;
-                        flags.writable = false;
-                    }
+                let properties = obj
+                    .properties
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<Vec<_>>();
+                let elements = obj
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| (index.to_string(), value.clone()))
+                    .collect::<Vec<_>>();
+                for (key, value) in properties.into_iter().chain(elements) {
+                    let flags = obj.descriptors.entry(key).or_insert(PropertyFlags {
+                        value: Some(value),
+                        writable: true,
+                        enumerable: true,
+                        configurable: true,
+                    });
+                    flags.configurable = false;
+                    flags.writable = false;
                 }
                 Ok(Value::Boolean(true))
             }

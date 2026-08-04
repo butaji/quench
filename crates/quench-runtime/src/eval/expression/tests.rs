@@ -99,6 +99,14 @@ fn tagged_template_objects_are_frozen() {
 }
 
 #[test]
+fn tagged_template_array_elements_have_frozen_descriptors() {
+    assert_eq!(
+        eval("var value; (s => { value = Object.getOwnPropertyDescriptor(s, '0'); })`x`; [value.writable, value.configurable].join('|')").unwrap(),
+        Value::String("false|false".to_string())
+    );
+}
+
+#[test]
 fn generator_arguments_assignment_updates_parameter() {
     assert_eq!(
         eval("function* g(a) { arguments[0] = 32; yield a; } g(23).next().value").unwrap(),
