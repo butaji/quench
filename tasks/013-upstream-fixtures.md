@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1112: OS process priority
+
+- Fixture: `test-os-process-priority.js`
+- Added the highest priority constant and validated PID/priority types and
+  ranges while retaining the host-independent priority state.
+- Retrospective: validation helpers keep the public OS methods small and make
+  platform-independent tests deterministic.
+
 ## Stage 1111: checked OS home directory
 
 - Fixture: `test-os-checked-function.js`
