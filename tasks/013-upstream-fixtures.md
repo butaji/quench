@@ -3072,3 +3072,9 @@ without another API-specific formatter.
 
 Upstream audit: the focused byte-length diagnostic stage passes; the complete
 fixture still reaches a later harness assertion mismatch after this boundary.
+
+Stage 1029 verifies that `buffer.INSPECT_MAX_BYTES` accepts `Infinity` while
+still rejecting negative values. Retrospective: probing the upstream inspect
+fixture isolated a single overly strict finite-number check; removing only
+that restriction preserved the existing type and lower-bound validation.
+The focused stage and upstream `test-buffer-inspect.js` now pass.
