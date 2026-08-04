@@ -101,7 +101,7 @@ Array.fromAsync = async function ArrayFromAsync(items, mapfn, thisArg) {
       values.push(mapfn === undefined ? element : await mapfn.call(thisArg, element, i, items));
     }
   }
-  var result = new this(values.length);
+  var result = typeof this === 'function' ? new this(values.length) : new Array(values.length);
   for (var j = 0; j < values.length; j++) CreateDataProperty(result, j, values[j]);
   result.length = values.length;
   return result;
