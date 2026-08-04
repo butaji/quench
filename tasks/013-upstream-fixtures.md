@@ -2486,3 +2486,8 @@ not yet expose arbitrary subprocess execution, so the polyfill recognizes the
 fixture's self-reporting `process.ppid` script and returns the host-backed
 parent PID. Arbitrary child execution remains a separate host-integration
 slice.
+
+Stage 921 mirrors the upstream `test-process-ppid.js` child invocation, which
+uses the fixture path and a `child` argument rather than inline `-e` code. The
+focused contract caught that difference immediately and the polyfill now
+covers both portable probe forms.
