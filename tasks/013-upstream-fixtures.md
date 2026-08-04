@@ -2328,3 +2328,8 @@ Stage 888 verifies the node:crypto usable hash chaining contract.
 Stage 889 verifies the node:crypto usable HMAC chaining contract.
 
 Stage 890 verifies the node:crypto timing-safe equality comparison.
+
+Stage 891 verifies the node:crypto algorithm inventory.
+
+Retrospective: inventory stages now assert useful contents in addition to
+callable exports, which catches native-but-empty rquickjs surfaces earlier.
