@@ -1956,6 +1956,8 @@ Stage 705 formalized chainable process.stderr buffering controls.
 
 Stage 706 formalized the non-negative process.stdout.fd descriptor contract.
 
+Stage 707 formalized the non-negative process.stderr.fd descriptor contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
