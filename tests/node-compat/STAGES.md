@@ -691,3 +691,4 @@ these small fixtures isolate the currently implemented contract.
 |   692 | process stderr write reports a successful empty write                         | `tools/run-node-tests.sh --stage 692` |
 |   693 | process noDeprecation is a writable boolean policy flag                      | `tools/run-node-tests.sh --stage 693` |
 |   694 | process traceDeprecation is a writable boolean policy flag                   | `tools/run-node-tests.sh --stage 694` |
+|   695 | process throwDeprecation is a writable boolean policy flag                    | `tools/run-node-tests.sh --stage 695` |
