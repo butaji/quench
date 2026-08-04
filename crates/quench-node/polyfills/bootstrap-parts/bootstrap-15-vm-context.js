@@ -20,6 +20,16 @@ const __quenchVmCacheMatches = (data, code) => {
     : data;
   return NodeBuffer.from(bytes).toString() === code;
 };
+const __quenchVmCheckRestrictedDeclaration = (code) => {
+  const declaration = /\blet\s+([A-Za-z_$][\w$]*)/.exec(String(code));
+  if (!declaration) return;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    declaration[1]
+  );
+  if (descriptor?.configurable === false)
+    throw new SyntaxError(`${declaration[1]} has already been declared`);
+};
 const __quenchVmApplyScriptCache = (script, options) => {
   if (options?.produceCachedData) {
     script.cachedDataProduced = true;
