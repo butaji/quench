@@ -836,3 +836,4 @@ these small fixtures isolate the currently implemented contract.
 |   837 | dns exposes callback and promise resolver API                 | `tools/run-node-tests.sh --stage 837` |
 |   838 | http exposes client and server core API                       | `tools/run-node-tests.sh --stage 838` |
 |   839 | https exposes secure client and server API                    | `tools/run-node-tests.sh --stage 839` |
+|   840 | net exposes TCP client and server core API                    | `tools/run-node-tests.sh --stage 840` |
