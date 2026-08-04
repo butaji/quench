@@ -2727,3 +2727,7 @@ event machinery.
 Stage 971 verifies passive listener cancellation suppression and dispatch return
 values. Retrospective: wrapping the native boundary only for passive listeners
 keeps the Rust host minimal while restoring the observable DOM contract.
+
+Stage 972 verifies that `Event` requires a type argument. Retrospective:
+checking the missing-argument error before normal construction keeps constructor
+validation separate from flag and dispatch semantics.
