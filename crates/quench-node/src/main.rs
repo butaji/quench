@@ -17,6 +17,7 @@ const BOOTSTRAP_PARTS: &[&str] = &[
     include_str!("../polyfills/bootstrap-parts/bootstrap-00-globals.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-01-timers-promises.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-input-validation.js"),
+    include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-arraybuffer.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-encoding.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-pool.js"),
     include_str!("../polyfills/bootstrap-parts/bootstrap-02-buffer-copy.js"),
