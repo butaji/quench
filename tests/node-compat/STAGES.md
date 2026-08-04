@@ -908,3 +908,4 @@ these small fixtures isolate the currently implemented contract.
 |   909 | module exposes builtin predicate normalization             | `tools/run-node-tests.sh --stage 909` |
 |   910 | process validates thread CPU usage arguments              | `tools/run-node-tests.sh --stage 910` |
 |   911 | process validates and tracks umask values                 | `tools/run-node-tests.sh --stage 911` |
+|   912 | process validates UID and GID setter arguments             | `tools/run-node-tests.sh --stage 912` |
