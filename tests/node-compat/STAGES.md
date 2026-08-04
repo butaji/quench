@@ -399,3 +399,4 @@ these small fixtures isolate the currently implemented contract.
 |   400 | crypto hash and HMAC update input encoding                    | `tools/run-node-tests.sh --stage 400` |
 |   401 | timers/promises setTimeout delay and value                    | `tools/run-node-tests.sh --stage 401` |
 |   402 | perf_hooks performance clock and serialization                 | `tools/run-node-tests.sh --stage 402` |
+|   403 | perf_hooks user timing marks and measures                      | `tools/run-node-tests.sh --stage 403` |
