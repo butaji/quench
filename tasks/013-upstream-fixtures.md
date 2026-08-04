@@ -1536,6 +1536,11 @@ validation for non-functions.
 Stage 543 formalized `util.transferableAbortSignal()` validation and
 `util.transferableAbortController()` abort behavior.
 
+Stage 544 formalized the `console` module's `Console` constructor and common
+logging, assertion, grouping, table, and trace methods. The existing shared
+console polyfill already covered this surface, so the stage required no new
+runtime code.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
