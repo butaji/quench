@@ -625,3 +625,4 @@ these small fixtures isolate the currently implemented contract.
 |   626 | process title identifies the Node-compatible runtime                   | `tools/run-node-tests.sh --stage 626` |
 |   627 | process getBuiltinModule resolves builtins and rejects unknown names   | `tools/run-node-tests.sh --stage 627` |
 |   628 | process loadEnvFile exposes a callable harness-safe surface             | `tools/run-node-tests.sh --stage 628` |
+|   629 | process finalization exposes registration method contracts             | `tools/run-node-tests.sh --stage 629` |
