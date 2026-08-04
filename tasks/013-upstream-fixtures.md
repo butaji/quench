@@ -1149,6 +1149,9 @@ with matching abort metadata.
 Stage 409 formalized process platform and architecture metadata plus the shapes
 of `memoryUsage` and `resourceUsage` results.
 
+Stage 410 formalized `process.binding` rejection of unknown internal modules
+with Node’s “No such module” error wording.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
