@@ -109,6 +109,35 @@ fn negative_type_mismatch_preserves_test_path_diagnostics() {
 }
 
 #[test]
+fn stage_zero_deep_equal_primitives_passes_through_runner() {
+    use crate::test262::harness::HarnessLoader;
+    use crate::test262::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let harness = HarnessLoader::new(&root);
+    let path = PathBuf::from(&root).join("test/harness/deepEqual-primitives.js");
+    assert_eq!(run_single_test(&harness, &path), TestOutcome::Pass);
+}
+
+#[test]
+fn stage_zero_native_function_matcher_passes_through_runner() {
+    use crate::test262::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join("test/harness/nativeFunctionMatcher.js");
+    assert_eq!(run_isolated(&path), TestOutcome::Pass);
+}
+
+#[test]
+fn stage_zero_typed_array_conversions_pass_through_runner() {
+    use crate::test262::runner::default_test262_dir;
+
+    let root = default_test262_dir();
+    let path = PathBuf::from(&root).join("test/harness/testTypedArray-conversions.js");
+    assert_eq!(run_isolated(&path), TestOutcome::Pass);
+}
+
+#[test]
 fn isolated_runner_matches_in_process_strictness() {
     use crate::test262::harness::HarnessLoader;
     use crate::test262::runner::default_test262_dir;
