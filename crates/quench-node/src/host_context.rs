@@ -413,7 +413,7 @@ macro_rules! run_host_context {
             eprintln!("Bootstrap JavaScript exception: {error:?}");
             error
         })?;
-        ctx.eval::<(), _>(b"if (globalThis.process) { globalThis.process.getActiveResourcesInfo = () => []; globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER; globalThis.process.setSourceMapsEnabled = () => undefined; globalThis.process.sourceMapsEnabled = false; globalThis.process.debugPort = 9229; globalThis.process.release = { name: 'node', sourceUrl: '', headersUrl: '' }; }")?;
+        ctx.eval::<(), _>(b"if (globalThis.process) { globalThis.process.getActiveResourcesInfo = () => []; globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER; globalThis.process.setSourceMapsEnabled = () => undefined; globalThis.process.sourceMapsEnabled = false; globalThis.process.debugPort = 9229; globalThis.process.release = { name: 'node', sourceUrl: '', headersUrl: '' }; globalThis.process.allowedNodeEnvironmentFlags = new Set(); }")?;
         ctx.globals().set("__nodeOsInitialized", false)?;
         ctx.globals().set("__quench_script_source", $source)?;
         let wrapped = format!("try {{\n{}\n}} catch (error) {{ globalThis.__quench_last_error = error && error.stack ? `${{error.name}}: ${{error.message}}\\n${{error.stack}}` : String(error); throw error; }}", $source);
