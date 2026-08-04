@@ -779,3 +779,4 @@ these small fixtures isolate the currently implemented contract.
 |   780 | process stdio exposes async disposal                                | `tools/run-node-tests.sh --stage 780` |
 |   781 | process stdio async disposal returns promises                      | `tools/run-node-tests.sh --stage 781` |
 |   782 | process exposes identity and umask methods                         | `tools/run-node-tests.sh --stage 782` |
+|   783 | process exposes credential helper methods                          | `tools/run-node-tests.sh --stage 783` |
