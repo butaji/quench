@@ -1,5 +1,11 @@
 {
   if (globalThis.process) {
+    globalThis.process.emitWarning = (message, name = "Warning") => {
+      const warning = new Error(String(message));
+      warning.name = String(name);
+      globalThis.process.emit("warning", warning);
+      return warning;
+    };
     globalThis.process.getActiveResourcesInfo = () => [];
     globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER;
     globalThis.process.setSourceMapsEnabled = () => undefined;

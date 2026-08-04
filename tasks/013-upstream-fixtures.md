@@ -2822,3 +2822,7 @@ Stage 988 verifies `events.addAbortListener()` disposable return values,
 delivery, and disposal. Retrospective: the focused CommonJS stage isolates API
 behavior while the upstream `.mjs` fixture remains outside the classic-script
 harness module-format boundary.
+
+Stage 989 verifies `process.emitWarning()` creates and emits a named Error
+warning. Retrospective: adding this primitive before listener-limit warnings
+keeps warning construction separate from warning threshold bookkeeping.
