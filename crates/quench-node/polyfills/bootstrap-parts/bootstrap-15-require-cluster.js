@@ -133,7 +133,13 @@ const __quenchInternalBindingModule = {
             ? __nodeAllocatorCounts.uninitialized
             : __nodeAllocatorCounts.zeroFilled
       };
-    if (binding === "uv") return { UV_ENOENT: -2, UV_EEXIST: -17 };
+    if (binding === "uv")
+      return {
+        UV_ENOENT: -2,
+        UV_EEXIST: -17,
+        errname: (errorNumber) =>
+          globalThis.__nodeUtil.getSystemErrorName(errorNumber)
+      };
     if (binding === "js_stream")
       return {
         JSStream: class JSStream {

@@ -1,7 +1,8 @@
 const __nodeSystemErrorNames = new Map([
   [-1, "EPERM"],
   [-2, "ENOENT"],
-  [-13, "EACCES"]
+  [-13, "EACCES"],
+  [-17, "EEXIST"]
 ]);
 const __nodeUtilGetSystemErrorName = (errorNumber) => {
   if (!Number.isInteger(errorNumber) || errorNumber >= 0) {
@@ -33,5 +34,19 @@ const __nodeUtilExceptionWithHostPort = (
   if (additional) error.message += ` - Local (${additional})`;
   return error;
 };
+const __nodeUtilErrnoException = (errorNumber, syscall) => {
+  const error = new Error(
+    `${syscall || ""} ${__nodeUtilGetSystemErrorName(errorNumber)}`.trim()
+  );
+  error.errno = errorNumber;
+  error.code = __nodeUtilGetSystemErrorName(errorNumber);
+  if (syscall) error.syscall = syscall;
+  return error;
+};
 globalThis.__nodeUtil.getSystemErrorName = __nodeUtilGetSystemErrorName;
 globalThis.__nodeUtil._exceptionWithHostPort = __nodeUtilExceptionWithHostPort;
+globalThis.__nodeUtil._errnoException = __nodeUtilErrnoException;
+globalThis.__nodeUtil.getSystemErrorMap = () =>
+  new Map(
+    [...__nodeSystemErrorNames].map(([number, name]) => [number, [name, name]])
+  );
