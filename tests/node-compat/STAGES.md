@@ -555,3 +555,4 @@ these small fixtures isolate the currently implemented contract.
 |   556 | http2 exposes constants and reports unsupported operations          | `tools/run-node-tests.sh --stage 556` |
 |   557 | node:test reporters reports an unknown builtin module              | `tools/run-node-tests.sh --stage 557` |
 |   558 | sqlite builtin reports an unknown module boundary                  | `tools/run-node-tests.sh --stage 558` |
+|   559 | cluster scheduling constants and primary-role flags are exposed     | `tools/run-node-tests.sh --stage 559` |

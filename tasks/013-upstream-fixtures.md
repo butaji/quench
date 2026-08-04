@@ -1587,6 +1587,9 @@ with `ERR_UNKNOWN_BUILTIN_MODULE`.
 Stage 558 formalized the unsupported `sqlite` and `node:sqlite` builtin
 boundary with `ERR_UNKNOWN_BUILTIN_MODULE`.
 
+Stage 559 formalized cluster scheduling constants and primary/master/worker
+role flags for the single-process compatibility environment.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
