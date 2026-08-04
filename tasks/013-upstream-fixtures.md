@@ -1581,6 +1581,9 @@ errors for network methods and the global agent surface.
 Stage 556 formalized the `http2` constants surface and explicit
 `ERR_HTTP2_NOT_SUPPORTED` errors for server and client creation.
 
+Stage 557 formalized the unsupported `node:test/reporters` builtin boundary
+with `ERR_UNKNOWN_BUILTIN_MODULE`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
