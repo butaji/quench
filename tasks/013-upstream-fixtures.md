@@ -2831,3 +2831,12 @@ Stage 990 verifies EventEmitter uses a null-prototype `_events` map and that
 `setMaxListeners()` does not create event entries. Retrospective: asserting
 internal shape and side effects together catches prototype-key collisions while
 remaining deterministic.
+
+Stage 991 verifies EventEmitter stores a single listener directly while public
+`listeners()` still returns an array. Retrospective: using an ordinary callback
+avoids conflating EventEmitter storage with the separate missing `assert.fail`
+assertion helper in the upstream fixture.
+
+Upstream audit: `test-event-emitter-listeners-side-effects.js` now reaches its
+listener assertions, but the fixture still needs the `assert.fail` compatibility
+surface before it can validate all cases.
