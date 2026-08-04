@@ -1,3 +1,30 @@
+const __quenchRequireStreamIter = () => {
+  if (!globalThis.__quench_argv.includes("--experimental-stream-iter")) {
+    const error = new Error("No such built-in module: node:stream/iter");
+    error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
+    throw error;
+  }
+  return {
+    text: async (readable) => {
+      const chunks = [];
+      for await (const batch of readable)
+        for (const chunk of batch) chunks.push(chunk);
+      return new TextDecoder().decode(NodeBuffer.concat(chunks));
+    },
+    bytes: async (readable) => {
+      const chunks = [];
+      for await (const batch of readable)
+        for (const chunk of batch) chunks.push(chunk);
+      return NodeBuffer.concat(chunks);
+    },
+    pull: (readable, transform) => ({
+      async *[Symbol.asyncIterator]() {
+        for await (const batch of readable)
+          yield transform ? transform(batch) : batch;
+      }
+    })
+  };
+};
 globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "cluster") {
     if (globalThis.__nodeCluster) return globalThis.__nodeCluster;
@@ -184,33 +211,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "internal/event_target")
     return { kWeakHandler: Symbol("kWeakHandler") };
   if (name === "stream") return globalThis.__nodeStream;
-  if (name === "stream/iter") {
-    if (!globalThis.__quench_argv.includes("--experimental-stream-iter")) {
-      const error = new Error("No such built-in module: node:stream/iter");
-      error.code = "ERR_UNKNOWN_BUILTIN_MODULE";
-      throw error;
-    }
-    return {
-      text: async (readable) => {
-        const chunks = [];
-        for await (const batch of readable)
-          for (const chunk of batch) chunks.push(chunk);
-        return new TextDecoder().decode(NodeBuffer.concat(chunks));
-      },
-      bytes: async (readable) => {
-        const chunks = [];
-        for await (const batch of readable)
-          for (const chunk of batch) chunks.push(chunk);
-        return NodeBuffer.concat(chunks);
-      },
-      pull: (readable, transform) => ({
-        async *[Symbol.asyncIterator]() {
-          for await (const batch of readable)
-            yield transform ? transform(batch) : batch;
-        }
-      })
-    };
-  }
+  if (name === "stream/iter") return __quenchRequireStreamIter();
   if (name === "vm")
     return {
       SourceTextModule: class SourceTextModule {
