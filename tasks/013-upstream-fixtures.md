@@ -2441,3 +2441,8 @@ Stage 912 verifies the node:process UID and GID setter argument contract.
 Retrospective: separate argument validation from credential resolution so
 platform-specific identity behavior can be added without weakening the base
 contract.
+
+Stage 913 verifies the node:process next-tick callback argument contract.
+
+Retrospective: upstream next-tick failures now distinguish callback validation
+from uncaught-exception event routing, keeping the next harness slice focused.
