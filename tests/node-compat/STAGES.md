@@ -844,3 +844,4 @@ these small fixtures isolate the currently implemented contract.
 |   845 | vm exposes contexts scripts and module API                    | `tools/run-node-tests.sh --stage 845` |
 |   846 | readline exposes interface and terminal API                   | `tools/run-node-tests.sh --stage 846` |
 |   847 | repl exposes interactive evaluation API                       | `tools/run-node-tests.sh --stage 847` |
+|   848 | cluster exposes primary and worker API                        | `tools/run-node-tests.sh --stage 848` |
