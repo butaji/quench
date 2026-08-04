@@ -933,3 +933,4 @@ these small fixtures isolate the currently implemented contract.
 |   934 | static events listener count                                             | `tools/run-node-tests.sh --stage 934` |
 |   935 | static events listener count validation                                  | `tools/run-node-tests.sh --stage 935` |
 |   936 | static events max-listener validation                                    | `tools/run-node-tests.sh --stage 936` |
+|   937 | static events max-listener target validation                             | `tools/run-node-tests.sh --stage 937` |
