@@ -1775,6 +1775,9 @@ Stage 625 formalized the semantic CJS module lexer version entry in
 
 Stage 626 formalized the Node-compatible runtime title in `process.title`.
 
+Stage 627 formalized `process.getBuiltinModule` lookup and unknown-module
+behavior.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
