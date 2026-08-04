@@ -47,7 +47,42 @@ globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
     globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
   }
 };
-const __nodeQuerystringEscape = (value) => encodeURIComponent(String(value));
+const __nodeQuerystringEscape = (value) => {
+  if (typeof value === "symbol")
+    throw new TypeError("Cannot convert a Symbol value to a string");
+  const input = String(value);
+  let normalized = "";
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 === input.length) {
+        const error = new URIError("URI malformed");
+        error.code = "ERR_INVALID_URI";
+        throw error;
+      }
+      const next = input.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        normalized += String.fromCodePoint(
+          0x10000 + ((code - 0xd800) << 10) + next - 0xdc00
+        );
+      } else {
+        normalized += String.fromCodePoint(
+          0x10000 + ((code - 0xd800) << 10) + next
+        );
+      }
+      index += 1;
+      continue;
+    }
+    normalized += input[index];
+  }
+  try {
+    return encodeURIComponent(normalized);
+  } catch (_) {
+    const error = new URIError("URI malformed");
+    error.code = "ERR_INVALID_URI";
+    throw error;
+  }
+};
 const __nodeQuerystringDecodeByte = (input, index, decodeSpaces) => {
   if (input[index] === "+" && decodeSpaces)
     return { bytes: [0x20], advance: 0 };
