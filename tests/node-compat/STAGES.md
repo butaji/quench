@@ -534,3 +534,4 @@ these small fixtures isolate the currently implemented contract.
 |   535 | assert strict aliases assert and enforces strict comparisons      | `tools/run-node-tests.sh --stage 535` |
 |   536 | sys aliases util and exposes formatting helpers                   | `tools/run-node-tests.sh --stage 536` |
 |   537 | trace_events reports unknown builtin module errors                | `tools/run-node-tests.sh --stage 537` |
+|   538 | wasi reports unknown builtin module errors                         | `tools/run-node-tests.sh --stage 538` |
