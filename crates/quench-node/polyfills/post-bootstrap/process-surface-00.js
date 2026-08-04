@@ -1,5 +1,6 @@
 {
   if (globalThis.process) {
+    globalThis.process[Symbol.toStringTag] ||= "process";
     globalThis.gc ||= () => undefined;
     globalThis.process.emitWarning = (message, options = {}) => {
       const warning =
