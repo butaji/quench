@@ -1593,6 +1593,9 @@ role flags for the single-process compatibility environment.
 Stage 560 formalized cluster worker connection state during fork and online
 events; the existing cluster process bridge already covered this lifecycle.
 
+Stage 561 formalized cluster worker `isDead()` state and the `destroy()`
+lifecycle method across primary and worker processes.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
