@@ -94,7 +94,7 @@ const __quenchVmModule = {
     const previous = {};
     for (const key of Object.keys(sandbox)) {
       previous[key] = globalThis[key];
-      globalThis[key] = sandbox[key];
+      globalThis[key] = sandbox[key] === sandbox ? globalThis : sandbox[key];
     }
     try {
       const result = (0, eval)(String(code));
@@ -110,7 +110,7 @@ const __quenchVmModule = {
     const originalKeys = new Set(Object.keys(globalThis));
     for (const key of Object.keys(sandbox)) {
       previous[key] = globalThis[key];
-      globalThis[key] = sandbox[key];
+      globalThis[key] = sandbox[key] === sandbox ? globalThis : sandbox[key];
     }
     try {
       const result = (0, eval)(String(code));
