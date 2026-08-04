@@ -18,6 +18,13 @@ const __quenchDecoderStoreUtf8 = (decoder, bytes) => {
 const __quenchStringDecoderClass = class {
   constructor(encoding = "utf8") {
     this.encoding = String(encoding).toLowerCase().replace("-", "");
+    if (
+      !["utf8", "ucs2", "utf16le", "latin1", "ascii"].includes(this.encoding)
+    ) {
+      const error = new TypeError(`Unknown encoding: ${encoding}`);
+      error.code = "ERR_UNKNOWN_ENCODING";
+      throw error;
+    }
     this._decoder = new TextDecoder(
       this.encoding === "utf8" ? "utf-8" : this.encoding
     );
@@ -27,6 +34,13 @@ const __quenchStringDecoderClass = class {
     this.lastChar = new NodeBuffer(4);
   }
   write(input) {
+    if (!ArrayBuffer.isView(input)) {
+      const error = new TypeError(
+        'The "buf" argument must be an instance of Buffer, TypedArray, or DataView'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const bytes = [...this._pending, ...__quenchDecoderInputBytes(input)];
     if (this.encoding === "utf8") {
       return __quenchDecoderStoreUtf8(this, bytes);
