@@ -27,7 +27,6 @@
     globalThis.require = (name) => {
       const result = originalRequire(name);
       if (String(name).replace(/^node:/, "") === "util") {
-        result.parseEnv ||= () => ({});
         result.inherits ||= (constructor, superConstructor) => {
           __quenchValidateInherits(constructor, superConstructor);
           Object.setPrototypeOf(
