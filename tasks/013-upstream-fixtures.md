@@ -1850,6 +1850,8 @@ Stage 652 formalized the boolean process.features.inspector capability contract.
 
 Stage 653 formalized boolean defaults for the process deprecation policy flags.
 
+Stage 654 formalized the finite non-negative process.debugPort contract.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
