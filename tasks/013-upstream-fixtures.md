@@ -1753,6 +1753,9 @@ Stage 617 formalized the semantic ICU version entry in `process.versions`.
 Stage 618 formalized the semantic nghttp2 version entry in
 `process.versions`.
 
+Stage 619 formalized the semantic llhttp version entry in
+`process.versions`.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
