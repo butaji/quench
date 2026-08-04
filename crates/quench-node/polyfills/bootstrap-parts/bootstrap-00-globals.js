@@ -208,6 +208,29 @@ globalThis.process = {
         );
         return true;
       },
+      defineProperty: (_, key, descriptor) => {
+        if (typeof key === "symbol") return true;
+        if (descriptor.get || descriptor.set) {
+          const error = new TypeError(
+            "'process.env' does not accept an accessor(getter/setter) descriptor"
+          );
+          error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+          throw error;
+        }
+        if (
+          descriptor.configurable !== true ||
+          descriptor.writable !== true ||
+          descriptor.enumerable !== true
+        ) {
+          const error = new TypeError(
+            "'process.env' only accepts a configurable, writable, and enumerable data descriptor"
+          );
+          error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+          throw error;
+        }
+        globalThis.__quench_env_set(String(key), String(descriptor.value));
+        return true;
+      },
       has: (_, key) =>
         typeof key === "string" &&
         globalThis.__quench_env_get(key) !== undefined,
