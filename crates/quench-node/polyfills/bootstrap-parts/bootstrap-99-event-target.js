@@ -191,7 +191,15 @@ globalThis.MessagePort ||= class MessagePort extends EventTarget {
     this.addEventListener(name, listener);
     return this;
   }
-  postMessage(value) {
+  postMessage(value, transferList) {
+    if (transferList?.some((item) => __nodeUntransferableBuffers.has(item))) {
+      const error = new DOMException(
+        "ArrayBuffer is not transferable",
+        "DataCloneError"
+      );
+      error.code = 25;
+      throw error;
+    }
     if (this._closed || !this._peer || this._peer._closed) return;
     const event = new CustomEvent("message", { detail: value });
     Object.defineProperty(event, "data", { value, enumerable: true });
