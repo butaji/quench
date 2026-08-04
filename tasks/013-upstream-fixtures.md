@@ -1550,6 +1550,9 @@ Stage 546 formalized the supported `v8` heap-statistics surface and explicit
 Stage 547 formalized `os.homedir()`, `os.tmpdir()`, and the core fields of
 `os.userInfo()`; the existing host-backed OS polyfill already covered them.
 
+Stage 548 formalized process uptime, memory-usage fields, and CPU-usage fields;
+the existing process host integration already covered these metrics.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing

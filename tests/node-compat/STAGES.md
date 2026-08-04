@@ -544,3 +544,4 @@ these small fixtures isolate the currently implemented contract.
 |   545 | URL static canParse validates inputs and parse returns URL objects  | `tools/run-node-tests.sh --stage 545` |
 |   546 | v8 exposes heap statistics and unsupported coverage operations       | `tools/run-node-tests.sh --stage 546` |
 |   547 | os helpers expose directories and user information                  | `tools/run-node-tests.sh --stage 547` |
+|   548 | process metrics expose uptime memory and CPU usage                  | `tools/run-node-tests.sh --stage 548` |
