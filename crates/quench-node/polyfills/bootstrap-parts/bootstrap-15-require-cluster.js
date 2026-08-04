@@ -370,7 +370,8 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "stream") return globalThis.__nodeStream;
   if (name === "stream/iter") return __quenchRequireStreamIter();
   if (name === "vm") return __quenchVmModule;
-  if (name === "worker_threads") return { isMainThread: true };
+  if (name === "worker_threads")
+    return { isMainThread: true, MessageChannel, MessagePort };
   if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   return __quenchRequireClusterInternal(name);
 };
