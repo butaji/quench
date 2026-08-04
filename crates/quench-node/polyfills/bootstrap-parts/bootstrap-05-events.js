@@ -18,6 +18,17 @@ const __nodeWritableWriteError = (stream, callback, error) => {
   });
   return false;
 };
+const __nodeWritableDestroyComplete = (stream, callback, error) => {
+  if (error) {
+    stream._writableState.errored = error;
+    stream._writableState.errorEmitted = true;
+    stream.emit("error", error);
+  }
+  queueMicrotask(() => {
+    stream.emit("close");
+    if (callback) callback(error);
+  });
+};
 globalThis.__nodeEventEmitter.once = (emitter, event) =>
   new Promise((resolve) => emitter.once(event, (...args) => resolve(args)));
 globalThis.__nodeEventEmitter.on = async function* (emitter, event, options) {
@@ -331,22 +342,27 @@ class NodeWritable extends NodeEventEmitter {
     this.writableHighWaterMark = options.highWaterMark ?? 16 * 1024;
     this.writableLength = 0;
     this.writableNeedDrain = false;
-    this._writableState = { needDrain: false };
+    this._writableState = {
+      needDrain: false,
+      errored: null,
+      errorEmitted: false
+    };
     this.writableEnded = false;
     this.writableFinished = false;
     this.writableCorked = 0;
     this._corkedChunks = [];
     this._write = options.write;
+    this._destroy = options.destroy;
   }
   destroy(error, callback) {
     if (this.destroyed) return this;
     this.destroyed = true;
     this.writable = false;
-    if (error) this.emit("error", error);
-    queueMicrotask(() => {
-      this.emit("close");
-      if (callback) callback(error);
-    });
+    this._writableState.errored = error || null;
+    const complete = (destroyError) =>
+      __nodeWritableDestroyComplete(this, callback, destroyError);
+    if (this._destroy) this._destroy.call(this, error || null, complete);
+    else queueMicrotask(() => complete(error));
     return this;
   }
   cork() {
