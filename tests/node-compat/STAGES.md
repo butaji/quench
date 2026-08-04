@@ -685,3 +685,4 @@ these small fixtures isolate the currently implemented contract.
 |   686 | process chdir accepts the current directory and preserves cwd                 | `tools/run-node-tests.sh --stage 686` |
 |   687 | process stdout exposes a writable stream-like object                         | `tools/run-node-tests.sh --stage 687` |
 |   688 | process stderr exposes a writable stream-like object                         | `tools/run-node-tests.sh --stage 688` |
+|   689 | process stdin exposes a stream-like listener interface                       | `tools/run-node-tests.sh --stage 689` |
