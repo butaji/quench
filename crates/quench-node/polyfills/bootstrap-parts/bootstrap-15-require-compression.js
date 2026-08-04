@@ -108,8 +108,7 @@ const __quenchBufferModule = () => {
     set: (value) => {
       if (typeof value !== "number")
         throw new TypeError("INSPECT_MAX_BYTES must be a number");
-      if (!Number.isFinite(value) || value < 0)
-        throw new RangeError("INSPECT_MAX_BYTES is out of range");
+      if (value < 0) throw new RangeError("INSPECT_MAX_BYTES is out of range");
       __nodeInspectMaxBytes = value;
     }
   });
