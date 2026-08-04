@@ -473,3 +473,4 @@ these small fixtures isolate the currently implemented contract.
 |   474 | stream write after destroy rejects with error                     | `tools/run-node-tests.sh --stage 474` |
 |   475 | stream push after destroy rejects with error                      | `tools/run-node-tests.sh --stage 475` |
 |   476 | stream writableLength counts UTF-8 bytes                         | `tools/run-node-tests.sh --stage 476` |
+|   477 | stream read combines queued buffer chunks                         | `tools/run-node-tests.sh --stage 477` |
