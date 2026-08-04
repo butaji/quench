@@ -3189,3 +3189,9 @@ prototype only after their bytes are copied.
 
 Upstream `test-buffer-pool-untransferable.js` now passes its shared-storage
 assertion; transfer blocking remains a separate MessageChannel contract.
+
+Stage 1047 classifies fractional floating-point Buffer offsets before checking
+the available byte width. Retrospective: range validation ran first and
+reported `1.01` as a buffer-size failure when Node reports a non-integer input;
+ordering the numeric classification first fixes both float reads and writes.
+Upstream `test-buffer-readfloat.js` now passes.
