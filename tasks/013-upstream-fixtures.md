@@ -1546,6 +1546,10 @@ Stage 929 records the broad `os` module surface covered by the upstream
 already satisfy this contract; EOL descriptor mutation and internal binding
 error injection remain separately tracked gaps.
 
+Stage 930 adds the static events max-listener APIs. Caching the built-in
+facade avoids losing state between `require("events")` calls, while a
+WeakMap keeps limits off user objects and preserves the AbortSignal default.
+
 Stage 545 formalized `URL.canParse()` validation and `URL.parse()` null-on-
 failure behavior; the existing URL surface already covered both statics.
 
