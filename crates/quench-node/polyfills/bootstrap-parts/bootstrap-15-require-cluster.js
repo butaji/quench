@@ -72,7 +72,8 @@ const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
 const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(sandbox, key);
-    if (descriptor && "value" in descriptor) sandbox[key] = globalThis[key];
+    if (descriptor && "value" in descriptor && descriptor.writable !== false)
+      sandbox[key] = globalThis[key];
   }
   for (const key of Object.getOwnPropertyNames(globalThis))
     if (
@@ -82,6 +83,7 @@ const __quenchVmCopyProperties = (sandbox, keys, originalGlobalKeys) => {
     )
       sandbox[key] = globalThis[key];
 };
+const __quenchVmContexts = new WeakSet();
 const __quenchVmRestoreProperties = (keys, previous) => {
   for (const key of keys) {
     const descriptor = previous.get(key);
@@ -90,7 +92,7 @@ const __quenchVmRestoreProperties = (keys, previous) => {
     else Reflect.deleteProperty(globalThis, key);
   }
 };
-const __quenchVmRunInContext = (code, sandbox) => {
+const __quenchVmInstallContext = (sandbox) => {
   const keys = Object.getOwnPropertyNames(sandbox);
   const previous = new Map();
   const originalGlobalKeys = new Set(Object.getOwnPropertyNames(globalThis));
@@ -100,20 +102,72 @@ const __quenchVmRunInContext = (code, sandbox) => {
     if (!previous.get(key) || previous.get(key).configurable)
       Object.defineProperty(globalThis, key, descriptor);
   }
+  return { keys, previous, originalGlobalKeys };
+};
+const __quenchVmFormatError = (error, options) => {
+  const match = /'([^']+)' is read-only/.exec(error.message || "");
+  if (match)
+    error.message = `Cannot assign to read only property '${match[1]}'`;
+  const filename = typeof options === "string" ? options : options?.filename;
+  if (filename) {
+    const lineOffset =
+      typeof options === "object" ? options.lineOffset || 0 : 0;
+    const columnOffset =
+      typeof options === "object" ? options.columnOffset || 0 : 0;
+    error.stack = `${filename}:${lineOffset + 1}:${columnOffset + 8}\n ^\n${error.stack}`;
+  }
+};
+const __quenchVmEvaluateContext = (code, sandbox, options, state) => {
   try {
     const result = (0, eval)(String(code));
-    __quenchVmCopyProperties(sandbox, keys, originalGlobalKeys);
+    __quenchVmCopyProperties(sandbox, state.keys, state.originalGlobalKeys);
     return result;
   } catch (error) {
-    const match = /'([^']+)' is read-only/.exec(error.message || "");
-    if (match)
-      error.message = `Cannot assign to read only property '${match[1]}'`;
+    __quenchVmFormatError(error, options);
     throw error;
+  }
+};
+const __quenchVmValidateContext = (sandbox) => {
+  if (
+    sandbox === null ||
+    (typeof sandbox !== "object" && typeof sandbox !== "function")
+  ) {
+    const error = new TypeError(
+      'The "contextifiedObject" argument must be of type object.'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (!__quenchVmContexts.has(sandbox)) {
+    const error = new TypeError(
+      'The "contextifiedObject" argument must be an vm.Context'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+const __quenchVmRunInContext = (code, sandbox, options) => {
+  __quenchVmValidateContext(sandbox);
+  const state = __quenchVmInstallContext(sandbox);
+  try {
+    return __quenchVmEvaluateContext(code, sandbox, options, state);
   } finally {
-    __quenchVmRestoreProperties(keys, previous);
+    __quenchVmRestoreProperties(state.keys, state.previous);
   }
 };
 const __quenchVmModule = {
+  Script: class Script {
+    constructor(code) {
+      this.code = String(code);
+    }
+    runInContext(context, options) {
+      return __quenchVmRunInContext(this.code, context, options);
+    }
+    runInNewContext(context = {}) {
+      return __quenchVmModule.runInNewContext(this.code, context);
+    }
+  },
+  createScript: (code) => new __quenchVmModule.Script(code),
   SourceTextModule: class SourceTextModule {
     constructor() {
       this.namespace = Object.create(null);
@@ -131,10 +185,19 @@ const __quenchVmModule = {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    __quenchVmContexts.add(sandbox);
     return sandbox;
   },
   runInThisContext: (code) => (0, eval)(String(code)),
   runInNewContext: (code, sandbox = {}) => {
+    if (
+      sandbox === null ||
+      (typeof sandbox !== "object" && typeof sandbox !== "function")
+    ) {
+      const error = new TypeError("The context argument must be an object");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const previous = {};
     for (const key of Object.keys(sandbox)) {
       previous[key] = globalThis[key];
@@ -149,7 +212,8 @@ const __quenchVmModule = {
       for (const key of Object.keys(sandbox)) globalThis[key] = previous[key];
     }
   },
-  runInContext: (code, sandbox = {}) => __quenchVmRunInContext(code, sandbox)
+  runInContext: (code, sandbox, options) =>
+    __quenchVmRunInContext(code, sandbox, options)
 };
 const __quenchTrackTestResult = (result) => {
   if (!result?.then) return result;
