@@ -2200,3 +2200,5 @@ Stage 824 verified the core node:path API.
 Stage 825 added path.matchesGlob compatibility.
 
 Stage 826 verified the core node:url API.
+
+Stage 827 verified node:timers callback and promise APIs.
