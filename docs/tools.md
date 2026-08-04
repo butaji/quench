@@ -52,6 +52,9 @@ completion from an old command log or from this document.
 cargo nextest run -p quench-runtime
 cargo fmt -p quench-runtime -- --check
 cargo clippy -p quench-runtime --all-targets
+
+# Reject duplicate JS/Rust builtin ownership
+bash tools/check-builtin-ownership.sh
 ```
 
 ## Diagnostics

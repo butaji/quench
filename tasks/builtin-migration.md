@@ -37,6 +37,13 @@ behavior and uses canonical `__ops__`. Before adding a wrapper, compare total
 maintained LOC and record the Rust-direct-binding exception in the family
 entry when the wrapper would be larger than the retained binding.
 
+`tools/check-builtin-ownership.sh` is the local ownership guard. It rejects a
+Rust hidden `__method` implementation when the corresponding public method is
+self-hosted in JS, unless the method is explicitly listed in
+`tasks/builtin-direct-bindings.txt` as a deliberate one-line direct binding.
+Run it before committing builtin changes; the exception list is part of the
+ownership record, not an escape hatch for algorithm duplication.
+
 ## Family queue
 
 - [~] The `__ops__` bridge is active and normal contexts enter
