@@ -105,6 +105,12 @@ const __quenchVmModule = {
     }
   }
 };
+const __quenchNodeTestModule = {
+  describe: (_name, callback) => callback(),
+  it: (_name, callback) => callback(),
+  test: (_name, options, callback) =>
+    (typeof options === "function" ? options : callback)()
+};
 let __quenchClusterModule;
 {
   if (!globalThis.__nodeCluster) {
@@ -255,13 +261,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "stream/iter") return __quenchRequireStreamIter();
   if (name === "vm") return __quenchVmModule;
   if (name === "worker_threads") return { isMainThread: true };
-  if (name === "node:test" || name === "test")
-    return {
-      describe: (_name, callback) => callback(),
-      it: (_name, callback) => callback(),
-      test: (_name, options, callback) =>
-        (typeof options === "function" ? options : callback)()
-    };
+  if (name === "node:test" || name === "test") return __quenchNodeTestModule;
   if (name === "internal/test/binding")
     return {
       internalBinding: (binding) =>
