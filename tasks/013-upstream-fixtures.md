@@ -1105,6 +1105,9 @@ Stage 393 formalized lazy querystring compatibility initialization and
 Stage 394 formalized experimental `node:stream/iter` gating through the
 `--experimental-stream-iter` runtime flag and unknown-builtin errors otherwise.
 
+Stage 395 formalized crypto capability enumeration, advertising supported
+hashes while returning cipher capability arrays.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
