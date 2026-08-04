@@ -2745,3 +2745,11 @@ Stage 974 verifies global `CustomEvent` detail, cancelability, and required
 type behavior. Retrospective: native Event metadata is kept as a separate
 boundary task after the upstream fixture exposed that rquickjs does not allow
 all dispatch fields to be assigned from JavaScript.
+
+Stage 975 verifies EventTarget one-shot and repeated listener lifecycles.
+Retrospective: pairing one `once` listener with one ordinary listener isolates
+automatic removal from normal repeated delivery.
+
+Upstream audit: `test-eventtarget-brandcheck.js` still requires native receiver
+brand enforcement for Event and EventTarget prototype methods. The adjacent
+once/twice lifecycle fixture passes and is covered by stage 975.
