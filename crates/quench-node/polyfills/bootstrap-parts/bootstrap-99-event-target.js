@@ -17,9 +17,16 @@ globalThis.EventTarget ||= class EventTarget {
   }
 };
 globalThis.Event ||= class Event {
-  constructor(type) {
+  constructor(type, options = {}) {
     this.type = String(type);
+    this.bubbles = Boolean(options.bubbles);
+    this.cancelable = Boolean(options.cancelable);
+    this.composed = Boolean(options.composed);
+    this.defaultPrevented = false;
     this._quenchImmediatePropagationStopped = false;
+  }
+  preventDefault() {
+    if (this.cancelable) this.defaultPrevented = true;
   }
   stopImmediatePropagation() {
     this._quenchImmediatePropagationStopped = true;
