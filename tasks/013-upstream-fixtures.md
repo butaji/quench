@@ -1544,6 +1544,9 @@ runtime code.
 Stage 545 formalized `URL.canParse()` validation and `URL.parse()` null-on-
 failure behavior; the existing URL surface already covered both statics.
 
+Stage 546 formalized the supported `v8` heap-statistics surface and explicit
+`ERR_V8_NOT_SUPPORTED` behavior for heap snapshots.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
