@@ -2116,3 +2116,5 @@ Stage 782 added process identity and umask method compatibility.
 Stage 783 added process credential helper method compatibility.
 
 Stage 784 added process uncaught exception capture state helpers.
+
+Stage 785 added process warning emission compatibility.
