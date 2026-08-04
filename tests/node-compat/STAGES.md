@@ -790,3 +790,4 @@ these small fixtures isolate the currently implemented contract.
 |   791 | process exposes ref and unref helpers                              | `tools/run-node-tests.sh --stage 791` |
 |   792 | process features expose Node capability flags                    | `tools/run-node-tests.sh --stage 792` |
 |   793 | process exposes configuration metadata                           | `tools/run-node-tests.sh --stage 793` |
+|   794 | process exposes diagnostic report object                         | `tools/run-node-tests.sh --stage 794` |
