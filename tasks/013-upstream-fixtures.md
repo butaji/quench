@@ -2661,3 +2661,7 @@ Stage 957 verifies the custom `nodejs.rejection` capture hook receives the
 original error, event name, and rejection context. Retrospective: testing the
 hook separately from the default `error` path prevents fallback behavior from
 masking missing symbol-based dispatch.
+
+Stage 958 verifies the static `EventEmitter.captureRejections` default is
+inherited by new instances. Retrospective: temporarily changing the static
+default and restoring it in the fixture avoids cross-test global-state leaks.
