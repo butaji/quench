@@ -2446,3 +2446,8 @@ Stage 913 verifies the node:process next-tick callback argument contract.
 
 Retrospective: upstream next-tick failures now distinguish callback validation
 from uncaught-exception event routing, keeping the next harness slice focused.
+
+Stage 914 verifies the node:process monotonic uptime API.
+
+Retrospective: upstream confirmation can close a stage without a polyfill
+change when the existing host timing primitive already matches Node behavior.
