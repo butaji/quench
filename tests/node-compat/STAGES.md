@@ -597,3 +597,4 @@ these small fixtures isolate the currently implemented contract.
 |   598 | process allowedNodeEnvironmentFlags exposes a Set contract               | `tools/run-node-tests.sh --stage 598` |
 |   599 | process execArgv exposes an empty runtime-argument array                 | `tools/run-node-tests.sh --stage 599` |
 |   600 | process argv0 identifies the Node-compatible runtime                    | `tools/run-node-tests.sh --stage 600` |
+|   601 | process features exposes a runtime capability object                   | `tools/run-node-tests.sh --stage 601` |
