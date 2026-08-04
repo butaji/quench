@@ -39,6 +39,7 @@ globalThis.EventTarget ||= class EventTarget {
 };
 globalThis.Event ||= class Event {
   constructor(type, options = {}) {
+    if (type === undefined) throw new TypeError("Event type is required");
     this.type = String(type);
     this.bubbles = Boolean(options.bubbles);
     this.cancelable = Boolean(options.cancelable);
