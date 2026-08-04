@@ -556,3 +556,4 @@ these small fixtures isolate the currently implemented contract.
 |   557 | node:test reporters reports an unknown builtin module              | `tools/run-node-tests.sh --stage 557` |
 |   558 | sqlite builtin reports an unknown module boundary                  | `tools/run-node-tests.sh --stage 558` |
 |   559 | cluster scheduling constants and primary-role flags are exposed     | `tools/run-node-tests.sh --stage 559` |
+|   560 | cluster workers report connected state across fork lifecycle       | `tools/run-node-tests.sh --stage 560` |
