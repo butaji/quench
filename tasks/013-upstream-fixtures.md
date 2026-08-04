@@ -2600,3 +2600,7 @@ keeps listener introspection progress independently verifiable.
 Stage 947 verifies synchronous `prependOnceListener()` ordering and one-shot
 removal. Retrospective: emitting twice confirms both priority and cleanup in a
 single deterministic fixture.
+
+Stage 948 verifies that `listeners()` exposes the original once callback while
+`rawListeners()` exposes its wrapper metadata. Retrospective: comparing both
+views makes wrapper normalization explicit without requiring asynchronous emit.

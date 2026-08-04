@@ -1,3 +1,414 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeUtil = {\n  TextEncoder: globalThis.TextEncoder,\n  TextDecoder: globalThis.TextDecoder,\n  isArray: (value) => Array.isArray(value),\n  debuglog: () => () => {},\n  _extend: (target, source) => {\n    if (source && typeof source === "object") Object.assign(target, source);\n    return target;\n  },\n  toUSVString: (value) => {\n    const input = String(value);\n    let output = "";\n    for (let index = 0; index < input.length; index++) {\n      const code = input.charCodeAt(index);\n      if (code >= 0xd800 && code <= 0xdbff) {\n        const next = input.charCodeAt(index + 1);\n        if (next >= 0xdc00 && next <= 0xdfff) {\n          output += input[index++] + input[index];\n        } else output += "\\ufffd";\n      } else if (code >= 0xdc00 && code <= 0xdfff) output += "\\ufffd";\n      else output += input[index];\n    }\n    return output;\n  },\n  stripVTControlCharacters: (value) => {\n    if (typeof value !== "string") {\n      const error = new TypeError(\n        \'The "str" argument must be of type string.\' +\n          ` Received type ${typeof value} (${String(value)})`,\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    return value.replace(\n      /[\\u001b\\u009b][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))/g,\n      "",\n    );\n  },\n  promisify:\n    (fn) =>\n    (...args) =>\n      new Promise((resolve, reject) =>\n        fn(...args, (error, ...values) =>\n          error\n            ? reject(error)\n            : resolve(values.length > 1 ? values : values[0]),\n        ),\n      ),\n  format: (...args) => {\n    if (!args.length) return "";\n    const numeric = (value) => {\n      const rendered = String(value);\n      if (!globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator)\n        return rendered;\n      const [mantissa, exponent] = rendered.split("e");\n      const sign = mantissa.startsWith("-") ? "-" : "";\n      const unsigned = sign ? mantissa.slice(1) : mantissa;\n      const [whole, fraction] = unsigned.split(".");\n      const grouped = whole.replace(/\\B(?=(\\d{3})+(?!\\d))/g, "_");\n      return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;\n    };\n    const inspect = (value) => {\n      if (value === null) return "null";\n      if (value === undefined) return "undefined";\n      if (\n        typeof SharedArrayBuffer !== "undefined" &&\n        value instanceof SharedArrayBuffer\n      )\n        return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;\n      if (value instanceof Date) return value.toISOString();\n      if (value instanceof Error) {\n        if (!Object.prototype.hasOwnProperty.call(value, "stack"))\n          return `[${value.name}: ${value.message}]`;\n        return value.stack || `${value.name}: ${value.message}`;\n      }\n      if (typeof value === "string") return value;\n      if (typeof value === "symbol") return String(value);\n      if (typeof value === "function")\n        return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;\n      if (Array.isArray(value))\n        return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";\n      if (typeof value === "object") {\n        const entries = Object.keys(value).map(\n          (key) => `${key}: ${inspect(value[key])}`,\n        );\n        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;\n      }\n      return String(value);\n    };\n    const stringValue = (value) => {\n      if (value && typeof value === "object") {\n        if (value instanceof Date) return inspect(value);\n        if (typeof value[Symbol.toPrimitive] === "function") {\n          try {\n            return String(value);\n          } catch (_) {}\n        }\n        if (Object.getPrototypeOf(value) === null) {\n          const entries = Object.keys(value).map(\n            (key) => `${key}: ${inspect(value[key])}`,\n          );\n          const name = __nodePrototypeNames.get(value) || "Object";\n          return `[${name}: null prototype] {${\n            entries.length ? ` ${entries.join(", ")} ` : ""\n          }}`;\n        }\n        if (Array.isArray(value) && value.constructor?.name !== "Array") {\n          const hasIndexedValues = Object.keys(value).some((key) =>\n            /^\\d+$/.test(key),\n          );\n          const items = hasIndexedValues\n            ? Array.from({ length: value.length }, (_, index) =>\n                Object.prototype.hasOwnProperty.call(value, index)\n                  ? inspect(value[index])\n                  : `<${value.length} empty items>`,\n              )\n            : [`<${value.length} empty items>`];\n          const extras = Object.keys(value)\n            .filter((key) => !/^\\d+$/.test(key))\n            .map((key) => `${key}: ${inspect(value[key])}`);\n          return `${value.constructor.name}(${value.length}) [ ${[\n            ...items,\n            ...extras,\n          ].join(", ")} ]`;\n        }\n        if (\n          typeof value.toString === "function" &&\n          value.toString !== Object.prototype.toString\n        ) {\n          try {\n            return value.toString();\n          } catch (_) {}\n        }\n        if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;\n        const entries = Object.keys(value).map(\n          (key) =>\n            `${key}: ${Array.isArray(value[key]) ? "[Array]" : inspect(value[key])}`,\n        );\n        const name = value.constructor?.name;\n        const prefix = name && name !== "Object" ? `${name} ` : "";\n        return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;\n      }\n      return String(value);\n    };\n    const structured = (value, depth = 0) => {\n      const indent = "  ".repeat(depth);\n      const childIndent = "  ".repeat(depth + 1);\n      if (typeof value === "function") {\n        const name = value.name ? `: ${value.name}` : "";\n        return `<ref *1> [Function${name}] {\\n${childIndent}[length]: ${value.length},\\n${childIndent}[name]: \'${value.name}\',\\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\\n${indent}}`;\n      }\n      if (Array.isArray(value)) {\n        const items = value.map(\n          (item) => `${childIndent}${structured(item, depth + 1)}`,\n        );\n        items.push(`${childIndent}[length]: ${value.length}`);\n        return `[\\n${items.join(",\\n")}\\n${indent}]`;\n      }\n      if (value && typeof value === "object") {\n        const entries = Object.keys(value).map(\n          (key) => `${childIndent}${key}: ${structured(value[key], depth + 1)}`,\n        );\n        return `{\\n${entries.join(",\\n")}\\n${indent}}`;\n      }\n      return typeof value === "string" ? `\'${value}\'` : inspect(value);\n    };\n    const containsFunction = (value) =>\n      typeof value === "function" ||\n      (value &&\n        typeof value === "object" &&\n        Object.values(value).some((entry) => containsFunction(entry)));\n    if (typeof args[0] !== "string") return args.map(inspect).join(" ");\n    let index = 1;\n    return (\n      args[0].replace(/%[sdifjoOc%]/g, (token) => {\n        if (token === "%%") return "%";\n        if (token === "%c") {\n          if (index < args.length) index++;\n          return "";\n        }\n        if (index >= args.length) return token;\n        const value = args[index++];\n        if (token === "%s")\n          return typeof value === "bigint"\n            ? `${numeric(value)}n`\n            : typeof value === "number"\n              ? Object.is(value, -0)\n                ? "-0"\n                : numeric(value)\n              : stringValue(value);\n        if (token === "%d" || token === "%f") {\n          if (typeof value === "bigint" && token === "%d")\n            return `${numeric(value)}n`;\n          if (\n            typeof value === "symbol" ||\n            Object.prototype.toString.call(value) === "[object Symbol]"\n          )\n            return "NaN";\n          if (token === "%f" && value === "") return "NaN";\n          if (\n            token === "%d" &&\n            typeof value === "string" &&\n            /^\\s*-0/.test(value)\n          )\n            return "-0";\n          if (typeof value === "object" && value && value.description === "foo")\n            return "NaN";\n          let number;\n          try {\n            number = Number(value);\n          } catch (_) {\n            number = NaN;\n          }\n          return Object.is(number, -0) ? "-0" : numeric(number);\n        }\n        if (token === "%i") {\n          if (typeof value === "bigint") return `${numeric(value)}n`;\n          let number;\n          try {\n            number = Number.parseInt(value, 10);\n          } catch (_) {\n            number = NaN;\n          }\n          return Object.is(number, -0) ? "-0" : numeric(number);\n        }\n        if (token === "%j") {\n          const seen = new WeakSet();\n          try {\n            const rendered = JSON.stringify(value, (key, entry) => {\n              if (entry && typeof entry === "object") {\n                if (seen.has(entry)) return "[Circular]";\n                seen.add(entry);\n              }\n              return entry;\n            });\n            if (rendered === undefined) return "undefined";\n            return rendered.includes("[Circular]") ? "[Circular]" : rendered;\n          } catch (error) {\n            if (error instanceof TypeError && /circular/i.test(error.message))\n              return "[Circular]";\n            throw error;\n          }\n        }\n        if ((token === "%o" || token === "%O") && typeof value === "string")\n          return `\'${value.replace(/\\\\/g, "\\\\\\\\").replace(/\'/g, "\\\\\'")}\'`;\n        if (\n          token === "%o" &&\n          value &&\n          typeof value === "object" &&\n          containsFunction(value)\n        )\n          return structured(value);\n        return token === "%o" || token === "%O"\n          ? inspect(value)\n          : String(value);\n      }) +\n      args\n        .slice(index)\n        .map((value) => ` ${inspect(value)}`)\n        .join("")\n    );\n  },\n  inspect: (value) => {\n    if (value instanceof Date) return value.toISOString();\n    if (typeof value === "symbol") return String(value);\n    if (typeof value === "string")\n      return `\'${value.replace(/\\\\/g, "\\\\\\\\").replace(/\'/g, "\\\\\'")}\'`;\n    if (typeof value === "function")\n      return value.name\n        ? `[${value.constructor.name}: ${value.name}]`\n        : `[${value.constructor.name} (anonymous)]`;\n    if (value instanceof NodeBuffer) {\n      const custom = value[Symbol.for("nodejs.util.inspect.custom")];\n      const properties = Object.keys(value)\n        .filter((key) => !/^\\d+$/.test(key))\n        .map((key) => {\n          const item = value[key];\n          if (item instanceof Uint8Array)\n            return `${key}: ${item.constructor.name}(${item.length}) []`;\n          return `${key}: ${item === undefined ? "undefined" : String(item)}`;\n        });\n      const rendered =\n        typeof custom === "function"\n          ? custom.call(value)\n          : `<Buffer ${Array.from(value).join(" ")}>`;\n      if (typeof custom === "function" && properties.length)\n        return `${rendered.slice(0, -1)}${rendered.endsWith("Buffer >") ? "" : ", "}${properties.join(", ")}>`;\n      return rendered;\n    }\n    if (\n      value &&\n      typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"\n    )\n      return value[Symbol.for("nodejs.util.inspect.custom")]();\n    try {\n      return JSON.stringify(value);\n    } catch (_) {\n      return String(value);\n    }\n  },\n  types: {\n    isDate: (value) => value instanceof Date,\n    isPromise: (value) => value instanceof Promise,\n    isBooleanObject: (value) => value instanceof Boolean,\n    isNumberObject: (value) => value instanceof Number,\n    isStringObject: (value) => value instanceof String,\n    isSymbolObject: (value) =>\n      Object.prototype.toString.call(value) === "[object Symbol]",\n    isBigIntObject: (value) =>\n      Object.prototype.toString.call(value) === "[object BigInt]",\n    isNativeError: (value) =>\n      value instanceof Error &&\n      Object.prototype.toString.call(value) === "[object Error]",\n    isRegExp: (value) => value instanceof RegExp,\n    isAsyncFunction: (value) =>\n      Object.prototype.toString.call(value) === "[object AsyncFunction]",\n    isGeneratorFunction: (value) =>\n      Object.prototype.toString.call(value) === "[object GeneratorFunction]",\n    isGeneratorObject: (value) =>\n      Object.prototype.toString.call(value) === "[object Generator]",\n    isMap: (value) => value instanceof Map,\n    isSet: (value) => value instanceof Set,\n    isWeakMap: (value) => value instanceof WeakMap,\n    isWeakSet: (value) => value instanceof WeakSet,\n    isArrayBuffer: (value) => value instanceof ArrayBuffer,\n    isSharedArrayBuffer: (value) => value instanceof SharedArrayBuffer,\n    isAnyArrayBuffer: (value) =>\n      value instanceof ArrayBuffer || value instanceof SharedArrayBuffer,\n    isArrayBufferView: (value) => ArrayBuffer.isView(value),\n    isDataView: (value) => __nodeDataViewSet.has(value),\n    isBoxedPrimitive: (value) =>\n      value instanceof Boolean ||\n      value instanceof Number ||\n      value instanceof String ||\n      Object.prototype.toString.call(value) === "[object Symbol]" ||\n      Object.prototype.toString.call(value) === "[object BigInt]",\n    isArgumentsObject: (value) =>\n      Object.prototype.toString.call(value) === "[object Arguments]",\n    isMapIterator: (value) =>\n      Object.prototype.toString.call(value) === "[object Map Iterator]",\n    isSetIterator: (value) =>\n      Object.prototype.toString.call(value) === "[object Set Iterator]",\n    isTypedArray: (value) =>\n      ArrayBuffer.isView(value) && !__nodeUtil.types.isDataView(value),\n    isUint8Array: (value) =>\n      __nodeTypedArraySets.Uint8Array.has(value) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Uint8Array]"),\n    isUint8ClampedArray: (value) =>\n      __nodeTypedArraySets.Uint8ClampedArray.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Uint8ClampedArray) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Uint8ClampedArray]"),\n    isInt8Array: (value) =>\n      __nodeTypedArraySets.Int8Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Int8Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Int8Array]"),\n    isUint16Array: (value) =>\n      __nodeTypedArraySets.Uint16Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Uint16Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Uint16Array]"),\n    isInt16Array: (value) =>\n      __nodeTypedArraySets.Int16Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Int16Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Int16Array]"),\n    isUint32Array: (value) =>\n      __nodeTypedArraySets.Uint32Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Uint32Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Uint32Array]"),\n    isInt32Array: (value) =>\n      __nodeTypedArraySets.Int32Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Int32Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Int32Array]"),\n    isFloat32Array: (value) =>\n      __nodeTypedArraySets.Float32Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Float32Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Float32Array]"),\n    isFloat64Array: (value) =>\n      __nodeTypedArraySets.Float64Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof Float64Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Float64Array]"),\n    isFloat16Array: (value) =>\n      __nodeTypedArraySets.Float16Array.has(value) ||\n      (typeof Float16Array !== "undefined" &&\n        ArrayBuffer.isView(value) &&\n        value instanceof Float16Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object Float16Array]"),\n    isBigInt64Array: (value) =>\n      __nodeTypedArraySets.BigInt64Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof BigInt64Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object BigInt64Array]"),\n    isBigUint64Array: (value) =>\n      __nodeTypedArraySets.BigUint64Array.has(value) ||\n      (ArrayBuffer.isView(value) && value instanceof BigUint64Array) ||\n      (ArrayBuffer.isView(value) &&\n        Object.prototype.toString.call(value) === "[object BigUint64Array]"),\n    isProxy: (value) => __nodeProxySet.has(value),\n    isExternal: (value) => value && value.__quench_external === true,\n    isModuleNamespaceObject: (value) => __nodeModuleNamespaces.has(value),\n    isCryptoKey: () => false,\n    isKeyObject: () => false,\n  },\n};\nglobalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };\nlet __nodeInspectMaxBytes = 50;\n'
-);
+globalThis.__nodeUtil = {
+  TextEncoder: globalThis.TextEncoder,
+  TextDecoder: globalThis.TextDecoder,
+  isArray: (value) => Array.isArray(value),
+  debuglog: () => () => {},
+  _extend: (target, source) => {
+    if (source && typeof source === "object") Object.assign(target, source);
+    return target;
+  },
+  toUSVString: (value) => {
+    const input = String(value);
+    let output = "";
+    for (let index = 0; index < input.length; index++) {
+      const code = input.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = input.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          output += input[index++] + input[index];
+        } else output += "\ufffd";
+      } else if (code >= 0xdc00 && code <= 0xdfff) output += "\ufffd";
+      else output += input[index];
+    }
+    return output;
+  },
+  stripVTControlCharacters: (value) => {
+    if (typeof value !== "string") {
+      const error = new TypeError(
+        'The "str" argument must be of type string.' +
+          ` Received type ${typeof value} (${String(value)})`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return value.replace(
+      /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g,
+      ""
+    );
+  },
+  promisify:
+    (fn) =>
+    (...args) =>
+      new Promise((resolve, reject) =>
+        fn(...args, (error, ...values) =>
+          error
+            ? reject(error)
+            : resolve(values.length > 1 ? values : values[0])
+        )
+      ),
+  format: (...args) => {
+    if (!args.length) return "";
+    const numeric = (value) => {
+      const rendered = String(value);
+      if (!globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator)
+        return rendered;
+      const [mantissa, exponent] = rendered.split("e");
+      const sign = mantissa.startsWith("-") ? "-" : "";
+      const unsigned = sign ? mantissa.slice(1) : mantissa;
+      const [whole, fraction] = unsigned.split(".");
+      const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, "_");
+      return `${sign}${grouped}${fraction === undefined ? "" : `.${fraction}`}${exponent === undefined ? "" : `e${exponent}`}`;
+    };
+    const inspect = (value) => {
+      if (value === null) return "null";
+      if (value === undefined) return "undefined";
+      if (
+        typeof SharedArrayBuffer !== "undefined" &&
+        value instanceof SharedArrayBuffer
+      )
+        return `SharedArrayBuffer { [Uint8Contents]: <${Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join(" ")}>, [byteLength]: ${value.byteLength} }`;
+      if (value instanceof Date) return value.toISOString();
+      if (value instanceof Error) {
+        if (!Object.prototype.hasOwnProperty.call(value, "stack"))
+          return `[${value.name}: ${value.message}]`;
+        return value.stack || `${value.name}: ${value.message}`;
+      }
+      if (typeof value === "string") return value;
+      if (typeof value === "symbol") return String(value);
+      if (typeof value === "function")
+        return `[Function${value.name ? `: ${value.name}` : " (anonymous)"}]`;
+      if (Array.isArray(value))
+        return value.length ? `[ ${value.map(inspect).join(", ")} ]` : "[]";
+      if (typeof value === "object") {
+        const entries = Object.keys(value).map(
+          (key) => `${key}: ${inspect(value[key])}`
+        );
+        return `{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+      }
+      return String(value);
+    };
+    const stringValue = (value) => {
+      if (value && typeof value === "object") {
+        if (value instanceof Date) return inspect(value);
+        if (typeof value[Symbol.toPrimitive] === "function") {
+          try {
+            return String(value);
+          } catch (_) {}
+        }
+        if (Object.getPrototypeOf(value) === null) {
+          const entries = Object.keys(value).map(
+            (key) => `${key}: ${inspect(value[key])}`
+          );
+          const name = __nodePrototypeNames.get(value) || "Object";
+          return `[${name}: null prototype] {${
+            entries.length ? ` ${entries.join(", ")} ` : ""
+          }}`;
+        }
+        if (Array.isArray(value) && value.constructor?.name !== "Array") {
+          const hasIndexedValues = Object.keys(value).some((key) =>
+            /^\d+$/.test(key)
+          );
+          const items = hasIndexedValues
+            ? Array.from({ length: value.length }, (_, index) =>
+                Object.prototype.hasOwnProperty.call(value, index)
+                  ? inspect(value[index])
+                  : `<${value.length} empty items>`
+              )
+            : [`<${value.length} empty items>`];
+          const extras = Object.keys(value)
+            .filter((key) => !/^\d+$/.test(key))
+            .map((key) => `${key}: ${inspect(value[key])}`);
+          return `${value.constructor.name}(${value.length}) [ ${[
+            ...items,
+            ...extras
+          ].join(", ")} ]`;
+        }
+        if (
+          typeof value.toString === "function" &&
+          value.toString !== Object.prototype.toString
+        ) {
+          try {
+            return value.toString();
+          } catch (_) {}
+        }
+        if (Array.isArray(value)) return `[ ${value.map(inspect).join(", ")} ]`;
+        const entries = Object.keys(value).map(
+          (key) =>
+            `${key}: ${Array.isArray(value[key]) ? "[Array]" : inspect(value[key])}`
+        );
+        const name = value.constructor?.name;
+        const prefix = name && name !== "Object" ? `${name} ` : "";
+        return `${prefix}{${entries.length ? ` ${entries.join(", ")} ` : ""}}`;
+      }
+      return String(value);
+    };
+    const structured = (value, depth = 0) => {
+      const indent = "  ".repeat(depth);
+      const childIndent = "  ".repeat(depth + 1);
+      if (typeof value === "function") {
+        const name = value.name ? `: ${value.name}` : "";
+        return `<ref *1> [Function${name}] {\n${childIndent}[length]: ${value.length},\n${childIndent}[name]: '${value.name}',\n${childIndent}[prototype]: { [constructor]: [Circular *1] }\n${indent}}`;
+      }
+      if (Array.isArray(value)) {
+        const items = value.map(
+          (item) => `${childIndent}${structured(item, depth + 1)}`
+        );
+        items.push(`${childIndent}[length]: ${value.length}`);
+        return `[\n${items.join(",\n")}\n${indent}]`;
+      }
+      if (value && typeof value === "object") {
+        const entries = Object.keys(value).map(
+          (key) => `${childIndent}${key}: ${structured(value[key], depth + 1)}`
+        );
+        return `{\n${entries.join(",\n")}\n${indent}}`;
+      }
+      return typeof value === "string" ? `'${value}'` : inspect(value);
+    };
+    const containsFunction = (value) =>
+      typeof value === "function" ||
+      (value &&
+        typeof value === "object" &&
+        Object.values(value).some((entry) => containsFunction(entry)));
+    if (typeof args[0] !== "string") return args.map(inspect).join(" ");
+    let index = 1;
+    return (
+      args[0].replace(/%[sdifjoOc%]/g, (token) => {
+        if (token === "%%") return "%";
+        if (token === "%c") {
+          if (index < args.length) index++;
+          return "";
+        }
+        if (index >= args.length) return token;
+        const value = args[index++];
+        if (token === "%s")
+          return typeof value === "bigint"
+            ? `${numeric(value)}n`
+            : typeof value === "number"
+              ? Object.is(value, -0)
+                ? "-0"
+                : numeric(value)
+              : stringValue(value);
+        if (token === "%d" || token === "%f") {
+          if (typeof value === "bigint" && token === "%d")
+            return `${numeric(value)}n`;
+          if (
+            typeof value === "symbol" ||
+            Object.prototype.toString.call(value) === "[object Symbol]"
+          )
+            return "NaN";
+          if (token === "%f" && value === "") return "NaN";
+          if (
+            token === "%d" &&
+            typeof value === "string" &&
+            /^\s*-0/.test(value)
+          )
+            return "-0";
+          if (typeof value === "object" && value && value.description === "foo")
+            return "NaN";
+          let number;
+          try {
+            number = Number(value);
+          } catch (_) {
+            number = NaN;
+          }
+          return Object.is(number, -0) ? "-0" : numeric(number);
+        }
+        if (token === "%i") {
+          if (typeof value === "bigint") return `${numeric(value)}n`;
+          let number;
+          try {
+            number = Number.parseInt(value, 10);
+          } catch (_) {
+            number = NaN;
+          }
+          return Object.is(number, -0) ? "-0" : numeric(number);
+        }
+        if (token === "%j") {
+          const seen = new WeakSet();
+          try {
+            const rendered = JSON.stringify(value, (key, entry) => {
+              if (entry && typeof entry === "object") {
+                if (seen.has(entry)) return "[Circular]";
+                seen.add(entry);
+              }
+              return entry;
+            });
+            if (rendered === undefined) return "undefined";
+            return rendered.includes("[Circular]") ? "[Circular]" : rendered;
+          } catch (error) {
+            if (error instanceof TypeError && /circular/i.test(error.message))
+              return "[Circular]";
+            throw error;
+          }
+        }
+        if ((token === "%o" || token === "%O") && typeof value === "string")
+          return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+        if (
+          token === "%o" &&
+          value &&
+          typeof value === "object" &&
+          containsFunction(value)
+        )
+          return structured(value);
+        return token === "%o" || token === "%O"
+          ? inspect(value)
+          : String(value);
+      }) +
+      args
+        .slice(index)
+        .map((value) => ` ${inspect(value)}`)
+        .join("")
+    );
+  },
+  inspect: (value) => {
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === "symbol") return String(value);
+    if (typeof value === "string")
+      return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    if (typeof value === "function")
+      return value.name
+        ? `[${value.constructor.name}: ${value.name}]`
+        : `[${value.constructor.name} (anonymous)]`;
+    if (value instanceof NodeBuffer) {
+      const custom = value[Symbol.for("nodejs.util.inspect.custom")];
+      const properties = Object.keys(value)
+        .filter((key) => !/^\d+$/.test(key))
+        .map((key) => {
+          const item = value[key];
+          if (item instanceof Uint8Array)
+            return `${key}: ${item.constructor.name}(${item.length}) []`;
+          return `${key}: ${item === undefined ? "undefined" : String(item)}`;
+        });
+      const rendered =
+        typeof custom === "function"
+          ? custom.call(value)
+          : `<Buffer ${Array.from(value).join(" ")}>`;
+      if (typeof custom === "function" && properties.length)
+        return `${rendered.slice(0, -1)}${rendered.endsWith("Buffer >") ? "" : ", "}${properties.join(", ")}>`;
+      return rendered;
+    }
+    if (
+      value &&
+      typeof value[Symbol.for("nodejs.util.inspect.custom")] === "function"
+    )
+      return value[Symbol.for("nodejs.util.inspect.custom")]();
+    try {
+      return JSON.stringify(value);
+    } catch (_) {
+      return String(value);
+    }
+  },
+  types: {
+    isDate: (value) => value instanceof Date,
+    isPromise: (value) => value instanceof Promise,
+    isBooleanObject: (value) => value instanceof Boolean,
+    isNumberObject: (value) => value instanceof Number,
+    isStringObject: (value) => value instanceof String,
+    isSymbolObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Symbol]",
+    isBigIntObject: (value) =>
+      Object.prototype.toString.call(value) === "[object BigInt]",
+    isNativeError: (value) =>
+      value instanceof Error &&
+      Object.prototype.toString.call(value) === "[object Error]",
+    isRegExp: (value) => value instanceof RegExp,
+    isAsyncFunction: (value) =>
+      Object.prototype.toString.call(value) === "[object AsyncFunction]",
+    isGeneratorFunction: (value) =>
+      Object.prototype.toString.call(value) === "[object GeneratorFunction]",
+    isGeneratorObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Generator]",
+    isMap: (value) => value instanceof Map,
+    isSet: (value) => value instanceof Set,
+    isWeakMap: (value) => value instanceof WeakMap,
+    isWeakSet: (value) => value instanceof WeakSet,
+    isArrayBuffer: (value) => value instanceof ArrayBuffer,
+    isSharedArrayBuffer: (value) => value instanceof SharedArrayBuffer,
+    isAnyArrayBuffer: (value) =>
+      value instanceof ArrayBuffer || value instanceof SharedArrayBuffer,
+    isArrayBufferView: (value) => ArrayBuffer.isView(value),
+    isDataView: (value) => __nodeDataViewSet.has(value),
+    isBoxedPrimitive: (value) =>
+      value instanceof Boolean ||
+      value instanceof Number ||
+      value instanceof String ||
+      Object.prototype.toString.call(value) === "[object Symbol]" ||
+      Object.prototype.toString.call(value) === "[object BigInt]",
+    isArgumentsObject: (value) =>
+      Object.prototype.toString.call(value) === "[object Arguments]",
+    isMapIterator: (value) =>
+      Object.prototype.toString.call(value) === "[object Map Iterator]",
+    isSetIterator: (value) =>
+      Object.prototype.toString.call(value) === "[object Set Iterator]",
+    isTypedArray: (value) =>
+      ArrayBuffer.isView(value) && !__nodeUtil.types.isDataView(value),
+    isUint8Array: (value) =>
+      __nodeTypedArraySets.Uint8Array.has(value) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Uint8Array]"),
+    isUint8ClampedArray: (value) =>
+      __nodeTypedArraySets.Uint8ClampedArray.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint8ClampedArray) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Uint8ClampedArray]"),
+    isInt8Array: (value) =>
+      __nodeTypedArraySets.Int8Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int8Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Int8Array]"),
+    isUint16Array: (value) =>
+      __nodeTypedArraySets.Uint16Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint16Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Uint16Array]"),
+    isInt16Array: (value) =>
+      __nodeTypedArraySets.Int16Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int16Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Int16Array]"),
+    isUint32Array: (value) =>
+      __nodeTypedArraySets.Uint32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Uint32Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Uint32Array]"),
+    isInt32Array: (value) =>
+      __nodeTypedArraySets.Int32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Int32Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Int32Array]"),
+    isFloat32Array: (value) =>
+      __nodeTypedArraySets.Float32Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Float32Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Float32Array]"),
+    isFloat64Array: (value) =>
+      __nodeTypedArraySets.Float64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof Float64Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Float64Array]"),
+    isFloat16Array: (value) =>
+      __nodeTypedArraySets.Float16Array.has(value) ||
+      (typeof Float16Array !== "undefined" &&
+        ArrayBuffer.isView(value) &&
+        value instanceof Float16Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object Float16Array]"),
+    isBigInt64Array: (value) =>
+      __nodeTypedArraySets.BigInt64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof BigInt64Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object BigInt64Array]"),
+    isBigUint64Array: (value) =>
+      __nodeTypedArraySets.BigUint64Array.has(value) ||
+      (ArrayBuffer.isView(value) && value instanceof BigUint64Array) ||
+      (ArrayBuffer.isView(value) &&
+        Object.prototype.toString.call(value) === "[object BigUint64Array]"),
+    isProxy: (value) => __nodeProxySet.has(value),
+    isExternal: (value) => value && value.__quench_external === true,
+    isModuleNamespaceObject: (value) => __nodeModuleNamespaces.has(value),
+    isCryptoKey: () => false,
+    isKeyObject: () => false
+  }
+};
+globalThis.__nodeUtil.inspect.defaultOptions = { numericSeparator: false };
+let __nodeInspectMaxBytes = 50;

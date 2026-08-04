@@ -1,3 +1,454 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeFs.link = (existing, link, callback) => {\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (\n    (typeof existing !== "string" && !(existing instanceof Uint8Array)) ||\n    (typeof link !== "string" && !(link instanceof Uint8Array))\n  ) {\n    const error = new TypeError(\n      \'The "path" argument must be of type string or an instance of Buffer or URL\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.linkSync(existing, link);\n      callback(null);\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.__nodeFs.chmod = (value, mode, callback) => {\n  if (typeof mode === "function") {\n    callback = mode;\n    mode = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.chmodSync(path, mode);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.appendFile = (value, data, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (\n    typeof data !== "string" &&\n    !(data instanceof NodeBuffer) &&\n    !(data instanceof Uint8Array)\n  ) {\n    const error = new TypeError(\n      \'The "data" argument must be of type string or an instance of Buffer\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.appendFileSync(value, data, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.rmdir = (value, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.rmdirSync(path);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.rm = (value, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.rmSync(path, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.rename = (from, to, callback) => {\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const source = nodeFsPath(from);\n  const destination = nodeFsPath(to);\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.renameSync(source, destination);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.copyFile = (from, to, mode, callback) => {\n  if (typeof mode === "function") {\n    callback = mode;\n    mode = 0;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const source = nodeFsPath(from);\n  const destination = nodeFsPath(to);\n  if (typeof mode !== "number") {\n    const error = new TypeError(\'The "mode" argument must be of type number\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.copyFileSync(source, destination, mode);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null);\n  });\n};\nglobalThis.__nodeFs.realpath = (value, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    let result;\n    try {\n      result = globalThis.__nodeFs.realpathSync(path, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, result);\n  });\n};\nglobalThis.__nodeFs.realpathSync.native = globalThis.__nodeFs.realpathSync;\nglobalThis.__nodeFs.realpath.native = globalThis.__nodeFs.realpath;\nglobalThis.__nodeStats = function Stats(\n  file = false,\n  directory = false,\n  date = new Date(),\n) {\n  if (!(date instanceof Date)) date = new Date(Number(date) || 0);\n  this.dev = 0;\n  this.mode = 0;\n  this.nlink = 1;\n  this.uid = 0;\n  this.gid = 0;\n  this.rdev = 0;\n  this.blksize = 4096;\n  this.ino = 0;\n  this.size = 0;\n  this.blocks = 0;\n  this.atime = date;\n  this.mtime = date;\n  this.ctime = date;\n  this.birthtime = date;\n  this.atimeMs = date.getTime();\n  this.mtimeMs = date.getTime();\n  this.ctimeMs = date.getTime();\n  this.birthtimeMs = date.getTime();\n  this._file = file;\n  this._directory = directory;\n};\nglobalThis.__nodeStats.prototype.isFile = function () {\n  return this._file;\n};\nglobalThis.__nodeStats.prototype.isDirectory = function () {\n  return this._directory;\n};\nglobalThis.__nodeStats.prototype.isSocket = function () {\n  return false;\n};\nglobalThis.__nodeStats.prototype.isBlockDevice = function () {\n  return false;\n};\nglobalThis.__nodeStats.prototype.isCharacterDevice = function () {\n  return false;\n};\nglobalThis.__nodeStats.prototype.isFIFO = function () {\n  return false;\n};\nglobalThis.__nodeStats.prototype.isSymbolicLink = function () {\n  return this._symlink === true;\n};\nglobalThis.__nodeFs.Dirent = class Dirent {\n  constructor(name, type = 1) {\n    this.name = name;\n    this._type = type === true ? 2 : type === false ? 1 : type;\n  }\n  isFile() {\n    return this._type === 1;\n  }\n  isDirectory() {\n    return this._type === 2;\n  }\n  isSymbolicLink() {\n    return this._type === 3;\n  }\n  isFIFO() {\n    return this._type === 4;\n  }\n  isSocket() {\n    return this._type === 5;\n  }\n  isCharacterDevice() {\n    return this._type === 6;\n  }\n  isBlockDevice() {\n    return this._type === 7;\n  }\n};\nglobalThis.__nodeFs.Dir = class Dir {\n  constructor(path) {\n    this.path = path;\n    this._entries = globalThis.__nodeFs.readdirSync(path, {\n      withFileTypes: true,\n    });\n    this._index = 0;\n    this._closed = false;\n  }\n  readSync() {\n    if (this._closed) {\n      const error = new Error("Directory handle was closed");\n      error.code = "ERR_DIR_CLOSED";\n      throw error;\n    }\n    return this._entries[this._index++] || null;\n  }\n  closeSync() {\n    if (this._closed) {\n      const error = new Error("Directory handle was closed");\n      error.code = "ERR_DIR_CLOSED";\n      throw error;\n    }\n    this._closed = true;\n  }\n  read(callback) {\n    if (typeof callback !== "function")\n      throw new TypeError(\'The "callback" argument must be of type function\');\n    queueMicrotask(() => {\n      try {\n        callback(null, this.readSync());\n      } catch (error) {\n        callback(error);\n      }\n    });\n  }\n  close(callback) {\n    if (typeof callback !== "function")\n      throw new TypeError(\'The "callback" argument must be of type function\');\n    queueMicrotask(() => {\n      try {\n        this.closeSync();\n        callback(null);\n      } catch (error) {\n        callback(error);\n      }\n    });\n  }\n};\nglobalThis.__nodeFs.opendirSync = (value) =>\n  new globalThis.__nodeFs.Dir(nodeFsPath(value));\nglobalThis.__nodeFs.opendir = (value, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      callback(null, new globalThis.__nodeFs.Dir(path));\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.__nodeFs.lstatSync = (value) => {\n  const path = nodeFsPath(value);\n  const kind = globalThis.__quench_fs_link_kind(path);\n  const stats = new globalThis.__nodeStats(\n    kind === "file",\n    kind === "directory",\n    new Date(),\n  );\n  stats._symlink = kind === "symlink";\n  stats.mode = globalThis.__nodeModes[path] || 0;\n  return stats;\n};\nglobalThis.__nodeFs.stat = (value, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    let result;\n    try {\n      result = globalThis.__nodeFs.statSync(path, options);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, result);\n  });\n};\nglobalThis.__nodeFs.lstat = (value, options, callback) => {\n  if (typeof options === "function") {\n    callback = options;\n    options = undefined;\n  }\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  const path = nodeFsPath(value);\n  queueMicrotask(() => {\n    try {\n      callback(null, globalThis.__nodeFs.lstatSync(path));\n    } catch (error) {\n      callback(error);\n      return;\n    }\n  });\n};\nglobalThis.__nodeFs.fstatSync = (fd) => {\n  if (typeof fd !== "number") {\n    const error = new TypeError(\'The "fd" argument must be of type number\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  return globalThis.__nodeFs.statSync(globalThis.__nodeFdPaths[fd] || ".");\n};\nglobalThis.__nodeFs.fstat = (fd, options, callback) => {\n  if (typeof options === "function") callback = options;\n  if (typeof callback !== "function")\n    throw new TypeError(\'The "callback" argument must be of type function\');\n  if (typeof fd !== "number") {\n    const error = new TypeError(\'The "fd" argument must be of type number\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    let result;\n    try {\n      result = globalThis.__nodeFs.fstatSync(fd);\n    } catch (error) {\n      callback(error);\n      return;\n    }\n    callback(null, result);\n  });\n};\nglobalThis.__nodeFs.Stats = globalThis.__nodeStats;\nglobalThis.__nodeFs.close = (fd, callback) => {\n  if (typeof fd !== "number") {\n    const error = new TypeError(\'The "fd" argument must be of type number\');\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  if (typeof callback !== "function") {\n    const error = new TypeError(\n      \'The "callback" argument must be of type function\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  queueMicrotask(() => {\n    try {\n      globalThis.__nodeFs.closeSync(fd);\n      callback(null);\n    } catch (error) {\n      callback(error);\n    }\n  });\n};\nglobalThis.__nodeFs.createWriteStream = (value, options = {}) => {\n  const stream = new NodeWritable(options);\n  const path = nodeFsPath(value);\n  const chunks = [];\n  stream.path = path;\n  stream.fd = null;\n  stream.bytesWritten = 0;\n  stream.write = (chunk) => {\n    const bytes =\n      typeof chunk === "string"\n        ? NodeBuffer.from(chunk, options.encoding || "utf8")\n        : NodeBuffer.from(chunk);\n    chunks.push(bytes);\n    stream.bytesWritten += bytes.byteLength;\n    return true;\n  };\n  stream.end = (chunk, encoding, callback) => {\n    if (typeof encoding === "function") {\n      callback = encoding;\n      encoding = undefined;\n    }\n    if (chunk !== undefined) stream.write(chunk, encoding);\n    queueMicrotask(() => {\n      try {\n        stream.fd = globalThis.__nodeFs.openSync(path, "w");\n        stream.emit("open", stream.fd);\n        const data = NodeBuffer.concat(chunks);\n        if (String(options.flags || "w").startsWith("a"))\n          globalThis.__nodeFs.appendFileSync(path, data);\n        else globalThis.__nodeFs.writeFileSync(path, data);\n        stream.emit("finish");\n        if (callback) callback();\n        if (options.autoClose !== false) {\n          globalThis.__nodeFs.closeSync(stream.fd);\n          stream.fd = null;\n        }\n        stream.emit("close");\n      } catch (error) {\n        stream.emit("error", error);\n      }\n    });\n    return stream;\n  };\n  return stream;\n};\n'
-);
+globalThis.__nodeFs.link = (existing, link, callback) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (
+    (typeof existing !== "string" && !(existing instanceof Uint8Array)) ||
+    (typeof link !== "string" && !(link instanceof Uint8Array))
+  ) {
+    const error = new TypeError(
+      'The "path" argument must be of type string or an instance of Buffer or URL'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.linkSync(existing, link);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+globalThis.__nodeFs.chmod = (value, mode, callback) => {
+  if (typeof mode === "function") {
+    callback = mode;
+    mode = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.chmodSync(path, mode);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.appendFile = (value, data, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (
+    typeof data !== "string" &&
+    !(data instanceof NodeBuffer) &&
+    !(data instanceof Uint8Array)
+  ) {
+    const error = new TypeError(
+      'The "data" argument must be of type string or an instance of Buffer'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.appendFileSync(value, data, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.rmdir = (value, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.rmdirSync(path);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.rm = (value, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.rmSync(path, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.rename = (from, to, callback) => {
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const source = nodeFsPath(from);
+  const destination = nodeFsPath(to);
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.renameSync(source, destination);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.copyFile = (from, to, mode, callback) => {
+  if (typeof mode === "function") {
+    callback = mode;
+    mode = 0;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const source = nodeFsPath(from);
+  const destination = nodeFsPath(to);
+  if (typeof mode !== "number") {
+    const error = new TypeError('The "mode" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.copyFileSync(source, destination, mode);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null);
+  });
+};
+globalThis.__nodeFs.realpath = (value, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    let result;
+    try {
+      result = globalThis.__nodeFs.realpathSync(path, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, result);
+  });
+};
+globalThis.__nodeFs.realpathSync.native = globalThis.__nodeFs.realpathSync;
+globalThis.__nodeFs.realpath.native = globalThis.__nodeFs.realpath;
+globalThis.__nodeStats = function Stats(
+  file = false,
+  directory = false,
+  date = new Date()
+) {
+  if (!(date instanceof Date)) date = new Date(Number(date) || 0);
+  this.dev = 0;
+  this.mode = 0;
+  this.nlink = 1;
+  this.uid = 0;
+  this.gid = 0;
+  this.rdev = 0;
+  this.blksize = 4096;
+  this.ino = 0;
+  this.size = 0;
+  this.blocks = 0;
+  this.atime = date;
+  this.mtime = date;
+  this.ctime = date;
+  this.birthtime = date;
+  this.atimeMs = date.getTime();
+  this.mtimeMs = date.getTime();
+  this.ctimeMs = date.getTime();
+  this.birthtimeMs = date.getTime();
+  this._file = file;
+  this._directory = directory;
+};
+globalThis.__nodeStats.prototype.isFile = function () {
+  return this._file;
+};
+globalThis.__nodeStats.prototype.isDirectory = function () {
+  return this._directory;
+};
+globalThis.__nodeStats.prototype.isSocket = function () {
+  return false;
+};
+globalThis.__nodeStats.prototype.isBlockDevice = function () {
+  return false;
+};
+globalThis.__nodeStats.prototype.isCharacterDevice = function () {
+  return false;
+};
+globalThis.__nodeStats.prototype.isFIFO = function () {
+  return false;
+};
+globalThis.__nodeStats.prototype.isSymbolicLink = function () {
+  return this._symlink === true;
+};
+globalThis.__nodeFs.Dirent = class Dirent {
+  constructor(name, type = 1) {
+    this.name = name;
+    this._type = type === true ? 2 : type === false ? 1 : type;
+  }
+  isFile() {
+    return this._type === 1;
+  }
+  isDirectory() {
+    return this._type === 2;
+  }
+  isSymbolicLink() {
+    return this._type === 3;
+  }
+  isFIFO() {
+    return this._type === 4;
+  }
+  isSocket() {
+    return this._type === 5;
+  }
+  isCharacterDevice() {
+    return this._type === 6;
+  }
+  isBlockDevice() {
+    return this._type === 7;
+  }
+};
+globalThis.__nodeFs.Dir = class Dir {
+  constructor(path) {
+    this.path = path;
+    this._entries = globalThis.__nodeFs.readdirSync(path, {
+      withFileTypes: true
+    });
+    this._index = 0;
+    this._closed = false;
+  }
+  readSync() {
+    if (this._closed) {
+      const error = new Error("Directory handle was closed");
+      error.code = "ERR_DIR_CLOSED";
+      throw error;
+    }
+    return this._entries[this._index++] || null;
+  }
+  closeSync() {
+    if (this._closed) {
+      const error = new Error("Directory handle was closed");
+      error.code = "ERR_DIR_CLOSED";
+      throw error;
+    }
+    this._closed = true;
+  }
+  read(callback) {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    queueMicrotask(() => {
+      try {
+        callback(null, this.readSync());
+      } catch (error) {
+        callback(error);
+      }
+    });
+  }
+  close(callback) {
+    if (typeof callback !== "function")
+      throw new TypeError('The "callback" argument must be of type function');
+    queueMicrotask(() => {
+      try {
+        this.closeSync();
+        callback(null);
+      } catch (error) {
+        callback(error);
+      }
+    });
+  }
+};
+globalThis.__nodeFs.opendirSync = (value) =>
+  new globalThis.__nodeFs.Dir(nodeFsPath(value));
+globalThis.__nodeFs.opendir = (value, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      callback(null, new globalThis.__nodeFs.Dir(path));
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+globalThis.__nodeFs.lstatSync = (value) => {
+  const path = nodeFsPath(value);
+  const kind = globalThis.__quench_fs_link_kind(path);
+  const stats = new globalThis.__nodeStats(
+    kind === "file",
+    kind === "directory",
+    new Date()
+  );
+  stats._symlink = kind === "symlink";
+  stats.mode = globalThis.__nodeModes[path] || 0;
+  return stats;
+};
+globalThis.__nodeFs.stat = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    let result;
+    try {
+      result = globalThis.__nodeFs.statSync(path, options);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, result);
+  });
+};
+globalThis.__nodeFs.lstat = (value, options, callback) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  const path = nodeFsPath(value);
+  queueMicrotask(() => {
+    try {
+      callback(null, globalThis.__nodeFs.lstatSync(path));
+    } catch (error) {
+      callback(error);
+      return;
+    }
+  });
+};
+globalThis.__nodeFs.fstatSync = (fd) => {
+  if (typeof fd !== "number") {
+    const error = new TypeError('The "fd" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return globalThis.__nodeFs.statSync(globalThis.__nodeFdPaths[fd] || ".");
+};
+globalThis.__nodeFs.fstat = (fd, options, callback) => {
+  if (typeof options === "function") callback = options;
+  if (typeof callback !== "function")
+    throw new TypeError('The "callback" argument must be of type function');
+  if (typeof fd !== "number") {
+    const error = new TypeError('The "fd" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    let result;
+    try {
+      result = globalThis.__nodeFs.fstatSync(fd);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    callback(null, result);
+  });
+};
+globalThis.__nodeFs.Stats = globalThis.__nodeStats;
+globalThis.__nodeFs.close = (fd, callback) => {
+  if (typeof fd !== "number") {
+    const error = new TypeError('The "fd" argument must be of type number');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError(
+      'The "callback" argument must be of type function'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    try {
+      globalThis.__nodeFs.closeSync(fd);
+      callback(null);
+    } catch (error) {
+      callback(error);
+    }
+  });
+};
+const __nodeFsWriteStreamEnd = (
+  stream,
+  path,
+  chunks,
+  options,
+  chunk,
+  encoding,
+  callback
+) => {
+  if (typeof encoding === "function") {
+    callback = encoding;
+    encoding = undefined;
+  }
+  if (chunk !== undefined) stream.write(chunk, encoding);
+  queueMicrotask(() => {
+    try {
+      stream.fd = globalThis.__nodeFs.openSync(path, "w");
+      stream.emit("open", stream.fd);
+      const data = NodeBuffer.concat(chunks);
+      if (String(options.flags || "w").startsWith("a"))
+        globalThis.__nodeFs.appendFileSync(path, data);
+      else globalThis.__nodeFs.writeFileSync(path, data);
+      stream.emit("finish");
+      if (callback) callback();
+      if (options.autoClose !== false) {
+        globalThis.__nodeFs.closeSync(stream.fd);
+        stream.fd = null;
+      }
+      stream.emit("close");
+    } catch (error) {
+      stream.emit("error", error);
+    }
+  });
+};
+globalThis.__nodeFs.createWriteStream = (value, options = {}) => {
+  const stream = new NodeWritable(options);
+  const path = nodeFsPath(value);
+  const chunks = [];
+  stream.path = path;
+  stream.fd = null;
+  stream.bytesWritten = 0;
+  stream.write = (chunk) => {
+    const bytes =
+      typeof chunk === "string"
+        ? NodeBuffer.from(chunk, options.encoding || "utf8")
+        : NodeBuffer.from(chunk);
+    chunks.push(bytes);
+    stream.bytesWritten += bytes.byteLength;
+    return true;
+  };
+  stream.end = (chunk, encoding, callback) => {
+    __nodeFsWriteStreamEnd(
+      stream,
+      path,
+      chunks,
+      options,
+      chunk,
+      encoding,
+      callback
+    );
+    return stream;
+  };
+  return stream;
+};

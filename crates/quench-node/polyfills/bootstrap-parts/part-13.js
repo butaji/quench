@@ -1,3 +1,416 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {\n  if (!options || typeof options !== "object" || Array.isArray(options)) {\n    const error = new TypeError(\n      \'The "inspectOptions" argument must be an object\',\n    );\n    error.code = "ERR_INVALID_ARG_TYPE";\n    throw error;\n  }\n  if (options.colors && typeof args[0] !== "string") {\n    const color = (value) => {\n      if (value === null) return "\\u001b[1mnull\\u001b[22m";\n      if (value === undefined) return "\\u001b[90mundefined\\u001b[39m";\n      if (\n        typeof value === "boolean" ||\n        typeof value === "number" ||\n        typeof value === "bigint"\n      )\n        return `\\u001b[33m${String(value)}${typeof value === "bigint" ? "n" : ""}\\u001b[39m`;\n      if (typeof value === "symbol")\n        return `\\u001b[32m${String(value)}\\u001b[39m`;\n      return String(value);\n    };\n    return args.map(color).join(" ");\n  }\n  if (\n    options.compact !== undefined &&\n    args[0] === "%s" &&\n    Array.isArray(args[1])\n  ) {\n    return `[ ${args[1]\n      .map((value) =>\n        value && typeof value === "object" ? "[Object]" : String(value),\n      )\n      .join(", ")} ]`;\n  }\n  const previous =\n    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;\n  if (options && options.numericSeparator !== undefined)\n    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator =\n      options.numericSeparator;\n  try {\n    return globalThis.__nodeUtil.format(...args);\n  } finally {\n    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;\n  }\n};\nconst __nodeQuerystringEscape = (value) => encodeURIComponent(String(value));\nconst __nodeQuerystringExports = {\n  escape: __nodeQuerystringEscape,\n  unescape: (value) =>\n    globalThis.__nodeQuerystring.unescapeBuffer(String(value), true).toString(),\n  unescapeBuffer: (value, decodeSpaces = false) => {\n    const input = String(value);\n    const bytes = [];\n    for (let i = 0; i < input.length; i++) {\n      if (input[i] === "+" && decodeSpaces) {\n        bytes.push(0x20);\n        continue;\n      }\n      if (\n        input[i] === "%" &&\n        /^[0-9a-f]{2}$/i.test(input.slice(i + 1, i + 3))\n      ) {\n        bytes.push(parseInt(input.slice(i + 1, i + 3), 16));\n        i += 2;\n      } else {\n        let character = input[i];\n        if (\n          input.charCodeAt(i) >= 0xd800 &&\n          input.charCodeAt(i) <= 0xdbff &&\n          i + 1 < input.length &&\n          input.charCodeAt(i + 1) >= 0xdc00 &&\n          input.charCodeAt(i + 1) <= 0xdfff\n        ) {\n          character += input[++i];\n        }\n        const encoded = new TextEncoder().encode(character);\n        bytes.push(...encoded);\n      }\n    }\n    return NodeBuffer.from(new Uint8Array(bytes));\n  },\n  stringify: (object, sep = "&", eq = "=", options = {}) => {\n    if (!object || typeof object !== "object") return "";\n    sep = sep == null ? "&" : String(sep);\n    eq = eq == null ? "=" : String(eq);\n    const encode =\n      options && options.encodeURIComponent\n        ? options.encodeURIComponent\n        : globalThis.__nodeQuerystring.escape;\n    return Object.keys(object)\n      .flatMap((key) => {\n        const value = object[key];\n        if (Array.isArray(value) && value.length === 0) return [];\n        const values = Array.isArray(value) ? value : [value];\n        return values.map((item) => {\n          let encodedKey;\n          let encodedValue;\n          try {\n            encodedKey = encode(key);\n            encodedValue =\n              item === null ||\n              typeof item === "object" ||\n              typeof item === "function" ||\n              (typeof item === "number" && !Number.isFinite(item))\n                ? ""\n                : encode(item);\n          } catch (error) {\n            if (error instanceof URIError) {\n              error.code = "ERR_INVALID_URI";\n              error.message = "URI malformed";\n            }\n            throw error;\n          }\n          return `${encodedKey}${eq}${encodedValue}`;\n        });\n      })\n      .join(sep);\n  },\n  parse: (input, sep = "&", eq = "=", options = {}) => {\n    const result = Object.create(null);\n    if (input == null || input === "") return result;\n    const decode = (value) => {\n      const inputValue = String(value).replace(/\\+/g, " ");\n      if (options && options.decodeURIComponent) {\n        try {\n          return options.decodeURIComponent(inputValue);\n        } catch (_) {\n          return globalThis.__nodeQuerystring.unescape(inputValue);\n        }\n      }\n      return globalThis.__nodeQuerystring.unescape(inputValue);\n    };\n    const separator = sep == null ? "&" : String(sep);\n    const equals = eq == null ? "=" : String(eq);\n    const maxKeys =\n      options && options.maxKeys !== undefined\n        ? options.maxKeys === 0\n          ? Infinity\n          : Number(options.maxKeys)\n        : 1000;\n    String(input)\n      .split(separator)\n      .slice(0, maxKeys)\n      .filter(Boolean)\n      .forEach((part) => {\n        const index = part.indexOf(equals);\n        const key = decode(index < 0 ? part : part.slice(0, index));\n        const value = decode(\n          index < 0 ? "" : part.slice(index + equals.length),\n        );\n        result[key] =\n          result[key] === undefined\n            ? value\n            : Array.isArray(result[key])\n              ? result[key].concat(value)\n              : [result[key], value];\n      });\n    return result;\n  },\n};\nlet __nodeQuerystringInstance;\nglobalThis.__nodeQuerystringInitialized = false;\nglobalThis.__nodeQuerystring = new Proxy(\n  {},\n  {\n    get: (_, key) => {\n      globalThis.__nodeQuerystringInitialized = true;\n      __nodeQuerystringInstance ||= __nodeQuerystringExports;\n      return __nodeQuerystringInstance[key];\n    },\n    ownKeys: () => Reflect.ownKeys(__nodeQuerystringExports),\n    getOwnPropertyDescriptor: (_, key) => ({\n      enumerable: true,\n      configurable: true,\n      value: __nodeQuerystringExports[key],\n    }),\n    set: (_, key, value) => {\n      __nodeQuerystringExports[key] = value;\n      return true;\n    },\n  },\n);\nclass NodeURLSearchParams {\n  constructor(init = "") {\n    this._pairs = [];\n    if (typeof init === "string") {\n      init\n        .replace(/^\\?/, "")\n        .split("&")\n        .filter(Boolean)\n        .forEach((part) => {\n          const i = part.indexOf("=");\n          this.append(\n            decodeURIComponent(i < 0 ? part : part.slice(0, i)),\n            decodeURIComponent(i < 0 ? "" : part.slice(i + 1)),\n          );\n        });\n    } else Object.keys(init).forEach((key) => this.append(key, init[key]));\n  }\n  append(key, value) {\n    this._pairs.push([String(key), String(value)]);\n  }\n  set(key, value) {\n    this.delete(key);\n    this.append(key, value);\n  }\n  get(key) {\n    const pair = this._pairs.find(([name]) => name === String(key));\n    return pair ? pair[1] : null;\n  }\n  getAll(key) {\n    return this._pairs\n      .filter(([name]) => name === String(key))\n      .map(([, value]) => value);\n  }\n  has(key) {\n    return this._pairs.some(([name]) => name === String(key));\n  }\n  delete(key) {\n    this._pairs = this._pairs.filter(([name]) => name !== String(key));\n  }\n  toString() {\n    return this._pairs\n      .map(\n        ([key, value]) =>\n          `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,\n      )\n      .join("&");\n  }\n}\nglobalThis.__nodeURLSearchParams = NodeURLSearchParams;\nglobalThis.__nodeURL = class NodeURL {\n  constructor(input, base) {\n    let value = String(input);\n    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {\n      const baseUrl = new NodeURL(base);\n      value = value.startsWith("/")\n        ? baseUrl.origin + value\n        : baseUrl.origin + baseUrl.pathname.replace(/\\/[^/]*$/, "/") + value;\n    }\n    const match = value.match(\n      /^([a-z][a-z0-9+.-]*:)?(?:\\/\\/([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#(.*))?$/i,\n    );\n    if (!match) throw new TypeError("Invalid URL");\n    this.protocol = match[1] || "";\n    this.host = match[2] || "";\n    this.hostname = this.host.replace(/^.*@/, "").split(":")[0];\n    this.port = this.host.includes(":")\n      ? this.host.slice(this.host.lastIndexOf(":") + 1)\n      : "";\n    this.pathname = match[3] || "/";\n    this.search = match[4] ? `?${match[4]}` : "";\n    this.hash = match[5] ? `#${match[5]}` : "";\n    this.origin =\n      this.protocol && this.host ? `${this.protocol}//${this.host}` : "null";\n    this.searchParams = new NodeURLSearchParams(match[4] || "");\n  }\n  get href() {\n    const query = this.searchParams.toString();\n    const prefix =\n      this.protocol === "file:"\n        ? "file://"\n        : this.origin === "null"\n          ? ""\n          : this.origin;\n    return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`;\n  }\n  toString() {\n    return this.href;\n  }\n};\nglobalThis.URL = globalThis.__nodeURL;\nglobalThis.URLSearchParams = globalThis.__nodeURLSearchParams;\nconst __nodeUrlModuleExports = {\n  URL: globalThis.__nodeURL,\n  URLSearchParams: globalThis.__nodeURLSearchParams,\n  fileURLToPath: (value) => {\n    let href;\n    if (value && typeof value.href === "string") href = value.href;\n    else href = String(value);\n    if (!href.startsWith("file://"))\n      throw new TypeError("URL must be a file URL");\n    let p = decodeURIComponent(href.slice("file://".length));\n    return p || "/";\n  },\n  pathToFileURL: (value, options) => {\n    const windows = options && options.windows;\n    const sep = windows ? "\\\\" : "/";\n    const resolved = globalThis.__nodePath.resolve(String(value));\n    const isAbsolute = globalThis.__nodePath.isAbsolute(resolved);\n    let p = resolved.split(sep).join("/");\n    if (windows && /^[A-Za-z]:/.test(p)) p = "/" + p;\n    const trailing = resolved.endsWith(sep) || resolved.endsWith("/");\n    p = p\n      .split("/")\n      .map((seg, i) => {\n        if (i === 0) return seg;\n        return encodeURIComponent(seg)\n          .replace(/[!\'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());\n      })\n      .join("/");\n    if (trailing && !p.endsWith("/")) p = p + "/";\n    return new globalThis.__nodeURL(\n      "file://" + (isAbsolute ? "" : "") + p,\n    );\n  },\n  parse: (value) => {\n    if (typeof value !== "string") {\n      let received;\n      if (value == null) received = String(value);\n      else {\n        try {\n          received = `type ${typeof value} (${String(value)})`;\n        } catch (_) {\n          received = `type ${typeof value} (${Object.prototype.toString.call(value)})`;\n        }\n      }\n      const error = new TypeError(\n        \'The "url" argument must be of type string.\' + ` Received ${received}`,\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (/^https?:\\/\\/[^/]*:[.]|^git\\+ssh:\\/\\/[^/]*:[^/]+\\/[^/]+/.test(value)) {\n      const error = new TypeError("Invalid URL");\n      error.code = "ERR_INVALID_ARG_VALUE";\n      throw error;\n    }\n    if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {\n      try {\n        decodeURIComponent(value);\n      } catch (_) {\n        throw new URIError("URI malformed");\n      }\n    }\n    const rawAuthority =\n      value.match(/^[a-z][a-z0-9+.-]*:\\/\\/([^/]+)/i)?.[1] || "";\n    if (/\\u0000/.test(rawAuthority) || /[#%/?@[\\\\\\]^|]/.test(rawAuthority)) {\n      const error = new TypeError("Invalid URL");\n      error.code = "ERR_INVALID_URL";\n      error.input = value;\n      throw error;\n    }\n    let input = value.trim();\n    if (/^[a-z][a-z0-9+.-]*:/.test(input)) input = input.replaceAll("\\\\", "/");\n    const parsed = new globalThis.__nodeURL(input);\n    const protocol = parsed.protocol.toLowerCase();\n    const authority =\n      input.match(/^[a-z][a-z0-9+.-]*:\\/\\/([^/?#]*)/i)?.[1] || "";\n    const at = authority.lastIndexOf("@");\n    const auth = at >= 0 ? decodeURIComponent(authority.slice(0, at)) : null;\n    const host = (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase();\n    const hostname = host.replace(/^\\[|\\]$/g, "").split(":")[0];\n    const port = host.match(/:(\\d+)$/)?.[1] || null;\n    const pathname = parsed.pathname || (host ? "/" : "");\n    const search = parsed.search || null;\n    return {\n      protocol: protocol || null,\n      slashes: protocol ? true : null,\n      auth,\n      host: host || null,\n      port,\n      hostname: hostname || null,\n      hash: parsed.hash || null,\n      search,\n      query: search ? search.slice(1) : null,\n      pathname: pathname || null,\n      path: pathname ? `${pathname}${search || ""}` : null,\n      href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`,\n    };\n  },\n  format: (value) => {\n    if (value instanceof globalThis.__nodeURL) return value.href;\n    if (typeof value === "string") {\n      try {\n        const href = new globalThis.__nodeURL(value).href;\n        return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;\n      } catch (_) {\n        return value;\n      }\n    }\n    if (value && typeof value === "object") {\n      const protocol = value.protocol || "";\n      const host = value.host || value.hostname || "";\n      const prefix =\n        protocol && (value.slashes || host) ? `${protocol}//` : protocol;\n      const pathname = value.pathname || (host ? "/" : "");\n      let search = value.search;\n      if (search === undefined && value.query !== undefined) {\n        search = typeof value.query === "string" ? `?${value.query}` : "";\n      }\n      return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;\n    }\n    return String(value);\n  },\n  resolve: (from, to) => new globalThis.__nodeURL(to, from).href,\n};\nlet __nodeUrlModuleInstance;\nglobalThis.__nodeUrlInitialized = false;\nglobalThis.__nodeUrlModule = new Proxy(\n  {},\n  {\n    get: (_, key) => {\n      globalThis.__nodeUrlInitialized = true;\n      __nodeUrlModuleInstance ||= __nodeUrlModuleExports;\n      return __nodeUrlModuleInstance[key];\n    },\n    ownKeys: () => Reflect.ownKeys(__nodeUrlModuleExports),\n    getOwnPropertyDescriptor: (_, key) => ({\n      enumerable: true,\n      configurable: true,\n      value: __nodeUrlModuleExports[key],\n    }),\n  },\n);\n'
+globalThis.__nodeUtil.formatWithOptions = (options, ...args) => {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    const error = new TypeError(
+      'The "inspectOptions" argument must be an object'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (options.colors && typeof args[0] !== "string") {
+    const color = (value) => {
+      if (value === null) return "\u001b[1mnull\u001b[22m";
+      if (value === undefined) return "\u001b[90mundefined\u001b[39m";
+      if (
+        typeof value === "boolean" ||
+        typeof value === "number" ||
+        typeof value === "bigint"
+      )
+        return `\u001b[33m${String(value)}${typeof value === "bigint" ? "n" : ""}\u001b[39m`;
+      if (typeof value === "symbol")
+        return `\u001b[32m${String(value)}\u001b[39m`;
+      return String(value);
+    };
+    return args.map(color).join(" ");
+  }
+  if (
+    options.compact !== undefined &&
+    args[0] === "%s" &&
+    Array.isArray(args[1])
+  ) {
+    return `[ ${args[1]
+      .map((value) =>
+        value && typeof value === "object" ? "[Object]" : String(value)
+      )
+      .join(", ")} ]`;
+  }
+  const previous =
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator;
+  if (options && options.numericSeparator !== undefined)
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator =
+      options.numericSeparator;
+  try {
+    return globalThis.__nodeUtil.format(...args);
+  } finally {
+    globalThis.__nodeUtil.inspect.defaultOptions.numericSeparator = previous;
+  }
+};
+const __nodeQuerystringEscape = (value) => encodeURIComponent(String(value));
+const __nodeQuerystringExports = {
+  escape: __nodeQuerystringEscape,
+  unescape: (value) =>
+    globalThis.__nodeQuerystring.unescapeBuffer(String(value), true).toString(),
+  unescapeBuffer: (value, decodeSpaces = false) => {
+    const input = String(value);
+    const bytes = [];
+    for (let i = 0; i < input.length; i++) {
+      if (input[i] === "+" && decodeSpaces) {
+        bytes.push(0x20);
+        continue;
+      }
+      if (
+        input[i] === "%" &&
+        /^[0-9a-f]{2}$/i.test(input.slice(i + 1, i + 3))
+      ) {
+        bytes.push(parseInt(input.slice(i + 1, i + 3), 16));
+        i += 2;
+      } else {
+        let character = input[i];
+        if (
+          input.charCodeAt(i) >= 0xd800 &&
+          input.charCodeAt(i) <= 0xdbff &&
+          i + 1 < input.length &&
+          input.charCodeAt(i + 1) >= 0xdc00 &&
+          input.charCodeAt(i + 1) <= 0xdfff
+        ) {
+          character += input[++i];
+        }
+        const encoded = new TextEncoder().encode(character);
+        bytes.push(...encoded);
+      }
+    }
+    return NodeBuffer.from(new Uint8Array(bytes));
+  },
+  stringify: (object, sep = "&", eq = "=", options = {}) => {
+    if (!object || typeof object !== "object") return "";
+    sep = sep == null ? "&" : String(sep);
+    eq = eq == null ? "=" : String(eq);
+    const encode =
+      options && options.encodeURIComponent
+        ? options.encodeURIComponent
+        : globalThis.__nodeQuerystring.escape;
+    return Object.keys(object)
+      .flatMap((key) => {
+        const value = object[key];
+        if (Array.isArray(value) && value.length === 0) return [];
+        const values = Array.isArray(value) ? value : [value];
+        return values.map((item) => {
+          let encodedKey;
+          let encodedValue;
+          try {
+            encodedKey = encode(key);
+            encodedValue =
+              item === null ||
+              typeof item === "object" ||
+              typeof item === "function" ||
+              (typeof item === "number" && !Number.isFinite(item))
+                ? ""
+                : encode(item);
+          } catch (error) {
+            if (error instanceof URIError) {
+              error.code = "ERR_INVALID_URI";
+              error.message = "URI malformed";
+            }
+            throw error;
+          }
+          return `${encodedKey}${eq}${encodedValue}`;
+        });
+      })
+      .join(sep);
+  },
+  parse: (input, sep = "&", eq = "=", options = {}) => {
+    const result = Object.create(null);
+    if (input == null || input === "") return result;
+    const decode = (value) => {
+      const inputValue = String(value).replace(/\+/g, " ");
+      if (options && options.decodeURIComponent) {
+        try {
+          return options.decodeURIComponent(inputValue);
+        } catch (_) {
+          return globalThis.__nodeQuerystring.unescape(inputValue);
+        }
+      }
+      return globalThis.__nodeQuerystring.unescape(inputValue);
+    };
+    const separator = sep == null ? "&" : String(sep);
+    const equals = eq == null ? "=" : String(eq);
+    const maxKeys =
+      options && options.maxKeys !== undefined
+        ? options.maxKeys === 0
+          ? Infinity
+          : Number(options.maxKeys)
+        : 1000;
+    String(input)
+      .split(separator)
+      .slice(0, maxKeys)
+      .filter(Boolean)
+      .forEach((part) => {
+        const index = part.indexOf(equals);
+        const key = decode(index < 0 ? part : part.slice(0, index));
+        const value = decode(
+          index < 0 ? "" : part.slice(index + equals.length)
+        );
+        result[key] =
+          result[key] === undefined
+            ? value
+            : Array.isArray(result[key])
+              ? result[key].concat(value)
+              : [result[key], value];
+      });
+    return result;
+  }
+};
+let __nodeQuerystringInstance;
+globalThis.__nodeQuerystringInitialized = false;
+globalThis.__nodeQuerystring = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeQuerystringInitialized = true;
+      __nodeQuerystringInstance ||= __nodeQuerystringExports;
+      return __nodeQuerystringInstance[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeQuerystringExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeQuerystringExports[key]
+    }),
+    set: (_, key, value) => {
+      __nodeQuerystringExports[key] = value;
+      return true;
+    }
+  }
+);
+class NodeURLSearchParams {
+  constructor(init = "") {
+    this._pairs = [];
+    if (typeof init === "string") {
+      init
+        .replace(/^\?/, "")
+        .split("&")
+        .filter(Boolean)
+        .forEach((part) => {
+          const i = part.indexOf("=");
+          this.append(
+            decodeURIComponent(i < 0 ? part : part.slice(0, i)),
+            decodeURIComponent(i < 0 ? "" : part.slice(i + 1))
+          );
+        });
+    } else Object.keys(init).forEach((key) => this.append(key, init[key]));
+  }
+  append(key, value) {
+    this._pairs.push([String(key), String(value)]);
+  }
+  set(key, value) {
+    this.delete(key);
+    this.append(key, value);
+  }
+  get(key) {
+    const pair = this._pairs.find(([name]) => name === String(key));
+    return pair ? pair[1] : null;
+  }
+  getAll(key) {
+    return this._pairs
+      .filter(([name]) => name === String(key))
+      .map(([, value]) => value);
+  }
+  has(key) {
+    return this._pairs.some(([name]) => name === String(key));
+  }
+  delete(key) {
+    this._pairs = this._pairs.filter(([name]) => name !== String(key));
+  }
+  toString() {
+    return this._pairs
+      .map(
+        ([key, value]) =>
+          `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+      )
+      .join("&");
+  }
+}
+globalThis.__nodeURLSearchParams = NodeURLSearchParams;
+globalThis.__nodeURL = class NodeURL {
+  constructor(input, base) {
+    let value = String(input);
+    if (base && !/^[a-z][a-z0-9+.-]*:/.test(value)) {
+      const baseUrl = new NodeURL(base);
+      value = value.startsWith("/")
+        ? baseUrl.origin + value
+        : baseUrl.origin + baseUrl.pathname.replace(/\/[^/]*$/, "/") + value;
+    }
+    const match = value.match(
+      /^([a-z][a-z0-9+.-]*:)?(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i
+    );
+    if (!match) throw new TypeError("Invalid URL");
+    this.protocol = match[1] || "";
+    this.host = match[2] || "";
+    this.hostname = this.host.replace(/^.*@/, "").split(":")[0];
+    this.port = this.host.includes(":")
+      ? this.host.slice(this.host.lastIndexOf(":") + 1)
+      : "";
+    this.pathname = match[3] || "/";
+    this.search = match[4] ? `?${match[4]}` : "";
+    this.hash = match[5] ? `#${match[5]}` : "";
+    this.origin =
+      this.protocol && this.host ? `${this.protocol}//${this.host}` : "null";
+    this.searchParams = new NodeURLSearchParams(match[4] || "");
+  }
+  get href() {
+    const query = this.searchParams.toString();
+    const prefix =
+      this.protocol === "file:"
+        ? "file://"
+        : this.origin === "null"
+          ? ""
+          : this.origin;
+    return `${prefix}${this.pathname}${query ? `?${query}` : this.search}${this.hash}`;
+  }
+  toString() {
+    return this.href;
+  }
+};
+globalThis.URL = globalThis.__nodeURL;
+globalThis.URLSearchParams = globalThis.__nodeURLSearchParams;
+const __nodeUrlModuleExports = {
+  URL: globalThis.__nodeURL,
+  URLSearchParams: globalThis.__nodeURLSearchParams,
+  fileURLToPath: (value) => {
+    let href;
+    if (value && typeof value.href === "string") href = value.href;
+    else href = String(value);
+    if (!href.startsWith("file://"))
+      throw new TypeError("URL must be a file URL");
+    let p = decodeURIComponent(href.slice("file://".length));
+    return p || "/";
+  },
+  pathToFileURL: (value, options) => {
+    const windows = options && options.windows;
+    const sep = windows ? "\\" : "/";
+    const resolved = globalThis.__nodePath.resolve(String(value));
+    const isAbsolute = globalThis.__nodePath.isAbsolute(resolved);
+    let p = resolved.split(sep).join("/");
+    if (windows && /^[A-Za-z]:/.test(p)) p = "/" + p;
+    const trailing = resolved.endsWith(sep) || resolved.endsWith("/");
+    p = p
+      .split("/")
+      .map((seg, i) => {
+        if (i === 0) return seg;
+        return encodeURIComponent(seg).replace(
+          /[!'()*]/g,
+          (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase()
+        );
+      })
+      .join("/");
+    if (trailing && !p.endsWith("/")) p = p + "/";
+    return new globalThis.__nodeURL("file://" + (isAbsolute ? "" : "") + p);
+  },
+  parse: (value) => {
+    if (typeof value !== "string") {
+      let received;
+      if (value == null) received = String(value);
+      else {
+        try {
+          received = `type ${typeof value} (${String(value)})`;
+        } catch (_) {
+          received = `type ${typeof value} (${Object.prototype.toString.call(value)})`;
+        }
+      }
+      const error = new TypeError(
+        'The "url" argument must be of type string.' + ` Received ${received}`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (/^https?:\/\/[^/]*:[.]|^git\+ssh:\/\/[^/]*:[^/]+\/[^/]+/.test(value)) {
+      const error = new TypeError("Invalid URL");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    if (/%(?:[0-9A-Fa-f]{0,1}|[0-9A-Fa-f]{2})/.test(value)) {
+      try {
+        decodeURIComponent(value);
+      } catch (_) {
+        throw new URIError("URI malformed");
+      }
+    }
+    const rawAuthority =
+      value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i)?.[1] || "";
+    if (/\u0000/.test(rawAuthority) || /[#%/?@[\\\]^|]/.test(rawAuthority)) {
+      const error = new TypeError("Invalid URL");
+      error.code = "ERR_INVALID_URL";
+      error.input = value;
+      throw error;
+    }
+    let input = value.trim();
+    if (/^[a-z][a-z0-9+.-]*:/.test(input)) input = input.replaceAll("\\", "/");
+    const parsed = new globalThis.__nodeURL(input);
+    const protocol = parsed.protocol.toLowerCase();
+    const authority =
+      input.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] || "";
+    const at = authority.lastIndexOf("@");
+    const auth = at >= 0 ? decodeURIComponent(authority.slice(0, at)) : null;
+    const host = (at >= 0 ? authority.slice(at + 1) : authority).toLowerCase();
+    const hostname = host.replace(/^\[|\]$/g, "").split(":")[0];
+    const port = host.match(/:(\d+)$/)?.[1] || null;
+    const pathname = parsed.pathname || (host ? "/" : "");
+    const search = parsed.search || null;
+    return {
+      protocol: protocol || null,
+      slashes: protocol ? true : null,
+      auth,
+      host: host || null,
+      port,
+      hostname: hostname || null,
+      hash: parsed.hash || null,
+      search,
+      query: search ? search.slice(1) : null,
+      pathname: pathname || null,
+      path: pathname ? `${pathname}${search || ""}` : null,
+      href: `${protocol}${host ? `//${host}` : ""}${pathname}${search || ""}${parsed.hash || ""}`
+    };
+  },
+  format: (value) => {
+    if (value instanceof globalThis.__nodeURL) return value.href;
+    if (typeof value === "string") {
+      try {
+        const href = new globalThis.__nodeURL(value).href;
+        return value.endsWith("?") && !href.endsWith("?") ? `${href}?` : href;
+      } catch (_) {
+        return value;
+      }
+    }
+    if (value && typeof value === "object") {
+      const protocol = value.protocol || "";
+      const host = value.host || value.hostname || "";
+      const prefix =
+        protocol && (value.slashes || host) ? `${protocol}//` : protocol;
+      const pathname = value.pathname || (host ? "/" : "");
+      let search = value.search;
+      if (search === undefined && value.query !== undefined) {
+        search = typeof value.query === "string" ? `?${value.query}` : "";
+      }
+      return `${prefix}${host}${pathname}${search || ""}${value.hash || ""}`;
+    }
+    return String(value);
+  },
+  resolve: (from, to) => new globalThis.__nodeURL(to, from).href
+};
+let __nodeUrlModuleInstance;
+globalThis.__nodeUrlInitialized = false;
+globalThis.__nodeUrlModule = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeUrlInitialized = true;
+      __nodeUrlModuleInstance ||= __nodeUrlModuleExports;
+      return __nodeUrlModuleInstance[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeUrlModuleExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeUrlModuleExports[key]
+    })
+  }
 );

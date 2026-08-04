@@ -1,3 +1,4 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchClusterRequire = globalThis.require;\nconst __quenchCluster = __quenchClusterRequire("cluster");\n__quenchCluster.SCHED_NONE = 1;\n__quenchCluster.SCHED_RR = 2;\n'
-);
+const __quenchClusterRequire = globalThis.require;
+const __quenchCluster = __quenchClusterRequire("cluster");
+__quenchCluster.SCHED_NONE = 1;
+__quenchCluster.SCHED_RR = 2;

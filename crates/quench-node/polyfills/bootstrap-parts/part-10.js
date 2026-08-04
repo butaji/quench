@@ -1,3 +1,417 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodeFs.promises.open = async (...args) => {\n  const handle = await __nodePromiseOpen(...args);\n  handle.write = (buffer, offset, length, position) =>\n    Promise.resolve().then(() => {\n      const start =\n        typeof offset === "object" ? offset.offset || 0 : offset || 0;\n      const source =\n        typeof offset === "object" ? offset.buffer || offset : buffer;\n      const size =\n        typeof offset === "object"\n          ? offset.length === undefined\n            ? source.length - start\n            : offset.length\n          : length === undefined\n            ? source.length - start\n            : length;\n      const at = typeof offset === "object" ? offset.position : position;\n      return {\n        bytesWritten: globalThis.__nodeFs.writeSync(\n          handle.fd,\n          source,\n          start,\n          size,\n          at === undefined ? null : at,\n        ),\n        buffer: source,\n      };\n    });\n  handle.readv = (buffers, position) =>\n    Promise.resolve().then(() => ({\n      bytesRead: globalThis.__nodeFs.readvSync(handle.fd, buffers, position),\n      buffers,\n    }));\n  handle.writev = (buffers, position) =>\n    Promise.resolve().then(() => ({\n      bytesWritten: globalThis.__nodeFs.writevSync(\n        handle.fd,\n        buffers,\n        position,\n      ),\n      buffers,\n    }));\n  handle.truncate = (length = 0) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.ftruncateSync(handle.fd, length),\n    );\n  handle.stat = () =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(handle.fd));\n  handle.sync = () =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(handle.fd));\n  handle.datasync = () =>\n    Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(handle.fd));\n  handle.chmod = (mode) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.chmodSync(globalThis.__nodeFdPaths[handle.fd], mode),\n    );\n  handle.readFile = (options) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.readFileSync(handle.fd, options),\n    );\n  handle.writeFile = async (data, options) => {\n    if (options && options.signal)\n      await new Promise((resolve) => queueMicrotask(resolve));\n    if (options && options.signal && options.signal.aborted) {\n      const error = new Error("The operation was aborted");\n      error.name = "AbortError";\n      error.code = "ABORT_ERR";\n      throw error;\n    }\n    if (data && data._chunks) data = data._chunks;\n    if (\n      data &&\n      typeof data !== "string" &&\n      !(data instanceof Uint8Array) &&\n      !(data instanceof ArrayBuffer) &&\n      typeof data[Symbol.asyncIterator] === "function"\n    ) {\n      const chunks = [];\n      for await (const chunk of data) chunks.push(chunk);\n      data = chunks;\n    }\n    if (\n      data &&\n      typeof data !== "string" &&\n      !(data instanceof Uint8Array) &&\n      !ArrayBuffer.isView(data) &&\n      typeof data[Symbol.iterator] === "function"\n    ) {\n      const chunks = [];\n      for (const chunk of data) {\n        if (\n          typeof chunk !== "string" &&\n          !(chunk instanceof Uint8Array) &&\n          !ArrayBuffer.isView(chunk)\n        ) {\n          const error = new TypeError(\n            \'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView\',\n          );\n          error.code = "ERR_INVALID_ARG_TYPE";\n          throw error;\n        }\n        chunks.push(chunk);\n      }\n      data =\n        chunks.length === 1\n          ? chunks[0]\n          : NodeBuffer.concat(\n              chunks.map((chunk) =>\n                typeof chunk === "string"\n                  ? NodeBuffer.from(\n                      chunk,\n                      typeof options === "string"\n                        ? options\n                        : options && options.encoding,\n                    )\n                  : NodeBuffer.from(chunk),\n              ),\n            );\n    }\n    if (\n      typeof data !== "string" &&\n      !(data instanceof Uint8Array) &&\n      !ArrayBuffer.isView(data) &&\n      !(data instanceof ArrayBuffer)\n    ) {\n      const error = new TypeError(\n        \'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    return globalThis.__nodeFs.writeFileSync(\n      handle.fd,\n      data,\n      typeof options === "string" ? { encoding: options } : options,\n    );\n  };\n  handle.appendFile = (data, options) =>\n    Promise.resolve().then(() =>\n      globalThis.__nodeFs.appendFileSync(handle.fd, data, options),\n    );\n  handle.close = () =>\n    Promise.resolve().then(() => globalThis.__nodeFs.closeSync(handle.fd));\n  return handle;\n};\nconst __nodeOpenWithFilePosition = globalThis.__nodeFs.promises.open;\nglobalThis.__nodeFs.promises.open = async (...args) => {\n  const handle = await __nodeOpenWithFilePosition(...args);\n  const previousWriteFile = handle.writeFile;\n  const previousReadFile = handle.readFile;\n  handle.pull = (transformOrOptions, maybeOptions) => {\n    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {\n      const error = new Error("The file handle is not in a valid state");\n      error.code = "ERR_INVALID_STATE";\n      throw error;\n    }\n    handle._pullLocked = true;\n    const transform =\n      typeof transformOrOptions === "function" ? transformOrOptions : undefined;\n    const options = transform ? maybeOptions || {} : transformOrOptions || {};\n    if (\n      options.autoClose !== undefined &&\n      typeof options.autoClose !== "boolean"\n    ) {\n      const error = new TypeError(\n        \'The "autoClose" option must be of type boolean\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    if (\n      options.signal !== undefined &&\n      (!options.signal || typeof options.signal.aborted !== "boolean")\n    ) {\n      const error = new TypeError(\'The "signal" option must be an AbortSignal\');\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    for (const [name, value] of [\n      ["start", options.start],\n      ["limit", options.limit],\n      ["chunkSize", options.chunkSize],\n    ]) {\n      if (value === undefined) continue;\n      if (typeof value !== "number" || !Number.isFinite(value)) {\n        const error = new TypeError(\n          `The "${name}" option must be of type number`,\n        );\n        error.code = "ERR_INVALID_ARG_TYPE";\n        throw error;\n      }\n      if (!Number.isInteger(value) || value < 0) {\n        const error = new RangeError(`The value of "${name}" is out of range`);\n        error.code = "ERR_OUT_OF_RANGE";\n        throw error;\n      }\n    }\n    const source = globalThis.__nodeFs.readFileSync(handle.fd);\n    const start =\n      options.start === undefined\n        ? globalThis.__nodeFdPositions[handle.fd] || 0\n        : Number(options.start);\n    const end =\n      options.limit === undefined\n        ? source.length\n        : Math.min(source.length, start + Number(options.limit));\n    const chunkSize =\n      options.chunkSize === undefined ? 128 * 1024 : Number(options.chunkSize);\n    const batches = [];\n    for (let offset = start; offset < end; offset += chunkSize)\n      batches.push([\n        source.subarray(offset, Math.min(end, offset + chunkSize)),\n      ]);\n    if (start >= end) batches.push([]);\n    return {\n      async *[Symbol.asyncIterator]() {\n        try {\n          if (options.signal && options.signal.aborted) {\n            const error = new Error("The operation was aborted");\n            error.name = "AbortError";\n            throw error;\n          }\n          for (const batch of batches)\n            yield transform ? transform(batch) : batch;\n          globalThis.__nodeFdPositions[handle.fd] = end;\n          if (options.autoClose) await handle.close();\n        } finally {\n          handle._pullLocked = false;\n        }\n      },\n    };\n  };\n  handle.writeFile = async (data, options) => {\n    if (typeof data === "string")\n      data = NodeBuffer.from(\n        data,\n        options && options.encoding ? options.encoding : "utf8",\n      );\n    if (data instanceof ArrayBuffer) data = new Uint8Array(data);\n    if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {\n      const view =\n        data instanceof Uint8Array\n          ? data\n          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);\n      globalThis.__nodeFs.writeSync(handle.fd, view, 0, view.length, null);\n      return;\n    }\n    return previousWriteFile(data, options);\n  };\n  handle.readFile = async (options) => {\n    if (options && options.signal)\n      await new Promise((resolve) => queueMicrotask(resolve));\n    if (options && options.signal && options.signal.aborted) {\n      const error = new Error("The operation was aborted");\n      error.name = "AbortError";\n      error.code = "ABORT_ERR";\n      throw error;\n    }\n    const source = globalThis.__nodeFs.readFileSync(handle.fd);\n    const position = globalThis.__nodeFdPositions[handle.fd] || 0;\n    globalThis.__nodeFdPositions[handle.fd] = source.length;\n    const result = NodeBuffer.from(source.subarray(position));\n    const encoding =\n      typeof options === "string" ? options : options && options.encoding;\n    return encoding ? result.toString(encoding) : result;\n  };\n  return handle;\n};\nlet __nodePriority = 0;\nconst __nodeStartedAt = Date.now();\nconst __nodeOsExports = {\n  EOL: "\\n",\n  devNull: "/dev/null",\n  platform: () => process.platform,\n  arch: () => process.arch,\n  release: () => "quench-node",\n  version: () => "v0.1.0",\n  machine: () => process.arch,\n  tmpdir: () => {\n    const candidate =\n      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";\n    return candidate.length > 1 ? candidate.replace(/\\/+$/, "") : candidate;\n  },\n  homedir: () => globalThis.__quench_homedir,\n  type: () => "Quench",\n  endianness: () => "LE",\n  hostname: () => globalThis.__quench_hostname,\n  loadavg: () => [0, 0, 0],\n  freemem: () => 1,\n  totalmem: () => 1,\n  networkInterfaces: () => ({\n    lo: [\n      {\n        address: "127.0.0.1",\n        netmask: "255.0.0.0",\n        family: "IPv4",\n        mac: "00:00:00:00:00:00",\n        internal: true,\n        cidr: "127.0.0.1/8",\n      },\n    ],\n  }),\n  uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),\n  getPriority: () => __nodePriority,\n  setPriority: (pid, priority) => {\n    __nodePriority = Number(priority === undefined ? pid : priority);\n  },\n  cpus: () =>\n    Array.from({ length: globalThis.__quench_cpu_count }, () => ({\n      model: "unknown",\n      speed: 0,\n      times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 },\n    })),\n  availableParallelism: () => globalThis.__quench_cpu_count,\n  userInfo: (options = {}) => {\n    const value = {\n      username: "quench",\n      uid: 0,\n      gid: 0,\n      shell: "/bin/sh",\n      homedir: globalThis.__quench_homedir || "/",\n    };\n    if (options.encoding === "buffer")\n      return Object.fromEntries(\n        Object.entries(value).map(([key, item]) => [\n          key,\n          typeof item === "string" ? NodeBuffer.from(item) : item,\n        ]),\n      );\n    return value;\n  },\n  constants: Object.freeze({\n    signals: Object.freeze({\n      SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5,\n      SIGABRT: 6, SIGIOT: 6, SIGBUS: 10, SIGFPE: 8, SIGKILL: 9,\n      SIGUSR1: 30, SIGSEGV: 11, SIGUSR2: 31, SIGPIPE: 13, SIGALRM: 14,\n      SIGTERM: 15, SIGCHLD: 20, SIGCONT: 19, SIGSTOP: 17, SIGTSTP: 18,\n      SIGTTIN: 21, SIGTTOU: 22, SIGURG: 16, SIGXCPU: 24, SIGXFSZ: 25,\n      SIGVTALRM: 26, SIGPROF: 27, SIGWINCH: 28, SIGIO: 23, SIGINFO: 29,\n      SIGSYS: 12,\n    }),\n    errno: Object.freeze({ ENOENT: -2, EACCES: -13 }),\n    priority: Object.freeze({\n      PRIORITY_LOW: 19,\n      PRIORITY_BELOW_NORMAL: 10,\n      PRIORITY_NORMAL: 0,\n      PRIORITY_ABOVE_NORMAL: -7,\n      PRIORITY_HIGH: -14,\n    }),\n  }),\n};\nglobalThis.__nodeOs = __nodeOsExports;\nfor (const [name, getter] of [\n  ["uptime", () => globalThis.__nodeOs.uptime()],\n  ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],\n  ["freemem", () => globalThis.__nodeOs.freemem()],\n  ["totalmem", () => globalThis.__nodeOs.totalmem()],\n]) {\n  globalThis.__nodeOs[name].valueOf = getter;\n}\nfor (const name of [\n  "hostname",\n  "homedir",\n  "release",\n  "type",\n  "endianness",\n  "tmpdir",\n  "arch",\n  "platform",\n  "version",\n  "machine",\n]) {\n  globalThis.__nodeOs[name].toString = () =>\n    String(globalThis.__nodeOs[name]());\n}\nglobalThis.__nodeOsInitialized = false;\nglobalThis.__nodeOs = new Proxy(\n  {},\n  {\n    get: (_, key) => {\n      globalThis.__nodeOsInitialized = true;\n      return __nodeOsExports[key];\n    },\n    ownKeys: () => Reflect.ownKeys(__nodeOsExports),\n    getOwnPropertyDescriptor: (_, key) => ({\n      enumerable: true,\n      configurable: true,\n      value: __nodeOsExports[key],\n    }),\n  },\n);\nconst __nodePerformanceMarks = new Map();\nconst __nodePerformanceEntries = [];\n'
+globalThis.__nodeFs.promises.open = async (...args) => {
+  const handle = await __nodePromiseOpen(...args);
+  handle.write = (buffer, offset, length, position) =>
+    Promise.resolve().then(() => {
+      const start =
+        typeof offset === "object" ? offset.offset || 0 : offset || 0;
+      const source =
+        typeof offset === "object" ? offset.buffer || offset : buffer;
+      const size =
+        typeof offset === "object"
+          ? offset.length === undefined
+            ? source.length - start
+            : offset.length
+          : length === undefined
+            ? source.length - start
+            : length;
+      const at = typeof offset === "object" ? offset.position : position;
+      return {
+        bytesWritten: globalThis.__nodeFs.writeSync(
+          handle.fd,
+          source,
+          start,
+          size,
+          at === undefined ? null : at
+        ),
+        buffer: source
+      };
+    });
+  handle.readv = (buffers, position) =>
+    Promise.resolve().then(() => ({
+      bytesRead: globalThis.__nodeFs.readvSync(handle.fd, buffers, position),
+      buffers
+    }));
+  handle.writev = (buffers, position) =>
+    Promise.resolve().then(() => ({
+      bytesWritten: globalThis.__nodeFs.writevSync(
+        handle.fd,
+        buffers,
+        position
+      ),
+      buffers
+    }));
+  handle.truncate = (length = 0) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.ftruncateSync(handle.fd, length)
+    );
+  handle.stat = () =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fstatSync(handle.fd));
+  handle.sync = () =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fsyncSync(handle.fd));
+  handle.datasync = () =>
+    Promise.resolve().then(() => globalThis.__nodeFs.fdatasyncSync(handle.fd));
+  handle.chmod = (mode) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.chmodSync(globalThis.__nodeFdPaths[handle.fd], mode)
+    );
+  handle.readFile = (options) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.readFileSync(handle.fd, options)
+    );
+  handle.writeFile = async (data, options) => {
+    if (options && options.signal)
+      await new Promise((resolve) => queueMicrotask(resolve));
+    if (options && options.signal && options.signal.aborted) {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      throw error;
+    }
+    if (data && data._chunks) data = data._chunks;
+    if (
+      data &&
+      typeof data !== "string" &&
+      !(data instanceof Uint8Array) &&
+      !(data instanceof ArrayBuffer) &&
+      typeof data[Symbol.asyncIterator] === "function"
+    ) {
+      const chunks = [];
+      for await (const chunk of data) chunks.push(chunk);
+      data = chunks;
+    }
+    if (
+      data &&
+      typeof data !== "string" &&
+      !(data instanceof Uint8Array) &&
+      !ArrayBuffer.isView(data) &&
+      typeof data[Symbol.iterator] === "function"
+    ) {
+      const chunks = [];
+      for (const chunk of data) {
+        if (
+          typeof chunk !== "string" &&
+          !(chunk instanceof Uint8Array) &&
+          !ArrayBuffer.isView(chunk)
+        ) {
+          const error = new TypeError(
+            'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        chunks.push(chunk);
+      }
+      data =
+        chunks.length === 1
+          ? chunks[0]
+          : NodeBuffer.concat(
+              chunks.map((chunk) =>
+                typeof chunk === "string"
+                  ? NodeBuffer.from(
+                      chunk,
+                      typeof options === "string"
+                        ? options
+                        : options && options.encoding
+                    )
+                  : NodeBuffer.from(chunk)
+              )
+            );
+    }
+    if (
+      typeof data !== "string" &&
+      !(data instanceof Uint8Array) &&
+      !ArrayBuffer.isView(data) &&
+      !(data instanceof ArrayBuffer)
+    ) {
+      const error = new TypeError(
+        'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return globalThis.__nodeFs.writeFileSync(
+      handle.fd,
+      data,
+      typeof options === "string" ? { encoding: options } : options
+    );
+  };
+  handle.appendFile = (data, options) =>
+    Promise.resolve().then(() =>
+      globalThis.__nodeFs.appendFileSync(handle.fd, data, options)
+    );
+  handle.close = () =>
+    Promise.resolve().then(() => globalThis.__nodeFs.closeSync(handle.fd));
+  return handle;
+};
+const __nodeOpenWithFilePosition = globalThis.__nodeFs.promises.open;
+globalThis.__nodeFs.promises.open = async (...args) => {
+  const handle = await __nodeOpenWithFilePosition(...args);
+  const previousWriteFile = handle.writeFile;
+  const previousReadFile = handle.readFile;
+  handle.pull = (transformOrOptions, maybeOptions) => {
+    if (!globalThis.__nodeFdPaths[handle.fd] || handle._pullLocked) {
+      const error = new Error("The file handle is not in a valid state");
+      error.code = "ERR_INVALID_STATE";
+      throw error;
+    }
+    handle._pullLocked = true;
+    const transform =
+      typeof transformOrOptions === "function" ? transformOrOptions : undefined;
+    const options = transform ? maybeOptions || {} : transformOrOptions || {};
+    if (
+      options.autoClose !== undefined &&
+      typeof options.autoClose !== "boolean"
+    ) {
+      const error = new TypeError(
+        'The "autoClose" option must be of type boolean'
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (
+      options.signal !== undefined &&
+      (!options.signal || typeof options.signal.aborted !== "boolean")
+    ) {
+      const error = new TypeError('The "signal" option must be an AbortSignal');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    for (const [name, value] of [
+      ["start", options.start],
+      ["limit", options.limit],
+      ["chunkSize", options.chunkSize]
+    ]) {
+      if (value === undefined) continue;
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        const error = new TypeError(
+          `The "${name}" option must be of type number`
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isInteger(value) || value < 0) {
+        const error = new RangeError(`The value of "${name}" is out of range`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
+    const source = globalThis.__nodeFs.readFileSync(handle.fd);
+    const start =
+      options.start === undefined
+        ? globalThis.__nodeFdPositions[handle.fd] || 0
+        : Number(options.start);
+    const end =
+      options.limit === undefined
+        ? source.length
+        : Math.min(source.length, start + Number(options.limit));
+    const chunkSize =
+      options.chunkSize === undefined ? 128 * 1024 : Number(options.chunkSize);
+    const batches = [];
+    for (let offset = start; offset < end; offset += chunkSize)
+      batches.push([
+        source.subarray(offset, Math.min(end, offset + chunkSize))
+      ]);
+    if (start >= end) batches.push([]);
+    return {
+      async *[Symbol.asyncIterator]() {
+        try {
+          if (options.signal && options.signal.aborted) {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            throw error;
+          }
+          for (const batch of batches)
+            yield transform ? transform(batch) : batch;
+          globalThis.__nodeFdPositions[handle.fd] = end;
+          if (options.autoClose) await handle.close();
+        } finally {
+          handle._pullLocked = false;
+        }
+      }
+    };
+  };
+  handle.writeFile = async (data, options) => {
+    if (typeof data === "string")
+      data = NodeBuffer.from(
+        data,
+        options && options.encoding ? options.encoding : "utf8"
+      );
+    if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+    if (data instanceof Uint8Array || ArrayBuffer.isView(data)) {
+      const view =
+        data instanceof Uint8Array
+          ? data
+          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      globalThis.__nodeFs.writeSync(handle.fd, view, 0, view.length, null);
+      return;
+    }
+    return previousWriteFile(data, options);
+  };
+  handle.readFile = async (options) => {
+    if (options && options.signal)
+      await new Promise((resolve) => queueMicrotask(resolve));
+    if (options && options.signal && options.signal.aborted) {
+      const error = new Error("The operation was aborted");
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      throw error;
+    }
+    const source = globalThis.__nodeFs.readFileSync(handle.fd);
+    const position = globalThis.__nodeFdPositions[handle.fd] || 0;
+    globalThis.__nodeFdPositions[handle.fd] = source.length;
+    const result = NodeBuffer.from(source.subarray(position));
+    const encoding =
+      typeof options === "string" ? options : options && options.encoding;
+    return encoding ? result.toString(encoding) : result;
+  };
+  return handle;
+};
+let __nodePriority = 0;
+const __nodeStartedAt = Date.now();
+const __nodeOsExports = {
+  EOL: "\n",
+  devNull: "/dev/null",
+  platform: () => process.platform,
+  arch: () => process.arch,
+  release: () => "quench-node",
+  version: () => "v0.1.0",
+  machine: () => process.arch,
+  tmpdir: () => {
+    const candidate =
+      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+    return candidate.length > 1 ? candidate.replace(/\/+$/, "") : candidate;
+  },
+  homedir: () => globalThis.__quench_homedir,
+  type: () => "Quench",
+  endianness: () => "LE",
+  hostname: () => globalThis.__quench_hostname,
+  loadavg: () => [0, 0, 0],
+  freemem: () => 1,
+  totalmem: () => 1,
+  networkInterfaces: () => ({
+    lo: [
+      {
+        address: "127.0.0.1",
+        netmask: "255.0.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: true,
+        cidr: "127.0.0.1/8"
+      }
+    ]
+  }),
+  uptime: () => Math.max(0.001, (Date.now() - __nodeStartedAt) / 1000),
+  getPriority: () => __nodePriority,
+  setPriority: (pid, priority) => {
+    __nodePriority = Number(priority === undefined ? pid : priority);
+  },
+  cpus: () =>
+    Array.from({ length: globalThis.__quench_cpu_count }, () => ({
+      model: "unknown",
+      speed: 0,
+      times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }
+    })),
+  availableParallelism: () => globalThis.__quench_cpu_count,
+  userInfo: (options = {}) => {
+    const value = {
+      username: "quench",
+      uid: 0,
+      gid: 0,
+      shell: "/bin/sh",
+      homedir: globalThis.__quench_homedir || "/"
+    };
+    if (options.encoding === "buffer")
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          typeof item === "string" ? NodeBuffer.from(item) : item
+        ])
+      );
+    return value;
+  },
+  constants: Object.freeze({
+    signals: Object.freeze({
+      SIGHUP: 1,
+      SIGINT: 2,
+      SIGQUIT: 3,
+      SIGILL: 4,
+      SIGTRAP: 5,
+      SIGABRT: 6,
+      SIGIOT: 6,
+      SIGBUS: 10,
+      SIGFPE: 8,
+      SIGKILL: 9,
+      SIGUSR1: 30,
+      SIGSEGV: 11,
+      SIGUSR2: 31,
+      SIGPIPE: 13,
+      SIGALRM: 14,
+      SIGTERM: 15,
+      SIGCHLD: 20,
+      SIGCONT: 19,
+      SIGSTOP: 17,
+      SIGTSTP: 18,
+      SIGTTIN: 21,
+      SIGTTOU: 22,
+      SIGURG: 16,
+      SIGXCPU: 24,
+      SIGXFSZ: 25,
+      SIGVTALRM: 26,
+      SIGPROF: 27,
+      SIGWINCH: 28,
+      SIGIO: 23,
+      SIGINFO: 29,
+      SIGSYS: 12
+    }),
+    errno: Object.freeze({ ENOENT: -2, EACCES: -13 }),
+    priority: Object.freeze({
+      PRIORITY_LOW: 19,
+      PRIORITY_BELOW_NORMAL: 10,
+      PRIORITY_NORMAL: 0,
+      PRIORITY_ABOVE_NORMAL: -7,
+      PRIORITY_HIGH: -14
+    })
+  })
+};
+globalThis.__nodeOs = __nodeOsExports;
+for (const [name, getter] of [
+  ["uptime", () => globalThis.__nodeOs.uptime()],
+  ["availableParallelism", () => globalThis.__nodeOs.availableParallelism()],
+  ["freemem", () => globalThis.__nodeOs.freemem()],
+  ["totalmem", () => globalThis.__nodeOs.totalmem()]
+]) {
+  globalThis.__nodeOs[name].valueOf = getter;
+}
+for (const name of [
+  "hostname",
+  "homedir",
+  "release",
+  "type",
+  "endianness",
+  "tmpdir",
+  "arch",
+  "platform",
+  "version",
+  "machine"
+]) {
+  globalThis.__nodeOs[name].toString = () =>
+    String(globalThis.__nodeOs[name]());
+}
+globalThis.__nodeOsInitialized = false;
+globalThis.__nodeOs = new Proxy(
+  {},
+  {
+    get: (_, key) => {
+      globalThis.__nodeOsInitialized = true;
+      return __nodeOsExports[key];
+    },
+    ownKeys: () => Reflect.ownKeys(__nodeOsExports),
+    getOwnPropertyDescriptor: (_, key) => ({
+      enumerable: true,
+      configurable: true,
+      value: __nodeOsExports[key]
+    })
+  }
 );
+const __nodePerformanceMarks = new Map();
+const __nodePerformanceEntries = [];

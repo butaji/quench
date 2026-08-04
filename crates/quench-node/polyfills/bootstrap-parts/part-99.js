@@ -1,3 +1,78 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.EventTarget ||= class EventTarget {\n  constructor() { this._listeners = {}; }\n  addEventListener(name, listener) { (this._listeners[name] ||= []).push(listener); }\n  removeEventListener(name, listener) { this._listeners[name] = (this._listeners[name] || []).filter((item) => item !== listener); }\n  dispatchEvent(event) { for (const listener of this._listeners[event.type] || []) listener.call(this, event); return true; }\n};\nconst __quenchEventsOriginalRequire = globalThis.require;\nlet __quenchEventsModule;\nglobalThis.require = (name) => {\n  const value = __quenchEventsOriginalRequire(name);\n  if (String(name).replace(/^node:/, "") !== "events") return value;\n  if (!__quenchEventsModule) {\n    const limits = new WeakMap();\n    __quenchEventsModule = value.EventEmitter;\n    Object.assign(__quenchEventsModule, value);\n    __quenchEventsModule.defaultMaxListeners = 10;\n    __quenchEventsModule.getMaxListeners = (target) => {\n      if (!(target instanceof __quenchEventsModule || target instanceof EventTarget || target instanceof AbortSignal)) {\n        const error = new TypeError("The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]");\n        error.code = "ERR_INVALID_ARG_TYPE";\n        throw error;\n      }\n      if (target instanceof AbortSignal) return 0;\n      return limits.get(target) ?? 10;\n    };\n    __quenchEventsModule.setMaxListeners = (limit, ...targets) => {\n      if (typeof limit !== "number") {\n        const error = new TypeError("The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]");\n        error.code = "ERR_INVALID_ARG_TYPE";\n        throw error;\n      }\n      if (Number.isNaN(limit) || limit < 0) {\n        const error = new RangeError("The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]");\n        error.code = "ERR_OUT_OF_RANGE";\n        throw error;\n      }\n      for (const target of targets) {\n        if (!(target instanceof __quenchEventsModule || target instanceof EventTarget || target instanceof AbortSignal)) {\n          const error = new TypeError("The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]");\n          error.code = "ERR_INVALID_ARG_TYPE";\n          throw error;\n        }\n        limits.set(target, limit);\n      }\n      return targets[0];\n    };\n  }\n  return __quenchEventsModule;\n};\n'
-);
+globalThis.EventTarget ||= class EventTarget {
+  constructor() {
+    this._listeners = {};
+  }
+  addEventListener(name, listener) {
+    (this._listeners[name] ||= []).push(listener);
+  }
+  removeEventListener(name, listener) {
+    this._listeners[name] = (this._listeners[name] || []).filter(
+      (item) => item !== listener
+    );
+  }
+  dispatchEvent(event) {
+    for (const listener of this._listeners[event.type] || [])
+      listener.call(this, event);
+    return true;
+  }
+};
+const __quenchEventsOriginalRequire = globalThis.require;
+let __quenchEventsModule;
+const __quenchEventsTargetValid = (target) =>
+  target instanceof __quenchEventsModule ||
+  target instanceof EventTarget ||
+  target instanceof AbortSignal;
+const __quenchValidateEventLimit = (limit) => {
+  if (typeof limit !== "number") {
+    const error = new TypeError(
+      "The setMaxListeners argument must be a number [ERR_INVALID_ARG_TYPE]"
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (Number.isNaN(limit) || limit < 0) {
+    const error = new RangeError(
+      "The value of setMaxListeners is out of range [ERR_OUT_OF_RANGE]"
+    );
+    error.code = "ERR_OUT_OF_RANGE";
+    throw error;
+  }
+};
+const __quenchEventsRequire = (value) => {
+  if (__quenchEventsModule) return __quenchEventsModule;
+  const limits = new WeakMap();
+  __quenchEventsModule = value.EventEmitter;
+  Object.assign(__quenchEventsModule, value);
+  __quenchEventsModule.defaultMaxListeners = 10;
+  __quenchEventsModule.getMaxListeners = (target) => {
+    if (!__quenchEventsTargetValid(target)) {
+      const error = new TypeError(
+        "The eventTarget argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (target instanceof AbortSignal) return 0;
+    return limits.get(target) ?? 10;
+  };
+  __quenchEventsModule.setMaxListeners = (limit, ...targets) => {
+    __quenchValidateEventLimit(limit);
+    for (const target of targets) {
+      if (!__quenchEventsTargetValid(target)) {
+        const error = new TypeError(
+          "The eventTargets argument must be an instance of EventEmitter or EventTarget [ERR_INVALID_ARG_TYPE]"
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      limits.set(target, limit);
+    }
+    return targets[0];
+  };
+  return __quenchEventsModule;
+};
+globalThis.require = (name) => {
+  const value = __quenchEventsOriginalRequire(name);
+  if (String(name).replace(/^node:/, "") !== "events") return value;
+  return __quenchEventsRequire(value);
+};

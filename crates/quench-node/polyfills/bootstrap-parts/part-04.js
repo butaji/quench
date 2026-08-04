@@ -1,3 +1,437 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'globalThis.__nodePath = {\n  sep: "/",\n  delimiter: ":",\n  isAbsolute: (value) => __nodePathArg(value).startsWith("/"),\n  resolve: (...parts) => {\n    let resolved = "";\n    let trailing = false;\n    for (const part of parts) {\n      if (!part) continue;\n      resolved = resolved\n        ? resolved + "/" + part.replace(/^\\/+/, "")\n        : (part.startsWith("/") ? part : globalThis.__quench_cwd_get() + "/" + part);\n      if (part.endsWith("/") && !part.endsWith("\\\\")) trailing = true;\n    }\n    const out = globalThis.__nodePath.normalize(resolved);\n    return trailing && !out.endsWith("/") ? out + "/" : out;\n  },\n  normalize: (value) => {\n    const input = __nodePathArg(value);\n    const absolute = input.startsWith("/");\n    const parts = input.split("/").filter((part) => part && part !== ".");\n    const output = [];\n    parts.forEach((part) => {\n      if (part === ".." && output.length && output[output.length - 1] !== "..")\n        output.pop();\n      else if (part !== "..") output.push(part);\n    });\n    const result = (absolute ? "/" : "") + output.join("/");\n    return result || (absolute ? "/" : ".");\n  },\n  basename: (value, suffix) => {\n    const base = __nodePathArg(value).replace(/\\\\/g, "/").split("/").pop();\n    if (suffix !== undefined) {\n      const end = __nodePathArg(suffix);\n      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;\n    }\n    return base;\n  },\n  dirname: (value) => {\n    const input =\n      __nodePathArg(value).replace(/\\\\/g, "/").replace(/\\/+$/, "") || "/";\n    const parts = input.split("/");\n    parts.pop();\n    return parts.join("/") || (input.startsWith("/") ? "/" : ".");\n  },\n  extname: (value) => {\n    const name = globalThis.__nodePath.basename(__nodePathArg(value));\n    const i = name.lastIndexOf(".");\n    return i > 0 ? name.slice(i) : "";\n  },\n  join: (...parts) =>\n    globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),\n  relative: (from, to) => {\n    const a = globalThis.__nodePath\n      .normalize(__nodePathArg(from))\n      .split("/")\n      .filter(Boolean);\n    const b = globalThis.__nodePath\n      .normalize(__nodePathArg(to))\n      .split("/")\n      .filter(Boolean);\n    while (a.length && a[0] === b[0]) {\n      a.shift();\n      b.shift();\n    }\n    return [...a.map(() => ".."), ...b].join("/") || "";\n  },\n  parse: (value) => {\n    if (typeof value !== "string") {\n      const error = new TypeError(\'The "path" argument must be of type string\');\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    const input = String(value);\n    const trimmed =\n      input.replace(/\\/+$/, "") || (input.startsWith("/") ? "/" : "");\n    const base = globalThis.__nodePath.basename(trimmed);\n    const dir = globalThis.__nodePath.dirname(trimmed);\n    const ext = globalThis.__nodePath.extname(base);\n    return {\n      root: input.startsWith("/") ? "/" : "",\n      dir,\n      base,\n      ext,\n      name: ext ? base.slice(0, -ext.length) : base,\n    };\n  },\n  format: (parts) => {\n    if (!parts || typeof parts !== "object" || Array.isArray(parts)) {\n      const error = new TypeError(\n        \'The "pathObject" argument must be of type object\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    const dir = parts.dir || parts.root || "";\n    const extension = parts.ext\n      ? String(parts.ext).startsWith(".")\n        ? String(parts.ext)\n        : `.${parts.ext}`\n      : "";\n    const base = parts.base || `${parts.name || ""}${extension}`;\n    if (!dir) return base;\n    if (dir === "/") return `/${base}`;\n    return `${dir}/${base}`;\n  },\n  matchesGlob(path, pattern) {\n    if (typeof path !== "string" || typeof pattern !== "string") return false;\n    const norm = (s) => s.replace(/\\\\/g, "/").replace(/\\/+/g, "/").replace(/\\/$/, "") || ".";\n    const p = norm(path).split("/");\n    const g = norm(pattern).split("/");\n    const matchSeg = (s, pat) => {\n      // Brace expansion\n      if (pat.includes("{") && pat.includes("}")) {\n        const open = pat.indexOf("{");\n        const close = pat.indexOf("}", open);\n        const head = pat.slice(0, open);\n        const tail = pat.slice(close + 1);\n        const alts = pat.slice(open + 1, close).split(",");\n        for (const alt of alts) {\n          if (matchSeg(s, head + alt + tail)) return true;\n        }\n        return false;\n      }\n      // Char class\n      const classMatch = (re) => {\n        const m = pat.match(/\\[([^\\]]+)\\]/);\n        if (m) {\n          const re_ = new RegExp("^" + re + "$");\n          return re_.test(s);\n        }\n        return re.test(s);\n      };\n      const re = pat\n        .replace(/[.+^$()|\\\\]/g, "\\\\$&")\n        .replace(/\\{[^}]*\\}/g, (m) => m)\n        .replace(/\\*\\*/g, "::DOUBLESTAR::")\n        .replace(/\\*/g, "[^/]*")\n        .replace(/::DOUBLESTAR::/g, ".*")\n        .replace(/\\?/g, "[^/]")\n        .replace(/\\[([^\\]]+)\\]/g, "[$1]");\n      try {\n        return new RegExp("^" + re + "$").test(s);\n      } catch {\n        return false;\n      }\n    };\n    let pi = 0;\n    let gi = 0;\n    while (gi < g.length) {\n      const pat = g[gi];\n      if (pat === "**") {\n        if (gi === g.length - 1) return true;\n        gi++;\n        for (let k = pi; k <= p.length; k++) {\n          if (this.matchesGlob(p.slice(k).join("/"), g.slice(gi).join("/"))) return true;\n        }\n        return false;\n      }\n      if (pi >= p.length) return false;\n      if (!matchSeg(p[pi], pat)) return false;\n      pi++;\n      gi++;\n    }\n    return pi === p.length;\n  },\n};\nglobalThis.__nodePath.posix = globalThis.__nodePath;\nconst __nodeWinPath = {\n  sep: "\\\\",\n  delimiter: ";",\n  isAbsolute(value) {\n    const input = __nodePathArg(value);\n    return /^[A-Za-z]:[\\\\/]/.test(input) || input.startsWith("\\\\\\\\");\n  },\n  normalize(value) {\n    const input = __nodePathArg(value).replace(/\\//g, "\\\\");\n    const root = /^[A-Za-z]:\\\\/.test(input) ? input.slice(0, 3) : "";\n    const parts = input.slice(root.length).split("\\\\").filter(Boolean);\n    const output = [];\n    for (const part of parts) {\n      if (part === ".." && output.length && output.at(-1) !== "..")\n        output.pop();\n      else if (part !== ".") output.push(part);\n    }\n    return `${root}${output.join("\\\\")}${output.length ? "" : root ? "" : "."}`;\n  },\n  join(...parts) {\n    return this.normalize(parts.map(__nodePathArg).join("\\\\"));\n  },\n  resolve(...parts) {\n    return this.normalize(parts.map(__nodePathArg).join("\\\\"));\n  },\n  relative(from, to) {\n    const a = this.normalize(__nodePathArg(from)).split("\\\\").filter(Boolean);\n    const b = this.normalize(__nodePathArg(to)).split("\\\\").filter(Boolean);\n    while (a.length && a[0].toLowerCase() === b[0].toLowerCase()) {\n      a.shift();\n      b.shift();\n    }\n    return [...a.map(() => ".."), ...b].join("\\\\");\n  },\n  parse(value) {\n    __nodePathArg(value);\n    if (value.startsWith("/")) return globalThis.__nodePath.parse(value);\n    const input = value.replace(/\\//g, "\\\\");\n    let root = "";\n    if (input.startsWith("\\\\\\\\")) {\n      const parts = input.split("\\\\");\n      if (parts.length >= 4 && parts[2] && parts[3])\n        root = `\\\\\\\\${parts[2]}\\\\${parts[3]}\\\\`;\n      else root = "\\\\";\n    } else if (/^[A-Za-z]:\\\\/.test(input)) root = input.slice(0, 3);\n    else if (/^[A-Za-z]:/.test(input)) root = input.slice(0, 2);\n    else if (input.startsWith("\\\\")) root = "\\\\";\n    const hadTrailingSeparator = input.length > 0 && /[\\\\]$/.test(input);\n    const trimmed = input.replace(/[\\\\]+$/, "") || root;\n    if (/^[A-Za-z]:$/.test(input))\n      return { root: input, dir: "", base: "", ext: "", name: "" };\n    if (/^[A-Za-z]:[^\\\\]/.test(input)) {\n      const relative = input.slice(2);\n      const dot = relative.lastIndexOf(".");\n      const ext = dot > 0 ? relative.slice(dot) : "";\n      return {\n        root: input.slice(0, 2),\n        dir: "",\n        base: relative,\n        ext,\n        name: ext ? relative.slice(0, -ext.length) : relative,\n      };\n    }\n    if (root.startsWith("\\\\\\\\") && trimmed === root.slice(0, -1))\n      return { root, dir: root, base: "", ext: "", name: "" };\n    const index = trimmed.lastIndexOf("\\\\");\n    const dir =\n      index >= 0\n        ? (hadTrailingSeparator ||\n          (root.length === 3 && index === 2) ||\n          (root.startsWith("\\\\\\\\") && index === root.length - 1)\n            ? trimmed.slice(0, index + 1)\n            : trimmed.slice(0, index)) || root\n        : "";\n    const base = index >= 0 ? trimmed.slice(index + 1) : trimmed;\n    const dot = base.lastIndexOf(".");\n    const ext = dot > 0 ? base.slice(dot) : "";\n    return {\n      root,\n      dir,\n      base,\n      ext,\n      name: ext ? base.slice(0, -ext.length) : base,\n    };\n  },\n  format(parts) {\n    if (!parts || typeof parts !== "object" || Array.isArray(parts)) {\n      const error = new TypeError(\n        \'The "pathObject" argument must be of type object\',\n      );\n      error.code = "ERR_INVALID_ARG_TYPE";\n      throw error;\n    }\n    const extension = parts.ext\n      ? String(parts.ext).startsWith(".")\n        ? String(parts.ext)\n        : `.${parts.ext}`\n      : "";\n    const base = parts.base || `${parts.name || ""}${extension}`;\n    const dir = parts.dir || parts.root || "";\n    if (!dir) return base;\n    if (/^[A-Za-z]:$/.test(dir)) return `${dir}${base}`;\n    if (dir.endsWith("\\\\")) return `${dir}${base}`;\n    return `${dir}\\\\${base}`;\n  },\n  basename: (value, suffix) => {\n    const base =\n      __nodePathArg(value)\n        .replace(/[\\\\/]+$/, "")\n        .split(/[\\\\/]/)\n        .pop() || "";\n    if (suffix !== undefined) {\n      const end = __nodePathArg(suffix);\n      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;\n    }\n    return base;\n  },\n  dirname: (value) => {\n    const input = __nodePathArg(value).replace(/[\\\\/]+$/, "");\n    const index = input.lastIndexOf("\\\\");\n    return index < 0 ? "" : input.slice(0, index) || "\\\\";\n  },\n  extname(value) {\n    const base = this.basename(__nodePathArg(value));\n    const index = base.lastIndexOf(".");\n    return index > 0 ? base.slice(index) : "";\n  },\n};\n__nodeWinPath.posix = globalThis.__nodePath;\n__nodeWinPath.win32 = __nodeWinPath;\nglobalThis.__nodePath.win32 = __nodeWinPath;\n\nglobalThis.__nodeCommon = {\n  mustCall: (fn, exact = 1) => {\n    let calls = 0;\n    const wrapped = function (...args) {\n      calls++;\n      wrapped.calls = calls;\n      return fn(...args);\n    };\n    wrapped.calls = 0;\n    wrapped.expected = exact;\n    wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;\n    globalThis.__nodeCallChecks.push(wrapped);\n    return wrapped;\n  },\n  mustCallAtLeast: (fn, minimum = 1) => {\n    const wrapped = globalThis.__nodeCommon.mustCall(fn, minimum);\n    wrapped.__quench_at_least = true;\n    return wrapped;\n  },\n  mustSucceed: (fn = () => {}) =>\n    globalThis.__nodeCommon.mustCall((error, ...args) => {\n      if (error) throw error;\n      return fn(...args);\n    }),\n  mustNotCall:\n    (message = "Unexpected call") =>\n    () => {\n      throw new Error(message);\n    },\n  noop: () => {},\n  isAlive: (pid) => {\n    const alive = globalThis.__quench_node_pids || new Set();\n    globalThis.__quench_node_pids = alive;\n    return alive.has(pid);\n  },\n  printSkipMessage: (message) => console.log(`# SKIP: ${message}`),\n  expectsError: (_expected) => (error) => {\n    if (!error) throw new Error("Expected filesystem error");\n  },\n  invalidArgTypeHelper: (input) => {\n    if (input == null) return ` Received ${input}`;\n    let rendered;\n    try {\n      rendered = String(input);\n    } catch (_) {\n      rendered = Object.prototype.toString.call(input);\n    }\n    return ` Received type ${typeof input} (${rendered})`;\n  },\n  expectWarning: (_type, _message) => {},\n  mustNotMutateObjectDeep: (value) => value,\n  isLinux: process.platform === "linux",\n  hasIntl: typeof Intl !== "undefined",\n  isDebug: false,\n  isMacOS: process.platform === "darwin",\n  isWindows: process.platform === "win32",\n  isAIX: false,\n  isFreeBSD: false,\n  enoughTestMem: true,\n  canCreateSymLink: () => process.platform !== "win32",\n  getArrayBufferViews: (buffer) => [\n    buffer,\n    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),\n    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength),\n  ],\n};\nglobalThis.__quench_verify_calls = () => {\n  for (const callback of globalThis.__nodeCallChecks || []) {\n    if (\n      callback.__quench_at_least\n        ? callback.calls < callback.expected\n        : callback.calls !== callback.expected\n    )\n      throw new Error(\n        `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`,\n      );\n  }\n};\nglobalThis.__nodeTmpdir = {\n  path: `/tmp/quench-node-${process.pid}`,\n  hasEnoughSpace: (_bytes) => false,\n  refresh: () => {\n    try {\n      globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path);\n    } catch (_) {}\n  },\n  resolve: (name = "") =>\n    globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),\n  fileURL: (name = "") =>\n    new globalThis.__nodeURL(\n      `file://${globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))}`,\n    ),\n};\nclass NodeEventEmitter {\n  constructor() {\n    this._events = {};\n  }\n  on(event, listener) {\n    (this._events[event] ||= []).push(listener);\n    return this;\n  }\n  addListener(event, listener) {\n    return this.on(event, listener);\n  }\n  once(event, listener) {\n    const wrapped = (...args) => {\n      this.removeListener(event, wrapped);\n      listener(...args);\n    };\n    return this.on(event, wrapped);\n  }\n  emit(event, ...args) {\n    const listeners = this._events[event] || [];\n    listeners.slice().forEach((listener) => listener(...args));\n    return listeners.length > 0;\n  }\n  removeListener(event, listener) {\n    this._events[event] = (this._events[event] || []).filter(\n      (item) => item !== listener,\n    );\n    return this;\n  }\n  off(event, listener) {\n    return this.removeListener(event, listener);\n  }\n  removeAllListeners(event) {\n    if (event === undefined) this._events = {};\n    else delete this._events[event];\n    return this;\n  }\n  listeners(event) {\n    return (this._events[event] || []).slice();\n  }\n  listenerCount(event) {\n    return (this._events[event] || []).length;\n  }\n}\nglobalThis.__nodeEventEmitter = NodeEventEmitter;\nglobalThis.process._events = {};\n'
-);
+const __nodePathFormatExtension = (extension) => {
+  if (!extension) return "";
+  const value = String(extension);
+  return value.startsWith(".") ? value : `.${value}`;
+};
+const __nodePathFormatParts = (parts) => {
+  if (!parts || typeof parts !== "object" || Array.isArray(parts)) {
+    const error = new TypeError(
+      'The "pathObject" argument must be of type object'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
+const __nodeWindowsRoot = (input) => {
+  if (input.startsWith("\\\\")) {
+    const parts = input.split("\\");
+    return parts.length >= 4 && parts[2] && parts[3]
+      ? `\\\\${parts[2]}\\${parts[3]}\\`
+      : "\\";
+  }
+  if (/^[A-Za-z]:\\/.test(input)) return input.slice(0, 3);
+  if (/^[A-Za-z]:/.test(input)) return input.slice(0, 2);
+  return input.startsWith("\\") ? "\\" : "";
+};
+const __nodeWindowsParts = (base, root, dir) => {
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot) : "";
+  return {
+    root,
+    dir,
+    base,
+    ext,
+    name: ext ? base.slice(0, -ext.length) : base
+  };
+};
+const __nodeWindowsDir = (trimmed, root, index, trailing) => {
+  if (index < 0) return "";
+  const keepSeparator =
+    trailing ||
+    (root.length === 3 && index === 2) ||
+    (root.startsWith("\\\\") && index === root.length - 1);
+  return trimmed.slice(0, index + (keepSeparator ? 1 : 0)) || root;
+};
+const __nodeGlobNormalize = (value) =>
+  value.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "") || ".";
+const __nodeGlobSegment = (value, pattern) => {
+  if (pattern.includes("{") && pattern.includes("}")) {
+    const open = pattern.indexOf("{");
+    const close = pattern.indexOf("}", open);
+    const head = pattern.slice(0, open);
+    const tail = pattern.slice(close + 1);
+    return pattern
+      .slice(open + 1, close)
+      .split(",")
+      .some((part) => __nodeGlobSegment(value, head + part + tail));
+  }
+  const expression = pattern
+    .replace(/[.+^$()|\\]/g, "\\$&")
+    .replace(/\{[^}]*\}/g, (match) => match)
+    .replace(/\*\*/g, "::DOUBLESTAR::")
+    .replace(/\*/g, "[^/]*")
+    .replace(/::DOUBLESTAR::/g, ".*")
+    .replace(/\?/g, "[^/]")
+    .replace(/\[([^\]]+)\]/g, "[$1]");
+  try {
+    return new RegExp("^" + expression + "$").test(value);
+  } catch {
+    return false;
+  }
+};
+const __nodeGlobMatch = (path, pattern) => {
+  if (typeof path !== "string" || typeof pattern !== "string") return false;
+  const paths = __nodeGlobNormalize(path).split("/");
+  const patterns = __nodeGlobNormalize(pattern).split("/");
+  let pathIndex = 0;
+  let patternIndex = 0;
+  while (patternIndex < patterns.length) {
+    const segment = patterns[patternIndex];
+    if (segment === "**") {
+      if (patternIndex === patterns.length - 1) return true;
+      patternIndex++;
+      for (let index = pathIndex; index <= paths.length; index++)
+        if (
+          __nodeGlobMatch(
+            paths.slice(index).join("/"),
+            patterns.slice(patternIndex).join("/")
+          )
+        )
+          return true;
+      return false;
+    }
+    if (
+      pathIndex >= paths.length ||
+      !__nodeGlobSegment(paths[pathIndex], segment)
+    )
+      return false;
+    pathIndex++;
+    patternIndex++;
+  }
+  return pathIndex === paths.length;
+};
+globalThis.__nodePath = {
+  sep: "/",
+  delimiter: ":",
+  isAbsolute: (value) => __nodePathArg(value).startsWith("/"),
+  resolve: (...parts) => {
+    let resolved = "";
+    let trailing = false;
+    for (const part of parts) {
+      if (!part) continue;
+      resolved = resolved
+        ? resolved + "/" + part.replace(/^\/+/, "")
+        : part.startsWith("/")
+          ? part
+          : globalThis.__quench_cwd_get() + "/" + part;
+      if (part.endsWith("/") && !part.endsWith("\\")) trailing = true;
+    }
+    const out = globalThis.__nodePath.normalize(resolved);
+    return trailing && !out.endsWith("/") ? out + "/" : out;
+  },
+  normalize: (value) => {
+    const input = __nodePathArg(value);
+    const absolute = input.startsWith("/");
+    const parts = input.split("/").filter((part) => part && part !== ".");
+    const output = [];
+    parts.forEach((part) => {
+      if (part === ".." && output.length && output[output.length - 1] !== "..")
+        output.pop();
+      else if (part !== "..") output.push(part);
+    });
+    const result = (absolute ? "/" : "") + output.join("/");
+    return result || (absolute ? "/" : ".");
+  },
+  basename: (value, suffix) => {
+    const base = __nodePathArg(value).replace(/\\/g, "/").split("/").pop();
+    if (suffix !== undefined) {
+      const end = __nodePathArg(suffix);
+      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
+    }
+    return base;
+  },
+  dirname: (value) => {
+    const input =
+      __nodePathArg(value).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+    const parts = input.split("/");
+    parts.pop();
+    return parts.join("/") || (input.startsWith("/") ? "/" : ".");
+  },
+  extname: (value) => {
+    const name = globalThis.__nodePath.basename(__nodePathArg(value));
+    const i = name.lastIndexOf(".");
+    return i > 0 ? name.slice(i) : "";
+  },
+  join: (...parts) =>
+    globalThis.__nodePath.normalize(parts.map(__nodePathArg).join("/")),
+  relative: (from, to) => {
+    const a = globalThis.__nodePath
+      .normalize(__nodePathArg(from))
+      .split("/")
+      .filter(Boolean);
+    const b = globalThis.__nodePath
+      .normalize(__nodePathArg(to))
+      .split("/")
+      .filter(Boolean);
+    while (a.length && a[0] === b[0]) {
+      a.shift();
+      b.shift();
+    }
+    return [...a.map(() => ".."), ...b].join("/") || "";
+  },
+  parse: (value) => {
+    if (typeof value !== "string") {
+      const error = new TypeError('The "path" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const input = String(value);
+    const trimmed =
+      input.replace(/\/+$/, "") || (input.startsWith("/") ? "/" : "");
+    const base = globalThis.__nodePath.basename(trimmed);
+    const dir = globalThis.__nodePath.dirname(trimmed);
+    const ext = globalThis.__nodePath.extname(base);
+    return {
+      root: input.startsWith("/") ? "/" : "",
+      dir,
+      base,
+      ext,
+      name: ext ? base.slice(0, -ext.length) : base
+    };
+  },
+  format: (parts) => {
+    __nodePathFormatParts(parts);
+    const dir = parts.dir || parts.root || "";
+    const extension = __nodePathFormatExtension(parts.ext);
+    const base = parts.base || `${parts.name || ""}${extension}`;
+    if (!dir) return base;
+    if (dir === "/") return `/${base}`;
+    return `${dir}/${base}`;
+  },
+  matchesGlob(path, pattern) {
+    return __nodeGlobMatch(path, pattern);
+  }
+};
+globalThis.__nodePath.posix = globalThis.__nodePath;
+const __nodeWinPath = {
+  sep: "\\",
+  delimiter: ";",
+  isAbsolute(value) {
+    const input = __nodePathArg(value);
+    return /^[A-Za-z]:[\\/]/.test(input) || input.startsWith("\\\\");
+  },
+  normalize(value) {
+    const input = __nodePathArg(value).replace(/\//g, "\\");
+    const root = /^[A-Za-z]:\\/.test(input) ? input.slice(0, 3) : "";
+    const parts = input.slice(root.length).split("\\").filter(Boolean);
+    const output = [];
+    for (const part of parts) {
+      if (part === ".." && output.length && output.at(-1) !== "..")
+        output.pop();
+      else if (part !== ".") output.push(part);
+    }
+    return `${root}${output.join("\\")}${output.length ? "" : root ? "" : "."}`;
+  },
+  join(...parts) {
+    return this.normalize(parts.map(__nodePathArg).join("\\"));
+  },
+  resolve(...parts) {
+    return this.normalize(parts.map(__nodePathArg).join("\\"));
+  },
+  relative(from, to) {
+    const a = this.normalize(__nodePathArg(from)).split("\\").filter(Boolean);
+    const b = this.normalize(__nodePathArg(to)).split("\\").filter(Boolean);
+    while (a.length && a[0].toLowerCase() === b[0].toLowerCase()) {
+      a.shift();
+      b.shift();
+    }
+    return [...a.map(() => ".."), ...b].join("\\");
+  },
+  parse(value) {
+    __nodePathArg(value);
+    if (value.startsWith("/")) return globalThis.__nodePath.parse(value);
+    const input = value.replace(/\//g, "\\");
+    const root = __nodeWindowsRoot(input);
+    const hadTrailingSeparator = input.length > 0 && /[\\]$/.test(input);
+    const trimmed = input.replace(/[\\]+$/, "") || root;
+    if (/^[A-Za-z]:$/.test(input))
+      return { root: input, dir: "", base: "", ext: "", name: "" };
+    if (/^[A-Za-z]:[^\\]/.test(input)) {
+      const relative = input.slice(2);
+      const dot = relative.lastIndexOf(".");
+      const ext = dot > 0 ? relative.slice(dot) : "";
+      return __nodeWindowsParts(relative, input.slice(0, 2), "");
+    }
+    if (root.startsWith("\\\\") && trimmed === root.slice(0, -1))
+      return { root, dir: root, base: "", ext: "", name: "" };
+    const index = trimmed.lastIndexOf("\\");
+    const dir = __nodeWindowsDir(trimmed, root, index, hadTrailingSeparator);
+    const base = index >= 0 ? trimmed.slice(index + 1) : trimmed;
+    return __nodeWindowsParts(base, root, dir);
+  },
+  format(parts) {
+    __nodePathFormatParts(parts);
+    const extension = __nodePathFormatExtension(parts.ext);
+    const base = parts.base || `${parts.name || ""}${extension}`;
+    const dir = parts.dir || parts.root || "";
+    if (!dir) return base;
+    if (/^[A-Za-z]:$/.test(dir)) return `${dir}${base}`;
+    if (dir.endsWith("\\")) return `${dir}${base}`;
+    return `${dir}\\${base}`;
+  },
+  basename: (value, suffix) => {
+    const base =
+      __nodePathArg(value)
+        .replace(/[\\/]+$/, "")
+        .split(/[\\/]/)
+        .pop() || "";
+    if (suffix !== undefined) {
+      const end = __nodePathArg(suffix);
+      return end && base.endsWith(end) ? base.slice(0, -end.length) : base;
+    }
+    return base;
+  },
+  dirname: (value) => {
+    const input = __nodePathArg(value).replace(/[\\/]+$/, "");
+    const index = input.lastIndexOf("\\");
+    return index < 0 ? "" : input.slice(0, index) || "\\";
+  },
+  extname(value) {
+    const base = this.basename(__nodePathArg(value));
+    const index = base.lastIndexOf(".");
+    return index > 0 ? base.slice(index) : "";
+  }
+};
+__nodeWinPath.posix = globalThis.__nodePath;
+__nodeWinPath.win32 = __nodeWinPath;
+globalThis.__nodePath.win32 = __nodeWinPath;
+
+globalThis.__nodeCommon = {
+  mustCall: (fn, exact = 1) => {
+    let calls = 0;
+    const wrapped = function (...args) {
+      calls++;
+      wrapped.calls = calls;
+      return fn(...args);
+    };
+    wrapped.calls = 0;
+    wrapped.expected = exact;
+    wrapped.__quench_index = (globalThis.__nodeCallChecks ||= []).length;
+    globalThis.__nodeCallChecks.push(wrapped);
+    return wrapped;
+  },
+  mustCallAtLeast: (fn, minimum = 1) => {
+    const wrapped = globalThis.__nodeCommon.mustCall(fn, minimum);
+    wrapped.__quench_at_least = true;
+    return wrapped;
+  },
+  mustSucceed: (fn = () => {}) =>
+    globalThis.__nodeCommon.mustCall((error, ...args) => {
+      if (error) throw error;
+      return fn(...args);
+    }),
+  mustNotCall:
+    (message = "Unexpected call") =>
+    () => {
+      throw new Error(message);
+    },
+  noop: () => {},
+  isAlive: (pid) => {
+    const alive = globalThis.__quench_node_pids || new Set();
+    globalThis.__quench_node_pids = alive;
+    return alive.has(pid);
+  },
+  printSkipMessage: (message) => console.log(`# SKIP: ${message}`),
+  expectsError: (_expected) => (error) => {
+    if (!error) throw new Error("Expected filesystem error");
+  },
+  invalidArgTypeHelper: (input) => {
+    if (input == null) return ` Received ${input}`;
+    let rendered;
+    try {
+      rendered = String(input);
+    } catch (_) {
+      rendered = Object.prototype.toString.call(input);
+    }
+    return ` Received type ${typeof input} (${rendered})`;
+  },
+  expectWarning: (_type, _message) => {},
+  mustNotMutateObjectDeep: (value) => value,
+  isLinux: process.platform === "linux",
+  hasIntl: typeof Intl !== "undefined",
+  isDebug: false,
+  isMacOS: process.platform === "darwin",
+  isWindows: process.platform === "win32",
+  isAIX: false,
+  isFreeBSD: false,
+  enoughTestMem: true,
+  canCreateSymLink: () => process.platform !== "win32",
+  getArrayBufferViews: (buffer) => [
+    buffer,
+    new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
+    new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+  ]
+};
+globalThis.__quench_verify_calls = () => {
+  for (const callback of globalThis.__nodeCallChecks || []) {
+    if (
+      callback.__quench_at_least
+        ? callback.calls < callback.expected
+        : callback.calls !== callback.expected
+    )
+      throw new Error(
+        `Callback ${callback.__quench_index}: expected ${callback.expected} calls, got ${callback.calls}`
+      );
+  }
+};
+globalThis.__nodeTmpdir = {
+  path: `/tmp/quench-node-${process.pid}`,
+  hasEnoughSpace: (_bytes) => false,
+  refresh: () => {
+    try {
+      globalThis.__quench_fs_mkdir(globalThis.__nodeTmpdir.path);
+    } catch (_) {}
+  },
+  resolve: (name = "") =>
+    globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name)),
+  fileURL: (name = "") =>
+    new globalThis.__nodeURL(
+      `file://${globalThis.__nodePath.join(globalThis.__nodeTmpdir.path, String(name))}`
+    )
+};
+class NodeEventEmitter {
+  constructor() {
+    this._events = {};
+  }
+  on(event, listener) {
+    (this._events[event] ||= []).push(listener);
+    return this;
+  }
+  addListener(event, listener) {
+    return this.on(event, listener);
+  }
+  once(event, listener) {
+    const wrapped = (...args) => {
+      this.removeListener(event, wrapped);
+      listener(...args);
+    };
+    return this.on(event, wrapped);
+  }
+  emit(event, ...args) {
+    const listeners = this._events[event] || [];
+    listeners.slice().forEach((listener) => listener(...args));
+    return listeners.length > 0;
+  }
+  removeListener(event, listener) {
+    this._events[event] = (this._events[event] || []).filter(
+      (item) => item !== listener
+    );
+    return this;
+  }
+  off(event, listener) {
+    return this.removeListener(event, listener);
+  }
+  removeAllListeners(event) {
+    if (event === undefined) this._events = {};
+    else delete this._events[event];
+    return this;
+  }
+  listeners(event) {
+    return (this._events[event] || []).slice();
+  }
+  listenerCount(event) {
+    return (this._events[event] || []).length;
+  }
+}
+globalThis.__nodeEventEmitter = NodeEventEmitter;
+globalThis.process._events = {};

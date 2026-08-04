@@ -1,3 +1,28 @@
-globalThis.__quench_bootstrap_fragments.push(
-  'const __quenchOriginalRequireWithProcessReport = globalThis.require;\nif (globalThis.process && !globalThis.process.report) {\n  globalThis.process.report = {\n    directory: "",\n    filename: "",\n    signal: "SIGUSR2",\n    compact: false,\n    reportOnFatalError: false,\n    reportOnSignal: false,\n    reportOnUncaughtException: false,\n    getReport: () => ({ header: { event: "JavaScript API", pid: globalThis.process.pid, commandLine: globalThis.process.argv }, javascriptStack: { message: "" }, resourceUsage: {}, libuv: [], sharedObjects: [] }),\n    writeReport: () => undefined,\n  };\n}\nglobalThis.require = (specifier) => String(specifier).replace(/^node:/, "") === "process" ? globalThis.process : __quenchOriginalRequireWithProcessReport(specifier);\n'
-);
+const __quenchOriginalRequireWithProcessReport = globalThis.require;
+if (globalThis.process && !globalThis.process.report) {
+  globalThis.process.report = {
+    directory: "",
+    filename: "",
+    signal: "SIGUSR2",
+    compact: false,
+    reportOnFatalError: false,
+    reportOnSignal: false,
+    reportOnUncaughtException: false,
+    getReport: () => ({
+      header: {
+        event: "JavaScript API",
+        pid: globalThis.process.pid,
+        commandLine: globalThis.process.argv
+      },
+      javascriptStack: { message: "" },
+      resourceUsage: {},
+      libuv: [],
+      sharedObjects: []
+    }),
+    writeReport: () => undefined
+  };
+}
+globalThis.require = (specifier) =>
+  String(specifier).replace(/^node:/, "") === "process"
+    ? globalThis.process
+    : __quenchOriginalRequireWithProcessReport(specifier);
