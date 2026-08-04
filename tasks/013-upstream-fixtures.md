@@ -1063,6 +1063,9 @@ metadata.
 Stage 380 formalized HMAC generation from Buffer key and message inputs with a
 hex digest.
 
+Stage 381 formalized binary crypto digest output as a Uint8Array-compatible
+Buffer with the expected SHA-256 length.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
