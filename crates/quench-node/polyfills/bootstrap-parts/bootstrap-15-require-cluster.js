@@ -25,6 +25,50 @@ const __quenchRequireStreamIter = () => {
     })
   };
 };
+const __quenchFinishClusterWorker = (cluster, worker, workerError) => {
+  queueMicrotask(() => {
+    if (worker.state !== "online" && worker.state !== "listening") return;
+    const exitCode =
+      process.exitCode !== undefined && process.exitCode !== 0
+        ? process.exitCode
+        : workerError
+          ? 1
+          : 0;
+    worker.process.exitCode = exitCode;
+    worker.process.signalCode = null;
+    worker._markDead();
+    cluster.emit("disconnect", worker);
+    worker.emit("disconnect");
+    cluster.emit("exit", worker, exitCode, null);
+    worker.emit("exit", exitCode, null);
+  });
+};
+const __quenchRunClusterWorker = (cluster, worker, env, reentry) => {
+  if (typeof globalThis.__quench_script_source !== "string" || reentry) return;
+  const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
+  const previousIsWorker = cluster.isWorker;
+  const previousArgv = process.argv;
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) process.env[key] = value;
+  }
+  const setupArgs = cluster.settings?.args || [];
+  if (setupArgs.length) process.argv = [...process.argv, ...setupArgs];
+  cluster.isWorker = true;
+  cluster.worker = worker;
+  globalThis.__quench_in_cluster_worker = true;
+  globalThis.__nodeCurrentAsyncResource = { id: worker.id };
+  let workerError = null;
+  try {
+    (0, globalThis.eval)(globalThis.__quench_script_source);
+  } catch (error) {
+    workerError = error;
+  }
+  cluster.isWorker = previousIsWorker;
+  process.argv = previousArgv;
+  globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
+  if (worker.state !== "dead")
+    __quenchFinishClusterWorker(cluster, worker, workerError);
+};
 globalThis.__quench_require_part_02 = (name, specifier) => {
   if (name === "cluster") {
     if (globalThis.__nodeCluster) return globalThis.__nodeCluster;
@@ -145,50 +189,7 @@ globalThis.__quench_require_part_02 = (name, specifier) => {
         worker.state = "online";
         worker.emit("online");
         cluster.emit("online", worker);
-        if (typeof globalThis.__quench_script_source !== "string") return;
-        if (reentry) return;
-        const previousAsyncResource = globalThis.__nodeCurrentAsyncResource;
-        const previousIsWorker = cluster.isWorker;
-        const previousArgv = process.argv;
-        for (const [key, value] of Object.entries(env)) {
-          if (value === undefined) continue;
-          process.env[key] = value;
-        }
-        const setupArgs =
-          cluster.settings && cluster.settings.args
-            ? cluster.settings.args
-            : [];
-        if (setupArgs.length) process.argv = [...process.argv, ...setupArgs];
-        cluster.isWorker = true;
-        cluster.worker = worker;
-        globalThis.__quench_in_cluster_worker = true;
-        globalThis.__nodeCurrentAsyncResource = { id: worker.id };
-        let workerError = null;
-        try {
-          (0, globalThis.eval)(globalThis.__quench_script_source);
-        } catch (error) {
-          workerError = error;
-        }
-        cluster.isWorker = previousIsWorker;
-        process.argv = previousArgv;
-        globalThis.__nodeCurrentAsyncResource = previousAsyncResource;
-        if (worker.state === "dead") return;
-        queueMicrotask(() => {
-          if (worker.state !== "online" && worker.state !== "listening") return;
-          const exitCode =
-            process.exitCode !== undefined && process.exitCode !== 0
-              ? process.exitCode
-              : workerError
-                ? 1
-                : 0;
-          worker.process.exitCode = exitCode;
-          worker.process.signalCode = null;
-          worker._markDead();
-          cluster.emit("disconnect", worker);
-          worker.emit("disconnect");
-          cluster.emit("exit", worker, exitCode, null);
-          worker.emit("exit", exitCode, null);
-        });
+        __quenchRunClusterWorker(cluster, worker, env, reentry);
       });
       return worker;
     };
