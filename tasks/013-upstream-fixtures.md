@@ -2541,3 +2541,6 @@ both string and symbol event names while excluding removed listeners.
 
 Stage 933 confirms the broader upstream EventEmitter list fixture now passes
 after Stage 932; no additional runtime code was required.
+
+Stage 934 adds the static `events.listenerCount()` forwarding API, including
+the optional listener filter, over the existing emitter implementation.
