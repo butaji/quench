@@ -596,6 +596,15 @@ mod tests {
         assert_eq!(r, Value::Boolean(true));
     }
 
+    #[test]
+    fn self_hosted_array_methods_reject_construct_calls() {
+        let mut ctx = new_ctx();
+        let r = ctx
+            .eval("try { new Array.prototype.copyWithin(); false; } catch (e) { e instanceof TypeError; }")
+            .unwrap();
+        assert_eq!(r, Value::Boolean(true));
+    }
+
 
     #[test]
     fn boxed_number_converts_to_its_primitive_value() {

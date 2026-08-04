@@ -561,13 +561,9 @@ pub fn eval_new(
     let constructor_val =
         crate::eval::expression::eval_expression(constructor, env, in_arrow_function)?;
 
-    // Arrow functions and generator functions are not constructors
-    if let Value::Function(ref f) = constructor_val {
-        if f.is_method || f.is_arrow || f.is_generator {
-            let (_, js_err) =
-                create_js_error_with_type("function is not a constructor", "TypeError");
-            return Err(js_err);
-        }
+    if !crate::eval::class::helpers::is_constructor_value(&constructor_val) {
+        let (_, js_err) = create_js_error_with_type("function is not a constructor", "TypeError");
+        return Err(js_err);
     }
 
     let args = eval_call_arguments(arguments, env, in_arrow_function)?;
