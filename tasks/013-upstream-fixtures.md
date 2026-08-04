@@ -1503,6 +1503,9 @@ Stage 531 formalized domain context add/run/bind/dispose lifecycle behavior.
 Stage 532 formalized `readline/promises` question resolution, prompt writing,
 and input pause on interface close.
 
+Stage 533 formalized REPL prompt output, expression evaluation callback, and
+closed-state reporting.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
