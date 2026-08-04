@@ -491,8 +491,6 @@ NodeBuffer.from = (...args) => {
     args[0] instanceof SharedArrayBuffer
   )
     return source;
-  const pooled = __nodeBufferPoolFrom(source);
-  if (pooled) return pooled;
   const output = new NodeBuffer(source.length);
   output.set(source);
   return output;
