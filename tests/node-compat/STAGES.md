@@ -448,3 +448,4 @@ these small fixtures isolate the currently implemented contract.
 |   449 | stream Readable unshift EOF and buffered body                  | `tools/run-node-tests.sh --stage 449` |
 |   450 | stream Readable default Buffer queue and draining              | `tools/run-node-tests.sh --stage 450` |
 |   451 | stream flow transition drains queued data and EOF              | `tools/run-node-tests.sh --stage 451` |
+|   452 | stream resume drains paused queued data                        | `tools/run-node-tests.sh --stage 452` |
