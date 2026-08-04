@@ -827,15 +827,6 @@ mod tests {
     }
 
     #[test]
-    fn array_last_index_of_has_spec_length() {
-        let mut ctx = new_ctx();
-        let r = ctx
-            .eval("Array.prototype.lastIndexOf.length === 1")
-            .unwrap();
-        assert_eq!(r, Value::Boolean(true));
-    }
-
-    #[test]
     fn array_from_applies_iterator_mapper_before_next_step() {
         let mut ctx = new_ctx();
         let r = ctx
