@@ -906,3 +906,4 @@ these small fixtures isolate the currently implemented contract.
 |   907 | process exposes builtin module lookup                    | `tools/run-node-tests.sh --stage 907` |
 |   908 | module exposes complete builtin inventory                 | `tools/run-node-tests.sh --stage 908` |
 |   909 | module exposes builtin predicate normalization             | `tools/run-node-tests.sh --stage 909` |
+|   910 | process validates thread CPU usage arguments              | `tools/run-node-tests.sh --stage 910` |
