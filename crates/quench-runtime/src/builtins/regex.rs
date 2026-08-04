@@ -96,6 +96,14 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn regex_word_class_matches_native_function_identifier() {
+        let mut ctx = crate::Context::new().unwrap();
+        crate::builtins::register_builtins(&mut ctx);
+        crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
+        assert_eq!(ctx.eval("/\\w/.test('f')"), Ok(Value::Boolean(true)));
+    }
+
     // ------------------------------------------------------------------------
     // regexp_match_state
     // ------------------------------------------------------------------------
