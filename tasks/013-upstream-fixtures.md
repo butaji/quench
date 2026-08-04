@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1125: VM external callback mutation
+
+- Fixture: `test-vm-run-in-new-context.js` callback contract
+- Preserved mutations made by host functions passed into a new VM context while
+  cleaning up the temporary function binding afterward.
+- Retrospective: reduce large upstream fixtures into independently verifiable
+  contracts when a remaining harness failure spans multiple behaviors.
+
 ## Stage 1124: VM Script new-context execution
 
 - Fixture: `test-vm-new-script-new-context.js`
