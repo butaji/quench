@@ -482,3 +482,4 @@ these small fixtures isolate the currently implemented contract.
 |   483 | fs mkdtemp validates options type                                | `tools/run-node-tests.sh --stage 483` |
 |   484 | crypto HMAC digest validates encoding                            | `tools/run-node-tests.sh --stage 484` |
 |   485 | crypto hash digest validates encoding                             | `tools/run-node-tests.sh --stage 485` |
+|   486 | crypto finalized hash copy rejects                                | `tools/run-node-tests.sh --stage 486` |
