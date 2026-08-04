@@ -525,3 +525,4 @@ these small fixtures isolate the currently implemented contract.
 |   526 | stream web readable and writable reader/writer contracts          | `tools/run-node-tests.sh --stage 526` |
 |   527 | stream consumers read Web Streams as text JSON and buffers         | `tools/run-node-tests.sh --stage 527` |
 |   528 | punycode converts Unicode domains and code points                 | `tools/run-node-tests.sh --stage 528` |
+|   529 | module API exposes builtins and require helpers                  | `tools/run-node-tests.sh --stage 529` |
