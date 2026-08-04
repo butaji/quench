@@ -2718,3 +2718,8 @@ EventTarget contract in one focused stage.
 Stage 969 verifies `Event` constructor flags and cancelability. Retrospective:
 using one cancelable and one fixed event keeps default-value behavior explicit
 without depending on the incomplete upstream WPT helper import.
+
+Stage 970 verifies EventTarget `once` listeners, abort-signal removal, and
+listener validation. Retrospective: storing listener records makes dispatch
+snapshot behavior and mid-dispatch removal testable without adding host-side
+event machinery.
