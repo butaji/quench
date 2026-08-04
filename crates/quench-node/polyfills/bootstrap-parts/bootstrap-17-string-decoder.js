@@ -6,6 +6,20 @@ const __quenchDecoderInputBytes = (input) => {
     );
   return Array.from(input || []);
 };
+const __quenchDecoderValidateInput = (decoder, input) => {
+  if (!decoder || !Array.isArray(decoder._pending)) {
+    const error = new TypeError("Cannot call write on an invalid receiver");
+    error.code = "ERR_INVALID_THIS";
+    throw error;
+  }
+  if (!ArrayBuffer.isView(input)) {
+    const error = new TypeError(
+      'The "buf" argument must be an instance of Buffer, TypedArray, or DataView'
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+};
 const __quenchDecoderStoreUtf8 = (decoder, bytes) => {
   const result = __quenchDecodeUtf8(bytes, false);
   decoder._pending = result.pending;
@@ -34,13 +48,7 @@ const __quenchStringDecoderClass = class {
     this.lastChar = new NodeBuffer(4);
   }
   write(input) {
-    if (!ArrayBuffer.isView(input)) {
-      const error = new TypeError(
-        'The "buf" argument must be an instance of Buffer, TypedArray, or DataView'
-      );
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
+    __quenchDecoderValidateInput(this, input);
     const bytes = [...this._pending, ...__quenchDecoderInputBytes(input)];
     if (this.encoding === "utf8") {
       return __quenchDecoderStoreUtf8(this, bytes);
