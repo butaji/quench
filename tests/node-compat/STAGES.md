@@ -376,3 +376,4 @@ these small fixtures isolate the currently implemented contract.
 |   377 | fs invalid path argument validation                              | `tools/run-node-tests.sh --stage 377` |
 |   378 | fs invalid write path validation                                 | `tools/run-node-tests.sh --stage 378` |
 |   379 | fs unknown encoding validation                                   | `tools/run-node-tests.sh --stage 379` |
+|   380 | crypto HMAC Buffer input and hex digest                         | `tools/run-node-tests.sh --stage 380` |
