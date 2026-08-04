@@ -840,3 +840,4 @@ these small fixtures isolate the currently implemented contract.
 |   841 | dgram exposes UDP socket API                                  | `tools/run-node-tests.sh --stage 841` |
 |   842 | tls exposes secure transport API                              | `tools/run-node-tests.sh --stage 842` |
 |   843 | child process exposes process creation API                    | `tools/run-node-tests.sh --stage 843` |
+|   844 | v8 exposes serialization and heap inspection API              | `tools/run-node-tests.sh --stage 844` |
