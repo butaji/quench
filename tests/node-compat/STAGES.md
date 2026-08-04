@@ -736,3 +736,4 @@ these small fixtures isolate the currently implemented contract.
 |   737 | process stderr destroy is non-destructive and chainable                      | `tools/run-node-tests.sh --stage 737` |
 |   738 | process stdout writable state reports an active stream                      | `tools/run-node-tests.sh --stage 738` |
 |   739 | process stderr writable state reports an active stream                      | `tools/run-node-tests.sh --stage 739` |
+|   740 | process stdout writableNeedDrain reports no pending drain                       | `tools/run-node-tests.sh --stage 740` |
