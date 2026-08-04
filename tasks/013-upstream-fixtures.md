@@ -2679,3 +2679,7 @@ listener scheduling.
 Stage 961 verifies stable async-resource ID exposure during event delivery.
 Retrospective: checking the ID both inside the listener and afterward isolates
 resource identity from event payload behavior.
+
+Stage 962 verifies chainable `EventEmitterAsyncResource.emitDestroy()` lifecycle
+behavior. Retrospective: asserting the fluent return keeps the fixture focused
+on the public lifecycle contract while the underlying resource performs cleanup.

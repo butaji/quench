@@ -97,6 +97,10 @@ const __quenchCoreStaticModules = new Map([
             this
           );
         }
+        emitDestroy() {
+          this.asyncResource.emitDestroy();
+          return this;
+        }
       };
       return {
         EventEmitter: globalThis.__nodeEventEmitter,
