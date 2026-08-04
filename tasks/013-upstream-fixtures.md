@@ -3009,3 +3009,7 @@ boundary in the legacy module path; the focused invalid-item contract passes.
 Stage 1019 adds Node-style distinction between non-integer and negative
 `Buffer.concat()` length errors. Retrospective: separating the two message
 families keeps validation behavior precise without changing copy semantics.
+
+Stage 1020 corrects primitive string descriptions in `Buffer.concat()` item
+errors. Retrospective: type-description formatting is centralized, so each
+fixture-specific mismatch can be fixed without increasing concat complexity.
