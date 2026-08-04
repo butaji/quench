@@ -707,3 +707,4 @@ these small fixtures isolate the currently implemented contract.
 |   708 | process stdout once returns the stream for chaining                           | `tools/run-node-tests.sh --stage 708` |
 |   709 | process stderr once returns the stream for chaining                           | `tools/run-node-tests.sh --stage 709` |
 |   710 | process stdout removeListener returns the stream for chaining                 | `tools/run-node-tests.sh --stage 710` |
+|   711 | process stderr removeListener returns the stream for chaining                 | `tools/run-node-tests.sh --stage 711` |
