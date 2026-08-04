@@ -2389,3 +2389,9 @@ Stage 902 verifies the node:crypto synchronous PBKDF2 derivation API.
 
 Retrospective: PBKDF2 can reuse the HMAC adapter with explicit block and XOR
 steps, keeping derivation behavior readable in one compatibility layer.
+
+Stage 903 verifies the node:crypto FIPS mode state controls.
+
+Retrospective: configuration-only APIs can remain process-local in the
+polyfill, avoiding host-global state for a compatibility surface that is not
+backed by rquickjs.
