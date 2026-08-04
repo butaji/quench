@@ -1208,6 +1208,9 @@ close.
 Stage 429 formalized process exit event delivery, listener ordering, and the
 default zero exit code.
 
+Stage 430 formalized stream `autoClose: false` behavior, retaining the file
+descriptor after stream close for caller-managed cleanup.
+
 The stage harness now has a fast path for parallel execution: `tools/check-all-
 tests.sh` uses `cargo-nextest` for Cargo tests when available and a parallel
 Node-stage runner for the CLI-driven API fixtures. This preserves the existing
