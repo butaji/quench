@@ -2983,3 +2983,12 @@ copy semantics while avoiding another host callback.
 Upstream audit: `test-buffer-concat.js` reaches existing exact error-message
 compatibility gaps in the older concat validation path; the focused copy and
 length behavior now pass.
+
+Stage 1016 verifies `Buffer.from(ArrayBuffer)` preserves shared storage and
+byte length. Retrospective: testing mutation through both the Buffer and its
+Uint8Array view catches accidental copying while keeping offset validation out
+of the focused slice.
+
+Upstream audit: `test-buffer-arraybuffer.js` still reaches the spoofed
+ArrayBuffer brand-check case; ordinary shared ArrayBuffer conversion now has a
+focused passing contract.
