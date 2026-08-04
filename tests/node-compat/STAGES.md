@@ -827,3 +827,4 @@ these small fixtures isolate the currently implemented contract.
 |   828 | console exposes core logging and constructor API               | `tools/run-node-tests.sh --stage 828` |
 |   829 | tty exposes detection and stream constructors                  | `tools/run-node-tests.sh --stage 829` |
 |   830 | querystring exposes parse and stringify API                    | `tools/run-node-tests.sh --stage 830` |
+|   831 | string decoder exposes incremental decoding API                | `tools/run-node-tests.sh --stage 831` |

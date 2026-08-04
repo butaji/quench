@@ -2208,3 +2208,5 @@ Stage 828 verified the core node:console API.
 Stage 829 verified the core node:tty API.
 
 Stage 830 verified the core node:querystring API.
+
+Stage 831 verified the node:string_decoder API.
