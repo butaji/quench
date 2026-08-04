@@ -91,8 +91,15 @@ fn to_primitive_function(
         }
         None
     };
-    let first_method = f.get_property(first).or_else(|| inherited(first));
-    let second_method = f.get_property(second).or_else(|| inherited(second));
+    let inherited_to_string = || {
+        inherited("toString").filter(|value| matches!(value, Value::Function(_)))
+    };
+    let first_method = f.get_property(first).or_else(|| {
+        (first == "toString").then(inherited_to_string).flatten()
+    });
+    let second_method = f.get_property(second).or_else(|| {
+        (second == "toString").then(inherited_to_string).flatten()
+    });
 
     let this_val = Value::Function((**f).clone());
 
