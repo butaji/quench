@@ -71,8 +71,28 @@ fn to_primitive_function(
     };
 
     // Check own properties first (user-defined override)
-    let first_method = f.get_property(first);
-    let second_method = f.get_property(second);
+    let prototype = if f.is_generator && !f.is_async {
+        crate::builtins::function::get_generator_function_prototype()
+    } else if f.is_async && !f.is_generator {
+        crate::builtins::function::get_async_function_prototype()
+    } else if f.is_async {
+        crate::builtins::function::get_async_generator_function_prototype()
+    } else {
+        crate::builtins::function::get_function_prototype()
+    };
+    let inherited = |name: &str| {
+        let mut current = prototype.clone();
+        while let Some(object) = current {
+            let borrowed = object.borrow();
+            if let Some(value) = borrowed.get_own_value(name) {
+                return Some(value);
+            }
+            current = borrowed.prototype.clone();
+        }
+        None
+    };
+    let first_method = f.get_property(first).or_else(|| inherited(first));
+    let second_method = f.get_property(second).or_else(|| inherited(second));
 
     let this_val = Value::Function((**f).clone());
 

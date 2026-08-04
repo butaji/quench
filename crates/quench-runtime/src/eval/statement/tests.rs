@@ -337,6 +337,7 @@ fn dynamic_import_specifier_error_rejects_with_original_value() {
 fn dynamic_import_uses_function_to_string_for_specifier() {
     let mut ctx = Context::new().unwrap();
     crate::builtins::register_builtins(&mut ctx);
+    crate::builtins::bootstrap::bootstrap_js_builtins(&mut ctx).unwrap();
     let mut exports = crate::value::Object::new(crate::value::ObjectKind::Ordinary);
     exports.set("x", Value::Number(1.0));
     ctx.register_module("./module.js", exports);
