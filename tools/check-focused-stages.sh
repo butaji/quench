@@ -13,9 +13,9 @@ for stage in $(find "$root/tests/node-compat" -mindepth 1 -maxdepth 1 -type d -n
     flags="--experimental-stream-iter"
   fi
   if command -v timeout >/dev/null 2>&1; then
-    run="timeout $timeout_seconds cargo run -q --manifest-path $root/Cargo.toml -p quench-node -- $flags --stage $stage"
+    run="timeout --kill-after=2 $timeout_seconds cargo run -q --manifest-path $root/Cargo.toml -p quench-node -- $flags --stage $stage"
   elif command -v gtimeout >/dev/null 2>&1; then
-    run="gtimeout $timeout_seconds cargo run -q --manifest-path $root/Cargo.toml -p quench-node -- $flags --stage $stage"
+    run="gtimeout --kill-after=2 $timeout_seconds cargo run -q --manifest-path $root/Cargo.toml -p quench-node -- $flags --stage $stage"
   else
     run="perl -e \"alarm shift; exec \\@ARGV\" $timeout_seconds cargo run -q --manifest-path $root/Cargo.toml -p quench-node -- $flags --stage $stage"
   fi

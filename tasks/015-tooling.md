@@ -114,6 +114,8 @@ as `tools/host-callback-contract.md`.
 Repository-wide
 source-limit enforcement is now installed. The bootstrap diagnostics added for
 stage 514 exposed and fixed an initialization-order bug in the stream polyfill.
+Focused runners now use a forced kill-after grace period so timed-out child
+processes cannot accumulate as stale runners.
 Stage 516 also confirmed that one shared callback adapter is sufficient for the
 zlib convenience methods while preserving synchronous validation and async
 error delivery.
