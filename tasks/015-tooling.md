@@ -105,8 +105,10 @@ decomposed in subsequent slices.
 
 ## Status
 
-In progress. Items 1 and 5 remain immediate next slices; the host callback
-contract template is now available as `tools/host-callback-contract.md`.
+In progress. Item 5 remains an immediate next slice; Prettier is now pinned in
+`package.json` with a local staged-file hook installed by
+`tools/install-hooks.sh`, and the host callback contract template is available
+as `tools/host-callback-contract.md`.
 Repository-wide
 source-limit enforcement is now installed. The bootstrap diagnostics added for
 stage 514 exposed and fixed an initialization-order bug in the stream polyfill.
