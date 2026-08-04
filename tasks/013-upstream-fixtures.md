@@ -1,5 +1,13 @@
 # Upstream fixtures — pass every `tests/node/test/parallel/*.js`
 
+## Stage 1143: VM nested global identity
+
+- Fixture: `test-vm-property-not-on-sandbox.js`
+- Rewrote direct nested sandbox self-references to the context global while
+  installing object-valued context properties.
+- Retrospective: preserve identity at descriptor injection time instead of
+  copying properties after evaluation.
+
 ## Stage 1142: VM restricted global declarations
 
 - Fixture: `test-vm-global-restricted-property.js`
