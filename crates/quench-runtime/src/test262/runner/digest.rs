@@ -633,6 +633,25 @@ mod tests {
     }
 
     #[test]
+    fn group_failures_keeps_all_paths_and_bounds_diagnostic_samples() {
+        let failures: Vec<_> = (0..10)
+            .map(|i| {
+                let mut failure = TestFailure::from_message("TypeError: same");
+                failure.error_type = Some("TypeError".into());
+                (format!("{i}.js"), failure)
+            })
+            .collect();
+        let groups = group_failures(&failures, true);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].count, 10);
+        assert_eq!(groups[0].paths.len(), 10);
+        assert_eq!(groups[0].sample_paths.len(), 8);
+        assert_eq!(groups[0].samples.len(), 8);
+        assert_eq!(groups[0].sample_paths[0], "0.js");
+        assert_eq!(groups[0].sample_paths[7], "7.js");
+    }
+
+    #[test]
     fn normalize_comparison_no_duplicate() {
         let r = normalize_comparison_values("N !== N");
         assert_eq!(r, "N !== N");
