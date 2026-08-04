@@ -588,3 +588,4 @@ these small fixtures isolate the currently implemented contract.
 |   589 | child_process exposes destroy and Symbol.dispose termination         | `tools/run-node-tests.sh --stage 589` |
 |   590 | process exposes active-resource information as an array               | `tools/run-node-tests.sh --stage 590` |
 |   591 | process exposes available memory as a non-negative number             | `tools/run-node-tests.sh --stage 591` |
+|   592 | process hrtime.bigint returns monotonic bigint timestamps             | `tools/run-node-tests.sh --stage 592` |
